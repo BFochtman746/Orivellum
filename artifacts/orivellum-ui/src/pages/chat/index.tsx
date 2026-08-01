@@ -836,12 +836,16 @@ export default function Chat() {
           }
         } else {
           const msg = err?.message ?? String(err);
-          if (msg.includes("503") || msg.includes("Service Unavailable") || msg.includes("AI")) {
-            toast.error("AI service unavailable — check Engine Settings");
-          } else {
-            toast.error("Message failed to send");
-          }
-          setLocalMessages((prev) => prev.filter((m) => m.id !== assistantId));
+          const errLabel = (msg.includes("503") || msg.includes("Service Unavailable") || msg.includes("AI"))
+            ? "AI service unavailable — check Engine Settings"
+            : "Message failed to send";
+          // Keep the bubble visible with a failed state instead of silently removing it
+          // so the user can see what happened and retry.
+          setLocalMessages((prev) => prev.map((m) =>
+            m.id === assistantId
+              ? { ...m, text: errLabel, streaming: false, failed: true }
+              : m
+          ));
         }
       } finally {
         if (rafRef.current !== null) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
@@ -855,7 +859,8 @@ export default function Chat() {
         queryClient.invalidateQueries({ queryKey: getListConversationsQueryKey() });
         // Clear local messages only if still viewing the same conversation
         // (otherwise the activeId-change effect already cleared them)
-        setLocalMessages((prev) => prev.filter((m) => m.incomplete));
+        // Keep incomplete (truncated) and failed bubbles — both are meaningful states.
+        setLocalMessages((prev) => prev.filter((m) => m.incomplete || (m as any).failed));
       }
     },
     [activeId, deepMode, scopeAll, pendingImage, activeConv?.messages, flushAccumulator, queryClient, defaultModel]
@@ -1141,11 +1146,13 @@ export default function Chat() {
                           </div>
                         )}
                         <div className={`px-4 py-3 rounded-lg text-sm break-words
-                          ${msg.isClarification
-                            ? "bg-amber-50/50 border border-amber-200/60 text-amber-900 dark:bg-amber-950/20 dark:border-amber-800/40 dark:text-amber-100"
-                            : msg.role === "user"
-                              ? "bg-secondary/60 border border-secondary whitespace-pre-wrap"
-                              : "bg-muted/40 border border-border/40"}`}>
+                          ${(msg as any).failed
+                            ? "bg-destructive/5 border border-destructive/30 text-destructive"
+                            : msg.isClarification
+                              ? "bg-amber-50/50 border border-amber-200/60 text-amber-900 dark:bg-amber-950/20 dark:border-amber-800/40 dark:text-amber-100"
+                              : msg.role === "user"
+                                ? "bg-secondary/60 border border-secondary whitespace-pre-wrap"
+                                : "bg-muted/40 border border-border/40"}`}>
                           {msg.text ? (
                             msg.role === "assistant" ? (
                               <>
