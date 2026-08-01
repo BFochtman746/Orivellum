@@ -35,7 +35,8 @@ class ConversationUpdate(BaseModel):
 class MessageSend(BaseModel):
     text: str
     stream: bool = False
-    deep: bool = False  # When True, route through cognition council
+    deep: bool = False   # When True, route through cognition council
+    scope: str = "work"  # "work" = active work only, "all" = all works
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -104,7 +105,7 @@ async def send_message(conv_id: str, body: MessageSend):
 
     if body.stream:
         return StreamingResponse(
-            _stream_response(db, conv, body.text, deep=body.deep),
+            _stream_response(db, conv, body.text, deep=body.deep, scope=body.scope),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
@@ -113,7 +114,7 @@ async def send_message(conv_id: str, body: MessageSend):
         )
 
     # Non-streaming path
-    messages = _build_messages(db, conv, body.text)
+    messages = _build_messages(db, conv, body.text, scope=body.scope)
     model    = _model_for(conv)
 
     if body.deep:
@@ -141,8 +142,12 @@ def _model_for(conv: dict) -> str:
     return conv.get("model") or cfg.serving.workhorse_model
 
 
-def _build_system_prompt(db: Any, conv: dict) -> str:
-    """Build a system prompt, optionally enriched with work knowledge and user memory."""
+def _build_system_prompt(db: Any, conv: dict, scope: str = "work") -> str:
+    """Build a system prompt, optionally enriched with work knowledge and user memory.
+
+    scope="work"  → inject knowledge from the conversation's Work only (default)
+    scope="all"   → inject top knowledge across ALL works
+    """
     base = (
         "You are Orivellum, a sovereign local-first AI assistant. "
         "You help the user think through their research, synthesise documents, "
@@ -165,6 +170,24 @@ def _build_system_prompt(db: Any, conv: dict) -> str:
         pass  # user_memory table may not exist yet on old schemas
 
     work_id = conv.get("work_id")
+
+    if scope == "all":
+        # Inject knowledge across ALL works (no work_id filter)
+        all_knowledge = db.list_knowledge(work_id=None, limit=_CONTEXT_KNOWLEDGE * 4)
+        knowledge = [
+            k for k in all_knowledge
+            if k.get("review_status") not in ("rejected",)
+        ][:_CONTEXT_KNOWLEDGE]
+        if knowledge:
+            context_parts = ["Relevant knowledge from all your works:"]
+            for k in knowledge:
+                kind = k.get("kind", "note")
+                text = k.get("text", "").strip()
+                if text:
+                    context_parts.append(f"  [{kind}] {text[:300]}")
+            return f"{base}\n\n" + "\n".join(context_parts)
+        return base
+
     if not work_id:
         return base
 
@@ -193,9 +216,9 @@ def _build_system_prompt(db: Any, conv: dict) -> str:
     return f"{base}\n\n" + "\n".join(context_parts)
 
 
-def _build_messages(db: Any, conv: dict, new_user_text: str) -> list[dict]:
+def _build_messages(db: Any, conv: dict, new_user_text: str, scope: str = "work") -> list[dict]:
     """Build the full OpenAI-format messages array for this conversation."""
-    system_prompt = _build_system_prompt(db, conv)
+    system_prompt = _build_system_prompt(db, conv, scope=scope)
 
     # Fetch recent history (excluding the message we just stored)
     history = db.get_messages(conv["id"], limit=_HISTORY_LIMIT + 1)
@@ -246,7 +269,7 @@ async def _call_ai(messages: list[dict], model: str) -> str:
         return _UNAVAILABLE
 
 
-async def _stream_response(db: Any, conv: dict, user_text: str, deep: bool = False):
+async def _stream_response(db: Any, conv: dict, user_text: str, deep: bool = False, scope: str = "work"):
     """SSE generator — streams tokens, stores final reply, auto-titles.
 
     Handles client disconnect (GeneratorExit) by persisting whatever tokens
@@ -255,7 +278,7 @@ async def _stream_response(db: Any, conv: dict, user_text: str, deep: bool = Fal
     """
     cfg = get_config()
     conv_id = conv["id"]
-    messages = _build_messages(db, conv, user_text)
+    messages = _build_messages(db, conv, user_text, scope=scope)
     full_reply = ""
 
     model = _model_for(conv)

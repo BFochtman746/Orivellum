@@ -39,6 +39,7 @@ import {
   MessageSquare, Plus, Send, Search, Bot, User, Copy, Check,
   Trash2, Wifi, WifiOff, Loader2, Cpu, Pencil, BookOpen, Archive, ArchiveRestore,
   AlertTriangle, FolderOpen, FileText, ChevronRight, X as XIcon, Zap, Brain,
+  Globe, Paperclip, Download, Layers,
 } from "lucide-react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -180,11 +181,14 @@ function MarkdownContent({ text }: { text: string }) {
 
 // ─── Streaming helper ─────────────────────────────────────────────────────────
 
-async function* streamChat(convId: string, text: string, signal?: AbortSignal, deep = false): AsyncGenerator<string> {
+async function* streamChat(
+  convId: string, text: string, signal?: AbortSignal,
+  deep = false, scope: "work" | "all" = "work",
+): AsyncGenerator<string> {
   const resp = await fetch(`${API_BASE}/conversations/${convId}/messages`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text, stream: true, deep }),
+    body: JSON.stringify({ text, stream: true, deep, scope }),
     keepalive: true,
     signal,
   });
@@ -294,6 +298,73 @@ function WorkFilesDrawer({ workId, workTitle }: { workId: string; workTitle: str
   );
 }
 
+// ─── Artifact tracker ─────────────────────────────────────────────────────────
+
+/** Detects markdown download links in assistant messages and shows a pill. */
+const FILE_LINK_RE = /\[([^\]]+)\]\(([^)]+\.(?:txt|md|csv|json|pdf|docx|xlsx|zip|py|js|ts|html|xml))\)/gi;
+const ALLOWED_SCHEMES = new Set(["http:", "https:", "blob:"]);
+
+/** Returns the URL only if it is safe to navigate/download; rejects javascript:, data:, etc. */
+function sanitizeArtifactUrl(raw: string): string | null {
+  try {
+    // Relative paths (starting with / or .) are safe — no scheme to attack
+    if (raw.startsWith("/") || raw.startsWith("./") || raw.startsWith("../")) return raw;
+    const parsed = new URL(raw);
+    if (!ALLOWED_SCHEMES.has(parsed.protocol)) return null;
+    return raw;
+  } catch {
+    // URL() threw — treat as relative path only if it looks benign (no colon before first slash)
+    if (/^[^:]*:/.test(raw)) return null; // has a scheme we couldn't parse → reject
+    return raw;
+  }
+}
+
+function ArtifactTracker({ messages }: { messages: LocalMessage[] }) {
+  const [open, setOpen] = useState(false);
+
+  const artifacts: { label: string; url: string; msgId: string }[] = [];
+  for (const m of messages) {
+    if (m.role !== "assistant" || !m.text) continue;
+    let match: RegExpExecArray | null;
+    FILE_LINK_RE.lastIndex = 0;
+    while ((match = FILE_LINK_RE.exec(m.text)) !== null) {
+      const safeUrl = sanitizeArtifactUrl(match[2]);
+      if (safeUrl) artifacts.push({ label: match[1], url: safeUrl, msgId: m.id });
+    }
+  }
+
+  if (artifacts.length === 0) return null;
+
+  return (
+    <div className="max-w-3xl mx-auto mb-2 flex items-center gap-2">
+      <button
+        type="button"
+        onClick={() => setOpen(v => !v)}
+        className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-mono bg-primary/10 text-primary border border-primary/20 hover:bg-primary/15 transition-colors"
+      >
+        <Paperclip className="w-3 h-3" />
+        {artifacts.length} file{artifacts.length !== 1 ? "s" : ""} made in this chat
+      </button>
+      {open && (
+        <div className="absolute bottom-24 left-1/2 -translate-x-1/2 z-50 w-72 rounded-xl border border-border bg-popover shadow-lg p-3 space-y-1.5">
+          <p className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-2">Made in this chat</p>
+          {artifacts.map((a, i) => (
+            <a
+              key={i}
+              href={a.url}
+              download
+              className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-muted/50 transition-colors text-xs"
+            >
+              <Download className="w-3.5 h-3.5 text-primary shrink-0" />
+              <span className="flex-1 truncate font-medium">{a.label}</span>
+            </a>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function Chat() {
@@ -332,7 +403,10 @@ export default function Chat() {
   const models = modelsData?.models ?? [];
   const defaultModel = modelsData?.default ?? "";
 
-  const [deepMode, setDeepMode] = useState(false);
+  const [deepMode,   setDeepMode]   = useState(false);
+  const [scopeAll,   setScopeAll]   = useState(false); // false = "This work", true = "All works"
+  const [dragOver,   setDragOver]   = useState(false);
+  const [importing,  setImporting]  = useState(false);
   const [newConvModel, setNewConvModel] = useState<string>("");
   const createConv = useCreateConversation();
   const deleteConv = useDeleteConversation();
@@ -411,6 +485,46 @@ export default function Chat() {
     return () => document.removeEventListener("visibilitychange", onVisible);
   }, [flushAccumulator]);
 
+  // ── File drag/drop → auto-import ─────────────────────────────────────────
+  const handleDrop = useCallback(async (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+    const files = Array.from(e.dataTransfer.files);
+    if (!files.length) return;
+    setImporting(true);
+    try {
+      for (const file of files.slice(0, 3)) {
+        // Read file as base64 — the API expects JSON { filename, content_b64, work_id }
+        const arrayBuf = await file.arrayBuffer();
+        const bytes = new Uint8Array(arrayBuf);
+        let binary = "";
+        bytes.forEach(b => { binary += String.fromCharCode(b); });
+        const content_b64 = btoa(binary);
+
+        const r = await fetch(`${API_BASE}/library/import`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            filename: file.name,
+            content_b64,
+            ...(convWorkId ? { work_id: convWorkId } : {}),
+          }),
+        });
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({}));
+          toast.error(`Could not import ${file.name}: ${(err as any)?.detail ?? r.status}`);
+          continue;
+        }
+        setDraft(prev => (prev ? `${prev}\nload: ${file.name}` : `load: ${file.name}`));
+        toast.success(`Imported ${file.name}`);
+      }
+    } catch {
+      toast.error("Import failed");
+    } finally {
+      setImporting(false);
+    }
+  }, [convWorkId]);
+
   const handleCreate = (modelOverride?: string) => {
     const chosenModel = modelOverride ?? newConvModel;
     createConv.mutate(
@@ -477,7 +591,7 @@ export default function Chat() {
       scheduleFlush();
 
       try {
-        for await (const token of streamChat(convId, text, controller.signal, deepMode)) {
+        for await (const token of streamChat(convId, text, controller.signal, deepMode, scopeAll ? "all" : "work")) {
           accumulatorRef.current += token;
         }
         const finalText = accumulatorRef.current;
@@ -518,7 +632,7 @@ export default function Chat() {
         setLocalMessages((prev) => prev.filter((m) => m.incomplete));
       }
     },
-    [draft, activeId, sending, activeConv?.messages, flushAccumulator, queryClient]
+    [draft, activeId, sending, deepMode, scopeAll, activeConv?.messages, flushAccumulator, queryClient]
   );
 
   const displayMessages: LocalMessage[] = localOverride
@@ -674,8 +788,21 @@ export default function Chat() {
                   )}
                 </div>
               </div>
-              {/* Right side: Files drawer + model picker */}
+              {/* Right side: scope toggle + Files drawer + model picker */}
               <div className="flex items-center gap-2">
+                {convWorkId && (
+                  <button
+                    onClick={() => setScopeAll(v => !v)}
+                    title={scopeAll ? "Searching all works — click for this work only" : "Searching this work only — click for all works"}
+                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium border transition-colors
+                      ${scopeAll
+                        ? "bg-primary/10 text-primary border-primary/30"
+                        : "text-muted-foreground border-border/50 hover:bg-muted/60 hover:text-foreground"}`}
+                  >
+                    {scopeAll ? <Globe className="w-3.5 h-3.5" /> : <Layers className="w-3.5 h-3.5" />}
+                    <span className="hidden sm:inline">{scopeAll ? "All works" : "This work"}</span>
+                  </button>
+                )}
                 {convWorkId && <WorkFilesDrawer workId={convWorkId} workTitle={linkedWorkTitle ?? "Work"} />}
                 {models.length > 0 && activeId && (
                   <ModelPicker
@@ -774,14 +901,22 @@ export default function Chat() {
 
             {/* Input */}
             <div className="px-6 py-4 bg-muted/10 border-t border-border/50 shrink-0">
-              <form onSubmit={handleSend} className="max-w-3xl mx-auto relative">
+              {/* Made-in-this-chat artifact tracker */}
+              <ArtifactTracker messages={displayMessages} />
+              <form
+                onSubmit={handleSend}
+                className={`max-w-3xl mx-auto relative transition-colors rounded-lg ${dragOver ? "ring-2 ring-primary/40 bg-primary/5" : ""}`}
+                onDragOver={e => { e.preventDefault(); setDragOver(true); }}
+                onDragLeave={() => setDragOver(false)}
+                onDrop={handleDrop}
+              >
                 <Textarea
                   value={draft}
                   onChange={(e) => setDraft(e.target.value)}
-                  placeholder={aiOnline ? "Ask anything… (Enter to send, Shift+Enter for newline)" : "AI offline — messages saved locally"}
+                  placeholder={dragOver ? "Drop files to import…" : importing ? "Importing…" : aiOnline ? "Ask anything… or drop a file (Enter to send, Shift+Enter for newline)" : "AI offline — messages saved locally"}
                   className="pr-24 resize-none py-3 text-sm"
                   rows={2}
-                  disabled={sending}
+                  disabled={sending || importing}
                   onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(e); } }}
                 />
                 {/* Deep/Fast toggle */}
