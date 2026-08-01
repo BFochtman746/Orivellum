@@ -136,6 +136,7 @@ Write-Host "[api]  Ready [OK]" -ForegroundColor $Green
 # ---- Web UI -----------------------------------------------------------------
 Write-Host "[web]  Starting web UI on port $WebPort ..." -ForegroundColor $Cyan
 $env:PORT              = "$WebPort"
+$env:BASE_PATH         = "/"
 $env:ORIVELLUM_API_URL = "http://127.0.0.1:$ApiPort"
 $webProc = Start-Process -FilePath $pnpmExe `
   -ArgumentList "--filter @workspace/orivellum-ui run dev" `
