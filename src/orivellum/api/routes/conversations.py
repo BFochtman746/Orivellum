@@ -23,11 +23,13 @@ _CONTEXT_KNOWLEDGE = 8
 class ConversationCreate(BaseModel):
     title: str | None = None
     work_id: str | None = None
+    model: str | None = None
 
 
 class ConversationUpdate(BaseModel):
     title: str | None = None
     archived: bool | None = None
+    model: str | None = None
 
 
 class MessageSend(BaseModel):
@@ -49,7 +51,7 @@ def list_conversations(archived: bool = False, limit: int = 100):
 @router.post("/conversations")
 def create_conversation(body: ConversationCreate):
     db = get_db()
-    conv = db.create_conversation(title=body.title, work_id=body.work_id)
+    conv = db.create_conversation(title=body.title, work_id=body.work_id, model=body.model)
     return {"conversation": conv}
 
 
@@ -66,7 +68,7 @@ def get_conversation(conv_id: str):
 @router.patch("/conversations/{conv_id}")
 def update_conversation(conv_id: str, body: ConversationUpdate):
     db = get_db()
-    conv = db.update_conversation(conv_id, title=body.title, archived=body.archived)
+    conv = db.update_conversation(conv_id, title=body.title, archived=body.archived, model=body.model)
     if not conv:
         raise HTTPException(404, f"Conversation {conv_id!r} not found")
     return {"conversation": conv}
@@ -103,7 +105,7 @@ async def send_message(conv_id: str, body: MessageSend):
 
     # Non-streaming path
     messages = _build_messages(db, conv, body.text)
-    reply = await _call_ai(messages)
+    reply = await _call_ai(messages, model=_model_for(conv))
     msg = db.add_message(conv_id, "assistant", reply)
 
     # Auto-title the conversation after the first exchange
@@ -115,6 +117,15 @@ async def send_message(conv_id: str, body: MessageSend):
 # ──────────────────────────────────────────────────────────────────────────────
 # Message construction
 # ──────────────────────────────────────────────────────────────────────────────
+
+def _model_for(conv: dict) -> str:
+    """Return the model to use for this conversation.
+
+    Priority: conversation.model → config workhorse default.
+    """
+    cfg = get_config()
+    return conv.get("model") or cfg.serving.workhorse_model
+
 
 def _build_system_prompt(db: Any, conv: dict) -> str:
     """Build a system prompt, optionally enriched with work knowledge."""
@@ -180,7 +191,7 @@ _UNAVAILABLE = (
 )
 
 
-async def _call_ai(messages: list[dict]) -> str:
+async def _call_ai(messages: list[dict], model: str) -> str:
     """Call the AI endpoint (Lemonade / Ollama / any OpenAI-compat server)."""
     cfg = get_config()
     try:
@@ -189,7 +200,7 @@ async def _call_ai(messages: list[dict]) -> str:
             resp = await client.post(
                 f"{cfg.serving.base_url}/chat/completions",
                 json={
-                    "model": cfg.serving.workhorse_model,
+                    "model": model,
                     "messages": messages,
                     "stream": False,
                 },
@@ -209,6 +220,7 @@ async def _stream_response(db: Any, conv: dict, user_text: str):
     messages = _build_messages(db, conv, user_text)
     full_reply = ""
 
+    model = _model_for(conv)
     try:
         import httpx
         async with httpx.AsyncClient(timeout=cfg.serving.timeout_sec) as client:
@@ -216,7 +228,7 @@ async def _stream_response(db: Any, conv: dict, user_text: str):
                 "POST",
                 f"{cfg.serving.base_url}/chat/completions",
                 json={
-                    "model": cfg.serving.workhorse_model,
+                    "model": model,
                     "messages": messages,
                     "stream": True,
                 },

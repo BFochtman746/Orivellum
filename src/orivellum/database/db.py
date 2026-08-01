@@ -283,13 +283,14 @@ class OrivellumDB:
             result.append(d)
         return result
 
-    def create_conversation(self, title: str | None = None, work_id: str | None = None) -> dict:
+    def create_conversation(self, title: str | None = None, work_id: str | None = None,
+                            model: str | None = None) -> dict:
         cid = _uuid()
         now = _now()
         with self._lock:
             self._conn.execute(
-                "INSERT INTO conversations(id,work_id,title,archived,created_at,updated_at) VALUES(?,?,?,0,?,?)",
-                (cid, work_id, title, now, now),
+                "INSERT INTO conversations(id,work_id,title,archived,model,created_at,updated_at) VALUES(?,?,?,0,?,?,?)",
+                (cid, work_id, title, model, now, now),
             )
             self._conn.commit()
         return self.get_conversation(cid)  # type: ignore[return-value]
@@ -311,13 +312,16 @@ class OrivellumDB:
                 "meta": meta or {}, "created_at": now}
 
     def update_conversation(self, conv_id: str, title: str | None = None,
-                            archived: bool | None = None) -> dict | None:
+                            archived: bool | None = None,
+                            model: str | None = None) -> dict | None:
         now = _now()
         updates: dict[str, Any] = {"updated_at": now}
         if title is not None:
             updates["title"] = title
         if archived is not None:
             updates["archived"] = 1 if archived else 0
+        if model is not None:
+            updates["model"] = model
         set_clause = ", ".join(f"{k}=?" for k in updates)
         vals = list(updates.values()) + [conv_id]
         with self._lock:

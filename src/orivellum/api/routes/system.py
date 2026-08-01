@@ -36,6 +36,36 @@ def system_health():
     }
 
 
+@router.get("/system/models")
+def system_models():
+    """Return the models configured in the serving section.
+
+    The frontend uses this to populate the model picker.
+    Each entry includes a short role label so the UI can show friendly names.
+    """
+    cfg = get_config()
+    seen: set[str] = set()
+    models = []
+    for role, model_id in [
+        ("workhorse", cfg.serving.workhorse_model),
+        ("reasoner",  cfg.serving.reasoner_model),
+        ("coder",     cfg.serving.coder_model),
+    ]:
+        if model_id and model_id not in seen:
+            seen.add(model_id)
+            models.append({
+                "id": model_id,
+                "role": role,
+                "label": role.capitalize(),
+                "description": {
+                    "workhorse": "Default · fast, capable",
+                    "reasoner":  "Deeper reasoning · slower",
+                    "coder":     "Code generation · analysis",
+                }.get(role, ""),
+            })
+    return {"models": models, "default": cfg.serving.workhorse_model}
+
+
 @router.get("/system/tools")
 def system_tools():
     """List registered capability tools (stub — populated as capabilities load)."""
