@@ -687,6 +687,23 @@ MIGRATIONS: list[tuple[int, str, str]] = [
     #          v44 restores the Projects schema and adds the correct work_concepts tables)
     (43, "Adaptive learning tables — superseded by v44", "SELECT 1"),
 
+    # v45 — Write Desk: rich-text document drafting workspace with AI assistance.
+    (45, "Add write_documents table for Write Desk", """
+        CREATE TABLE IF NOT EXISTS write_documents (
+            id           TEXT PRIMARY KEY,
+            title        TEXT NOT NULL DEFAULT 'Untitled',
+            content_json TEXT NOT NULL DEFAULT '{}',
+            content_text TEXT NOT NULL DEFAULT '',
+            word_count   INTEGER NOT NULL DEFAULT 0,
+            work_id      TEXT REFERENCES works(id) ON DELETE SET NULL,
+            is_pinned    INTEGER NOT NULL DEFAULT 0,
+            created_at   TEXT NOT NULL,
+            updated_at   TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS write_documents_updated ON write_documents(updated_at DESC);
+        CREATE INDEX IF NOT EXISTS write_documents_work ON write_documents(work_id)
+    """),
+
     # v44 — Add Work-scoped adaptive learning tables.
     # Projects owns learning_concepts/learning_mastery — those are NEVER touched here.
     # This migration is purely additive: CREATE TABLE IF NOT EXISTS only.

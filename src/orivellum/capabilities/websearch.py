@@ -1,11 +1,12 @@
-"""Web search tool — returns markdown-formatted citations from DuckDuckGo.
+"""Web search via SearXNG — real news, research, and general results with LLM synthesis.
 
-Uses DuckDuckGo's Instant Answers JSON API (no API key, no scraping required).
-This API returns structured abstract text, related topics, and definition results.
-It works reliably from server-side contexts unlike the HTML Lite endpoint, which
-requires a real browser session and CAPTCHA-solving for automated access.
+SearXNG is an open-source metasearch engine that simultaneously queries Google,
+Bing, DuckDuckGo, Wikipedia, and many other engines.  We query its JSON API,
+collect the top results, synthesise an answer with the local LLM (so the user
+gets a proper cited response), and return the result.
 
-Falls back to a "search directly" link on total failure.  Never raises.
+Public SearXNG instances are used by default; a custom instance URL can be
+configured via Settings.  Falls back to a direct-search link on total failure.
 """
 from __future__ import annotations
 
@@ -16,122 +17,188 @@ import urllib.request
 
 logger = logging.getLogger("orivellum.websearch")
 
-_DDG_API = "https://api.duckduckgo.com/"
-_HEADERS  = {
-    "User-Agent": "Orivellum/1.0 (local AI research assistant; +https://orivellum.app)",
-    "Accept": "application/json",
+# ── Public SearXNG instances (tried in order until one responds) ───────────────
+_PUBLIC_INSTANCES = [
+    "https://searxng.site",
+    "https://searx.be",
+    "https://paulgo.io",
+    "https://search.mdosch.de",
+    "https://searx.tiekoetter.com",
+]
+
+_MAX_RESULTS = 8
+_TIMEOUT     = 15
+_HEADERS     = {
+    "User-Agent": "Orivellum/1.0 (local AI research assistant)",
+    "Accept":     "application/json",
 }
-_MAX_RESULTS = 5
-_TIMEOUT     = 12
 
 
-def _ddg_search(query: str) -> list[dict[str, str]]:
-    """Query the DuckDuckGo Instant Answers JSON API.
+def _configured_instance() -> str:
+    """Return the user-configured SearXNG base URL, or the first public instance."""
+    try:
+        from orivellum.api._deps import get_db
+        val = get_db().get_setting("searxng_url", "")
+        if val and val.startswith("http"):
+            return val.rstrip("/")
+    except Exception:
+        pass
+    return _PUBLIC_INSTANCES[0]
 
-    Returns a list of {title, snippet, url} dicts (may be empty for queries
-    outside DuckDuckGo's answer knowledge base).
-    """
+
+def _query_instance(instance: str, query: str, categories: str = "general,news") -> list[dict]:
+    """Query one SearXNG instance's JSON endpoint and return raw result dicts."""
     params = urllib.parse.urlencode({
-        "q":           query,
-        "format":      "json",
-        "no_html":     "1",
-        "skip_disambig": "1",
-        "no_redirect": "1",
+        "q":          query,
+        "format":     "json",
+        "categories": categories,
+        "language":   "en",
     })
-    req = urllib.request.Request(f"{_DDG_API}?{params}", headers=_HEADERS)
+    req = urllib.request.Request(f"{instance}/search?{params}", headers=_HEADERS)
     with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:
         data = json.loads(resp.read().decode("utf-8"))
+    return data.get("results", [])[:_MAX_RESULTS]
 
-    results: list[dict[str, str]] = []
 
-    # 1. Abstract (best single authoritative answer)
-    if data.get("AbstractText") and data.get("AbstractURL"):
-        results.append({
-            "title":   data.get("Heading", query)[:120],
-            "snippet": data["AbstractText"][:350],
-            "url":     data["AbstractURL"],
-        })
+def _fetch_results(query: str) -> list[dict]:
+    """Try the configured instance, then each public fallback, return first success."""
+    instances = [_configured_instance()] + [
+        i for i in _PUBLIC_INSTANCES if i != _configured_instance()
+    ]
+    for inst in instances:
+        try:
+            raw = _query_instance(inst, query)
+            if raw:
+                logger.info("SearXNG: %d results from %s", len(raw), inst)
+                return raw
+            logger.debug("SearXNG %s returned 0 results", inst)
+        except Exception as exc:
+            logger.warning("SearXNG instance %s failed: %s", inst, exc)
+    return []
 
-    # 2. Answer (calculator, conversions, etc.)
-    if data.get("Answer") and data.get("AnswerType"):
-        results.append({
-            "title":   f"{data['AnswerType'].title()} answer",
-            "snippet": str(data["Answer"])[:250],
-            "url":     f"https://duckduckgo.com/?q={urllib.parse.quote_plus(query)}",
-        })
 
-    # 3. Definition
-    if data.get("Definition") and data.get("DefinitionURL"):
-        results.append({
-            "title":   f"Definition: {data.get('Heading', query)}",
-            "snippet": data["Definition"][:300],
-            "url":     data["DefinitionURL"],
-        })
-
-    # 4. Related topics
-    for topic in data.get("RelatedTopics", []):
-        if len(results) >= _MAX_RESULTS:
-            break
-        # Flat topic
-        if isinstance(topic, dict) and topic.get("Text") and topic.get("FirstURL"):
-            results.append({
-                "title":   topic["Text"][:80],
-                "snippet": topic["Text"][:250],
-                "url":     topic["FirstURL"],
-            })
+def _format_results_block(query: str, results: list[dict]) -> str:
+    """Format search results as a clean numbered markdown block."""
+    lines: list[str] = []
+    for i, r in enumerate(results, 1):
+        title   = (r.get("title") or "").strip()[:200]
+        snippet = (r.get("content") or r.get("snippet") or "").strip()[:400]
+        url     = (r.get("url") or "").strip()
+        pub     = (r.get("publishedDate") or "").strip()[:20]
+        if not title or not url:
             continue
-        # Nested sub-topics
-        for sub in topic.get("Topics", []):
-            if len(results) >= _MAX_RESULTS:
-                break
-            if sub.get("Text") and sub.get("FirstURL"):
-                results.append({
-                    "title":   sub["Text"][:80],
-                    "snippet": sub["Text"][:250],
-                    "url":     sub["FirstURL"],
-                })
-
-    return results[:_MAX_RESULTS]
+        lines.append(f"**[{i}] [{title}]({url})**")
+        if pub:
+            lines.append(f"*{pub}*")
+        if snippet:
+            lines.append(snippet)
+        lines.append("")
+    return "\n".join(lines)
 
 
 def web_search(query: str) -> str:
-    """Search for *query* and return a markdown-formatted result.
+    """Search with SearXNG and return a formatted markdown string.
 
-    Uses DuckDuckGo Instant Answers API (reliable, no CAPTCHA, no key).
-    For queries outside DDG's answer database the tool provides a direct
-    search link so the user can open it in their browser.
-
+    This is the simple interface used when a full LLM synthesis isn't available.
+    For a synthesised conversational answer use web_search_synthesize().
     Never raises.
     """
-    direct_url = f"https://duckduckgo.com/?q={urllib.parse.quote_plus(query)}"
-
-    results: list[dict[str, str]] = []
     try:
-        results = _ddg_search(query)
+        results = _fetch_results(query)
     except Exception as exc:
-        logger.warning("DuckDuckGo Instant Answers search failed: %s", exc)
+        logger.error("web_search unexpected error: %s", exc)
+        results = []
 
     if not results:
+        direct = f"https://duckduckgo.com/?q={urllib.parse.quote_plus(query)}"
         return (
             f"🌐 **Web Search: {query}**\n\n"
-            "DuckDuckGo's Instant Answers database doesn't have a structured result "
-            "for this query (common for open-ended research topics). "
-            "To get full web results, open the search directly in your browser:\n\n"
-            f"[Search on DuckDuckGo]({direct_url})"
+            "No results found — all search engines were unreachable or returned nothing.\n\n"
+            f"[Open in browser]({direct})"
         )
 
-    lines = [f"🌐 **Web Search: {query}**\n"]
-    for i, r in enumerate(results, 1):
-        title   = r["title"].strip()
-        snippet = r["snippet"].strip()
-        url     = r["url"]
-        # Avoid duplicating title text in snippet
-        if snippet.lower().startswith(title.lower()):
-            snippet = snippet[len(title):].lstrip(" —-:")
-        lines.append(f"**{i}. [{title}]({url})**")
-        if snippet:
-            lines.append(f"   {snippet}")
-        lines.append("")
+    block = _format_results_block(query, results)
+    return f"🌐 **Web Search: {query}**\n\n{block}"
 
-    lines.append(f"---\n*Powered by DuckDuckGo Instant Answers — [open full results]({direct_url})*")
-    return "\n".join(lines)
+
+def web_search_synthesize(query: str, base_url: str, model: str) -> str:
+    """Search with SearXNG, then have the local LLM synthesise a cited answer.
+
+    Returns the synthesised answer with inline [1][2] citations followed by a
+    numbered sources list.  Falls back to the plain formatted results if the
+    LLM call fails.  Never raises.
+    """
+    try:
+        results = _fetch_results(query)
+    except Exception as exc:
+        logger.error("web_search_synthesize fetch error: %s", exc)
+        results = []
+
+    if not results:
+        return web_search(query)  # fallback
+
+    # Build the context block the LLM will read
+    context_lines: list[str] = []
+    for i, r in enumerate(results, 1):
+        title   = (r.get("title")   or "").strip()[:200]
+        snippet = (r.get("content") or r.get("snippet") or "").strip()[:500]
+        url     = (r.get("url")     or "").strip()
+        pub     = (r.get("publishedDate") or "").strip()[:20]
+        entry   = f"[{i}] {title}"
+        if pub:
+            entry += f" ({pub})"
+        if snippet:
+            entry += f"\n{snippet}"
+        entry += f"\nURL: {url}"
+        context_lines.append(entry)
+
+    context = "\n\n".join(context_lines)
+
+    synthesis_prompt = (
+        f"You are a research assistant synthesising web search results into a clear, "
+        f"accurate answer.  Use inline citation numbers like [1] or [2] when referencing "
+        f"a source.  Be concise but complete.  Do not invent facts not present in the sources.\n\n"
+        f"User query: {query}\n\n"
+        f"Search results:\n{context}\n\n"
+        f"Write a well-structured answer to the query, citing sources inline."
+    )
+
+    try:
+        import httpx
+        resp = httpx.post(
+            f"{base_url}/chat/completions",
+            json={
+                "model":       model,
+                "messages":    [{"role": "user", "content": synthesis_prompt}],
+                "max_tokens":  800,
+                "temperature": 0.2,
+            },
+            timeout=45,
+        )
+        if resp.status_code == 200:
+            synthesis = (
+                resp.json()
+                .get("choices", [{}])[0]
+                .get("message", {})
+                .get("content", "")
+                .strip()
+            )
+            if synthesis:
+                # Build numbered sources footer
+                sources: list[str] = []
+                for i, r in enumerate(results, 1):
+                    title = (r.get("title") or "").strip()[:120]
+                    url   = (r.get("url")   or "").strip()
+                    sources.append(f"**[{i}]** [{title}]({url})")
+
+                return (
+                    f"🌐 **{query}**\n\n"
+                    f"{synthesis}\n\n"
+                    f"---\n**Sources**\n" + "\n".join(sources)
+                )
+    except Exception as exc:
+        logger.warning("LLM synthesis failed (%s) — returning raw results", exc)
+
+    # Fallback: plain formatted results
+    block = _format_results_block(query, results)
+    return f"🌐 **Web Search: {query}**\n\n{block}"

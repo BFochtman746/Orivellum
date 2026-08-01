@@ -637,8 +637,10 @@ async def _maybe_dispatch_intent(
 
     if intent == "web_search":
         try:
-            from orivellum.capabilities.websearch import web_search
-            text = await asyncio.to_thread(web_search, query)
+            from orivellum.capabilities.websearch import web_search_synthesize
+            text = await asyncio.to_thread(
+                web_search_synthesize, query, base_url, model
+            )
         except Exception as exc:
             logger.warning("Web search failed: %s", exc)
             text = f"🌐 **Web Search**\n\nSearch encountered an error: {exc}\nTry rephrasing your query."

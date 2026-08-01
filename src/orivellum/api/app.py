@@ -238,10 +238,10 @@ def create_app() -> FastAPI:
     # Register routers
     from orivellum.api.routes import (
         auth, health, works, conversations, library, knowledge,
-        projects, backups, studio, files, system, dashboard, learning,
+        projects, backups, studio, files, system, dashboard, learning, write,
     )
     for module in [auth, health, works, conversations, library, knowledge,
-                   projects, backups, studio, files, system, dashboard, learning]:
+                   projects, backups, studio, files, system, dashboard, learning, write]:
         app.include_router(module.router)
 
     # 404 handler for /api/* paths

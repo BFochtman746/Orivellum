@@ -66,7 +66,7 @@ const PHASES = [
     icon: Feather,
     routes: ["/write"],
     items: [
-      { name: "Write desk", href: "/write", icon: Feather, disabled: true },
+      { name: "Write desk", href: "/write", icon: Feather },
     ],
   },
   {

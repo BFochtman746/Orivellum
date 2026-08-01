@@ -19,6 +19,7 @@ import Files from '@/pages/files/index';
 import Projects from '@/pages/projects/index';
 import ProjectDetail from '@/pages/projects/detail';
 import Studio from '@/pages/studio/index';
+import WriteDeskPage from '@/pages/write/index';
 import Backups from '@/pages/backups/index';
 import System from '@/pages/system/index';
 import NotFound from '@/pages/not-found';
@@ -56,6 +57,7 @@ function Router() {
         <Route path="/projects">{() => <RouteWithBoundary component={Projects} />}</Route>
         <Route path="/projects/:projectId">{() => <RouteWithBoundary component={ProjectDetail} />}</Route>
         <Route path="/studio">{() => <RouteWithBoundary component={Studio} />}</Route>
+        <Route path="/write">{() => <RouteWithBoundary component={WriteDeskPage} />}</Route>
         <Route path="/backups">{() => <RouteWithBoundary component={Backups} />}</Route>
         <Route path="/system">{() => <RouteWithBoundary component={System} />}</Route>
         <Route component={NotFound} />
