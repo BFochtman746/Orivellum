@@ -211,6 +211,7 @@ export default function ChatScreen() {
   const [initialized, setInitialized] = useState(false);
   const [sendFailed, setSendFailed] = useState(false);
   const [modelPickerVisible, setModelPickerVisible] = useState(false);
+  const [deepMode, setDeepMode] = useState(false);
 
   const { data, isLoading, isError, refetch } = useGetConversation(id, { query: { staleTime: 10_000 } } as any);
   const conversation = data?.conversation;
@@ -304,7 +305,7 @@ export default function ChatScreen() {
       const resp = await mobileFetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: trimmed, stream: false }),
+        body: JSON.stringify({ text: trimmed, stream: false, deep: deepMode }),
       });
 
       if (!resp.ok) throw new Error(`Server returned ${resp.status}`);
@@ -490,6 +491,22 @@ export default function ChatScreen() {
             },
           ]}
         >
+          {/* Deep mode toggle */}
+          <Pressable
+            onPress={() => setDeepMode((d) => !d)}
+            style={[
+              styles.deepToggle,
+              deepMode
+                ? { backgroundColor: colors.primary + '18', borderColor: colors.primary + '44' }
+                : { backgroundColor: colors.muted, borderColor: colors.border },
+            ]}
+            hitSlop={6}
+          >
+            <Feather name="cpu" size={12} color={deepMode ? colors.primary : colors.mutedForeground} />
+            <Text style={[styles.deepToggleText, { color: deepMode ? colors.primary : colors.mutedForeground }]}>
+              {deepMode ? 'Deep' : 'Fast'}
+            </Text>
+          </Pressable>
           <TextInput
             ref={inputRef}
             style={[
@@ -581,6 +598,12 @@ const styles = StyleSheet.create({
   },
   modelLabel: { fontSize: 14, fontFamily: 'Inter_500Medium' },
   modelDesc: { fontSize: 12, fontFamily: 'Inter_400Regular', marginTop: 2 },
+  deepToggle: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    paddingHorizontal: 8, paddingVertical: 5, borderRadius: 7, borderWidth: 1,
+    alignSelf: 'flex-end', marginBottom: 6,
+  },
+  deepToggleText: { fontSize: 11, fontFamily: 'Inter_600SemiBold' },
   listContent: { paddingHorizontal: 16, paddingVertical: 12 },
   bubbleRow: { flexDirection: 'row', alignItems: 'flex-end', marginBottom: 10, gap: 8 },
   bubbleLeft: {},

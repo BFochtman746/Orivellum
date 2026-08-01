@@ -706,12 +706,14 @@ async function setKnowledgeReview(itemId: string, status: string): Promise<void>
 }
 
 type KnowledgeFilter = "all" | "pending" | "approved" | "rejected";
+type KnowledgeKindFilter = "all" | "entity" | "claim" | "relationship" | "summary";
 
 function KnowledgeTab({ workId }: { workId: string }) {
   const queryClient = useQueryClient();
   const [, navigate] = useLocation();
   const [reviewing, setReviewing] = useState<string | null>(null);
   const [filter, setFilter] = useState<KnowledgeFilter>("all");
+  const [kindFilter, setKindFilter] = useState<KnowledgeKindFilter>("all");
   const [searchText, setSearchText] = useState("");
   const deleteKnowledge = useDeleteKnowledgeItem();
   const { data: knowResp, isLoading } = useGetWorkKnowledge(workId, {}, {
@@ -766,7 +768,13 @@ function KnowledgeTab({ workId }: { workId: string }) {
     if (filter === "approved") return k.review_status === "approved";
     if (filter === "rejected") return k.review_status === "rejected";
     return true;
+  }).filter((k) => {
+    if (kindFilter === "all") return true;
+    return (k.kind ?? "").toLowerCase() === kindFilter;
   });
+
+  // Collect distinct kinds for the kind filter pills
+  const availableKinds = Array.from(new Set(allKnowledge.map((k) => (k.kind ?? "").toLowerCase()))).filter(Boolean);
 
   // API search fallback — used when the knowledge list is large and user has typed 3+ chars
   const useApiSearch = allKnowledge.length > 100 && searchText.trim().length >= 3;
@@ -809,6 +817,14 @@ function KnowledgeTab({ workId }: { workId: string }) {
     { key: "rejected", label: "Dismissed" },
   ];
 
+  const KIND_LABELS: Record<string, string> = {
+    entity: "Entity", claim: "Claim", relationship: "Relationship", summary: "Summary",
+  };
+  const KIND_FILTERS: { key: KnowledgeKindFilter; label: string }[] = [
+    { key: "all", label: "All kinds" },
+    ...availableKinds.map((k) => ({ key: k as KnowledgeKindFilter, label: KIND_LABELS[k] ?? k })),
+  ];
+
   return (
     <div className="space-y-4">
       <div className="flex items-start justify-between flex-wrap gap-3">
@@ -826,20 +842,41 @@ function KnowledgeTab({ workId }: { workId: string }) {
             </div>
           )}
           {allKnowledge.length > 0 && (
-            <div className="flex items-center gap-1 p-1 bg-muted/40 rounded-lg">
-              {FILTERS.map(({ key, label }) => (
-                <button
-                  key={key}
-                  onClick={() => setFilter(key)}
-                  className={`px-2.5 py-1 rounded text-xs font-mono transition-colors ${
-                    filter === key
-                      ? "bg-background text-foreground shadow-sm font-semibold"
-                      : "text-muted-foreground hover:text-foreground"
-                  } ${key === "pending" && pendingCount > 0 ? "text-violet-700" : ""}`}
-                >
-                  {label}
-                </button>
-              ))}
+            <div className="flex items-center gap-2 flex-wrap justify-end">
+              {/* Kind filter */}
+              {availableKinds.length > 1 && (
+                <div className="flex items-center gap-1 p-1 bg-muted/40 rounded-lg">
+                  {KIND_FILTERS.map(({ key, label }) => (
+                    <button
+                      key={key}
+                      onClick={() => setKindFilter(key)}
+                      className={`px-2.5 py-1 rounded text-xs font-mono transition-colors ${
+                        kindFilter === key
+                          ? "bg-background text-foreground shadow-sm font-semibold"
+                          : "text-muted-foreground hover:text-foreground"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {/* Review status filter */}
+              <div className="flex items-center gap-1 p-1 bg-muted/40 rounded-lg">
+                {FILTERS.map(({ key, label }) => (
+                  <button
+                    key={key}
+                    onClick={() => setFilter(key)}
+                    className={`px-2.5 py-1 rounded text-xs font-mono transition-colors ${
+                      filter === key
+                        ? "bg-background text-foreground shadow-sm font-semibold"
+                        : "text-muted-foreground hover:text-foreground"
+                    } ${key === "pending" && pendingCount > 0 ? "text-violet-700" : ""}`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
             </div>
           )}
         </div>

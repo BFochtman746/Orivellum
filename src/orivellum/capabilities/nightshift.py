@@ -99,6 +99,11 @@ def run_nightshift(db: "OrivellumDB", cfg: "OrivellumConfig") -> None:
                 ).fetchall()
             full_text = "\n".join(r["text"] for r in chunks_row)
             if not full_text.strip():
+                logger.debug(
+                    "Nightshift: skipping %s — no extractable text in chunks (sparse or image-only doc)",
+                    doc_id,
+                )
+                report_lines.append(f"{title}: skipped — no text in chunks")
                 continue
 
             # Reconstruct a minimal ExtractionResult so harvest() and llm_harvest()
