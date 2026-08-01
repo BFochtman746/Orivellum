@@ -22,3 +22,4 @@
 - [Orivellum media capabilities](orivellum-media-capabilities.md) — TTS via espeak-ng+ffmpeg; OCR via tesseract5 (probe needed); PDF 3-tier fallback; DOCX tables extracted; XLSX 5000-row cap.
 - [Sidebar, cognition, nightshift, progress panel](orivellum-sidebar-cognition.md) — useConnectivity single source of truth; deepMode toggle; schema v40/v41; nightshift daemon; automemory; quiz tab; work files drawer.
 - [Windows compatibility](orivellum-windows-compat.md) — bash/nix probes guarded by sys.platform; tesseract Windows path; espeak error message; disk_usage drive; setup-windows.ps1 + start.ps1 scripts.
+- [Windows pnpm TTY quirk](windows-pnpm-tty.md) — pnpm silently skips launching Vite when stdout is redirected; must open Vite in a new console window (Start-Process without -NoNewWindow/-Redirect).
