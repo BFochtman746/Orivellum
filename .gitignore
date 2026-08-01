@@ -55,4 +55,12 @@ data/orivellum.db-wal
 data/*.db
 data/*.db-shm
 data/*.db-wal
-\n# Temporary debug files uploaded during development\nattached_assets/
+
+# Temporary debug files uploaded during development
+attached_assets/
+
+# Generated API credentials — NEVER commit these files
+# data/api_key.txt    — bearer token written by the API server on first startup
+# data/.session_secret — session-signing secret written by the API server
+data/api_key.txt
+data/.session_secret
