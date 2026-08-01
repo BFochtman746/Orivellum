@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
@@ -16,6 +17,22 @@ logger = logging.getLogger(__name__)
 
 # Max messages to send as history (keeps context window manageable)
 _HISTORY_LIMIT = 40
+
+# Explicit remember pattern — kept in sync with the "remember" intent fast-path
+# in capabilities/intent.py so that every phrase routed to _handle_remember also
+# suppresses the background auto-capture thread, ensuring exactly ONE persistence
+# path for that turn.
+_EXPLICIT_REMEMBER_RE = re.compile(
+    r"\b(remember (that|my|i|this)"
+    r"|my name is"
+    r"|i prefer"
+    r"|i like"
+    r"|i dislike"
+    r"|i always"
+    r"|i never"
+    r"|my (email|phone|address|birthday))\b",
+    re.IGNORECASE,
+)
 # Max knowledge items to inject as context
 _CONTEXT_KNOWLEDGE = 8
 
@@ -95,13 +112,15 @@ async def send_message(conv_id: str, body: MessageSend):
     # Store user message first so it appears immediately
     db.add_message(conv_id, "user", body.text)
 
-    # Capture durable user memory facts from this turn (background, non-blocking)
+    # Background auto-capture: skip when the user explicitly says "remember that…"
+    # to avoid a competing write racing against the intent router's _handle_remember.
     import asyncio, threading
-    threading.Thread(
-        target=_maybe_capture_memory,
-        args=(db, conv_id, body.text),
-        daemon=True,
-    ).start()
+    if not _EXPLICIT_REMEMBER_RE.search(body.text):
+        threading.Thread(
+            target=_maybe_capture_memory,
+            args=(db, conv_id, body.text),
+            daemon=True,
+        ).start()
 
     if body.stream:
         return StreamingResponse(
@@ -117,6 +136,14 @@ async def send_message(conv_id: str, body: MessageSend):
     messages = _build_messages(db, conv, body.text, scope=body.scope)
     model    = _model_for(conv)
     cfg      = get_config()
+
+    # ── Intent routing (non-streaming) ───────────────────────────────────────
+    tool_result = await _maybe_dispatch_intent(db, body.text, cfg.serving.base_url, model)
+    if tool_result is not None:
+        tool_text, tool_meta = tool_result
+        msg = db.add_message(conv_id, "assistant", tool_text, meta=tool_meta)
+        _maybe_auto_title(db, conv, body.text)
+        return {"message": msg}
 
     if body.deep:
         import asyncio
@@ -326,6 +353,19 @@ async def _stream_response(db: Any, conv: dict, user_text: str, deep: bool = Fal
     full_reply = ""
     model = _model_for(conv)
 
+    # ── Intent routing — runs before deep mode and normal AI ──────────────────
+    tool_result = await _maybe_dispatch_intent(db, user_text, cfg.serving.base_url, model)
+    if tool_result is not None:
+        tool_text, tool_meta = tool_result
+        # Persist before streaming (disconnect-safe)
+        db.add_message(conv_id, "assistant", tool_text, meta=tool_meta)
+        _maybe_auto_title(db, conv, user_text)
+        _CHUNK = 40
+        for i in range(0, len(tool_text), _CHUNK):
+            yield f"data: {json.dumps({'token': tool_text[i:i+_CHUNK], 'intent': tool_meta.get('intent')})}\n\n"
+        yield "data: [DONE]\n\n"
+        return
+
     # ── Deep mode: run the meta-prompt gate ──────────────────────────────────
     if deep:
         from orivellum.capabilities.cognition import (
@@ -439,6 +479,169 @@ async def _stream_response(db: Any, conv: dict, user_text: str, deep: bool = Fal
         db.add_message(conv_id, "assistant", full_reply, meta={"model": model})
     _maybe_auto_title(db, conv, user_text)
     yield "data: [DONE]\n\n"
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Intent routing helpers
+# ──────────────────────────────────────────────────────────────────────────────
+
+async def _maybe_dispatch_intent(
+    db: Any, user_text: str, base_url: str, model: str,
+) -> tuple[str, dict] | None:
+    """Classify intent and dispatch to the appropriate tool.
+
+    Returns (reply_text, meta_dict) when a tool handles the request,
+    or None when the intent is "chat" (caller falls through to the AI).
+    """
+    import asyncio
+    try:
+        from orivellum.capabilities.intent import classify_intent
+        classification = await asyncio.to_thread(
+            classify_intent, user_text, base_url, model
+        )
+    except Exception as exc:
+        logger.debug("Intent classification error: %s — falling back to chat", exc)
+        return None
+
+    intent   = classification.get("intent", "chat")
+    query    = classification.get("query", user_text)
+    location = classification.get("location")
+
+    if intent == "chat":
+        return None
+
+    logger.debug("Intent routing: %s (query=%r, location=%r)", intent, query[:60], location)
+
+    if intent == "web_search":
+        try:
+            from orivellum.capabilities.websearch import web_search
+            text = await asyncio.to_thread(web_search, query)
+        except Exception as exc:
+            logger.warning("Web search failed: %s", exc)
+            text = f"🌐 **Web Search**\n\nSearch encountered an error: {exc}\nTry rephrasing your query."
+        return text, {"intent": "web_search", "query": query}
+
+    if intent == "weather":
+        try:
+            from orivellum.capabilities.weather import get_weather
+            loc = location or query
+            text = await asyncio.to_thread(get_weather, loc)
+        except Exception as exc:
+            logger.warning("Weather fetch failed: %s", exc)
+            text = f"📍 **Weather**\n\nCould not retrieve weather data: {exc}"
+        return text, {"intent": "weather", "location": location or query}
+
+    if intent == "remember":
+        text = await asyncio.to_thread(_handle_remember, db, user_text, base_url, model)
+        return text, {"intent": "remember"}
+
+    if intent == "image_gen":
+        text = await asyncio.to_thread(_handle_image_gen, query, base_url, model)
+        return text, {"intent": "image_gen", "query": query}
+
+    return None
+
+
+def _handle_remember(db: Any, user_text: str, base_url: str, model: str) -> str:
+    """Synchronously extract and store a durable fact, then return a confirmation.
+
+    Only acknowledges success after a committed database write.
+    Returns a clear failure message when extraction or storage does not succeed.
+    """
+    try:
+        from orivellum.capabilities.cognition import _call_sync
+        prompt = (
+            "Extract the single most important durable fact from this message. "
+            "Return ONLY valid JSON (no code fences): "
+            "{\"key\": \"short_snake_case_key\", \"value\": \"fact text\"} "
+            "or {\"key\": null, \"value\": null} if nothing is worth storing.\n\n"
+            f"Message: {user_text[:400]}"
+        )
+        raw = _call_sync(
+            [{"role": "user", "content": prompt}],
+            base_url=base_url, model=model, timeout=12,
+        )
+        if not raw:
+            raise ValueError("Empty response from LLM extractor")
+
+        # Strip optional code fences before parsing
+        raw_clean = raw.strip().strip("`").strip()
+        if raw_clean.startswith("json"):
+            raw_clean = raw_clean[4:].strip()
+        parsed = json.loads(raw_clean)
+        key   = str(parsed.get("key") or "").strip()[:80]
+        value = str(parsed.get("value") or "").strip()[:500]
+
+        if not key or not value:
+            return (
+                "📌 **Nothing stored**\n\n"
+                "I couldn't identify a specific fact worth saving from that message. "
+                "Try phrasing it more explicitly, "
+                "e.g. *\"remember that I prefer APA citations\"*."
+            )
+
+        import uuid
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc).isoformat()
+        with db._lock:
+            db._conn.execute(
+                """INSERT INTO user_memory(id, key, value, source_conv_id, created_at)
+                   VALUES(?, ?, ?, NULL, ?)
+                   ON CONFLICT(key) DO UPDATE SET value=excluded.value,
+                     created_at=excluded.created_at""",
+                (str(uuid.uuid4()), key, value, now),
+            )
+            db._conn.commit()
+
+        return (
+            f"📌 **Remembered**\n\n"
+            f"Stored: **{key.replace('_', ' ').title()}** → {value}\n\n"
+            "*This will be included in all future conversations.*"
+        )
+
+    except Exception as exc:
+        logger.warning("Remember extraction/storage failed: %s", exc)
+        return (
+            "📌 **Could not save**\n\n"
+            "Something went wrong while trying to store that fact "
+            f"({type(exc).__name__}). Please try again."
+        )
+
+
+def _handle_image_gen(query: str, base_url: str, model: str) -> str:
+    """Attempt image generation via the AI backend; return a markdown response."""
+    try:
+        import urllib.request, urllib.error, json as _json
+        cfg = get_config()
+        payload = json.dumps({
+            "model": model,
+            "prompt": query,
+            "n": 1,
+            "size": "512x512",
+        }).encode()
+        req = urllib.request.Request(
+            f"{cfg.serving.base_url}/images/generations",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            data = _json.loads(resp.read())
+        item = data["data"][0]
+        if item.get("url") and item["url"].startswith("http"):
+            return f"🎨 **Image generated**\n\n![{query}]({item['url']})"
+        if item.get("b64_json"):
+            # Full base64 payload — valid data URL the browser can render directly
+            b64 = item["b64_json"]
+            return f"🎨 **Image generated**\n\n![{query}](data:image/png;base64,{b64})"
+    except Exception as exc:
+        logger.debug("Image generation unavailable: %s", exc)
+    return (
+        "🎨 **Image Generation**\n\n"
+        "Image generation isn't available on this Orivellum instance. "
+        "It requires an AI backend that supports the `/images/generations` endpoint "
+        "(e.g., a DALL·E-compatible server). Your local Ollama/Lemonade model handles text only."
+    )
 
 
 # ──────────────────────────────────────────────────────────────────────────────

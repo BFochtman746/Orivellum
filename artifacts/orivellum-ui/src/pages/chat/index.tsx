@@ -60,10 +60,21 @@ interface LocalMessage {
   incomplete?: boolean;
   /** Set when this message is a clarifying question from the cognition gate */
   isClarification?: boolean;
+  /** Tool intent that produced this message, e.g. "web_search", "weather" */
+  intent?: string;
 }
 
 /** Sentinel prefix carried through the token stream when the gate returns "clarify". */
 const CLARIFY_PREFIX = "\x02CLARIFY\x02";
+/** Sentinel prefix carrying the tool intent through the token stream. Format: \x02INTENT\x02web_search\x02 */
+const INTENT_PREFIX = "\x02INTENT\x02";
+
+const INTENT_LABELS: Record<string, { icon: string; label: string }> = {
+  web_search: { icon: "🌐", label: "Web search" },
+  weather:    { icon: "📍", label: "Weather" },
+  remember:   { icon: "📌", label: "Remembered" },
+  image_gen:  { icon: "🎨", label: "Image gen" },
+};
 
 // ─── Models hook (generated) ──────────────────────────────────────────────────
 
@@ -177,6 +188,24 @@ function MarkdownContent({ text }: { text: string }) {
         strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
         em: ({ children }) => <em className="italic">{children}</em>,
         hr: () => <hr className="border-border my-3" />,
+        // Allow data:image/... base64 URLs (generated images) while keeping
+        // the default sanitizer for all other URL types.
+        img: ({ src, alt }) => {
+          const safe =
+            typeof src === "string" &&
+            (/^data:image\/(png|jpeg|webp|gif);base64,/.test(src) ||
+              /^https?:\/\//.test(src) ||
+              src.startsWith("/") ||
+              src.startsWith("./"));
+          if (!safe) return null;
+          return (
+            <img
+              src={src}
+              alt={alt ?? ""}
+              className="max-w-full rounded-lg border border-border/40 my-2"
+            />
+          );
+        },
       }}
     >
       {text}
@@ -206,6 +235,7 @@ async function* streamChat(
   const reader = resp.body.getReader();
   const decoder = new TextDecoder();
   let buf = "";
+  let intentEmitted = false;
 
   while (true) {
     const { done, value } = await reader.read();
@@ -223,6 +253,11 @@ async function* streamChat(
           // Cognition gate needs clarification — yield a sentinel then stop
           yield `${CLARIFY_PREFIX}${parsed.question ?? "Could you clarify what you mean?"}`;
           return;
+        }
+        // Carry the intent through via a one-time sentinel on the first token
+        if (parsed.intent && !intentEmitted) {
+          intentEmitted = true;
+          yield `${INTENT_PREFIX}${parsed.intent}${INTENT_PREFIX}`;
         }
         if (parsed.token) yield parsed.token as string;
       } catch { /* ignore */ }
@@ -663,11 +698,11 @@ export default function Chat() {
       };
       scheduleFlush();
 
+      let streamedIntent: string | undefined;
       try {
         for await (const token of streamChat(convId, text, controller.signal, deepMode, scopeAll ? "all" : "work")) {
           if (token.startsWith(CLARIFY_PREFIX)) {
-            // Cognition gate requests clarification — render as a distinct bubble,
-            // do NOT persist (backend did not store an assistant message for this turn)
+            // Cognition gate requests clarification — render as a distinct amber bubble
             const question = token.slice(CLARIFY_PREFIX.length);
             setLocalMessages((prev) => prev.map((m) =>
               m.id === assistantId
@@ -676,11 +711,24 @@ export default function Chat() {
             ));
             break;
           }
+          // Intent sentinel — extract intent, don't add to accumulated text
+          if (token.startsWith(INTENT_PREFIX) && token.endsWith(INTENT_PREFIX) && token.length > INTENT_PREFIX.length * 2) {
+            streamedIntent = token.slice(INTENT_PREFIX.length, -INTENT_PREFIX.length);
+            // Reflect intent badge immediately on the streaming bubble
+            setLocalMessages((prev) => prev.map((m) =>
+              m.id === assistantId ? { ...m, intent: streamedIntent } : m
+            ));
+            continue;
+          }
           accumulatorRef.current += token;
         }
         const finalText = accumulatorRef.current;
         if (finalText) {
-          setLocalMessages((prev) => prev.map((m) => m.id === assistantId ? { ...m, text: finalText, streaming: false } : m));
+          setLocalMessages((prev) => prev.map((m) =>
+            m.id === assistantId
+              ? { ...m, text: finalText, streaming: false, intent: streamedIntent ?? m.intent }
+              : m
+          ));
         }
       } catch (err: any) {
         if (err?.name === "AbortError") {
@@ -730,6 +778,8 @@ export default function Chat() {
         created_at: m.created_at ?? "",
         // Restore amber bubble style for persisted clarification messages
         isClarification: !!(m as any).meta?.isClarification,
+        // Surface the tool intent badge from persisted meta
+        intent: (m as any).meta?.intent as string | undefined,
       }));
 
   // ID of the last non-streaming AI message — compass footer renders here
@@ -979,9 +1029,16 @@ export default function Chat() {
                           )}
                         </div>
                         {msg.role === "assistant" && !msg.streaming && !msg.isClarification && (
-                          <div className="flex items-center gap-2 px-0.5">
+                          <div className="flex items-center gap-2 px-0.5 flex-wrap">
+                            {/* Intent badge */}
+                            {msg.intent && INTENT_LABELS[msg.intent] && (
+                              <span className="flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-mono bg-primary/8 text-primary/70 border border-primary/15">
+                                <span>{INTENT_LABELS[msg.intent].icon}</span>
+                                <span>{INTENT_LABELS[msg.intent].label}</span>
+                              </span>
+                            )}
                             {/* Per-message model attribution: prefer msg.meta.model, fall back to conv.model */}
-                            {((msg as any).meta?.model || conv?.model) && (
+                            {((msg as any).meta?.model || conv?.model) && !msg.intent && (
                               <span className="text-[10px] font-mono text-muted-foreground/50">
                                 {modelLabel((msg as any).meta?.model ?? conv?.model, models, defaultModel)}
                               </span>

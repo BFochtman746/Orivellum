@@ -1,0 +1,430 @@
+"""Integration tests for intent routing — classify, dispatch, tool failures, persistence."""
+from __future__ import annotations
+
+import json
+import sqlite3
+import tempfile
+import threading
+import unittest
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+
+# ─── Helper: minimal in-memory DB ────────────────────────────────────────────
+
+def _make_db(tmp_path: str) -> "OrivellumDB":
+    from orivellum.database.db import OrivellumDB
+    return OrivellumDB(tmp_path)
+
+
+# ─── Intent classifier ────────────────────────────────────────────────────────
+
+class TestIntentClassifier(unittest.TestCase):
+
+    def test_fast_path_remember(self):
+        from orivellum.capabilities.intent import classify_intent
+        r = classify_intent("remember that I prefer APA citations", "http://x", "m")
+        self.assertEqual(r["intent"], "remember")
+
+    def test_fast_path_remember_my_name(self):
+        from orivellum.capabilities.intent import classify_intent
+        r = classify_intent("my name is Alice", "http://x", "m")
+        self.assertEqual(r["intent"], "remember")
+
+    def test_fast_path_weather_returns_location(self):
+        from orivellum.capabilities.intent import classify_intent, _extract_weather_location
+        # Location extraction without LLM
+        loc = _extract_weather_location("what's the weather in London?")
+        self.assertIsNotNone(loc)
+        self.assertIn("London", loc)
+
+    def test_fast_path_weather_for_city(self):
+        from orivellum.capabilities.intent import _extract_weather_location
+        loc = _extract_weather_location("weather in New York today")
+        self.assertIsNotNone(loc)
+        self.assertIn("New York", loc)
+
+    def test_fast_path_image_gen(self):
+        from orivellum.capabilities.intent import classify_intent
+        r = classify_intent("generate an image of a mountain at dusk", "http://x", "m")
+        self.assertEqual(r["intent"], "image_gen")
+
+    def test_fast_path_web_search(self):
+        from orivellum.capabilities.intent import classify_intent
+        r = classify_intent("search for recent papers on attention mechanisms", "http://x", "m")
+        self.assertEqual(r["intent"], "web_search")
+
+    def test_llm_failure_falls_back_to_chat(self):
+        """Classifier must return 'chat' when the LLM call fails."""
+        from orivellum.capabilities.intent import classify_intent
+        # No pattern match + LLM unavailable
+        with patch("orivellum.capabilities.cognition._call_sync", side_effect=Exception("offline")):
+            r = classify_intent("explain quantum entanglement simply", "http://bad", "m")
+        self.assertEqual(r["intent"], "chat")
+
+    def test_llm_bad_json_falls_back_to_chat(self):
+        from orivellum.capabilities.intent import classify_intent
+        with patch("orivellum.capabilities.cognition._call_sync", return_value="not json at all"):
+            r = classify_intent("tell me about black holes", "http://x", "m")
+        self.assertEqual(r["intent"], "chat")
+
+    def test_llm_unknown_intent_coerced_to_chat(self):
+        from orivellum.capabilities.intent import classify_intent
+        bad = json.dumps({"intent": "hacking", "query": "x", "location": None})
+        with patch("orivellum.capabilities.cognition._call_sync", return_value=bad):
+            r = classify_intent("do something weird", "http://x", "m")
+        self.assertEqual(r["intent"], "chat")
+
+
+# ─── Web search ───────────────────────────────────────────────────────────────
+
+class TestWebSearch(unittest.TestCase):
+    """Tests use the real DDG Instant Answers JSON format (mocked)."""
+
+    # Realistic DDG Instant Answers API response for an abstract query
+    _DDG_ABSTRACT = json.dumps({
+        "Heading":     "Attention (machine learning)",
+        "AbstractText": "Attention mechanisms allow neural networks to focus on relevant parts of inputs.",
+        "AbstractURL": "https://en.wikipedia.org/wiki/Attention_(machine_learning)",
+        "RelatedTopics": [
+            {
+                "Text":     "Transformer (machine learning model) — Architecture using self-attention.",
+                "FirstURL": "https://en.wikipedia.org/wiki/Transformer_(machine_learning_model)",
+            },
+            {
+                "Text":     "BERT (language model) — Pre-trained attention-based model by Google.",
+                "FirstURL": "https://en.wikipedia.org/wiki/BERT_(language_model)",
+            },
+        ],
+        "Answer": "",
+        "AnswerType": "",
+        "Definition": "",
+        "DefinitionURL": "",
+    })
+
+    # Empty response (no instant answer available for this query)
+    _DDG_EMPTY = json.dumps({
+        "Heading": "", "AbstractText": "", "AbstractURL": "",
+        "RelatedTopics": [], "Answer": "", "AnswerType": "",
+        "Definition": "", "DefinitionURL": "",
+    })
+
+    def _mock_urlopen(self, body: str):
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = body.encode()
+        mock_resp.__enter__ = lambda s: s
+        mock_resp.__exit__ = MagicMock(return_value=False)
+        return mock_resp
+
+    def test_returns_markdown_with_abstract_result(self):
+        from orivellum.capabilities.websearch import web_search
+        with patch("urllib.request.urlopen", return_value=self._mock_urlopen(self._DDG_ABSTRACT)):
+            result = web_search("attention mechanisms")
+
+        self.assertIn("🌐", result)
+        self.assertIn("Attention (machine learning)", result)
+        self.assertIn("wikipedia.org", result)
+        self.assertIn("Transformer", result)
+
+    def test_returns_all_related_topics(self):
+        from orivellum.capabilities.websearch import web_search
+        with patch("urllib.request.urlopen", return_value=self._mock_urlopen(self._DDG_ABSTRACT)):
+            result = web_search("attention mechanisms")
+        # At least abstract + 2 related topics
+        self.assertGreaterEqual(result.count("**1."), 1)
+
+    def test_graceful_no_results_includes_direct_link(self):
+        """When DDG returns no structured data, user gets a browser link (not an error)."""
+        from orivellum.capabilities.websearch import web_search
+        with patch("urllib.request.urlopen", return_value=self._mock_urlopen(self._DDG_EMPTY)):
+            result = web_search("recent papers on quantum computing 2025")
+
+        self.assertIn("🌐", result)
+        self.assertIn("duckduckgo.com", result)
+        self.assertIsInstance(result, str)
+        # Must not claim success when no results returned
+        self.assertNotIn("**1.", result)
+
+    def test_graceful_network_failure(self):
+        """API failure must return a user-visible string, never raise."""
+        from orivellum.capabilities.websearch import web_search
+        with patch("urllib.request.urlopen", side_effect=Exception("connection refused")):
+            result = web_search("anything")
+
+        self.assertIn("🌐", result)
+        self.assertIn("duckduckgo.com", result)
+        self.assertIsInstance(result, str)
+
+    def test_ddg_search_parses_answer_type(self):
+        """Calculator/conversion answers from DDG should appear in results."""
+        from orivellum.capabilities.websearch import _ddg_search
+        body = json.dumps({
+            "Heading": "", "AbstractText": "", "AbstractURL": "",
+            "Answer": "42 miles = 67.59 km",
+            "AnswerType": "distance conversion",
+            "Definition": "", "DefinitionURL": "",
+            "RelatedTopics": [],
+        })
+        with patch("urllib.request.urlopen", return_value=self._mock_urlopen(body)):
+            results = _ddg_search("42 miles in km")
+
+        self.assertEqual(len(results), 1)
+        self.assertIn("42 miles", results[0]["snippet"])
+
+
+# ─── Weather ─────────────────────────────────────────────────────────────────
+
+class TestWeather(unittest.TestCase):
+
+    def test_returns_card_for_known_city(self):
+        from orivellum.capabilities.weather import get_weather
+
+        geo_data = {"results": [{"latitude": 51.5, "longitude": -0.12, "name": "London",
+                                  "country_code": "GB"}]}
+        wx_data = {
+            "current_weather": {"temperature": 15.3, "windspeed": 12.0,
+                                 "winddirection": 270, "weathercode": 2},
+            "hourly": {"relativehumidity_2m": [65], "apparent_temperature": [13.1]},
+        }
+
+        def fake_fetch(url, params):
+            if "geocoding" in url:
+                return geo_data
+            return wx_data
+
+        with patch("orivellum.capabilities.weather._fetch_json", side_effect=fake_fetch):
+            result = get_weather("London")
+
+        self.assertIn("📍", result)
+        self.assertIn("London", result)
+        self.assertIn("15", result)  # temperature
+
+    def test_graceful_error_missing_location(self):
+        from orivellum.capabilities.weather import get_weather
+        result = get_weather("")
+        self.assertIn("📍", result)
+        self.assertIsInstance(result, str)
+
+    def test_graceful_error_geocoding_failure(self):
+        from orivellum.capabilities.weather import get_weather
+        with patch("orivellum.capabilities.weather._geocode", return_value=None):
+            result = get_weather("NoSuchPlace XYZ")
+        self.assertIn("📍", result)
+        self.assertNotIn("Traceback", result)
+
+    def test_graceful_error_weather_fetch_failure(self):
+        from orivellum.capabilities.weather import get_weather
+
+        geo = {"latitude": 51.5, "longitude": -0.12, "name": "London", "country_code": "GB"}
+        with patch("orivellum.capabilities.weather._geocode", return_value=geo):
+            with patch("orivellum.capabilities.weather._fetch_json", side_effect=Exception("network")):
+                result = get_weather("London")
+        self.assertIn("📍", result)
+        self.assertIsInstance(result, str)
+
+
+# ─── Remember tool ────────────────────────────────────────────────────────────
+
+class TestRemember(unittest.TestCase):
+
+    def _db(self):
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            path = f.name
+        db = _make_db(path)
+        return db
+
+    def test_stores_fact_and_returns_confirmation(self):
+        from orivellum.api.routes.conversations import _handle_remember
+        db = self._db()
+
+        llm_reply = json.dumps({"key": "citation_style", "value": "APA"})
+        with patch("orivellum.capabilities.cognition._call_sync", return_value=llm_reply):
+            result = _handle_remember(db, "remember that I prefer APA citations", "http://x", "m")
+
+        self.assertIn("📌", result)
+        self.assertIn("Remembered", result)
+        self.assertIn("APA", result)
+
+        # Fact must be persisted
+        with db._lock:
+            row = db._conn.execute("SELECT value FROM user_memory WHERE key='citation_style'").fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual(row[0], "APA")
+
+    def test_honest_failure_when_nothing_extracted(self):
+        from orivellum.api.routes.conversations import _handle_remember
+        db = self._db()
+
+        llm_reply = json.dumps({"key": None, "value": None})
+        with patch("orivellum.capabilities.cognition._call_sync", return_value=llm_reply):
+            result = _handle_remember(db, "hello world", "http://x", "m")
+
+        self.assertIn("Nothing stored", result)
+        self.assertNotIn("Remembered", result)
+
+        # DB must be empty — no false write
+        with db._lock:
+            count = db._conn.execute("SELECT COUNT(*) FROM user_memory").fetchone()[0]
+        self.assertEqual(count, 0)
+
+    def test_honest_failure_when_llm_offline(self):
+        from orivellum.api.routes.conversations import _handle_remember
+        db = self._db()
+
+        with patch("orivellum.capabilities.cognition._call_sync", side_effect=Exception("offline")):
+            result = _handle_remember(db, "remember my birthday is June 5", "http://x", "m")
+
+        self.assertIn("Could not save", result)
+        self.assertNotIn("Remembered", result)
+
+        with db._lock:
+            count = db._conn.execute("SELECT COUNT(*) FROM user_memory").fetchone()[0]
+        self.assertEqual(count, 0)
+
+    def test_upsert_updates_existing_key(self):
+        from orivellum.api.routes.conversations import _handle_remember
+        db = self._db()
+
+        for value in ("APA", "MLA"):
+            llm_reply = json.dumps({"key": "citation_style", "value": value})
+            with patch("orivellum.capabilities.cognition._call_sync", return_value=llm_reply):
+                _handle_remember(db, f"I prefer {value}", "http://x", "m")
+
+        with db._lock:
+            row = db._conn.execute("SELECT value FROM user_memory WHERE key='citation_style'").fetchone()
+        self.assertEqual(row[0], "MLA")  # latest wins
+
+    def test_my_name_is_stores_fact(self):
+        """'my name is X' must go through _handle_remember and write only once."""
+        from orivellum.api.routes.conversations import _handle_remember
+        db = self._db()
+
+        llm_reply = json.dumps({"key": "user_name", "value": "Alice"})
+        with patch("orivellum.capabilities.cognition._call_sync", return_value=llm_reply):
+            result = _handle_remember(db, "my name is Alice", "http://x", "m")
+
+        self.assertIn("Remembered", result)
+        with db._lock:
+            row = db._conn.execute("SELECT value FROM user_memory WHERE key='user_name'").fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual(row[0], "Alice")
+
+    def test_i_prefer_failure_leaves_db_empty(self):
+        """'I prefer X' with LLM offline must NOT write anything (honest failure)."""
+        from orivellum.api.routes.conversations import _handle_remember
+        db = self._db()
+
+        with patch("orivellum.capabilities.cognition._call_sync", side_effect=Exception("offline")):
+            result = _handle_remember(db, "I prefer APA citations", "http://x", "m")
+
+        self.assertIn("Could not save", result)
+        self.assertNotIn("Remembered", result)
+        with db._lock:
+            count = db._conn.execute("SELECT COUNT(*) FROM user_memory").fetchone()[0]
+        self.assertEqual(count, 0)
+
+
+class TestExplicitRememberSuppression(unittest.TestCase):
+    """Verify that _EXPLICIT_REMEMBER_RE covers all phrases routed to remember intent."""
+
+    def _matches(self, text: str) -> bool:
+        from orivellum.api.routes.conversations import _EXPLICIT_REMEMBER_RE
+        return bool(_EXPLICIT_REMEMBER_RE.search(text))
+
+    def test_remember_that(self):
+        self.assertTrue(self._matches("remember that I prefer APA"))
+
+    def test_remember_my(self):
+        self.assertTrue(self._matches("remember my birthday please"))
+
+    def test_my_name_is(self):
+        self.assertTrue(self._matches("my name is Alice"))
+
+    def test_i_prefer(self):
+        self.assertTrue(self._matches("I prefer dark mode"))
+
+    def test_i_like(self):
+        self.assertTrue(self._matches("I like concise answers"))
+
+    def test_i_dislike(self):
+        self.assertTrue(self._matches("I dislike verbose responses"))
+
+    def test_my_email(self):
+        self.assertTrue(self._matches("my email is alice@example.com"))
+
+    def test_my_phone(self):
+        self.assertTrue(self._matches("my phone is 555-1234"))
+
+    def test_unrelated_does_not_match(self):
+        self.assertFalse(self._matches("what is the weather in Paris?"))
+        self.assertFalse(self._matches("explain quantum entanglement"))
+        self.assertFalse(self._matches("search for recent AI papers"))
+
+
+# ─── Intent dispatch (meta) ───────────────────────────────────────────────────
+
+class TestIntentDispatch(unittest.TestCase):
+    """Light tests that _maybe_dispatch_intent returns (text, meta) with correct intent."""
+
+    def _db(self):
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            path = f.name
+        return _make_db(path)
+
+    def _run(self, coro):
+        import asyncio
+        return asyncio.get_event_loop().run_until_complete(coro)
+
+    def test_chat_intent_returns_none(self):
+        from orivellum.api.routes.conversations import _maybe_dispatch_intent
+        db = self._db()
+        classification = {"intent": "chat", "query": "hello", "location": None}
+        with patch("orivellum.capabilities.intent.classify_intent", return_value=classification):
+            result = self._run(_maybe_dispatch_intent(db, "hello", "http://x", "m"))
+        self.assertIsNone(result)
+
+    def test_weather_intent_returns_meta(self):
+        from orivellum.api.routes.conversations import _maybe_dispatch_intent
+        db = self._db()
+        classification = {"intent": "weather", "query": "weather in Paris", "location": "Paris"}
+        with patch("orivellum.capabilities.intent.classify_intent", return_value=classification):
+            with patch("orivellum.capabilities.weather.get_weather", return_value="📍 Paris: 20°C"):
+                result = self._run(_maybe_dispatch_intent(db, "weather in Paris", "http://x", "m"))
+        self.assertIsNotNone(result)
+        text, meta = result
+        self.assertEqual(meta["intent"], "weather")
+        self.assertIn("Paris", text)
+
+    def test_web_search_intent_returns_meta(self):
+        from orivellum.api.routes.conversations import _maybe_dispatch_intent
+        db = self._db()
+        classification = {"intent": "web_search", "query": "quantum computing", "location": None}
+        with patch("orivellum.capabilities.intent.classify_intent", return_value=classification):
+            with patch("orivellum.capabilities.websearch.web_search", return_value="🌐 Results..."):
+                result = self._run(_maybe_dispatch_intent(db, "search for quantum computing", "http://x", "m"))
+        self.assertIsNotNone(result)
+        text, meta = result
+        self.assertEqual(meta["intent"], "web_search")
+
+    def test_classifier_exception_returns_none(self):
+        """If classify_intent raises, dispatch must return None (fall through to chat)."""
+        from orivellum.api.routes.conversations import _maybe_dispatch_intent
+        db = self._db()
+        with patch("orivellum.capabilities.intent.classify_intent", side_effect=Exception("boom")):
+            result = self._run(_maybe_dispatch_intent(db, "any message", "http://x", "m"))
+        self.assertIsNone(result)
+
+    def test_tool_meta_includes_intent_key(self):
+        """Persisted meta must always include 'intent' key so the frontend badge works."""
+        from orivellum.api.routes.conversations import _maybe_dispatch_intent
+        db = self._db()
+        classification = {"intent": "weather", "query": "weather in Tokyo", "location": "Tokyo"}
+        with patch("orivellum.capabilities.intent.classify_intent", return_value=classification):
+            with patch("orivellum.capabilities.weather.get_weather", return_value="📍 Tokyo: 28°C"):
+                result = self._run(_maybe_dispatch_intent(db, "weather in Tokyo", "http://x", "m"))
+        _, meta = result
+        self.assertIn("intent", meta)
+
+
+if __name__ == "__main__":
+    unittest.main()
