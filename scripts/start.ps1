@@ -157,8 +157,9 @@ Write-Host "[web]  Starting web UI on port $WebPort ..." -ForegroundColor $Cyan
 $env:PORT              = "$WebPort"
 $env:BASE_PATH         = "/"
 $env:ORIVELLUM_API_URL = "http://127.0.0.1:$ApiPort"
-$webProc = Start-Process -FilePath $pnpmExe `
-  -ArgumentList "--filter @workspace/orivellum-ui run dev" `
+# Use cmd.exe /c so shims, .cmd wrappers, and .exe files all work
+$webProc = Start-Process -FilePath "cmd.exe" `
+  -ArgumentList "/c `"$pnpmExe`" --filter @workspace/orivellum-ui run dev" `
   -PassThru -NoNewWindow `
   -WorkingDirectory $root `
   -RedirectStandardOutput (Join-Path $logsDir "web.log") `
@@ -168,8 +169,8 @@ $children.Add($webProc)
 # ---- Mobile (optional) ------------------------------------------------------
 if ($Mobile) {
   Write-Host "[mob]  Starting Expo ..." -ForegroundColor $Cyan
-  $mobProc = Start-Process -FilePath $pnpmExe `
-    -ArgumentList "--filter @workspace/mobile run dev" `
+  $mobProc = Start-Process -FilePath "cmd.exe" `
+    -ArgumentList "/c `"$pnpmExe`" --filter @workspace/mobile run dev" `
     -PassThru -NoNewWindow `
     -WorkingDirectory $root
   $children.Add($mobProc)
