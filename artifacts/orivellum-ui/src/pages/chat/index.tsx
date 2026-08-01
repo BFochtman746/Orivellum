@@ -73,6 +73,9 @@ interface LocalMessage {
   meta?: Record<string, unknown>;
 }
 
+/** Suffix appended by the backend when a streaming response is cut short by a timeout. */
+const TRUNCATION_SUFFIX = "\n\n*(Response was cut short — re-send to continue.)*";
+
 /** Sentinel prefix carried through the token stream when the gate returns "clarify". */
 const CLARIFY_PREFIX = "\x02CLARIFY\x02";
 /** Sentinel prefix carrying the tool intent through the token stream. Format: \x02INTENT\x02web_search\x02 */
@@ -668,16 +671,14 @@ export default function Chat() {
     });
   };
 
-  const handleSend = useCallback(
-    async (e: React.FormEvent) => {
-      e.preventDefault();
-      if (!draft.trim() || !activeId || sending) return;
+  // ── Core send logic (called by handleSend and the Re-send button) ────────
+  const sendText = useCallback(
+    async (text: string) => {
+      if (!text || !activeId || sendingRef.current) return;
 
-      const text = draft.trim();
       lastSentRef.current = text;
       // Capture convId now — activeId may change before the stream finishes
       const convId = activeId;
-      setDraft("");
       setSending(true);
       sendingRef.current = true;
 
@@ -780,22 +781,42 @@ export default function Chat() {
         setLocalMessages((prev) => prev.filter((m) => m.incomplete));
       }
     },
-    [draft, activeId, sending, deepMode, scopeAll, activeConv?.messages, flushAccumulator, queryClient, defaultModel]
+    [activeId, deepMode, scopeAll, activeConv?.messages, flushAccumulator, queryClient, defaultModel]
+  );
+
+  const handleSend = useCallback(
+    (e: React.FormEvent) => {
+      e.preventDefault();
+      const text = draft.trim();
+      if (!text) return;
+      setDraft("");
+      sendText(text);
+    },
+    [draft, sendText]
   );
 
   const displayMessages: LocalMessage[] = localOverride
     ? localMessages
-    : (activeConv?.messages ?? []).map((m) => ({
-        id: m.id ?? "",
-        role: m.role as "user" | "assistant",
-        text: m.text ?? "",
-        created_at: m.created_at ?? "",
-        meta: (m as any).meta as Record<string, unknown> | undefined,
-        // Restore amber bubble style for persisted clarification messages
-        isClarification: !!(m as any).meta?.isClarification,
-        // Surface the tool intent badge from persisted meta
-        intent: (m as any).meta?.intent as string | undefined,
-      }));
+    : (activeConv?.messages ?? []).map((m) => {
+        const rawText = m.text ?? "";
+        const isServerTruncated =
+          m.role === "assistant" && rawText.endsWith(TRUNCATION_SUFFIX);
+        return {
+          id: m.id ?? "",
+          role: m.role as "user" | "assistant",
+          text: isServerTruncated
+            ? rawText.slice(0, -TRUNCATION_SUFFIX.length)
+            : rawText,
+          created_at: m.created_at ?? "",
+          meta: (m as any).meta as Record<string, unknown> | undefined,
+          // Restore amber bubble style for persisted clarification messages
+          isClarification: !!(m as any).meta?.isClarification,
+          // Surface the tool intent badge from persisted meta
+          intent: (m as any).meta?.intent as string | undefined,
+          // Surface incomplete flag for server-stored truncated replies
+          incomplete: isServerTruncated || undefined,
+        };
+      });
 
   // ID of the last non-streaming AI message — compass footer renders here
   const lastAiMsgId = [...displayMessages].reverse().find(
@@ -990,7 +1011,7 @@ export default function Chat() {
                     <p className="text-sm">{aiOnline ? "Send a message to start the conversation." : "AI is offline — start Lemonade or Ollama to enable responses."}</p>
                   </div>
                 ) : (
-                  displayMessages.map((msg) => (
+                  displayMessages.map((msg, msgIdx) => (
                     <div key={msg.id} className={`flex gap-3 ${msg.role === "user" ? "flex-row-reverse" : ""}`}>
                       <div className={`w-7 h-7 shrink-0 rounded-sm flex items-center justify-center
                         ${msg.isClarification
@@ -1021,20 +1042,26 @@ export default function Chat() {
                               <>
                                 <MarkdownContent text={msg.text} />
                                 {msg.streaming && <span className="inline-block w-0.5 h-3.5 bg-current ml-0.5 animate-pulse align-text-bottom" />}
-                                {msg.incomplete && (
-                                  <div className="mt-2 flex items-center justify-between gap-2 border-t border-amber-200/40 pt-2">
-                                    <div className="flex items-center gap-1.5 text-xs text-amber-600">
-                                      <AlertTriangle className="w-3 h-3 shrink-0" />
-                                      <span>Response was cut short.</span>
+                                {msg.incomplete && (() => {
+                                  // Find the user message that triggered this incomplete reply
+                                  const prevUser = displayMessages.slice(0, msgIdx).reverse().find(m => m.role === "user");
+                                  const resendText = prevUser?.text || lastSentRef.current;
+                                  return (
+                                    <div className="mt-2 flex items-center justify-between gap-2 border-t border-amber-200/40 pt-2">
+                                      <div className="flex items-center gap-1.5 text-xs text-amber-600">
+                                        <AlertTriangle className="w-3 h-3 shrink-0" />
+                                        <span>Response was cut short.</span>
+                                      </div>
+                                      <button
+                                        onClick={() => resendText && sendText(resendText)}
+                                        disabled={!resendText || sending}
+                                        className="text-xs font-mono text-amber-700 hover:text-amber-900 underline underline-offset-2 shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
+                                      >
+                                        Re-send
+                                      </button>
                                     </div>
-                                    <button
-                                      onClick={() => setDraft(lastSentRef.current)}
-                                      className="text-xs font-mono text-amber-700 hover:text-amber-900 underline underline-offset-2 shrink-0"
-                                    >
-                                      Re-send
-                                    </button>
-                                  </div>
-                                )}
+                                  );
+                                })()}
                               </>
                             ) : msg.text
                           ) : (
