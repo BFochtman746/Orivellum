@@ -219,19 +219,32 @@ if (Test-CommandExists espeak-ng) {
   }
 }
 
+# -- Refresh PATH so all just-installed tools are visible --------------------
+
+Write-Host ""
+Write-Step "Refreshing PATH from registry ..."
+$machinePath = [Environment]::GetEnvironmentVariable("PATH", "Machine")
+$userPath    = [Environment]::GetEnvironmentVariable("PATH", "User")
+$env:PATH    = "$userPath;$machinePath"
+Write-Ok "PATH refreshed"
+
 # -- Python + Node dependencies -----------------------------------------------
 
 Write-Host ""
 Write-Host "Installing Python dependencies ..." -ForegroundColor $Yellow
 Write-Step "Running: uv sync"
 Push-Location (Split-Path $PSScriptRoot -Parent)
-uv sync
+
+$uvCmd = if (Test-CommandExists uv) { "uv" } else { "$env:USERPROFILE\.local\bin\uv.exe" }
+& $uvCmd sync
 Write-Ok "Python dependencies installed"
 
 Write-Host ""
 Write-Host "Installing Node dependencies ..." -ForegroundColor $Yellow
 Write-Step "Running: pnpm install"
-pnpm install
+
+$pnpmCmd = if (Test-CommandExists pnpm) { "pnpm" } else { "$env:LOCALAPPDATA\pnpm\pnpm.cmd" }
+& $pnpmCmd install
 Write-Ok "Node dependencies installed"
 Pop-Location
 
