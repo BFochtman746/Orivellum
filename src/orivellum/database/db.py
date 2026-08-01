@@ -506,6 +506,82 @@ class OrivellumDB:
         return dict(row) if row else None
 
     # -------------------------------------------------------------------------
+    # Chunks (extracted text segments, FTS-indexed)
+    # -------------------------------------------------------------------------
+
+    def add_chunk(self, doc_id: str, text: str, page: int = 0) -> str:
+        """Insert a text chunk and update the FTS index. Returns chunk id.
+
+        chunks.id is a FK to objects(id), so we must register it there first.
+        """
+        cid = self.create_object("chunk")
+        now = _now()
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO chunks(id,doc_id,page,text,created_at) VALUES(?,?,?,?,?)",
+                (cid, doc_id, page, text, now),
+            )
+            self._conn.execute(
+                "INSERT INTO chunks_fts(chunk_id,doc_id,text) VALUES(?,?,?)",
+                (cid, doc_id, text),
+            )
+            self._conn.commit()
+        return cid
+
+    def delete_chunks(self, doc_id: str) -> None:
+        """Remove all chunks for a document (e.g. before re-extracting)."""
+        with self._lock:
+            self._conn.execute("DELETE FROM chunks_fts WHERE doc_id=?", (doc_id,))
+            self._conn.execute("DELETE FROM chunks WHERE doc_id=?", (doc_id,))
+            self._conn.commit()
+
+    def update_document_extracted(self, doc_id: str, extracted_text: str,
+                                  word_count: int, readiness: str = "ready") -> None:
+        """Persist extraction results back on the document row."""
+        with self._lock:
+            self._conn.execute(
+                "UPDATE documents SET extracted_text=?, word_count=?, readiness=? WHERE id=?",
+                (extracted_text, word_count, readiness, doc_id),
+            )
+            self._conn.commit()
+
+    # -------------------------------------------------------------------------
+    # Knowledge items
+    # -------------------------------------------------------------------------
+
+    def create_knowledge_item(self, work_id: str | None, kind: str, text: str,
+                              subject: str | None = None, predicate: str | None = None,
+                              obj: str | None = None, confidence: float = 0.7,
+                              source_doc_id: str | None = None,
+                              source_chunk_id: str | None = None) -> str:
+        """Insert a knowledge item and update FTS. Returns item id."""
+        kid = self.create_object("knowledge")
+        now = _now()
+        # Dedup by text_hash within same work
+        text_hash = hashlib.sha256(f"{work_id}:{text}".encode()).hexdigest()
+        with self._lock:
+            existing = self._conn.execute(
+                "SELECT id FROM knowledge WHERE text_hash=? AND work_id IS ?",
+                (text_hash, work_id),
+            ).fetchone()
+            if existing:
+                return existing["id"]
+            self._conn.execute(
+                """INSERT INTO knowledge(id,work_id,kind,text,subject,predicate,object,
+                   confidence,source_doc_id,source_chunk_id,review_status,meta,
+                   created_at,text_hash)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,'auto','{}',?,?)""",
+                (kid, work_id, kind, text, subject, predicate, obj, confidence,
+                 source_doc_id, source_chunk_id, now, text_hash),
+            )
+            self._conn.execute(
+                "INSERT INTO knowledge_fts(knowledge_id,work_id,text,subject,object) VALUES(?,?,?,?,?)",
+                (kid, work_id, text, subject or "", obj or ""),
+            )
+            self._conn.commit()
+        return kid
+
+    # -------------------------------------------------------------------------
     # Dashboard / aggregations
     # -------------------------------------------------------------------------
 

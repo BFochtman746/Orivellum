@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
-import mimetypes
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +11,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from orivellum.api._deps import get_db, get_config
+from orivellum.capabilities.pipeline import process_document
 
 router = APIRouter(prefix="/api")
 
@@ -142,6 +143,23 @@ def library_import(body: LibraryImport):
         content_path=str(file_path.relative_to(lib_root)),
         meta=body.meta,
     )
+
+    # Fire extraction + chunking + knowledge harvest in the background
+    t = threading.Thread(
+        target=process_document,
+        kwargs=dict(
+            doc_id=doc["id"],
+            file_path=str(file_path),
+            kind=kind,
+            work_id=body.work_id,
+            title=name,
+            db=db,
+        ),
+        daemon=True,
+        name=f"extract-{doc['id'][:8]}",
+    )
+    t.start()
+
     return {"document": doc, "duplicate": False}
 
 

@@ -1,0 +1,18 @@
+
+The Transformer Architecture
+
+The Transformer model, introduced in "Attention Is All You Need" (Vaswani et al., 2017),
+revolutionized natural language processing. Unlike recurrent networks, Transformers rely
+entirely on attention mechanisms to draw global dependencies between input and output.
+
+Self-Attention Mechanism
+
+Self-attention allows the model to weigh the relevance of different words in a sentence
+when encoding a particular word. For each word, a query, key, and value vector is computed.
+The attention score is the dot product of the query with all keys, scaled and softmaxed.
+
+Multi-Head Attention
+
+Multi-head attention runs several attention operations in parallel, each with different
+learned projections. This allows the model to attend to information from different
+representation subspaces at different positions.

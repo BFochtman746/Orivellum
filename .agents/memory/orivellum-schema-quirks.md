@@ -21,3 +21,11 @@ FROM works w JOIN objects o ON o.id = w.id
 
 ## Tables that DO have own created_at
 documents, knowledge, conversations, messages, tasks — all have their own `created_at` column.
+
+## chunks.id and knowledge.id are FKs to objects(id)
+Both `chunks` and `knowledge` use `id TEXT PRIMARY KEY REFERENCES objects(id) ON DELETE CASCADE`.
+You cannot INSERT a chunk or knowledge row using a plain `uuid4()` — the id must first be registered via `create_object("chunk")` / `create_object("knowledge")`.
+
+**Why:** The schema treats every entity as a governed object so lifecycle/provenance are universal.
+
+**How to apply:** `add_chunk()` must call `self.create_object("chunk")` to get the id before inserting into chunks. `create_knowledge_item()` already does this correctly via `create_object("knowledge")`.

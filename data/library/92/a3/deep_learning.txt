@@ -1,0 +1,18 @@
+
+Deep Learning Fundamentals
+
+Deep learning is a subset of machine learning that uses artificial neural networks
+with multiple layers. Geoffrey Hinton, Yann LeCun, and Yoshua Bengio pioneered
+modern deep learning techniques. The ImageNet competition showed that Convolutional
+Neural Networks could dramatically outperform other methods on image classification.
+
+Backpropagation Algorithm
+
+The backpropagation algorithm, developed by Rumelhart, Hinton, and Williams,
+computes the gradient of the loss function with respect to the weights of the network.
+This allows Stochastic Gradient Descent to efficiently train deep networks.
+
+Applications of Deep Learning
+
+Natural Language Processing, Computer Vision, and Speech Recognition have all been
+transformed by deep learning. OpenAI and DeepMind have produced remarkable systems.
