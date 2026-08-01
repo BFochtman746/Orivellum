@@ -55,6 +55,17 @@ function RootLayoutNav() {
           title: '',
         }}
       />
+      <Stack.Screen
+        name="library/[id]"
+        options={{
+          headerShown: true,
+          headerBackTitle: 'Library',
+          headerStyle: { backgroundColor: 'transparent' },
+          headerTransparent: true,
+          headerBlurEffect: 'regular',
+          title: '',
+        }}
+      />
     </Stack>
   );
 }
