@@ -50,9 +50,8 @@ export default defineConfig({
     output: {
       workspace: apiZodSrc,
       client: "zod",
-      target: "generated",
-      schemas: { path: "generated/types", type: "typescript" },
-      mode: "split",
+      target: "generated/api.ts",
+      mode: "single",
       clean: true,
       prettier: true,
       override: {
@@ -62,6 +61,10 @@ export default defineConfig({
             param: ['boolean', 'number', 'string'],
             body: ['bigint', 'date'],
             response: ['bigint', 'date'],
+          },
+          generate: {
+            // Stay on Zod v3 — project catalog pins zod@^3.25.x
+            zodV4: false,
           },
         },
         useDates: true,

@@ -1,0 +1,58 @@
+[project]
+name = "orivellum"
+version = "0.1.0"
+description = "Orivellum — local-first sovereign AI workspace"
+requires-python = ">=3.12"
+dependencies = [
+    # Web framework
+    "fastapi>=0.141.1",
+    "uvicorn[standard]>=0.32.0",
+    "python-multipart>=0.0.32",
+    "httpx>=0.28.0",
+    # Documents
+    "python-docx>=1.2.0",
+    "docxtpl>=0.20.2",
+    "python-redlines>=0.3.0",
+    "python-pptx>=1.0.2",
+    "openpyxl>=3.1.5",
+    "formulas>=1.3.4",
+    # PDF / OCR
+    "pypdf>=6.14.2",
+    "pdfplumber>=0.11.10",
+    "pytesseract>=0.3.13",
+    "pdf2image>=1.17.0",
+    "pillow>=12.3.0",
+    "markitdown>=0.1.7",
+    # Math / NLP
+    "sympy>=1.14.0",
+    # Utilities
+    "pyyaml>=6.0.3",
+    "psutil>=7.2.2",
+    "requests>=2.34.2",
+    # Output
+    "reportlab>=5.0.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "httpx>=0.28.0", "ruff>=0.8.0"]
+
+[project.scripts]
+orivellum = "orivellum.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/orivellum"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"

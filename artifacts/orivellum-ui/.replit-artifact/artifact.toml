@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "Orivellum"
+description = "Orivellum — the local-first sovereign AI workspace UI. A rich, comprehensive dashboard with Chat, Works, Library, Files, Projects, Studio, Writing, Backups, and System pages — all connected to the FastAPI backend at /api."
+version = "1.0.0"
+id = "artifacts/orivellum-ui"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 19901
+
+[services.development]
+run = "pnpm --filter @workspace/orivellum-ui run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/orivellum-ui", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/orivellum-ui/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "19901"
+BASE_PATH = "/"
