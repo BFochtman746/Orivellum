@@ -116,11 +116,47 @@ async def send_message(conv_id: str, body: MessageSend):
     # Non-streaming path
     messages = _build_messages(db, conv, body.text, scope=body.scope)
     model    = _model_for(conv)
+    cfg      = get_config()
 
     if body.deep:
-        # Cognition council — run in thread to avoid blocking event loop
         import asyncio
-        reply = await asyncio.to_thread(_deep_response, messages, model)
+        from orivellum.capabilities.cognition import (
+            classify, get_clarifying_question, deliberate, update_compass,
+        )
+        route = await asyncio.to_thread(
+            classify, body.text, messages[:-1], cfg.serving.base_url, model
+        )
+        logger.debug("Cognition gate (non-stream) for conv %s: %s", conv_id, route)
+
+        if route == "clarify":
+            question = await asyncio.to_thread(
+                get_clarifying_question, body.text, cfg.serving.base_url, model
+            )
+            msg = db.add_message(conv_id, "assistant", question,
+                                 meta={"isClarification": True})
+            _maybe_auto_title(db, conv, body.text)
+            return {"message": msg}
+
+        if route == "complex":
+            council_reply = await asyncio.to_thread(
+                deliberate, messages, cfg.serving.base_url, model
+            )
+            if council_reply:
+                work_id = conv.get("work_id")
+                if work_id:
+                    await asyncio.to_thread(
+                        update_compass, db, work_id,
+                        focus=body.text[:200],
+                        reasoning=council_reply[:500],
+                    )
+                msg = db.add_message(conv_id, "assistant", council_reply,
+                                     meta={"model": model, "council": True})
+                _maybe_auto_title(db, conv, body.text)
+                return {"message": msg}
+            # Council failed → fall through to direct single call
+
+        # "direct" or council/classify fallback
+        reply = await _call_ai(messages, model=model)
     else:
         reply = await _call_ai(messages, model=model)
 
@@ -272,22 +308,83 @@ async def _call_ai(messages: list[dict], model: str) -> str:
 async def _stream_response(db: Any, conv: dict, user_text: str, deep: bool = False, scope: str = "work"):
     """SSE generator — streams tokens, stores final reply, auto-titles.
 
+    When deep=True the cognition gate runs first:
+      - "clarify"  → persist + emit clarify SSE event with amber-bubble metadata, return early
+      - "complex"  → run Author→Critic→Synthesizer council; persist BEFORE streaming chunks
+                     so a mid-stream disconnect never loses the reply
+      - "direct"   → fall through to the normal single-call streaming path
+
     Handles client disconnect (GeneratorExit) by persisting whatever tokens
     arrived before the connection dropped, so the conversation is never left
     with a missing assistant turn.
     """
+    import asyncio
+
     cfg = get_config()
     conv_id = conv["id"]
     messages = _build_messages(db, conv, user_text, scope=scope)
     full_reply = ""
-
     model = _model_for(conv)
+
+    # ── Deep mode: run the meta-prompt gate ──────────────────────────────────
+    if deep:
+        from orivellum.capabilities.cognition import (
+            classify, get_clarifying_question, deliberate, update_compass,
+        )
+
+        route = await asyncio.to_thread(
+            classify, user_text, messages[:-1], cfg.serving.base_url, model
+        )
+        logger.debug("Cognition gate for conv %s: %s", conv_id, route)
+
+        if route == "clarify":
+            question = await asyncio.to_thread(
+                get_clarifying_question, user_text, cfg.serving.base_url, model
+            )
+            # Persist the clarifying question so it survives refetch/reload.
+            # The isClarification flag lets the frontend render it with the amber bubble style.
+            db.add_message(conv_id, "assistant", question, meta={"isClarification": True})
+            _maybe_auto_title(db, conv, user_text)
+            # Also emit a typed SSE event so the frontend can display immediately
+            # without waiting for the query invalidation round-trip.
+            yield f"data: {json.dumps({'event': 'clarify', 'question': question})}\n\n"
+            yield "data: [DONE]\n\n"
+            return
+
+        if route == "complex":
+            council_reply = await asyncio.to_thread(
+                deliberate, messages, cfg.serving.base_url, model
+            )
+            if council_reply:
+                # ── Disconnect-safe persistence ──────────────────────────────
+                # Save the full reply BEFORE yielding any chunks.  This way a
+                # GeneratorExit raised during the chunk loop still results in a
+                # saved assistant turn — the client just misses the streaming UX.
+                db.add_message(conv_id, "assistant", council_reply,
+                               meta={"model": model, "council": True})
+                _maybe_auto_title(db, conv, user_text)
+                # Update Project Compass (merge — preserves next_step if already set)
+                work_id = conv.get("work_id")
+                if work_id:
+                    await asyncio.to_thread(
+                        update_compass, db, work_id,
+                        focus=user_text[:200],
+                        reasoning=council_reply[:500],
+                    )
+                # Stream chunks for UI responsiveness (persistence already done above)
+                _CHUNK = 30
+                for i in range(0, len(council_reply), _CHUNK):
+                    yield f"data: {json.dumps({'token': council_reply[i:i+_CHUNK]})}\n\n"
+                yield "data: [DONE]\n\n"
+                return
+            # Council failed → fall through to the direct streaming path
+
+    # ── Per-chunk silence timeout ─────────────────────────────────────────────
     # Per-chunk silence timeout: if the AI server sends no new token for this
     # long, we treat the stream as stalled and close it cleanly.
     _CHUNK_TIMEOUT_SEC = 30
 
     try:
-        import asyncio
         import httpx
         async with httpx.AsyncClient(timeout=cfg.serving.timeout_sec) as client:
             async with client.stream(

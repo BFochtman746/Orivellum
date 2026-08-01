@@ -163,20 +163,42 @@ def read_compass(db: Any, work_id: str) -> dict:
         return {}
 
 
-def update_compass(db: Any, work_id: str, focus: str | None, reasoning: str | None, next_step: str | None) -> None:
+def update_compass(db: Any, work_id: str,
+                   focus: str | None = None,
+                   reasoning: str | None = None,
+                   next_step: str | None = None) -> None:
+    """Merge-update the Project Compass for *work_id*.
+
+    Only fields supplied with a non-None value are written; existing values
+    for omitted (None) fields are preserved.  This prevents a council call that
+    doesn't infer a next_step from accidentally clearing one the user set.
+    """
     from datetime import datetime, timezone
     now = datetime.now(timezone.utc).isoformat()
     try:
         with db._lock:
+            # Ensure the row exists first (INSERT OR IGNORE)
             db._conn.execute(
-                """INSERT INTO project_compass(work_id, focus, last_reasoning, next_step, updated_at)
-                   VALUES(?, ?, ?, ?, ?)
-                   ON CONFLICT(work_id) DO UPDATE SET
-                     focus=excluded.focus,
-                     last_reasoning=excluded.last_reasoning,
-                     next_step=excluded.next_step,
-                     updated_at=excluded.updated_at""",
-                (work_id, focus, reasoning, next_step, now),
+                """INSERT OR IGNORE INTO project_compass(work_id, updated_at)
+                   VALUES(?, ?)""",
+                (work_id, now),
+            )
+            # Build a SET clause only for provided fields
+            parts: list[str] = ["updated_at = ?"]
+            vals: list[Any] = [now]
+            if focus is not None:
+                parts.append("focus = ?")
+                vals.append(focus)
+            if reasoning is not None:
+                parts.append("last_reasoning = ?")
+                vals.append(reasoning)
+            if next_step is not None:
+                parts.append("next_step = ?")
+                vals.append(next_step)
+            vals.append(work_id)
+            db._conn.execute(
+                f"UPDATE project_compass SET {', '.join(parts)} WHERE work_id = ?",
+                vals,
             )
             db._conn.commit()
     except Exception as exc:

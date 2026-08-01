@@ -20,7 +20,7 @@ import {
   getGetWorkDocumentsQueryKey,
 } from "@workspace/api-client-react";
 import { useConnectivity } from "@/lib/useConnectivity";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -39,7 +39,7 @@ import {
   MessageSquare, Plus, Send, Search, Bot, User, Copy, Check,
   Trash2, Wifi, WifiOff, Loader2, Cpu, Pencil, BookOpen, Archive, ArchiveRestore,
   AlertTriangle, FolderOpen, FileText, ChevronRight, X as XIcon, Zap, Brain,
-  Globe, Paperclip, Download, Layers,
+  Globe, Paperclip, Download, Layers, HelpCircle, Compass, ChevronDown,
 } from "lucide-react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -58,7 +58,12 @@ interface LocalMessage {
   streaming?: boolean;
   /** Set when the stream was aborted before completion */
   incomplete?: boolean;
+  /** Set when this message is a clarifying question from the cognition gate */
+  isClarification?: boolean;
 }
+
+/** Sentinel prefix carried through the token stream when the gate returns "clarify". */
+const CLARIFY_PREFIX = "\x02CLARIFY\x02";
 
 // ─── Models hook (generated) ──────────────────────────────────────────────────
 
@@ -214,6 +219,11 @@ async function* streamChat(
       if (data === "[DONE]") return;
       try {
         const parsed = JSON.parse(data);
+        if (parsed.event === "clarify") {
+          // Cognition gate needs clarification — yield a sentinel then stop
+          yield `${CLARIFY_PREFIX}${parsed.question ?? "Could you clarify what you mean?"}`;
+          return;
+        }
         if (parsed.token) yield parsed.token as string;
       } catch { /* ignore */ }
     }
@@ -362,6 +372,69 @@ function ArtifactTracker({ messages }: { messages: LocalMessage[] }) {
         </div>
       )}
     </div>
+  );
+}
+
+// ─── Compass footer ───────────────────────────────────────────────────────────
+
+interface CompassData {
+  focus?: string | null;
+  last_reasoning?: string | null;
+  next_step?: string | null;
+  updated_at?: string | null;
+}
+
+function useCompass(workId: string | undefined) {
+  return useQuery({
+    queryKey: ["works", workId, "compass"],
+    queryFn: async (): Promise<{ compass: CompassData }> => {
+      const r = await fetch(`${API_BASE}/works/${workId}/compass`);
+      if (!r.ok) return { compass: {} };
+      return r.json();
+    },
+    enabled: !!workId,
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+  });
+}
+
+/** Collapsible Project Compass shown below the last AI message in Work-scoped chats. */
+function CompassFooter({ workId }: { workId: string }) {
+  const { data } = useCompass(workId);
+  const compass = data?.compass;
+
+  if (!compass || (!compass.focus && !compass.last_reasoning && !compass.next_step)) {
+    return null;
+  }
+
+  return (
+    <details className="mt-3 group">
+      <summary className="flex items-center gap-1.5 cursor-pointer select-none text-[10px] font-mono text-muted-foreground/50 hover:text-muted-foreground transition-colors list-none">
+        <Compass className="w-3 h-3 shrink-0" />
+        <span>Project Compass</span>
+        <ChevronDown className="w-3 h-3 transition-transform group-open:rotate-180" />
+      </summary>
+      <div className="mt-2 p-2.5 rounded-lg border border-border/30 bg-muted/20 space-y-1.5 text-xs">
+        {compass.focus && (
+          <div>
+            <span className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground/60 block">Focus</span>
+            <span className="text-foreground/80">{compass.focus}</span>
+          </div>
+        )}
+        {compass.last_reasoning && (
+          <div>
+            <span className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground/60 block">Last reasoning</span>
+            <span className="text-foreground/70 line-clamp-3">{compass.last_reasoning}</span>
+          </div>
+        )}
+        {compass.next_step && (
+          <div>
+            <span className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground/60 block">Next step</span>
+            <span className="text-foreground/80">{compass.next_step}</span>
+          </div>
+        )}
+      </div>
+    </details>
   );
 }
 
@@ -592,10 +665,23 @@ export default function Chat() {
 
       try {
         for await (const token of streamChat(convId, text, controller.signal, deepMode, scopeAll ? "all" : "work")) {
+          if (token.startsWith(CLARIFY_PREFIX)) {
+            // Cognition gate requests clarification — render as a distinct bubble,
+            // do NOT persist (backend did not store an assistant message for this turn)
+            const question = token.slice(CLARIFY_PREFIX.length);
+            setLocalMessages((prev) => prev.map((m) =>
+              m.id === assistantId
+                ? { ...m, text: question, streaming: false, isClarification: true }
+                : m
+            ));
+            break;
+          }
           accumulatorRef.current += token;
         }
         const finalText = accumulatorRef.current;
-        setLocalMessages((prev) => prev.map((m) => m.id === assistantId ? { ...m, text: finalText, streaming: false } : m));
+        if (finalText) {
+          setLocalMessages((prev) => prev.map((m) => m.id === assistantId ? { ...m, text: finalText, streaming: false } : m));
+        }
       } catch (err: any) {
         if (err?.name === "AbortError") {
           // Intentional cancellation (conversation switch or unmount)
@@ -638,9 +724,18 @@ export default function Chat() {
   const displayMessages: LocalMessage[] = localOverride
     ? localMessages
     : (activeConv?.messages ?? []).map((m) => ({
-        id: m.id ?? "", role: m.role as "user" | "assistant",
-        text: m.text ?? "", created_at: m.created_at ?? "",
+        id: m.id ?? "",
+        role: m.role as "user" | "assistant",
+        text: m.text ?? "",
+        created_at: m.created_at ?? "",
+        // Restore amber bubble style for persisted clarification messages
+        isClarification: !!(m as any).meta?.isClarification,
       }));
+
+  // ID of the last non-streaming AI message — compass footer renders here
+  const lastAiMsgId = [...displayMessages].reverse().find(
+    m => m.role === "assistant" && !m.streaming
+  )?.id ?? null;
 
   const filteredConvs = convsResp?.conversations?.filter((c) => {
     return !search || c.title?.toLowerCase().includes(search.toLowerCase()) || c.last_message?.toLowerCase().includes(search.toLowerCase());
@@ -832,17 +927,29 @@ export default function Chat() {
                 ) : (
                   displayMessages.map((msg) => (
                     <div key={msg.id} className={`flex gap-3 ${msg.role === "user" ? "flex-row-reverse" : ""}`}>
-                      <div className={`w-7 h-7 shrink-0 rounded-sm flex items-center justify-center ${msg.role === "user" ? "bg-secondary text-secondary-foreground" : "bg-primary text-primary-foreground"}`}>
-                        {msg.role === "user" ? <User className="w-3.5 h-3.5" /> : <Bot className="w-3.5 h-3.5" />}
+                      <div className={`w-7 h-7 shrink-0 rounded-sm flex items-center justify-center
+                        ${msg.isClarification
+                          ? "bg-amber-500/15 text-amber-600"
+                          : msg.role === "user"
+                            ? "bg-secondary text-secondary-foreground"
+                            : "bg-primary text-primary-foreground"}`}>
+                        {msg.isClarification ? <HelpCircle className="w-3.5 h-3.5" /> : msg.role === "user" ? <User className="w-3.5 h-3.5" /> : <Bot className="w-3.5 h-3.5" />}
                       </div>
                       <div className={`flex flex-col gap-1 max-w-[78%] ${msg.role === "user" ? "items-end" : "items-start"}`}>
                         <div className="flex items-center gap-2">
-                          <span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">{msg.role}</span>
+                          <span className={`text-[10px] font-mono uppercase tracking-wider ${msg.isClarification ? "text-amber-600/70" : "text-muted-foreground"}`}>
+                            {msg.isClarification ? "Needs clarification" : msg.role}
+                          </span>
                           {msg.created_at && (
                             <span className="text-[10px] text-muted-foreground/40 font-mono">{format(new Date(msg.created_at), "HH:mm")}</span>
                           )}
                         </div>
-                        <div className={`px-4 py-3 rounded-lg text-sm break-words ${msg.role === "user" ? "bg-secondary/60 border border-secondary whitespace-pre-wrap" : "bg-muted/40 border border-border/40"}`}>
+                        <div className={`px-4 py-3 rounded-lg text-sm break-words
+                          ${msg.isClarification
+                            ? "bg-amber-50/50 border border-amber-200/60 text-amber-900 dark:bg-amber-950/20 dark:border-amber-800/40 dark:text-amber-100"
+                            : msg.role === "user"
+                              ? "bg-secondary/60 border border-secondary whitespace-pre-wrap"
+                              : "bg-muted/40 border border-border/40"}`}>
                           {msg.text ? (
                             msg.role === "assistant" ? (
                               <>
@@ -871,12 +978,17 @@ export default function Chat() {
                             </span>
                           )}
                         </div>
-                        {msg.role === "assistant" && !msg.streaming && (
+                        {msg.role === "assistant" && !msg.streaming && !msg.isClarification && (
                           <div className="flex items-center gap-2 px-0.5">
                             {/* Per-message model attribution: prefer msg.meta.model, fall back to conv.model */}
                             {((msg as any).meta?.model || conv?.model) && (
                               <span className="text-[10px] font-mono text-muted-foreground/50">
                                 {modelLabel((msg as any).meta?.model ?? conv?.model, models, defaultModel)}
+                              </span>
+                            )}
+                            {(msg as any).meta?.council && (
+                              <span className="text-[10px] font-mono text-primary/50 flex items-center gap-0.5">
+                                <Brain className="w-2.5 h-2.5" /> council
                               </span>
                             )}
                             <button
@@ -890,6 +1002,10 @@ export default function Chat() {
                               <Copy className="w-3 h-3" />
                             </button>
                           </div>
+                        )}
+                        {/* Compass footer — shown on the last AI message for Work-scoped chats */}
+                        {msg.id === lastAiMsgId && convWorkId && !msg.isClarification && (
+                          <CompassFooter workId={convWorkId} />
                         )}
                       </div>
                     </div>

@@ -283,3 +283,43 @@ def works_stats(work_id: str):
         "tasks_by_status": {r["status"]: r["n"] for r in task_by_status},
         "conversation_count": conv_count,
     }
+
+
+# ─── Project Compass ───────────────────────────────────────────────────────────
+
+class CompassUpdate(BaseModel):
+    focus: str | None = None
+    last_reasoning: str | None = None
+    next_step: str | None = None
+
+
+@router.get("/works/{work_id}/compass")
+def get_compass(work_id: str):
+    """Return the Project Compass state for a Work."""
+    db = get_db()
+    if not db.get_work(work_id):
+        raise HTTPException(404, f"Work {work_id!r} not found")
+    from orivellum.capabilities.cognition import read_compass
+    compass = read_compass(db, work_id)
+    return {"work_id": work_id, "compass": compass}
+
+
+@router.patch("/works/{work_id}/compass")
+def patch_compass(work_id: str, body: CompassUpdate):
+    """Partial-update the Project Compass state for a Work.
+
+    Only fields explicitly provided in the request body are written;
+    omitted fields retain their current values.
+    """
+    db = get_db()
+    if not db.get_work(work_id):
+        raise HTTPException(404, f"Work {work_id!r} not found")
+    from orivellum.capabilities.cognition import update_compass, read_compass
+    # Pass keyword args so only non-None fields are set
+    update_compass(
+        db, work_id,
+        focus=body.focus,
+        reasoning=body.last_reasoning,
+        next_step=body.next_step,
+    )
+    return {"work_id": work_id, "compass": read_compass(db, work_id)}
