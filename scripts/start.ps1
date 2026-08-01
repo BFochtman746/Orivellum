@@ -194,9 +194,11 @@ $children.Add($webProc)
 # ---- Mobile (optional) ------------------------------------------------------
 if ($Mobile) {
   Write-Host "[mob]  Starting Expo ..." -ForegroundColor $Cyan
-  $mobTmp = [System.IO.Path]::GetTempFileName() -replace '\.tmp$', '.cmd'
-  [System.IO.File]::WriteAllText($mobTmp, "@echo off`r`ncd /d `"$root`"`r`n`"$pnpmExe`" --filter @workspace/mobile run dev`r`n", [System.Text.Encoding]::ASCII)
-  $mobProc = Start-Process -FilePath "cmd.exe" -ArgumentList "/c `"$mobTmp`"" -PassThru -NoNewWindow -WorkingDirectory $root
+  $mobDir = Join-Path $root "artifacts\mobile"
+  $mobProc = Start-Process -FilePath "powershell.exe" `
+    -ArgumentList "-NoProfile", "-Command", "& '$pnpmExe' run dev" `
+    -WorkingDirectory $mobDir `
+    -PassThru
   $children.Add($mobProc)
 }
 
