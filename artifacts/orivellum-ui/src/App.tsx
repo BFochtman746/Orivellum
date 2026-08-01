@@ -9,6 +9,7 @@ import WorksList from '@/pages/works/index';
 import WorkDetail from '@/pages/works/detail';
 import Chat from '@/pages/chat/index';
 import Library from '@/pages/library/index';
+import DocumentDetail from '@/pages/library/detail';
 import Files from '@/pages/files/index';
 import Projects from '@/pages/projects/index';
 import Studio from '@/pages/studio/index';
@@ -34,6 +35,7 @@ function Router() {
         <Route path="/works/:workId" component={WorkDetail} />
         <Route path="/chat" component={Chat} />
         <Route path="/library" component={Library} />
+        <Route path="/library/:docId" component={DocumentDetail} />
         <Route path="/files" component={Files} />
         <Route path="/projects" component={Projects} />
         <Route path="/studio" component={Studio} />

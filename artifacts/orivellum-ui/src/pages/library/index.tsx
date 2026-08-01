@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { useLocation } from "wouter";
 import {
   useListLibrary,
   useSearchLibrary,
@@ -197,6 +198,7 @@ export default function Library() {
   const [search, setSearch] = useState("");
   const [reprocessingIds, setReprocessingIds] = useState<Set<string>>(new Set());
   const queryClient = useQueryClient();
+  const [, navigate] = useLocation();
 
   const { data: listResp, isLoading: loadingList } = useListLibrary(
     {},
@@ -283,7 +285,8 @@ export default function Library() {
               return (
                 <Card
                   key={doc.id}
-                  className={`transition-colors group ${hasError ? "border-red-200/60" : "hover-elevate"}`}
+                  onClick={() => navigate(`/library/${doc.id}`)}
+                  className={`transition-colors group cursor-pointer ${hasError ? "border-red-200/60" : "hover-elevate"}`}
                 >
                   <CardContent className="p-4 sm:p-5 flex flex-col sm:flex-row sm:items-start justify-between gap-4">
                     {/* Left: icon + meta */}

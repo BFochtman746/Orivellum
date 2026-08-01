@@ -87,6 +87,25 @@ def library_delete(doc_id: str):
     return {"ok": True}
 
 
+@router.get("/library/{doc_id}/knowledge")
+def library_doc_knowledge(doc_id: str, limit: int = 200):
+    """Return all knowledge items sourced from this document."""
+    db = get_db()
+    doc = db.get_document(doc_id)
+    if not doc:
+        raise HTTPException(404, f"Document {doc_id!r} not found")
+    with db._lock:
+        rows = db._conn.execute(
+            """SELECT * FROM knowledge
+               WHERE source_doc_id=?
+               ORDER BY confidence DESC, created_at DESC
+               LIMIT ?""",
+            (doc_id, min(limit, 500)),
+        ).fetchall()
+    items = [db._k_dict(r) for r in rows]
+    return {"knowledge": items, "count": len(items), "doc_id": doc_id}
+
+
 @router.get("/library/{doc_id}/chunks")
 def library_chunks(doc_id: str):
     db = get_db()

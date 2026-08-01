@@ -42,6 +42,7 @@ import {
   Plus,
   Clock,
   Loader2,
+  Sparkles,
 } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
@@ -270,13 +271,19 @@ function KnowledgeTab({ workId }: { workId: string }) {
               <CardContent className="p-4">
                 <div className="flex items-start justify-between gap-4">
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-2">
+                    <div className="flex items-center gap-2 mb-2 flex-wrap">
                       <Badge variant="outline" className="text-[10px] uppercase font-mono border-primary/30 text-primary">
                         {item.kind}
                       </Badge>
-                      <Badge variant="secondary" className="text-[10px] uppercase font-mono">
-                        {item.review_status}
-                      </Badge>
+                      {item.review_status === "ai_auto" ? (
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold border border-violet-200 bg-violet-50 text-violet-700">
+                          <Sparkles className="w-2.5 h-2.5" /> AI
+                        </span>
+                      ) : (
+                        <Badge variant="secondary" className="text-[10px] uppercase font-mono">
+                          {item.review_status}
+                        </Badge>
+                      )}
                     </div>
                     {item.subject && item.predicate && item.object ? (
                       <div className="font-mono text-sm bg-muted/30 p-2 rounded border border-border/50">
