@@ -558,8 +558,16 @@ class OrivellumDB:
                               subject: str | None = None, predicate: str | None = None,
                               obj: str | None = None, confidence: float = 0.7,
                               source_doc_id: str | None = None,
-                              source_chunk_id: str | None = None) -> str:
-        """Insert a knowledge item and update FTS. Returns item id."""
+                              source_chunk_id: str | None = None,
+                              review_status: str = "auto") -> str:
+        """Insert a knowledge item and update FTS. Returns item id.
+
+        review_status:
+          'auto'     — rule-based, unreviewed
+          'ai_auto'  — LLM-extracted, unreviewed
+          'approved' — human confirmed
+          'rejected' — human dismissed
+        """
         kid = self.create_object("knowledge")
         now = _now()
         # Dedup by text_hash within same work
@@ -575,9 +583,9 @@ class OrivellumDB:
                 """INSERT INTO knowledge(id,work_id,kind,text,subject,predicate,object,
                    confidence,source_doc_id,source_chunk_id,review_status,meta,
                    created_at,text_hash)
-                   VALUES(?,?,?,?,?,?,?,?,?,?,'auto','{}',?,?)""",
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,'{}',?,?)""",
                 (kid, work_id, kind, text, subject, predicate, obj, confidence,
-                 source_doc_id, source_chunk_id, now, text_hash),
+                 source_doc_id, source_chunk_id, review_status, now, text_hash),
             )
             self._conn.execute(
                 "INSERT INTO knowledge_fts(knowledge_id,work_id,text,subject,object) VALUES(?,?,?,?,?)",

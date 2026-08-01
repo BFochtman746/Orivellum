@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 from orivellum.capabilities.extraction import extract
 from orivellum.capabilities.chunking import chunk_and_store
 from orivellum.capabilities.knowledge_harvest import harvest
+from orivellum.capabilities.ai_harvest import try_ai_harvest
 
 if TYPE_CHECKING:
     from orivellum.database.db import OrivellumDB
@@ -87,9 +88,13 @@ def process_document(doc_id: str, file_path: str, kind: str,
         # Step 2: chunk and index
         chunk_and_store(result, doc_id, db)
 
-        # Step 3: harvest knowledge
-        harvest(result, doc_id=doc_id, work_id=work_id,
-                doc_title=title, db=db)
+        # Step 3: harvest knowledge — try LLM first, fall back to rules
+        ai_count = try_ai_harvest(result, doc_id=doc_id, work_id=work_id,
+                                  doc_title=title, db=db)
+        if ai_count == 0:
+            logger.info("Doc %s — using rule-based harvest (AI unavailable)", doc_id[:8])
+            harvest(result, doc_id=doc_id, work_id=work_id,
+                    doc_title=title, db=db)
 
         # Step 4: mark document ready
         db.update_document_extracted(
