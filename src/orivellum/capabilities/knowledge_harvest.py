@@ -1,18 +1,19 @@
-"""Rule-based knowledge harvesting from extraction results.
+"""Knowledge harvesting from extraction results.
 
-No LLM required — uses heuristics to surface:
-  - document-level summary item
-  - section headings as "concept" items
-  - key sentences (long, punctuated sentences near the start of pages)
-  - capitalised multi-word noun phrases as potential entity mentions
-  - bold/italic runs captured as headings by the extractor
+Two harvesting strategies:
+  1. Rule-based (always runs): uses heuristics to surface summaries, headings,
+     key sentences, and capitalised noun-phrase entity mentions.
+  2. LLM-based (opt-in via `ai_extraction_enabled` setting): sends each chunk
+     to a local OpenAI-compat endpoint and extracts structured entities, claims,
+     and relationships with higher confidence scores.
 
 Each item is written to the knowledge table via db.create_knowledge_item().
-The items are tagged with review_status='auto' so a future LLM pass can
-promote or reject them without cluttering human-curated knowledge.
+Items tagged with review_status='auto' so a future pass can promote or reject
+them without cluttering human-curated knowledge.
 """
 from __future__ import annotations
 
+import json
 import logging
 import re
 from typing import TYPE_CHECKING
@@ -159,5 +160,204 @@ def harvest(result: "ExtractionResult", doc_id: str,
 
     logger.info(
         "Harvested %d knowledge items for doc %s (work=%s)", created, doc_id, work_id
+    )
+    return created
+
+
+# ---------------------------------------------------------------------------
+# LLM-powered harvesting (opt-in)
+# ---------------------------------------------------------------------------
+
+# Extraction prompt — asks for JSON only to make parsing reliable
+_EXTRACT_PROMPT = """\
+You are a precise knowledge extractor. Analyse the document chunk below and \
+extract structured knowledge. Return ONLY valid JSON with this exact structure \
+and no other text:
+
+{{
+  "entities": [{{"name": "...", "description": "..."}}],
+  "claims": [{{"text": "..."}}],
+  "relationships": [{{"subject": "...", "predicate": "...", "object": "..."}}]
+}}
+
+Rules:
+- Up to 5 entities (named things: people, organisations, concepts, places, products).
+- Up to 5 claims (factual statements asserted by the document).
+- Up to 3 relationships (subject -> predicate -> object triples).
+- Be factual. Do not invent anything not present in the chunk.
+- "description" for entities should be 20 words or fewer.
+- Output ONLY the JSON object. No markdown fences, no commentary.
+
+Document title: {title}
+
+Chunk:
+{chunk}
+"""
+
+# How many pages/segments to send to the LLM per document
+_MAX_LLM_CHUNKS = 5
+# Maximum characters per chunk sent to LLM (keeps context manageable)
+_MAX_CHUNK_CHARS = 2_000
+
+
+# Dedicated per-call timeout for extraction (independent of the chat timeout).
+# Kept short so a slow/absent AI never blocks the background thread for long.
+_EXTRACTION_TIMEOUT_SEC = 30
+
+
+def _call_llm_sync(prompt: str, base_url: str, model: str, timeout: int) -> str | None:
+    """Make a synchronous (blocking) call to the LLM endpoint.
+
+    Returns the raw text response, or None on any failure.
+    Safe to call from a background thread.
+    """
+    try:
+        import httpx  # noqa: PLC0415 — deferred to avoid startup cost
+        with httpx.Client(timeout=timeout) as client:
+            resp = client.post(
+                f"{base_url}/chat/completions",
+                json={
+                    "model": model,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "stream": False,
+                },
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            return data["choices"][0]["message"]["content"]
+    except Exception as exc:
+        logger.warning("LLM call failed during knowledge extraction: %s", exc)
+        return None
+
+
+def _parse_extraction(raw: str) -> dict:
+    """Parse the LLM JSON response, returning a safe dict on any error."""
+    try:
+        # Strip accidental markdown fences if present
+        text = raw.strip()
+        if text.startswith("```"):
+            lines = text.splitlines()
+            # Drop first and last fence lines
+            inner = lines[1:-1] if lines[-1].strip() == "```" else lines[1:]
+            text = "\n".join(inner)
+        data = json.loads(text)
+        if not isinstance(data, dict):
+            return {}
+        return data
+    except Exception:
+        return {}
+
+
+def llm_harvest(result: "ExtractionResult", doc_id: str,
+                work_id: str | None, doc_title: str,
+                db: "OrivellumDB") -> int:
+    """LLM-powered knowledge extraction for a single document.
+
+    Sends up to _MAX_LLM_CHUNKS text segments to the local AI endpoint and
+    writes the resulting entities, claims, and relationships to the DB.
+
+    Returns the count of knowledge items created.
+    Silently skips on any LLM or parse failure so the pipeline never breaks.
+    """
+    from orivellum.api._deps import get_config  # noqa: PLC0415
+
+    try:
+        cfg = get_config()
+    except Exception:
+        logger.warning("llm_harvest: could not load config — skipping")
+        return 0
+
+    base_url = cfg.serving.base_url
+    model = cfg.serving.workhorse_model
+    # Use the short extraction-specific timeout, not the general chat timeout
+    timeout = _EXTRACTION_TIMEOUT_SEC
+
+    created = 0
+    segments = result.pages[:_MAX_LLM_CHUNKS]
+
+    for seg in segments:
+        chunk_text = seg.text[:_MAX_CHUNK_CHARS].strip()
+        if not chunk_text:
+            continue
+
+        prompt = _EXTRACT_PROMPT.format(
+            title=doc_title,
+            chunk=chunk_text,
+        )
+
+        raw = _call_llm_sync(prompt, base_url, model, timeout)
+        if not raw:
+            continue
+
+        extraction = _parse_extraction(raw)
+        if not extraction:
+            logger.debug("llm_harvest: empty/unparseable response for doc %s", doc_id)
+            continue
+
+        # --- Entities ---
+        for ent in (extraction.get("entities") or [])[:5]:
+            if not isinstance(ent, dict):
+                continue
+            name = (ent.get("name") or "").strip()
+            desc = (ent.get("description") or "").strip()
+            if not name:
+                continue
+            text = f"{name}: {desc}" if desc else name
+            db.create_knowledge_item(
+                work_id=work_id,
+                kind="entity",
+                text=text,
+                subject=name,
+                predicate="is",
+                obj=desc or None,
+                confidence=0.85,
+                source_doc_id=doc_id,
+            )
+            created += 1
+
+        # --- Claims ---
+        for claim in (extraction.get("claims") or [])[:5]:
+            if not isinstance(claim, dict):
+                continue
+            text = (claim.get("text") or "").strip()
+            if not text:
+                continue
+            db.create_knowledge_item(
+                work_id=work_id,
+                kind="claim",
+                text=text,
+                subject=doc_title,
+                predicate="claims",
+                obj=None,
+                confidence=0.80,
+                source_doc_id=doc_id,
+            )
+            created += 1
+
+        # --- Relationships ---
+        for rel in (extraction.get("relationships") or [])[:3]:
+            if not isinstance(rel, dict):
+                continue
+            subject = (rel.get("subject") or "").strip()
+            predicate = (rel.get("predicate") or "").strip()
+            obj = (rel.get("object") or "").strip()
+            if not (subject and predicate and obj):
+                continue
+            text = f"{subject} {predicate} {obj}"
+            db.create_knowledge_item(
+                work_id=work_id,
+                kind="relationship",
+                text=text,
+                subject=subject,
+                predicate=predicate,
+                obj=obj,
+                confidence=0.75,
+                source_doc_id=doc_id,
+            )
+            created += 1
+
+    logger.info(
+        "LLM-harvested %d knowledge items for doc %s (work=%s, chunks=%d)",
+        created, doc_id, work_id, len(segments),
     )
     return created

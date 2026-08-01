@@ -1,7 +1,8 @@
 """System routes — /api/system/*"""
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
 from orivellum.api._deps import get_db, get_config
 
@@ -103,6 +104,26 @@ def get_suggestions(work_id: str | None = None, limit: int = 5):
     with db._lock:
         rows = db._conn.execute(q, args).fetchall()
     return {"suggestions": [dict(r) for r in rows]}
+
+
+@router.get("/system/settings/ai-extraction")
+def get_ai_extraction_setting():
+    """Return whether LLM-powered knowledge extraction is enabled."""
+    db = get_db()
+    enabled = db.get_setting("ai_extraction_enabled", "false").lower() == "true"
+    return {"enabled": enabled}
+
+
+class AiExtractionUpdate(BaseModel):
+    enabled: bool
+
+
+@router.put("/system/settings/ai-extraction")
+def set_ai_extraction_setting(body: AiExtractionUpdate):
+    """Enable or disable LLM-powered knowledge extraction for future document imports."""
+    db = get_db()
+    db.set_setting("ai_extraction_enabled", "true" if body.enabled else "false")
+    return {"enabled": body.enabled, "ok": True}
 
 
 @router.get("/briefing")

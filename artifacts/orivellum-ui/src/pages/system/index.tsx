@@ -1,12 +1,48 @@
 import { useGetSystemHealth, useListCapabilities } from "@workspace/api-client-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Activity, Database, Cpu, CheckCircle2, XCircle, AlertCircle, Terminal } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
+import { Activity, Database, Cpu, CheckCircle2, XCircle, AlertCircle, Terminal, Sparkles } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+
+const API_BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") || "";
+
+function useAiExtractionSetting() {
+  return useQuery({
+    queryKey: ["system", "ai-extraction"],
+    queryFn: async () => {
+      const r = await fetch(`${API_BASE}/api/system/settings/ai-extraction`);
+      if (!r.ok) throw new Error("Failed to fetch AI extraction setting");
+      return r.json() as Promise<{ enabled: boolean }>;
+    },
+    staleTime: 30_000,
+  });
+}
+
+function useSetAiExtractionSetting() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (enabled: boolean) => {
+      const r = await fetch(`${API_BASE}/api/system/settings/ai-extraction`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled }),
+      });
+      if (!r.ok) throw new Error("Failed to update AI extraction setting");
+      return r.json();
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["system", "ai-extraction"] });
+    },
+  });
+}
 
 export default function System() {
   const { data: health, isLoading: loadingHealth } = useGetSystemHealth();
   const { data: capsResp, isLoading: loadingCaps } = useListCapabilities();
+  const { data: aiExtraction, isLoading: loadingAiExt } = useAiExtractionSetting();
+  const setAiExtraction = useSetAiExtractionSetting();
 
   const aiStatus = (health?.services?.ai as Record<string, string> | undefined)?.status;
   const aiEndpoint = (health?.services?.ai as Record<string, string> | undefined)?.endpoint;
@@ -100,6 +136,44 @@ export default function System() {
           </CardContent>
         </Card>
       </div>
+
+      {/* AI Extraction Setting */}
+      <Card>
+        <CardContent className="p-6">
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex items-start gap-3">
+              <Sparkles className="w-5 h-5 text-primary mt-0.5 shrink-0" />
+              <div className="space-y-1">
+                <h3 className="font-medium text-sm">AI-Powered Knowledge Extraction</h3>
+                <p className="text-sm text-muted-foreground max-w-xl">
+                  When enabled, newly imported documents are analysed by your local AI to extract
+                  named entities, key claims, and relationships — richer than what rule-based
+                  harvesting alone can surface. Documents are marked ready first; extraction runs
+                  afterwards and does not delay access to your files.
+                </p>
+                {!aiOnline && (
+                  <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">
+                    Requires the local AI engine to be running. Enable it now and it will activate
+                    automatically once the AI service is available.
+                  </p>
+                )}
+              </div>
+            </div>
+            <div className="shrink-0 pt-0.5">
+              {loadingAiExt ? (
+                <Skeleton className="h-6 w-11 rounded-full" />
+              ) : (
+                <Switch
+                  checked={aiExtraction?.enabled ?? false}
+                  onCheckedChange={(checked) => setAiExtraction.mutate(checked)}
+                  disabled={setAiExtraction.isPending}
+                  aria-label="Enable AI-powered knowledge extraction"
+                />
+              )}
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
       {/* AI offline setup guide */}
       {!loadingHealth && !aiOnline && (

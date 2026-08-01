@@ -14,8 +14,7 @@ from typing import TYPE_CHECKING
 
 from orivellum.capabilities.extraction import extract
 from orivellum.capabilities.chunking import chunk_and_store
-from orivellum.capabilities.knowledge_harvest import harvest
-from orivellum.capabilities.ai_harvest import try_ai_harvest
+from orivellum.capabilities.knowledge_harvest import harvest, llm_harvest
 
 if TYPE_CHECKING:
     from orivellum.database.db import OrivellumDB
@@ -88,15 +87,12 @@ def process_document(doc_id: str, file_path: str, kind: str,
         # Step 2: chunk and index
         chunk_and_store(result, doc_id, db)
 
-        # Step 3: harvest knowledge — try LLM first, fall back to rules
-        ai_count = try_ai_harvest(result, doc_id=doc_id, work_id=work_id,
-                                  doc_title=title, db=db)
-        if ai_count == 0:
-            logger.info("Doc %s — using rule-based harvest (AI unavailable)", doc_id[:8])
-            harvest(result, doc_id=doc_id, work_id=work_id,
-                    doc_title=title, db=db)
+        # Step 3: harvest knowledge (rule-based, always runs)
+        harvest(result, doc_id=doc_id, work_id=work_id,
+                doc_title=title, db=db)
 
-        # Step 4: mark document ready
+        # Step 4: mark document ready — happens BEFORE the optional LLM step so
+        # the document is usable even if the AI service is slow or unavailable.
         db.update_document_extracted(
             doc_id,
             extracted_text=result.full_text[:100_000],  # cap stored text
@@ -104,6 +100,19 @@ def process_document(doc_id: str, file_path: str, kind: str,
             readiness="ready",
         )
         logger.info("Doc %s processed — %d words, ready", doc_id, result.word_count)
+
+        # Step 5 (optional): LLM-powered harvest — runs after readiness is set so
+        # latency here never blocks the document from appearing as ready.
+        if db.get_setting("ai_extraction_enabled", "false").lower() == "true":
+            logger.info("AI extraction enabled — running llm_harvest for doc %s", doc_id)
+            try:
+                llm_harvest(result, doc_id=doc_id, work_id=work_id,
+                            doc_title=title, db=db)
+            except Exception as llm_exc:
+                # Never let an LLM failure touch the ready document
+                logger.warning(
+                    "llm_harvest failed for doc %s (non-fatal): %s", doc_id, llm_exc
+                )
 
     except Exception as exc:
         msg = f"{type(exc).__name__}: {exc}"
