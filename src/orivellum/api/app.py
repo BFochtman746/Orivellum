@@ -66,7 +66,7 @@ async def lifespan(app: FastAPI):
             db.set_setting("api_key", api_key)
             # Write to a local file so the Vite dev server can read it without
             # an API call.  This file must NOT be committed or exposed publicly.
-            key_file = cfg.data_dir / "api_key.txt"
+            key_file = Path(cfg.data_dir) / "api_key.txt"
             try:
                 key_file.write_text(api_key, encoding="utf-8")
                 logger.info("API key generated — stored in %s", key_file)
