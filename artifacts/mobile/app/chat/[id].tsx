@@ -169,7 +169,12 @@ function MessageBubble({ message, colors, isDark }: { message: Message & { isErr
               {message.text}
             </Text>
           ) : (
-            <Markdown style={markdownStyles as any} rules={{ fence: fenceRule }}>{message.text ?? ''}</Markdown>
+            <>
+              {!!(message as any).meta?.thinking && (
+                <ReasoningBlock text={(message as any).meta.thinking} colors={colors} />
+              )}
+              <Markdown style={markdownStyles as any} rules={{ fence: fenceRule }}>{message.text ?? ''}</Markdown>
+            </>
           )}
         </View>
         {copied && (
@@ -179,6 +184,57 @@ function MessageBubble({ message, colors, isDark }: { message: Message & { isErr
         )}
       </View>
     </Pressable>
+  );
+}
+
+function ReasoningBlock({ text, colors }: { text: string; colors: any }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <View
+      style={{
+        marginBottom: 8,
+        borderRadius: 8,
+        borderWidth: 1,
+        borderColor: '#7c3aed33',
+        backgroundColor: '#7c3aed08',
+        overflow: 'hidden',
+      }}
+    >
+      <Pressable
+        onPress={() => setOpen((v) => !v)}
+        style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 10, paddingVertical: 7 }}
+        hitSlop={4}
+      >
+        <Feather name="cpu" size={11} color="#7c3aed99" />
+        <Text style={{ flex: 1, fontSize: 11, fontFamily: 'Inter_400Regular', color: '#7c3aed88', letterSpacing: 0.2 }}>
+          Reasoning
+        </Text>
+        <Feather name={open ? 'chevron-up' : 'chevron-down'} size={11} color="#7c3aed66" />
+      </Pressable>
+      {open && (
+        <View
+          style={{
+            paddingHorizontal: 10,
+            paddingBottom: 10,
+            paddingTop: 8,
+            borderTopWidth: 1,
+            borderTopColor: '#7c3aed22',
+          }}
+        >
+          <Text
+            style={{
+              fontSize: 12,
+              fontFamily: 'Inter_400Regular',
+              fontStyle: 'italic',
+              color: '#7c3aed88',
+              lineHeight: 18,
+            }}
+          >
+            {text}
+          </Text>
+        </View>
+      )}
+    </View>
   );
 }
 

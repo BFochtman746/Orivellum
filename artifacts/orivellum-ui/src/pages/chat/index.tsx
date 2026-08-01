@@ -78,6 +78,11 @@ interface LocalMessage {
   /** Base64 image attached to this user message (session-only, not persisted) */
   image_b64?: string;
   image_media_type?: string;
+
+  /** Chain-of-thought text from a reasoning model (e.g. DeepSeek R1 <think> blocks) */
+  thinking?: string;
+  /** True while thinking tokens are still streaming in */
+  thinkingStreaming?: boolean;
 }
 
 /** Suffix appended by the backend when a streaming response is cut short by a timeout. */
@@ -87,6 +92,8 @@ const TRUNCATION_SUFFIX = "\n\n*(Response was cut short — re-send to continue.
 const CLARIFY_PREFIX = "\x02CLARIFY\x02";
 /** Sentinel prefix carrying the tool intent through the token stream. Format: \x02INTENT\x02web_search\x02 */
 const INTENT_PREFIX = "\x02INTENT\x02";
+/** Sentinel prefix carrying reasoning/thinking tokens from <think> blocks or reasoning_content. */
+const THINKING_PREFIX = "\x02THINKING\x02";
 
 const INTENT_LABELS: Record<string, { icon: string; label: string }> = {
   web_search: { icon: "🌐", label: "Web search" },
@@ -196,6 +203,50 @@ function SourcesFooter({ sources }: { sources: Array<{doc_id?: string; doc_title
               </span>
             )
           ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Reasoning block ──────────────────────────────────────────────────────────
+
+function ReasoningBlock({ text, streaming }: { text: string; streaming?: boolean }) {
+  const [open, setOpen] = useState(!!streaming);
+
+  // Auto-collapse 1.5 s after streaming ends, so the answer takes focus
+  useEffect(() => {
+    if (!streaming && open) {
+      const t = setTimeout(() => setOpen(false), 1500);
+      return () => clearTimeout(t);
+    }
+    return undefined;
+  }, [streaming]);  // eslint-disable-line react-hooks/exhaustive-deps
+
+  return (
+    <div className="mb-2.5 rounded-lg border border-violet-200/50 bg-violet-50/40 dark:bg-violet-950/20 dark:border-violet-800/30 overflow-hidden">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center gap-2 px-3 py-1.5 text-left hover:bg-violet-100/40 dark:hover:bg-violet-900/20 transition-colors"
+      >
+        <Brain
+          className={`w-3 h-3 text-violet-500/80 shrink-0 ${streaming ? "animate-pulse" : ""}`}
+        />
+        <span className="text-[11px] font-mono text-violet-600/70 dark:text-violet-400/60 flex-1">
+          {streaming ? "Reasoning…" : "Reasoning"}
+        </span>
+        <ChevronDown
+          className={`w-3 h-3 text-violet-400/60 transition-transform duration-200 ${open ? "rotate-180" : ""}`}
+        />
+      </button>
+      {open && (
+        <div className="px-3 pb-2.5 pt-1.5 border-t border-violet-200/30 dark:border-violet-800/20">
+          <p className="text-[12px] font-mono text-violet-700/55 dark:text-violet-300/45 italic leading-relaxed whitespace-pre-wrap">
+            {text}
+            {streaming && (
+              <span className="inline-block w-0.5 h-3 bg-violet-400/60 ml-0.5 animate-pulse align-text-bottom" />
+            )}
+          </p>
         </div>
       )}
     </div>
@@ -328,6 +379,8 @@ async function* streamChat(
         if (parsed.sources) {
           yield `${SOURCES_PREFIX}${JSON.stringify(parsed.sources)}${SOURCES_PREFIX}`;
         }
+        // Thinking/reasoning tokens from <think> blocks or reasoning_content
+        if (parsed.thinking) yield `${THINKING_PREFIX}${parsed.thinking as string}`;
         if (parsed.token) yield parsed.token as string;
       } catch { /* ignore */ }
     }
@@ -561,6 +614,7 @@ export default function Chat() {
 
   // Tab-focus resilience refs
   const accumulatorRef = useRef("");
+  const thinkingAccRef = useRef("");   // accumulates reasoning tokens during streaming
   const assistantIdRef = useRef("");
   const rafRef = useRef<number | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -650,13 +704,23 @@ export default function Chat() {
     prevAiOnlineRef.current = aiOnline;
   }, [aiOnline]);
 
-  // Tab-focus flush
+  // Tab-focus flush — updates both main text and thinking accumulator
   const flushAccumulator = useCallback(() => {
     const text = accumulatorRef.current;
+    const thinking = thinkingAccRef.current;
     const id = assistantIdRef.current;
-    if (!id || !text) return;
+    if (!id || (!text && !thinking)) return;
     setLocalMessages((prev) =>
-      prev.map((m) => (m.id === id ? { ...m, text, streaming: true } : m))
+      prev.map((m) =>
+        m.id === id
+          ? {
+              ...m,
+              ...(text ? { text } : {}),
+              ...(thinking ? { thinking, thinkingStreaming: true } : {}),
+              streaming: true,
+            }
+          : m
+      )
     );
   }, []);
 
@@ -766,6 +830,7 @@ export default function Chat() {
       const assistantId = randomUUID();
       assistantIdRef.current = assistantId;
       accumulatorRef.current = "";
+      thinkingAccRef.current = "";
       // Capture the effective model so the attribution label shows during streaming
       const effectiveModel = conv?.model || defaultModel || undefined;
 
@@ -811,14 +876,26 @@ export default function Chat() {
             ));
             continue;
           }
-          accumulatorRef.current += token;
+          if (token.startsWith(THINKING_PREFIX)) {
+            thinkingAccRef.current += token.slice(THINKING_PREFIX.length);
+          } else {
+            accumulatorRef.current += token;
+          }
         }
         const finalText = accumulatorRef.current;
-        if (finalText) {
+        const finalThinking = thinkingAccRef.current;
+        if (finalText || finalThinking) {
           setLocalMessages((prev) => prev.map((m) =>
             m.id === assistantId
-              ? { ...m, text: finalText, streaming: false, intent: streamedIntent ?? m.intent,
-                  meta: { ...(m.meta ?? {}), ...(streamedSources ? { sources: streamedSources } : {}) } }
+              ? {
+                  ...m,
+                  ...(finalText ? { text: finalText } : {}),
+                  ...(finalThinking ? { thinking: finalThinking } : {}),
+                  thinkingStreaming: false,
+                  streaming: false,
+                  intent: streamedIntent ?? m.intent,
+                  meta: { ...(m.meta ?? {}), ...(streamedSources ? { sources: streamedSources } : {}) },
+                }
               : m
           ));
         }
@@ -850,6 +927,7 @@ export default function Chat() {
       } finally {
         if (rafRef.current !== null) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
         accumulatorRef.current = "";
+        thinkingAccRef.current = "";
         assistantIdRef.current = "";
         sendingRef.current = false;
         abortRef.current = null;
@@ -910,6 +988,8 @@ export default function Chat() {
           intent: (m as any).meta?.intent as string | undefined,
           // Surface incomplete flag for server-stored truncated replies
           incomplete: isServerTruncated || undefined,
+          // Restore persisted reasoning / chain-of-thought
+          thinking: (m as any).meta?.thinking as string | undefined,
         };
       });
 
@@ -1156,6 +1236,12 @@ export default function Chat() {
                           {msg.text ? (
                             msg.role === "assistant" ? (
                               <>
+                                {msg.thinking && (
+                                  <ReasoningBlock
+                                    text={msg.thinking}
+                                    streaming={!!msg.thinkingStreaming}
+                                  />
+                                )}
                                 <MarkdownContent text={msg.text} />
                                 {msg.streaming && <span className="inline-block w-0.5 h-3.5 bg-current ml-0.5 animate-pulse align-text-bottom" />}
                                 {msg.incomplete && (() => {

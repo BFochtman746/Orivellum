@@ -518,6 +518,9 @@ async def _stream_response(
             _seen.add(key)
             sources.append(s)
     full_reply = ""
+    thinking_text = ""   # accumulated <think> / reasoning_content text
+    _in_think = False    # True while inside a <think>…</think> block
+    _tag_buf = ""        # partial-tag detection buffer (handles cross-token tags)
     model = _model_for_vision(conv) if image_b64 else _model_for(conv)
 
     # ── Intent routing — runs before deep mode and normal AI ──────────────────
@@ -620,10 +623,62 @@ async def _stream_response(
                         break
                     try:
                         d = json.loads(chunk)
-                        token = d["choices"][0]["delta"].get("content", "")
-                        if token:
-                            full_reply += token
-                            yield f"data: {json.dumps({'token': token})}\n\n"
+                        delta = d["choices"][0]["delta"]
+                        # Some providers (e.g. DeepSeek via OpenRouter) emit
+                        # reasoning in a separate field rather than inside content.
+                        reasoning = delta.get("reasoning_content") or ""
+                        if reasoning:
+                            thinking_text += reasoning
+                            yield f"data: {json.dumps({'thinking': reasoning})}\n\n"
+                        raw = delta.get("content") or ""
+                        if raw:
+                            _tag_buf += raw
+                            # Process buffer, splitting on <think> / </think> tags.
+                            # The while-loop drains _tag_buf until a partial tag
+                            # (or empty buffer) remains.
+                            while _tag_buf:
+                                if not _in_think:
+                                    idx = _tag_buf.find("<think>")
+                                    if idx == -1:
+                                        # No complete open tag — flush everything
+                                        # except a possible partial suffix.
+                                        partial = 0
+                                        for l in range(min(7, len(_tag_buf)), 0, -1):
+                                            if _tag_buf[-l:] == "<think>"[:l]:
+                                                partial = l
+                                                break
+                                        flush = _tag_buf[: len(_tag_buf) - partial]
+                                        _tag_buf = _tag_buf[len(_tag_buf) - partial :]
+                                        if flush:
+                                            full_reply += flush
+                                            yield f"data: {json.dumps({'token': flush})}\n\n"
+                                        break
+                                    before = _tag_buf[:idx]
+                                    if before:
+                                        full_reply += before
+                                        yield f"data: {json.dumps({'token': before})}\n\n"
+                                    _in_think = True
+                                    _tag_buf = _tag_buf[idx + 7 :]
+                                else:
+                                    idx = _tag_buf.find("</think>")
+                                    if idx == -1:
+                                        partial = 0
+                                        for l in range(min(8, len(_tag_buf)), 0, -1):
+                                            if _tag_buf[-l:] == "</think>"[:l]:
+                                                partial = l
+                                                break
+                                        flush = _tag_buf[: len(_tag_buf) - partial]
+                                        _tag_buf = _tag_buf[len(_tag_buf) - partial :]
+                                        if flush:
+                                            thinking_text += flush
+                                            yield f"data: {json.dumps({'thinking': flush})}\n\n"
+                                        break
+                                    think_chunk = _tag_buf[:idx]
+                                    if think_chunk:
+                                        thinking_text += think_chunk
+                                        yield f"data: {json.dumps({'thinking': think_chunk})}\n\n"
+                                    _in_think = False
+                                    _tag_buf = _tag_buf[idx + 8 :]
                     except Exception:
                         pass
     except asyncio.TimeoutError:
@@ -638,7 +693,10 @@ async def _stream_response(
         if full_reply:
             try:
                 truncated = full_reply + "\n\n*(Response was cut short — re-send to continue.)*"
-                db.add_message(conv_id, "assistant", truncated, meta={"model": model})
+                _meta: dict = {"model": model}
+                if thinking_text:
+                    _meta["thinking"] = thinking_text
+                db.add_message(conv_id, "assistant", truncated, meta=_meta)
                 _maybe_auto_title(db, conv, user_text)
             except Exception as save_exc:
                 logger.warning("Could not persist partial reply: %s", save_exc)
@@ -652,6 +710,8 @@ async def _stream_response(
     # Normal completion path (also reached after AI failure fallback)
     if full_reply:
         meta: dict = {"model": model}
+        if thinking_text:
+            meta["thinking"] = thinking_text
         if sources:
             meta["sources"] = sources
         db.add_message(conv_id, "assistant", full_reply, meta=meta)
