@@ -1,13 +1,12 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-  Start Orivellum on Windows — API server + web UI (optionally + Expo mobile).
+  Start Orivellum on Windows -- API server + web UI (optionally + Expo mobile).
 
 .DESCRIPTION
   Equivalent of ./start.sh for Windows.
   Starts the FastAPI backend, waits for it to pass its health check, then
-  launches the Vite frontend. Both processes are stopped when you close the
-  terminal or press Ctrl+C.
+  launches the Vite frontend. Both processes are stopped when you press Ctrl+C.
 
 .PARAMETER Mobile
   Also start the Expo React Native dev server.
@@ -30,11 +29,18 @@ param(
   [int]$WebPort = $(if ($env:WEB_PORT) { [int]$env:WEB_PORT } else { 5173 })
 )
 
-Set-StrictMode -Version Latest
+# Strict mode OFF -- makes null/missing property checks much simpler
+$ErrorActionPreference = "Stop"
 
 $Cyan  = "Cyan"
 $Green = "Green"
 $Red   = "Red"
+$Gray  = "Gray"
+
+# ---- Refresh PATH from registry so newly-installed tools are visible --------
+$machinePath = [Environment]::GetEnvironmentVariable("PATH", "Machine")
+$userPath    = [Environment]::GetEnvironmentVariable("PATH", "User")
+$env:PATH    = "$userPath;$machinePath"
 
 Write-Host ""
 Write-Host "---------------------------------------" -ForegroundColor $Cyan
@@ -42,89 +48,127 @@ Write-Host "  Orivellum -- starting services" -ForegroundColor $Cyan
 Write-Host "---------------------------------------" -ForegroundColor $Cyan
 Write-Host ""
 
-# Track child processes for clean teardown
-$children = @()
+# ---- Locate executables (handles tools not yet on session PATH) -------------
+function Find-Exe {
+  param([string]$name, [string[]]$candidates)
+  $found = Get-Command $name -ErrorAction SilentlyContinue
+  if ($found) { return $found.Source }
+  foreach ($c in $candidates) {
+    if (Test-Path $c) { return $c }
+  }
+  return $null
+}
+
+$uvExe = Find-Exe "uv" @(
+  "$env:USERPROFILE\.local\bin\uv.exe",
+  "$env:APPDATA\uv\bin\uv.exe",
+  "C:\Program Files\uv\uv.exe"
+)
+
+$pnpmExe = Find-Exe "pnpm" @(
+  "$env:LOCALAPPDATA\pnpm\pnpm.exe",
+  "$env:LOCALAPPDATA\pnpm\pnpm.cmd",
+  "C:\Program Files\pnpm\pnpm.exe",
+  "C:\Program Files (x86)\pnpm\pnpm.exe"
+)
+
+if (-not $uvExe) {
+  Write-Host "[err]  uv not found. Run setup-windows.ps1 or restart your terminal." -ForegroundColor $Red
+  exit 1
+}
+if (-not $pnpmExe) {
+  Write-Host "[err]  pnpm not found. Run setup-windows.ps1 or restart your terminal." -ForegroundColor $Red
+  exit 1
+}
+
+# ---- Ensure log dir exists --------------------------------------------------
+$root = if ($PSScriptRoot) { Split-Path $PSScriptRoot -Parent } else { Get-Location }
+$logsDir = Join-Path $root "logs"
+New-Item -ItemType Directory -Force -Path $logsDir | Out-Null
+
+# ---- Track child processes --------------------------------------------------
+$children = [System.Collections.Generic.List[System.Diagnostics.Process]]::new()
 
 function Stop-All {
   foreach ($p in $children) {
-    if ($p -and !$p.HasExited) {
-      Write-Host "  Stopping PID $($p.Id) ..." -ForegroundColor Gray
+    if ($p -ne $null -and -not $p.HasExited) {
+      Write-Host "  Stopping PID $($p.Id) ..." -ForegroundColor $Gray
       try { $p.Kill($true) } catch {}
     }
   }
 }
 
-# -- API server ---------------------------------------------------------------
+# ---- API server -------------------------------------------------------------
 Write-Host "[api]  Starting API server on port $ApiPort ..." -ForegroundColor $Cyan
-$apiEnv  = @{ PORT = "$ApiPort" }
-$apiProc = Start-Process -FilePath "uv" `
+$env:PORT = "$ApiPort"
+$apiProc = Start-Process -FilePath $uvExe `
   -ArgumentList "run python -m orivellum.api.main" `
   -PassThru -NoNewWindow `
-  -RedirectStandardOutput "logs\api.log" `
-  -RedirectStandardError  "logs\api-err.log"
-$children += $apiProc
+  -WorkingDirectory $root `
+  -RedirectStandardOutput (Join-Path $logsDir "api.log") `
+  -RedirectStandardError  (Join-Path $logsDir "api-err.log")
+$children.Add($apiProc)
 
-# Ensure log dir exists
-New-Item -ItemType Directory -Force -Path "logs" | Out-Null
-
-# -- wait for health check ----------------------------------------------------
+# ---- Wait for health check --------------------------------------------------
 Write-Host "[api]  Waiting for API to be ready ..." -ForegroundColor $Cyan
-$maxWait = 30
+$maxWait = 60
 $elapsed = 0
 $healthy = $false
 while ($elapsed -lt $maxWait) {
   if ($apiProc.HasExited) {
-    Write-Host "[api]  ERROR: API process exited unexpectedly. Check logs\api-err.log" -ForegroundColor $Red
+    Write-Host "[api]  ERROR: API exited unexpectedly. Check logs\api-err.log" -ForegroundColor $Red
     Stop-All; exit 1
   }
   try {
     $r = Invoke-WebRequest -Uri "http://127.0.0.1:$ApiPort/api/healthz" `
-      -UseBasicParsing -TimeoutSec 1 -ErrorAction Stop
+      -UseBasicParsing -TimeoutSec 2 -ErrorAction Stop
     if ($r.StatusCode -eq 200) { $healthy = $true; break }
   } catch {}
   Start-Sleep -Seconds 1
   $elapsed++
 }
-if (!$healthy) {
-  Write-Host "[api]  ERROR: API did not become healthy within ${maxWait}s." -ForegroundColor $Red
+if (-not $healthy) {
+  Write-Host "[api]  ERROR: API not healthy after ${maxWait}s. Check logs\api-err.log" -ForegroundColor $Red
   Stop-All; exit 1
 }
 Write-Host "[api]  Ready [OK]" -ForegroundColor $Green
 
-# -- web UI -------------------------------------------------------------------
+# ---- Web UI -----------------------------------------------------------------
 Write-Host "[web]  Starting web UI on port $WebPort ..." -ForegroundColor $Cyan
-$env:PORT               = "$WebPort"
-$env:ORIVELLUM_API_URL  = "http://127.0.0.1:$ApiPort"
-$webProc = Start-Process -FilePath "pnpm" `
+$env:PORT              = "$WebPort"
+$env:ORIVELLUM_API_URL = "http://127.0.0.1:$ApiPort"
+$webProc = Start-Process -FilePath $pnpmExe `
   -ArgumentList "--filter @workspace/orivellum-ui run dev" `
   -PassThru -NoNewWindow `
-  -RedirectStandardOutput "logs\web.log" `
-  -RedirectStandardError  "logs\web-err.log"
-$children += $webProc
+  -WorkingDirectory $root `
+  -RedirectStandardOutput (Join-Path $logsDir "web.log") `
+  -RedirectStandardError  (Join-Path $logsDir "web-err.log")
+$children.Add($webProc)
 
-# -- mobile (optional) --------------------------------------------------------
+# ---- Mobile (optional) ------------------------------------------------------
 if ($Mobile) {
   Write-Host "[mob]  Starting Expo ..." -ForegroundColor $Cyan
-  $mobProc = Start-Process -FilePath "pnpm" `
+  $mobProc = Start-Process -FilePath $pnpmExe `
     -ArgumentList "--filter @workspace/mobile run dev" `
-    -PassThru -NoNewWindow
-  $children += $mobProc
+    -PassThru -NoNewWindow `
+    -WorkingDirectory $root
+  $children.Add($mobProc)
 }
 
 Write-Host ""
-Write-Host "  API  → http://localhost:$ApiPort" -ForegroundColor White
-Write-Host "  Web  → http://localhost:$WebPort" -ForegroundColor White
-if ($Mobile) { Write-Host "  Expo → http://localhost:19000" -ForegroundColor White }
+Write-Host "  API  -> http://localhost:$ApiPort" -ForegroundColor White
+Write-Host "  Web  -> http://localhost:$WebPort" -ForegroundColor White
+if ($Mobile) { Write-Host "  Expo -> http://localhost:19000" -ForegroundColor White }
 Write-Host ""
-Write-Host "  Press Ctrl+C to stop all services." -ForegroundColor Gray
+Write-Host "  Press Ctrl+C to stop all services." -ForegroundColor $Gray
 Write-Host "---------------------------------------" -ForegroundColor $Cyan
 
-# Keep running; clean up on Ctrl+C
+# ---- Keep alive; clean up on Ctrl+C ----------------------------------------
 try {
   while ($true) {
     foreach ($p in $children) {
-      if ($p.HasExited) {
-        Write-Host "  A service exited unexpectedly (PID $($p.Id)). Shutting down." -ForegroundColor $Red
+      if ($p -ne $null -and $p.HasExited) {
+        Write-Host "  A service stopped unexpectedly (PID $($p.Id)). Shutting down." -ForegroundColor $Red
         Stop-All; exit 1
       }
     }
@@ -132,6 +176,6 @@ try {
   }
 } finally {
   Write-Host ""
-  Write-Host "  Stopping all services…" -ForegroundColor Gray
+  Write-Host "  Stopping all services ..." -ForegroundColor $Gray
   Stop-All
 }
