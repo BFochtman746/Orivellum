@@ -54,7 +54,7 @@ export default defineConfig({
   },
   server: {
     port,
-    strictPort: true,
+    strictPort: false,
     host: '0.0.0.0',
     allowedHosts: true,
     // When running outside Replit (self-hosted), set ORIVELLUM_API_URL to the

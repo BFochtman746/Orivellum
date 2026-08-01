@@ -85,10 +85,14 @@ if (-not $pnpmExe) {
 function Clear-Port {
   param([int]$port)
   try {
-    $pids = (Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue).OwningProcess | Sort-Object -Unique
-    foreach ($pid in $pids) {
-      if ($pid -and $pid -ne 0) {
-        Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue
+    # netstat works without admin rights unlike Get-NetTCPConnection
+    $lines = netstat -ano 2>$null | Select-String ":$port\s"
+    foreach ($line in $lines) {
+      if ($line -match 'LISTENING') {
+        $owningPid = ($line.ToString().Trim() -split '\s+')[-1]
+        if ($owningPid -match '^\d+$' -and [int]$owningPid -gt 0) {
+          taskkill /PID $owningPid /F 2>$null | Out-Null
+        }
       }
     }
   } catch {}
