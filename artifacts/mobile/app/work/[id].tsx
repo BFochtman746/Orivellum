@@ -170,6 +170,7 @@ function OverviewTab({ workId, onStartDiscussion, starting }: {
           { label: 'Documents', value: String((work as any)?.doc_count ?? 0) },
           { label: 'Knowledge', value: String((work as any)?.knowledge_count ?? 0) },
           { label: 'Pending Tasks', value: String((work as any)?.pending_tasks ?? 0) },
+          { label: 'Conversations', value: String((work as any)?.conv_count ?? 0) },
           {
             label: 'Updated',
             value: work?.updated_at ? new Date(work.updated_at).toLocaleDateString() : '—',
@@ -215,10 +216,10 @@ export default function WorkDetailScreen() {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<Tab>('overview');
 
-  const { data: workData } = useGetWork(id);
-  const { data: docsData, isLoading: docsLoading, refetch: refetchDocs } = useGetWorkDocuments(id);
-  const { data: knData, isLoading: knLoading, refetch: refetchKn } = useGetWorkKnowledge(id);
-  const { data: tasksData, isLoading: tasksLoading, refetch: refetchTasks } = useGetWorkTasks(id);
+  const { data: workData } = useGetWork(id, { query: { staleTime: 30_000 } } as any);
+  const { data: docsData, isLoading: docsLoading, refetch: refetchDocs } = useGetWorkDocuments(id, { query: { staleTime: 20_000, refetchInterval: (q: any) => (q.state.data?.documents ?? []).some((d: any) => d.readiness === 'imported') ? 4_000 : false } } as any);
+  const { data: knData, isLoading: knLoading, refetch: refetchKn } = useGetWorkKnowledge(id, { query: { staleTime: 30_000 } } as any);
+  const { data: tasksData, isLoading: tasksLoading, refetch: refetchTasks } = useGetWorkTasks(id, { query: { staleTime: 30_000 } } as any);
 
   const { mutateAsync: createConversation, isPending: startingConvo } = useCreateConversation();
 

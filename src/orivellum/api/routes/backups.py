@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import FileResponse
 
 from orivellum.api._deps import get_db, get_config
 
@@ -67,6 +68,20 @@ def create_backup():
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
     }
+
+
+@router.get("/backups/{name}/download")
+def download_backup(name: str):
+    bd = _backup_dir()
+    safe_name = Path(name).name
+    path = bd / safe_name
+    if not path.exists() or not safe_name.endswith(".zip"):
+        raise HTTPException(404, f"Backup {name!r} not found")
+    return FileResponse(
+        path=str(path),
+        media_type="application/zip",
+        filename=safe_name,
+    )
 
 
 @router.get("/backups/{name}/verify")

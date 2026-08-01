@@ -89,7 +89,18 @@ export default function Backups() {
                   >
                     {verifying === backup.name ? <RefreshCw className="w-4 h-4 animate-spin" /> : "Verify"}
                   </Button>
-                  <Button variant="secondary" size="sm" className="gap-2">
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    className="gap-2"
+                    onClick={() => {
+                      const base = (import.meta.env.BASE_URL ?? "/").replace(/\/$/, "");
+                      const a = document.createElement("a");
+                      a.href = `${base}/api/backups/${encodeURIComponent(backup.name!)}/download`;
+                      a.download = backup.name!;
+                      a.click();
+                    }}
+                  >
                     <Download className="w-4 h-4" /> Download
                   </Button>
                 </div>

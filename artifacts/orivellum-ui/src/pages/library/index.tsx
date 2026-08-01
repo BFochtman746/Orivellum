@@ -14,6 +14,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Search, Upload, FileText, Database, Filter,
@@ -76,6 +77,8 @@ function ImportDialog({ onSuccess }: ImportDialogProps) {
   const [dragging, setDragging] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const importDoc = useImportDocument();
+  const [, navigateTo] = useLocation();
+  const { data: worksResp } = useListWorks();
 
   const handleFile = (f: File) => setFile(f);
 
@@ -99,7 +102,9 @@ function ImportDialog({ onSuccess }: ImportDialogProps) {
           setFile(null);
           setWorkId("");
           if ((res as any).duplicate) {
-            toast.info(`${file.name} already exists — navigating to existing document`);
+            toast.info(`${file.name} already exists — opening existing document`);
+            const existingId = (res as any).document?.id;
+            if (existingId) navigateTo(`/library/${existingId}`);
           } else {
             toast.success(`${file.name} imported — extraction running`);
           }
@@ -173,14 +178,21 @@ function ImportDialog({ onSuccess }: ImportDialogProps) {
 
         <div className="space-y-1">
           <label className="text-xs font-mono uppercase text-muted-foreground">
-            Work ID (optional)
+            Link to Work (optional)
           </label>
-          <Input
-            value={workId}
-            onChange={(e) => setWorkId(e.target.value)}
-            placeholder="Link to a work by ID"
-            className="font-mono text-sm"
-          />
+          <Select value={workId || "__none__"} onValueChange={(v) => setWorkId(v === "__none__" ? "" : v)}>
+            <SelectTrigger className="font-mono text-sm">
+              <SelectValue placeholder="— None —" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__none__" className="text-xs font-mono text-muted-foreground">— None —</SelectItem>
+              {(worksResp?.works ?? []).map((w) => (
+                <SelectItem key={w.id!} value={w.id!} className="text-xs font-mono">
+                  {w.title ?? w.id}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
 
         <DialogFooter>
@@ -227,12 +239,17 @@ export default function Library() {
   const deleteDoc = useDeleteDocument();
   const [readinessFilter, setReadinessFilter] = useState<"all" | "ready" | "processing" | "error">("all");
   const [kindFilter, setKindFilter] = useState<string>("all");
+  const [workFilter, setWorkFilter] = useState<string>("all");
   const [showFilters, setShowFilters] = useState(false);
   const { data: worksResp } = useListWorks();
   const workTitles: Record<string, string> = {};
   for (const w of worksResp?.works ?? []) {
     if (w.id) workTitles[w.id] = w.title ?? w.id.slice(0, 8);
   }
+  // Works that actually have at least one document in the list
+  const worksWithDocs = Array.from(
+    new Set((listResp?.documents ?? []).map((d: any) => d.work_id).filter(Boolean))
+  ) as string[];
 
   const isLoading = search ? loadingSearch : loadingList;
   const rawDocs: any[] = search
@@ -251,7 +268,12 @@ export default function Library() {
       return true;
     })();
     const matchesKind = kindFilter === "all" || (d.kind ?? "file") === kindFilter;
-    return matchesReadiness && matchesKind;
+    const matchesWork = workFilter === "all"
+      ? true
+      : workFilter === "__none__"
+        ? !d.work_id
+        : d.work_id === workFilter;
+    return matchesReadiness && matchesKind && matchesWork;
   });
 
   const invalidate = () =>
@@ -289,7 +311,7 @@ export default function Library() {
           <div>
             <h1 className="text-3xl font-serif font-semibold tracking-tight">Library</h1>
             <p className="text-muted-foreground mt-1 font-serif">
-              {isLoading ? "Loading…" : `${docs.length} document${docs.length !== 1 ? "s" : ""}${search || readinessFilter !== "all" || kindFilter !== "all" ? " matching filters" : ""}`}
+              {isLoading ? "Loading…" : `${docs.length} document${docs.length !== 1 ? "s" : ""}${search || readinessFilter !== "all" || kindFilter !== "all" || workFilter !== "all" ? " matching filters" : ""}`}
             </p>
           </div>
           <ImportDialog onSuccess={invalidate} />
@@ -352,6 +374,26 @@ export default function Library() {
                         }`}
                       >
                         {k === "all" ? "All" : k}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {worksWithDocs.length > 0 && (
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-mono text-muted-foreground uppercase">Work:</span>
+                  <div className="flex items-center gap-1 p-0.5 bg-muted/30 rounded-lg flex-wrap">
+                    {["all", "__none__", ...worksWithDocs].map((w) => (
+                      <button
+                        key={w}
+                        onClick={() => setWorkFilter(w)}
+                        className={`px-2.5 py-1 rounded text-xs font-mono transition-colors ${
+                          workFilter === w
+                            ? "bg-background shadow-sm text-foreground"
+                            : "text-muted-foreground hover:text-foreground"
+                        }`}
+                      >
+                        {w === "all" ? "All" : w === "__none__" ? "Unlinked" : (workTitles[w] ?? w.slice(0, 8))}
                       </button>
                     ))}
                   </div>

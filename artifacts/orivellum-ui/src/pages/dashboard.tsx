@@ -8,10 +8,10 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 
 export default function Dashboard() {
-  const { data: summary, isLoading: loadingSummary } = useGetDashboardSummary();
-  const { data: activityResp, isLoading: loadingActivity } = useGetDashboardActivity({ limit: 10 });
-  const { data: briefing, isLoading: loadingBriefing } = useGetBriefing();
-  const { data: convsResp, isLoading: loadingConvs } = useListConversations({ limit: 5 });
+  const { data: summary, isLoading: loadingSummary } = useGetDashboardSummary({ query: { refetchInterval: 30_000, staleTime: 20_000 } });
+  const { data: activityResp, isLoading: loadingActivity } = useGetDashboardActivity({ limit: 10 }, { query: { refetchInterval: 30_000, staleTime: 20_000 } });
+  const { data: briefing, isLoading: loadingBriefing } = useGetBriefing({ query: { staleTime: 300_000 } });
+  const { data: convsResp, isLoading: loadingConvs } = useListConversations({ limit: 5 }, { query: { refetchInterval: 30_000, staleTime: 20_000 } });
 
   return (
     <div className="space-y-8 max-w-5xl animate-in fade-in slide-in-from-bottom-4 duration-500">

@@ -39,7 +39,7 @@ function useSetAiExtractionSetting() {
 }
 
 export default function System() {
-  const { data: health, isLoading: loadingHealth } = useGetSystemHealth();
+  const { data: health, isLoading: loadingHealth } = useGetSystemHealth({ query: { refetchInterval: 10_000, staleTime: 8_000 } });
   const { data: capsResp, isLoading: loadingCaps } = useListCapabilities();
   const { data: aiExtraction, isLoading: loadingAiExt } = useAiExtractionSetting();
   const setAiExtraction = useSetAiExtractionSetting();

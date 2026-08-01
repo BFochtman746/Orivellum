@@ -88,6 +88,14 @@ function WorkCard({ work }: { work: Work }) {
             </Text>
           </View>
         )}
+        {((work as any).conv_count ?? 0) > 0 && (
+          <View style={styles.statChip}>
+            <Feather name="message-circle" size={11} color={colors.mutedForeground} />
+            <Text style={[styles.chipText, { color: colors.mutedForeground }]}>
+              {(work as any).conv_count} chats
+            </Text>
+          </View>
+        )}
         <View style={[styles.statusBadge, { backgroundColor: statusColor + '22' }]}>
           <Text style={[styles.statusText, { color: statusColor }]}>
             {work.status ?? 'active'}
@@ -103,7 +111,7 @@ export default function WorksScreen() {
   const insets = useSafeAreaInsets();
   const isWeb = Platform.OS === 'web';
 
-  const { data, isLoading, isError, refetch } = useListWorks();
+  const { data, isLoading, isError, refetch } = useListWorks({ query: { refetchInterval: 30_000, staleTime: 20_000 } } as any);
   const works = data?.works ?? [];
   const hasData = works.length > 0;
 

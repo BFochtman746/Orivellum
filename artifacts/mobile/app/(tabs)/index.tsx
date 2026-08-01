@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 import { useColors } from '@/hooks/useColors';
 import { Feather } from '@expo/vector-icons';
-import { useGetDashboardSummary, useGetDashboardActivity } from '@workspace/api-client-react';
+import { useGetDashboardSummary, useGetDashboardActivity, useGetBriefing } from '@workspace/api-client-react';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { Work, ActivityItem } from '@workspace/api-client-react';
@@ -55,6 +55,7 @@ function WorkRow({ work }: { work: Work }) {
 
 function ActivityRow({ item }: { item: ActivityItem }) {
   const colors = useColors();
+  const router = useRouter();
   const iconMap: Record<string, string> = {
     work: 'book-open',
     document: 'file-text',
@@ -64,8 +65,21 @@ function ActivityRow({ item }: { item: ActivityItem }) {
   const icon = iconMap[item.kind ?? ''] ?? 'activity';
   const when = item.created_at ? new Date(item.created_at).toLocaleDateString() : '';
 
+  const handlePress = () => {
+    if (item.kind === 'work' && item.id) router.push(`/work/${item.id}`);
+    else if (item.kind === 'conversation' && item.id) router.push(`/chat/${item.id}`);
+  };
+
+  const tappable = item.kind === 'work' || item.kind === 'conversation';
+
   return (
-    <View style={[styles.activityRow, { borderColor: colors.border }]}>
+    <Pressable
+      onPress={tappable ? handlePress : undefined}
+      style={({ pressed }) => [
+        styles.activityRow,
+        { borderColor: colors.border, opacity: pressed && tappable ? 0.6 : 1 },
+      ]}
+    >
       <View style={[styles.activityIcon, { backgroundColor: colors.muted }]}>
         <Feather name={icon as any} size={13} color={colors.primary} />
       </View>
@@ -73,7 +87,8 @@ function ActivityRow({ item }: { item: ActivityItem }) {
         {item.label ?? item.kind}
       </Text>
       <Text style={[styles.activityDate, { color: colors.mutedForeground }]}>{when}</Text>
-    </View>
+      {tappable && <Feather name="chevron-right" size={13} color={colors.mutedForeground} />}
+    </Pressable>
   );
 }
 
@@ -86,13 +101,15 @@ export default function DashboardScreen() {
     data: summary,
     isLoading: summaryLoading,
     refetch: refetchSummary,
-  } = useGetDashboardSummary();
+  } = useGetDashboardSummary({ query: { refetchInterval: 30_000, staleTime: 20_000 } } as any);
 
   const {
     data: activityData,
     isLoading: activityLoading,
     refetch: refetchActivity,
-  } = useGetDashboardActivity({ limit: 10 });
+  } = useGetDashboardActivity({ limit: 10 }, { query: { refetchInterval: 30_000, staleTime: 20_000 } } as any);
+
+  const { data: briefing } = useGetBriefing({ query: { staleTime: 300_000 } } as any);
 
   const isLoading = summaryLoading || activityLoading;
   const recentWorks = summary?.recent_works ?? [];
@@ -132,7 +149,7 @@ export default function DashboardScreen() {
           <View style={styles.header}>
             <Text style={[styles.brand, { color: colors.foreground }]}>Orivellum</Text>
             <Text style={[styles.subtitle, { color: colors.mutedForeground }]}>
-              Your research workspace
+              {briefing?.greeting ?? 'Your research workspace'}
             </Text>
           </View>
 

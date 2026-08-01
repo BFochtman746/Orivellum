@@ -280,7 +280,15 @@ export default function DocumentDetail() {
   const [knFilter, setKnFilter] = useState<"all" | "pending" | "approved" | "rejected">("all");
   const queryClient = useQueryClient();
 
-  const { data, isLoading, error, refetch } = useGetDocument(docId ?? "");
+  const { data, isLoading, error, refetch } = useGetDocument(docId ?? "", {
+    query: {
+      // Auto-poll every 3 s while the document is still being processed
+      refetchInterval: (query) => {
+        const r = (query.state.data?.document as any)?.readiness;
+        return r === "imported" ? 3_000 : false;
+      },
+    },
+  });
   const deleteDoc = useDeleteDocument();
 
   const doc = data?.document as any;
@@ -476,6 +484,20 @@ export default function DocumentDetail() {
         {hasError && doc.error_message && (
           <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-lg">
             <p className="text-xs font-mono text-red-700 break-all">{doc.error_message}</p>
+          </div>
+        )}
+
+        {/* Extraction warnings (non-fatal issues from the pipeline) */}
+        {Array.isArray(doc.warnings) && doc.warnings.length > 0 && (
+          <div className="mt-3 p-3 bg-amber-50 border border-amber-200 rounded-lg space-y-1">
+            <p className="text-[10px] font-mono font-semibold uppercase tracking-wide text-amber-700 mb-1.5">
+              Extraction warnings ({doc.warnings.length})
+            </p>
+            {(doc.warnings as any[]).map((w, i) => (
+              <p key={i} className="text-xs font-mono text-amber-800 break-all">
+                <span className="font-semibold">{w.kind}:</span> {w.detail}
+              </p>
+            ))}
           </div>
         )}
 

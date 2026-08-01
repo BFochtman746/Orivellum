@@ -4,7 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Folder, File, Upload, ChevronRight, Home } from "lucide-react";
+import { Folder, File, Upload, ChevronRight, Home, Download } from "lucide-react";
 import { toast } from "sonner";
 
 export default function Files() {
@@ -143,13 +143,29 @@ export default function Files() {
                   return (
                     <div
                       key={`file-${i}`}
-                      className="flex items-center justify-between p-3 hover:bg-muted/30 transition-colors"
+                      className="flex items-center justify-between p-3 hover:bg-muted/30 transition-colors group"
                     >
                       <div className="flex items-center gap-3">
                         <File className="w-5 h-5 text-muted-foreground" />
                         <span className="text-sm">{fileName}</span>
                       </div>
-                      {fileSize && <span className="text-xs font-mono text-muted-foreground">{fileSize}</span>}
+                      <div className="flex items-center gap-3">
+                        {fileSize && <span className="text-xs font-mono text-muted-foreground">{fileSize}</span>}
+                        <button
+                          title="Download"
+                          className="opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-foreground"
+                          onClick={() => {
+                            const base = (import.meta.env.BASE_URL ?? "/").replace(/\/$/, "");
+                            const filePath = currentPath ? `${currentPath}/${fileName}` : fileName;
+                            const a = document.createElement("a");
+                            a.href = `${base}/api/download/${encodeURIComponent(filePath)}`;
+                            a.download = fileName;
+                            a.click();
+                          }}
+                        >
+                          <Download className="w-4 h-4" />
+                        </button>
+                      </div>
                     </div>
                   );
                 })}

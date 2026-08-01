@@ -84,7 +84,10 @@ export default function ConversationsScreen() {
   const isWeb = Platform.OS === 'web';
   const router = useRouter();
 
-  const { data, isLoading, isError, refetch } = useListConversations({ archived: false, limit: 100 });
+  const { data, isLoading, isError, refetch } = useListConversations(
+    { archived: false, limit: 100 },
+    { query: { refetchInterval: 15_000, staleTime: 10_000 } }
+  );
   const conversations = data?.conversations ?? [];
   const hasData = conversations.length > 0;
 

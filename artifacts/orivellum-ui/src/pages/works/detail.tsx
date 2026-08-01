@@ -76,7 +76,14 @@ export default function WorkDetail() {
   });
   const work = workResp?.work;
   const { data: statsResp } = useGetWorkStats(workId!, {
-    query: { enabled: !!workId },
+    query: {
+      enabled: !!workId,
+      // Poll while any docs are still processing so the readiness strip stays current
+      refetchInterval: (query) => {
+        const byR = ((query.state.data as any)?.documents_by_readiness ?? {}) as Record<string, number>;
+        return (byR.imported ?? 0) > 0 ? 4_000 : false;
+      },
+    },
   });
   const stats = statsResp as any;
   const updateWork = useUpdateWork();
@@ -245,7 +252,7 @@ export default function WorkDetail() {
             </span>
           </div>
           {stats && (
-            <div className="flex items-center gap-4 pt-1">
+            <div className="flex flex-wrap items-center gap-4 pt-1">
               {[
                 {
                   label: "Documents",
@@ -269,6 +276,29 @@ export default function WorkDetail() {
                   <div className="text-[10px] font-mono uppercase text-muted-foreground mt-0.5">{label}</div>
                 </div>
               ))}
+              {/* Readiness strip — shown when any doc is still processing or has errors */}
+              {(() => {
+                const byR = stats.documents_by_readiness as Record<string, number> ?? {};
+                const processing = byR.imported ?? 0;
+                const errors = (byR.error ?? 0) + (byR.no_text ?? 0);
+                if (processing === 0 && errors === 0) return null;
+                return (
+                  <div className="flex items-center gap-2 ml-2 pl-4 border-l border-border/50">
+                    {processing > 0 && (
+                      <span className="flex items-center gap-1 text-[10px] font-mono text-amber-600 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5">
+                        <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+                        {processing} processing
+                      </span>
+                    )}
+                    {errors > 0 && (
+                      <span className="flex items-center gap-1 text-[10px] font-mono text-red-600 bg-red-50 border border-red-200 rounded px-1.5 py-0.5">
+                        <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
+                        {errors} error{errors !== 1 ? "s" : ""}
+                      </span>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
           )}
         </div>
@@ -314,7 +344,15 @@ function DocumentsTab({ workId }: { workId: string }) {
   const [open, setOpen] = useState(false);
 
   const { data: docsResp, isLoading } = useGetWorkDocuments(workId, {
-    query: { enabled: !!workId, queryKey: getGetWorkDocumentsQueryKey(workId) },
+    query: {
+      enabled: !!workId,
+      queryKey: getGetWorkDocumentsQueryKey(workId),
+      // Poll every 4 s while any doc is still in "imported" state
+      refetchInterval: (query) => {
+        const docs = (query.state.data as any)?.documents ?? [];
+        return docs.some((d: any) => d.readiness === "imported") ? 4_000 : false;
+      },
+    },
   });
 
   // Library documents not yet linked to this work — for the picker

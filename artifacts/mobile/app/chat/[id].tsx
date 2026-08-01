@@ -1,17 +1,26 @@
 import React, { useRef, useState } from 'react';
 import {
+  ActionSheetIOS,
   ActivityIndicator,
   FlatList,
+  Modal,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
+  useColorScheme,
 } from 'react-native';
+import Markdown from 'react-native-markdown-display';
 import { useColors } from '@/hooks/useColors';
 import { Feather } from '@expo/vector-icons';
-import { useGetConversation } from '@workspace/api-client-react';
+import {
+  useGetConversation,
+  useGetSystemModels,
+  useUpdateConversation,
+} from '@workspace/api-client-react';
 import { useLocalSearchParams, useNavigation } from 'expo-router';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -20,9 +29,53 @@ import * as Haptics from 'expo-haptics';
 import type { Message } from '@workspace/api-client-react';
 import { OfflineBanner } from '@/components/OfflineBanner';
 
-function MessageBubble({ message, colors }: { message: Message & { isError?: boolean }; colors: any }) {
+function MessageBubble({ message, colors, isDark }: { message: Message & { isError?: boolean }; colors: any; isDark: boolean }) {
   const isUser = message.role === 'user';
   const isErr = (message as any).isError;
+  const textColor = isUser ? colors.primaryForeground : isErr ? colors.mutedForeground : colors.foreground;
+
+  const markdownStyles = {
+    body: { color: textColor, fontSize: 15, fontFamily: 'Inter_400Regular', lineHeight: 21 },
+    paragraph: { marginTop: 0, marginBottom: 4 },
+    strong: { fontFamily: 'Inter_700Bold' },
+    em: { fontStyle: 'italic' as const },
+    code_inline: {
+      backgroundColor: isDark ? '#3f3f46' : '#f4f4f5',
+      color: isDark ? '#d4d4d8' : '#3f3f46',
+      fontFamily: 'Inter_400Regular',
+      fontSize: 13,
+      paddingHorizontal: 4,
+      borderRadius: 3,
+    },
+    fence: {
+      backgroundColor: isDark ? '#18181b' : '#27272a',
+      borderRadius: 6,
+      padding: 10,
+      marginVertical: 4,
+    },
+    code_block: {
+      backgroundColor: isDark ? '#18181b' : '#27272a',
+      color: '#d4d4d8',
+      fontFamily: 'Inter_400Regular',
+      fontSize: 12,
+      borderRadius: 6,
+      padding: 10,
+      marginVertical: 4,
+    },
+    bullet_list: { marginBottom: 4 },
+    ordered_list: { marginBottom: 4 },
+    list_item: { marginVertical: 1 },
+    heading1: { fontSize: 17, fontFamily: 'Inter_700Bold', marginVertical: 4 },
+    heading2: { fontSize: 15, fontFamily: 'Inter_700Bold', marginVertical: 3 },
+    heading3: { fontSize: 14, fontFamily: 'Inter_600SemiBold', marginVertical: 2 },
+    blockquote: {
+      borderLeftWidth: 2,
+      borderLeftColor: colors.border,
+      paddingLeft: 10,
+      marginVertical: 4,
+    },
+  };
+
   return (
     <View style={[styles.bubbleRow, isUser ? styles.bubbleRight : styles.bubbleLeft]}>
       {!isUser && (
@@ -56,21 +109,18 @@ function MessageBubble({ message, colors }: { message: Message & { isError?: boo
           { maxWidth: '80%' },
         ]}
       >
-        <Text
-          style={[
-            styles.bubbleText,
-            {
-              color: isUser
-                ? colors.primaryForeground
-                : isErr
-                ? colors.mutedForeground
-                : colors.foreground,
-              fontStyle: isErr ? 'italic' : 'normal',
-            },
-          ]}
-        >
-          {message.text}
-        </Text>
+        {isUser || isErr ? (
+          <Text
+            style={[
+              styles.bubbleText,
+              { color: textColor, fontStyle: isErr ? 'italic' : 'normal' },
+            ]}
+          >
+            {message.text}
+          </Text>
+        ) : (
+          <Markdown style={markdownStyles as any}>{message.text ?? ''}</Markdown>
+        )}
       </View>
     </View>
   );
@@ -93,6 +143,8 @@ export default function ChatScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const isWeb = Platform.OS === 'web';
+  const colorScheme = useColorScheme();
+  const isDark = colorScheme === 'dark';
   const { id } = useLocalSearchParams<{ id: string }>();
   const navigation = useNavigation();
   const inputRef = useRef<TextInput>(null);
@@ -102,10 +154,40 @@ export default function ChatScreen() {
   const [localMessages, setLocalMessages] = useState<(Message & { isError?: boolean })[]>([]);
   const [initialized, setInitialized] = useState(false);
   const [sendFailed, setSendFailed] = useState(false);
+  const [modelPickerVisible, setModelPickerVisible] = useState(false);
 
-  const { data, isLoading, isError, refetch } = useGetConversation(id);
+  const { data, isLoading, isError, refetch } = useGetConversation(id, { query: { staleTime: 10_000 } } as any);
   const conversation = data?.conversation;
   const serverMessages = data?.messages ?? [];
+
+  const { data: modelsData } = useGetSystemModels();
+  const models = modelsData?.models ?? [];
+  const updateConv = useUpdateConversation();
+
+  const currentModelId = (conversation as any)?.model;
+  const currentModelLabel =
+    models.find((m: any) => m.id === currentModelId)?.label ?? currentModelId ?? 'Default';
+
+  const handlePickModel = () => {
+    if (models.length === 0) return;
+    if (Platform.OS === 'ios') {
+      const options = [...models.map((m: any) => m.label ?? m.id), 'Cancel'];
+      ActionSheetIOS.showActionSheetWithOptions(
+        { options, cancelButtonIndex: options.length - 1, title: 'Select AI Model' },
+        (idx) => {
+          if (idx < models.length) {
+            const chosen = models[idx] as any;
+            updateConv.mutate(
+              { convId: id, data: { model: chosen.id } },
+              { onSuccess: () => refetch() }
+            );
+          }
+        }
+      );
+    } else {
+      setModelPickerVisible(true);
+    }
+  };
 
   // Sync server messages into local state on first load
   useEffect(() => {
@@ -220,7 +302,75 @@ export default function ChatScreen() {
       behavior="padding"
       keyboardVerticalOffset={0}
     >
+      {/* Model picker modal — Android / web */}
+      <Modal
+        visible={modelPickerVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setModelPickerVisible(false)}
+      >
+        <Pressable
+          style={[styles.modalOverlay]}
+          onPress={() => setModelPickerVisible(false)}
+        >
+          <View
+            style={[styles.modelSheet, { backgroundColor: colors.card, borderColor: colors.border }]}
+            onStartShouldSetResponder={() => true}
+          >
+            <Text style={[styles.modelSheetTitle, { color: colors.foreground }]}>Select AI Model</Text>
+            <ScrollView>
+              {models.map((m: any) => (
+                <Pressable
+                  key={m.id}
+                  style={({ pressed }) => [
+                    styles.modelRow,
+                    { borderColor: colors.border, backgroundColor: pressed ? colors.muted : 'transparent' },
+                    m.id === currentModelId && { backgroundColor: colors.muted },
+                  ]}
+                  onPress={() => {
+                    updateConv.mutate(
+                      { convId: id, data: { model: m.id } },
+                      { onSuccess: () => refetch() }
+                    );
+                    setModelPickerVisible(false);
+                  }}
+                >
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.modelLabel, { color: colors.foreground }]}>{m.label ?? m.id}</Text>
+                    {m.description ? (
+                      <Text style={[styles.modelDesc, { color: colors.mutedForeground }]} numberOfLines={1}>
+                        {m.description}
+                      </Text>
+                    ) : null}
+                  </View>
+                  {m.id === currentModelId && (
+                    <Feather name="check" size={16} color={colors.primary} />
+                  )}
+                </Pressable>
+              ))}
+            </ScrollView>
+          </View>
+        </Pressable>
+      </Modal>
+
       <View style={{ flex: 1, paddingTop: topPad }}>
+        {/* Model badge row */}
+        {models.length > 0 && (
+          <Pressable
+            onPress={handlePickModel}
+            style={({ pressed }) => [
+              styles.modelBadgeRow,
+              { borderBottomColor: colors.border, opacity: pressed ? 0.7 : 1 },
+            ]}
+          >
+            <Feather name="cpu" size={11} color={colors.mutedForeground} />
+            <Text style={[styles.modelBadgeText, { color: colors.mutedForeground }]}>
+              {currentModelLabel}
+            </Text>
+            <Feather name="chevron-down" size={11} color={colors.mutedForeground} />
+          </Pressable>
+        )}
+
         {/* Soft offline banner — shown when we have loaded data but subsequent fetches fail */}
         {isError && initialized && (
           <OfflineBanner
@@ -236,7 +386,7 @@ export default function ChatScreen() {
         <FlatList
           data={displayMessages}
           keyExtractor={(m) => m.id ?? ''}
-          renderItem={({ item }) => <MessageBubble message={item} colors={colors} />}
+          renderItem={({ item }) => <MessageBubble message={item} colors={colors} isDark={isDark} />}
           inverted
           contentContainerStyle={styles.listContent}
           keyboardDismissMode="interactive"
@@ -318,6 +468,45 @@ export default function ChatScreen() {
 const styles = StyleSheet.create({
   screen: { flex: 1 },
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 10 },
+  modelBadgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    paddingVertical: 6,
+    borderBottomWidth: 1,
+  },
+  modelBadgeText: { fontSize: 11, fontFamily: 'Inter_500Medium' },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    justifyContent: 'flex-end',
+  },
+  modelSheet: {
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    borderWidth: 1,
+    paddingTop: 16,
+    paddingBottom: 32,
+    maxHeight: '60%',
+  },
+  modelSheetTitle: {
+    fontSize: 15,
+    fontFamily: 'Inter_600SemiBold',
+    textAlign: 'center',
+    marginBottom: 12,
+    paddingHorizontal: 16,
+  },
+  modelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    gap: 12,
+  },
+  modelLabel: { fontSize: 14, fontFamily: 'Inter_500Medium' },
+  modelDesc: { fontSize: 12, fontFamily: 'Inter_400Regular', marginTop: 2 },
   listContent: { paddingHorizontal: 16, paddingVertical: 12 },
   bubbleRow: { flexDirection: 'row', alignItems: 'flex-end', marginBottom: 10, gap: 8 },
   bubbleLeft: {},

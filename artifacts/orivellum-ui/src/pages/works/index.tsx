@@ -21,7 +21,7 @@ export default function WorksList() {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const queryClient = useQueryClient();
   
-  const { data: worksResp, isLoading } = useListWorks();
+  const { data: worksResp, isLoading } = useListWorks({ query: { refetchInterval: 30_000, staleTime: 20_000 } } as any);
   const { data: typesResp } = useGetWorkTypes();
   const createWork = useCreateWork();
 
@@ -178,6 +178,10 @@ export default function WorksList() {
                       <div className="space-y-1">
                         <div className="font-mono text-xs uppercase">Tasks</div>
                         <div className="font-medium text-foreground text-base">{work.pending_tasks || 0}</div>
+                      </div>
+                      <div className="space-y-1">
+                        <div className="font-mono text-xs uppercase">Chats</div>
+                        <div className="font-medium text-foreground text-base">{(work as any).conv_count || 0}</div>
                       </div>
                       {(work as any).obj_created && (
                         <div className="space-y-1">

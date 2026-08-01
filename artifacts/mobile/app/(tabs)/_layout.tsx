@@ -24,6 +24,10 @@ function NativeTabLayout() {
         <Icon sf={{ default: 'books.vertical', selected: 'books.vertical.fill' }} />
         <Label>Works</Label>
       </NativeTabs.Trigger>
+      <NativeTabs.Trigger name="library">
+        <Icon sf={{ default: 'folder', selected: 'folder.fill' }} />
+        <Label>Library</Label>
+      </NativeTabs.Trigger>
     </NativeTabs>
   );
 }
@@ -101,6 +105,18 @@ function ClassicTabLayout() {
               <SymbolView name="books.vertical" tintColor={color} size={24} />
             ) : (
               <Feather name="book-open" size={22} color={color} />
+            ),
+        }}
+      />
+      <Tabs.Screen
+        name="library"
+        options={{
+          title: 'Library',
+          tabBarIcon: ({ color }) =>
+            isIOS ? (
+              <SymbolView name="folder" tintColor={color} size={24} />
+            ) : (
+              <Feather name="folder" size={22} color={color} />
             ),
         }}
       />

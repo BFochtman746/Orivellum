@@ -164,7 +164,8 @@ class OrivellumDB:
         q = """SELECT w.*, o.created_at as obj_created, o.lifecycle,
                       (SELECT COUNT(*) FROM documents d WHERE d.work_id=w.id) as doc_count,
                       (SELECT COUNT(*) FROM tasks t WHERE t.work_id=w.id AND t.status='pending') as pending_tasks,
-                      (SELECT COUNT(*) FROM knowledge k WHERE k.work_id=w.id) as knowledge_count
+                      (SELECT COUNT(*) FROM knowledge k WHERE k.work_id=w.id) as knowledge_count,
+                      (SELECT COUNT(*) FROM conversations c WHERE c.work_id=w.id) as conv_count
                FROM works w JOIN objects o ON o.id=w.id
                WHERE o.lifecycle != 'deleted'"""
         args: list = []

@@ -244,15 +244,17 @@ export default function Chat() {
   // Synchronous sending flag (avoids stale closure in RAF loop) + abort controller
   const sendingRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
+  // Track the last message the user sent so the re-send button can restore it
+  const lastSentRef = useRef<string>("");
 
   const { data: convsResp, isLoading: loadingList } = useListConversations(
     { archived: showArchived || undefined },
-    { query: { queryKey: getListConversationsQueryKey({ archived: showArchived || undefined }) } }
+    { query: { queryKey: getListConversationsQueryKey({ archived: showArchived || undefined }), refetchInterval: 15_000, staleTime: 10_000 } }
   );
   const { data: activeConv, isLoading: loadingActive } = useGetConversation(activeId!, {
     query: { enabled: !!activeId, queryKey: getGetConversationQueryKey(activeId!) },
   });
-  const { data: sysHealth } = useGetSystemHealth();
+  const { data: sysHealth } = useGetSystemHealth({ query: { refetchInterval: 15_000, staleTime: 10_000 } });
   const { data: modelsData } = useModels();
   const aiOnline = sysHealth?.services?.ai?.status === "ok";
   const models = modelsData?.models ?? [];
@@ -353,6 +355,7 @@ export default function Chat() {
       if (!draft.trim() || !activeId || sending) return;
 
       const text = draft.trim();
+      lastSentRef.current = text;
       // Capture convId now — activeId may change before the stream finishes
       const convId = activeId;
       setDraft("");
@@ -628,9 +631,17 @@ export default function Chat() {
                                 <MarkdownContent text={msg.text} />
                                 {msg.streaming && <span className="inline-block w-0.5 h-3.5 bg-current ml-0.5 animate-pulse align-text-bottom" />}
                                 {msg.incomplete && (
-                                  <div className="mt-2 flex items-center gap-1.5 text-xs text-amber-600 border-t border-amber-200/40 pt-2">
-                                    <AlertTriangle className="w-3 h-3 shrink-0" />
-                                    <span>Response was cut short — re-send your message to continue.</span>
+                                  <div className="mt-2 flex items-center justify-between gap-2 border-t border-amber-200/40 pt-2">
+                                    <div className="flex items-center gap-1.5 text-xs text-amber-600">
+                                      <AlertTriangle className="w-3 h-3 shrink-0" />
+                                      <span>Response was cut short.</span>
+                                    </div>
+                                    <button
+                                      onClick={() => setDraft(lastSentRef.current)}
+                                      className="text-xs font-mono text-amber-700 hover:text-amber-900 underline underline-offset-2 shrink-0"
+                                    >
+                                      Re-send
+                                    </button>
                                   </div>
                                 )}
                               </>
