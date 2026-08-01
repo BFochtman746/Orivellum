@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import logging
+import re
 import subprocess
 import tempfile
+import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
@@ -195,6 +197,175 @@ async def synthesize_speech(body: TTSRequest):
     except Exception as exc:
         logger.error("TTS espeak-ng failed: %s", exc)
         raise HTTPException(500, f"TTS synthesis failed: {exc}")
+
+
+# ── Text segmentation helper ──────────────────────────────────────────────────
+
+def _split_text_into_segments(text: str, max_chars: int = 1500) -> list[str]:
+    """Split text at paragraph/sentence boundaries, targeting max_chars per segment."""
+    text = re.sub(r'\n{3,}', '\n\n', text.strip())
+    paragraphs = [p.strip() for p in text.split('\n\n') if p.strip()]
+    segments: list[str] = []
+    current = ""
+    for para in paragraphs:
+        if len(para) > max_chars:
+            # Split long paragraph at sentence boundaries
+            sentences = re.split(r'(?<=[.!?])\s+', para)
+            for sent in sentences:
+                if current and len(current) + len(sent) + 1 > max_chars:
+                    segments.append(current.strip())
+                    current = ""
+                current += (" " if current else "") + sent
+        else:
+            if current and len(current) + len(para) + 2 > max_chars:
+                segments.append(current.strip())
+                current = ""
+            current += ("\n\n" if current else "") + para
+    if current.strip():
+        segments.append(current.strip())
+    return [s for s in segments if s]
+
+
+# ── Document-to-Audiobook ─────────────────────────────────────────────────────
+
+class DocumentTTSRequest(BaseModel):
+    doc_id: str
+    voice: str = "af_heart"
+    speed: float = 1.0
+    max_segments: int = 60  # cap at ~90 000 chars / ~1 hour of reading
+
+
+@router.post("/studio/tts/document")
+def synthesize_document(body: DocumentTTSRequest):
+    """Convert an entire library document to an audiobook MP3.
+
+    Fetches all extracted text chunks for *doc_id*, joins them, splits at
+    paragraph/sentence boundaries, synthesises each segment with espeak-ng (or
+    the configured AI TTS endpoint), then concatenates everything into a single
+    MP3 via ffmpeg and saves it to the outputs directory.
+    """
+    db  = get_db()
+    cfg = get_config()
+
+    # ── Validate document ──────────────────────────────────────────────────────
+    doc = db.get_document(body.doc_id)
+    if not doc:
+        raise HTTPException(404, f"Document {body.doc_id!r} not found")
+    if doc.get("readiness") not in ("ready", "error"):
+        raise HTTPException(422, "Document has not been fully processed yet. "
+                                  "Wait until it shows as 'ready' in the Library.")
+
+    # ── Fetch full text from chunks ───────────────────────────────────────────
+    with db._lock:
+        rows = db._conn.execute(
+            "SELECT text FROM chunks WHERE doc_id=? ORDER BY page, rowid",
+            (body.doc_id,),
+        ).fetchall()
+
+    if not rows:
+        raise HTTPException(422, "No extracted text found for this document. "
+                                  "The document may not have been processed yet.")
+
+    full_text = "\n\n".join(r["text"] for r in rows)
+    segments  = _split_text_into_segments(full_text)[:body.max_segments]
+
+    if not segments:
+        raise HTTPException(422, "Could not extract readable text from this document.")
+
+    out_dir = Path(cfg.data_dir) / "outputs"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    espeak_voice = _ESPEAK_VOICE_MAP.get(body.voice, "en+f4")
+    wpm          = max(80, min(400, int(175 * body.speed)))
+
+    wav_paths: list[Path] = []
+    tmp_dir   = Path(tempfile.mkdtemp())
+
+    # ── Strategy 1: AI TTS endpoint ───────────────────────────────────────────
+    ai_ok = False
+    try:
+        import httpx
+        # Quick probe — only attempt AI if the endpoint is reachable
+        probe = httpx.get(f"{cfg.serving.base_url}/models", timeout=2.0)
+        ai_ok = probe.status_code == 200
+    except Exception:
+        ai_ok = False
+
+    try:
+        for idx, seg in enumerate(segments):
+            wav_path = tmp_dir / f"seg_{idx:04d}.wav"
+            synthesised = False
+
+            if ai_ok:
+                try:
+                    import httpx as _hx
+                    r = _hx.post(
+                        f"{cfg.serving.base_url}/audio/speech",
+                        json={"model": "tts-1", "input": seg,
+                              "voice": body.voice, "response_format": "wav",
+                              "speed": body.speed},
+                        timeout=60,
+                    )
+                    if r.status_code == 200:
+                        wav_path.write_bytes(r.content)
+                        synthesised = True
+                except Exception:
+                    pass
+
+            if not synthesised:
+                res = subprocess.run(
+                    ["espeak-ng", "-v", espeak_voice, "-s", str(wpm),
+                     "-w", str(wav_path), seg],
+                    capture_output=True, text=True, timeout=60,
+                )
+                if res.returncode != 0:
+                    raise RuntimeError(f"espeak-ng failed on segment {idx}: {res.stderr}")
+
+            wav_paths.append(wav_path)
+
+        # ── Concatenate all WAVs → single MP3 ─────────────────────────────────
+        concat_list = tmp_dir / "concat.txt"
+        concat_list.write_text(
+            "\n".join(f"file '{p}'" for p in wav_paths), encoding="utf-8"
+        )
+
+        safe_title = re.sub(r'[^\w\-]', '_', (doc.get("title") or "audiobook"))[:60]
+        mp3_name   = f"{safe_title}_{uuid.uuid4().hex[:6]}.mp3"
+        mp3_path   = out_dir / mp3_name
+
+        ff = subprocess.run(
+            ["ffmpeg", "-y", "-f", "concat", "-safe", "0",
+             "-i", str(concat_list),
+             "-codec:a", "libmp3lame", "-q:a", "4", str(mp3_path)],
+            capture_output=True, timeout=300,
+        )
+        if ff.returncode != 0:
+            raise RuntimeError(f"ffmpeg concat failed: {ff.stderr.decode()[:300]}")
+
+        _rotate_outputs(out_dir)
+        return FileResponse(str(mp3_path), media_type="audio/mpeg",
+                            filename=mp3_name)
+
+    except FileNotFoundError:
+        import sys as _sys
+        hint = (
+            "espeak-ng is not installed. Run scripts\\setup-windows.ps1 to install it."
+            if _sys.platform == "win32"
+            else "espeak-ng is not installed. Run: nix-env -iA nixpkgs.espeak-ng"
+        )
+        raise HTTPException(503, hint)
+    except Exception as exc:
+        logger.error("Document TTS failed: %s", exc)
+        raise HTTPException(500, f"Audiobook generation failed: {exc}")
+    finally:
+        # Clean up temp WAVs
+        for p in wav_paths:
+            p.unlink(missing_ok=True)
+        try:
+            (tmp_dir / "concat.txt").unlink(missing_ok=True)
+            tmp_dir.rmdir()
+        except Exception:
+            pass
 
 
 # ── Outputs ───────────────────────────────────────────────────────────────────

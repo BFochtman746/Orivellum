@@ -1,3 +1,4 @@
+import { useState, useEffect } from "react";
 import {
   useGetDashboardSummary,
   useGetDashboardActivity,
@@ -12,12 +13,154 @@ import {
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { format, formatDistanceToNow } from "date-fns";
-import { BookOpen, Library, MessageSquare, Target, Activity, FileText, CheckCircle2, Clock, Plus, Upload, FolderPlus } from "lucide-react";
+import { BookOpen, Library, MessageSquare, Target, Activity, FileText, CheckCircle2, Clock, Plus, Upload, FolderPlus, Sparkles, RefreshCw, ArrowRight, Lightbulb, Telescope, Zap, GitMerge } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { apiFetch } from "@/lib/auth";
+
+const BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
+
+const KIND_ICON: Record<string, React.ElementType> = {
+  explore:    Telescope,
+  deep_dive:  BookOpen,
+  practice:   Zap,
+  connect:    GitMerge,
+  gap:        Lightbulb,
+};
+const KIND_COLOR: Record<string, string> = {
+  explore:   "text-blue-500",
+  deep_dive: "text-violet-500",
+  practice:  "text-emerald-500",
+  connect:   "text-amber-500",
+  gap:       "text-rose-500",
+};
+
+function SuggestionsWidget() {
+  const [suggestions, setSuggestions] = useState<any[]>([]);
+  const [loading, setLoading]   = useState(false);
+  const [fetched, setFetched]   = useState(false);
+  const [, setLocation] = useLocation();
+
+  async function fetchSuggestions() {
+    try {
+      const resp = await apiFetch(`${BASE}/suggestions?limit=6`);
+      if (resp.ok) {
+        const data = await resp.json();
+        setSuggestions(data.suggestions ?? []);
+        setFetched(true);
+      }
+    } catch { /* silent */ }
+  }
+
+  async function handleGenerate() {
+    setLoading(true);
+    try {
+      const resp = await apiFetch(`${BASE}/suggestions/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ limit: 6 }),
+      });
+      if (!resp.ok) throw new Error("generate failed");
+      const data = await resp.json();
+      setSuggestions(data.suggestions ?? []);
+      setFetched(true);
+      if ((data.suggestions ?? []).length === 0) {
+        toast.info("No suggestions yet — add more documents to your library first.");
+      }
+    } catch {
+      toast.error("Could not generate suggestions. Check that your library has processed documents.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // Auto-fetch existing suggestions on mount
+  useEffect(() => { fetchSuggestions(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <h2 className="text-2xl font-serif font-semibold flex items-center gap-2">
+          <Sparkles className="w-5 h-5 text-primary" />
+          What to Explore Next
+        </h2>
+        <Button
+          size="sm" variant="outline"
+          className="gap-1.5 font-mono text-xs uppercase tracking-wider"
+          onClick={handleGenerate}
+          disabled={loading}
+        >
+          {loading
+            ? <><Loader2Dash className="w-3 h-3 animate-spin" />Thinking…</>
+            : <><RefreshCw className="w-3 h-3" />Refresh</>}
+        </Button>
+      </div>
+
+      {!fetched && !loading ? (
+        <div className="rounded-xl border border-dashed border-border/50 bg-muted/10 p-8 text-center space-y-3">
+          <Sparkles className="w-8 h-8 mx-auto text-muted-foreground opacity-40" />
+          <p className="text-sm text-muted-foreground">
+            Tap <strong>Refresh</strong> to get personalised study suggestions based on your knowledge base.
+          </p>
+          <Button size="sm" className="gap-2" onClick={handleGenerate} disabled={loading}>
+            {loading ? <><Loader2Dash className="w-3.5 h-3.5 animate-spin" />Thinking…</> : <><Sparkles className="w-3.5 h-3.5" />Generate Suggestions</>}
+          </Button>
+        </div>
+      ) : suggestions.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-border/50 bg-muted/10 p-6 text-center">
+          <p className="text-sm text-muted-foreground">
+            {loading ? "Analysing your knowledge base…" : "No suggestions yet — upload and process some documents, then tap Refresh."}
+          </p>
+        </div>
+      ) : (
+        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          {suggestions.map((s: any) => {
+            const meta   = typeof s.meta === "string" ? JSON.parse(s.meta || "{}") : (s.meta ?? {});
+            const kind   = meta.kind ?? s.kind ?? "explore";
+            const KIcon  = KIND_ICON[kind] ?? Lightbulb;
+            const kColor = KIND_COLOR[kind] ?? "text-primary";
+            return (
+              <div key={s.id}
+                className="flex flex-col gap-2 p-4 rounded-xl border border-border/50 bg-card hover:border-primary/40 transition-colors group">
+                <div className="flex items-start gap-2">
+                  <KIcon className={`w-4 h-4 mt-0.5 shrink-0 ${kColor}`} />
+                  <p className="text-sm font-medium leading-snug line-clamp-2 flex-1">{s.text}</p>
+                </div>
+                {meta.rationale && (
+                  <p className="text-xs text-muted-foreground leading-relaxed line-clamp-2">
+                    {meta.rationale}
+                  </p>
+                )}
+                <div className="flex items-center justify-between mt-auto pt-1">
+                  {meta.effort && (
+                    <span className="text-[10px] font-mono text-muted-foreground bg-muted/40 px-2 py-0.5 rounded-full">
+                      {meta.effort}
+                    </span>
+                  )}
+                  <Button
+                    size="sm" variant="ghost"
+                    className="gap-1 text-xs h-7 ml-auto opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity"
+                    onClick={() => setLocation("/chat")}
+                  >
+                    Explore <ArrowRight className="w-3 h-3" />
+                  </Button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Inline loader to avoid naming conflict
+function Loader2Dash({ className }: { className?: string }) {
+  return <svg className={className} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>;
+}
 
 export default function Dashboard() {
   const [, setLocation] = useLocation();
@@ -240,6 +383,11 @@ export default function Dashboard() {
               )}
             </div>
           )}
+        </div>
+
+        {/* Suggestions */}
+        <div className="md:col-span-3">
+          <SuggestionsWidget />
         </div>
 
         {/* Recent Conversations + Activity Feed */}

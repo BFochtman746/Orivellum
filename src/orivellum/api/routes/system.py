@@ -1,10 +1,17 @@
 """System routes — /api/system/*"""
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+import json
+import logging
+import uuid
+from datetime import datetime, timezone
+
+from fastapi import APIRouter, Body, HTTPException
 from pydantic import BaseModel
 
 from orivellum.api._deps import get_db, get_config
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api")
 
@@ -156,6 +163,147 @@ def get_suggestions(work_id: str | None = None, limit: int = 5):
     with db._lock:
         rows = db._conn.execute(q, args).fetchall()
     return {"suggestions": [dict(r) for r in rows]}
+
+
+@router.post("/suggestions/generate")
+def generate_suggestions(work_id: str | None = Body(None), limit: int = Body(6)):
+    """Generate personalised study/research suggestions from the knowledge base.
+
+    Fetches a sample of knowledge items, groups them by topic, then either
+    asks the configured LLM to propose the next study directions or falls back
+    to a deterministic algorithm when the AI endpoint is unavailable.
+    Clears suggestions older than 7 days before writing new ones.
+    """
+    db  = get_db()
+    cfg = get_config()
+    now = datetime.now(timezone.utc).isoformat()
+
+    # ── Gather knowledge context ───────────────────────────────────────────────
+    with db._lock:
+        # Sample up to 40 recent/diverse knowledge items
+        k_rows = db._conn.execute(
+            """SELECT k.kind, k.text, w.title AS work_title
+               FROM knowledge k
+               LEFT JOIN works w ON w.id = k.work_id
+               WHERE k.review_status != 'rejected'
+               ORDER BY k.created_at DESC
+               LIMIT 40""",
+        ).fetchall()
+        # Grab work titles for context
+        work_rows = db._conn.execute(
+            "SELECT id, title FROM works ORDER BY created_at DESC LIMIT 10"
+        ).fetchall()
+
+    if not k_rows:
+        return {"suggestions": [], "generated": 0,
+                "message": "Upload and process some documents first — your library is empty."}
+
+    knowledge_lines = [
+        f"[{r['kind']}] ({r['work_title'] or 'Library'}) {r['text'][:200]}"
+        for r in k_rows
+    ]
+    works_list = ", ".join(r["title"] for r in work_rows) or "none yet"
+    knowledge_block = "\n".join(knowledge_lines)
+
+    # ── Try LLM ───────────────────────────────────────────────────────────────
+    llm_suggestions: list[dict] | None = None
+    try:
+        import httpx
+        probe = httpx.get(f"{cfg.serving.base_url}/models", timeout=2.0)
+        if probe.status_code == 200:
+            payload = {
+                "model": cfg.serving.workhorse_model,
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are a research advisor. Given a user's knowledge base, "
+                            "suggest specific topics they should study or research next. "
+                            "Return ONLY valid JSON — a list of objects with keys: "
+                            "title (short, ≤60 chars), rationale (1-2 sentences citing their existing "
+                            "knowledge), effort (e.g. '1 hour', '2-3 hours'), kind (one of: "
+                            "explore, deep_dive, practice, connect, gap). No markdown, no prose."
+                        ),
+                    },
+                    {
+                        "role": "user",
+                        "content": (
+                            f"My active works: {works_list}\n\n"
+                            f"Sample of my knowledge base ({len(k_rows)} items):\n"
+                            f"{knowledge_block}\n\n"
+                            f"Suggest {limit} specific things I should study or explore next. "
+                            "Focus on gaps, connections between topics, and logical next steps."
+                        ),
+                    },
+                ],
+                "temperature": 0.7,
+                "max_tokens": 1200,
+            }
+            r = httpx.post(
+                f"{cfg.serving.base_url}/chat/completions",
+                json=payload, timeout=30,
+            )
+            if r.status_code == 200:
+                raw = r.json()["choices"][0]["message"]["content"].strip()
+                # Strip markdown code fences if present
+                raw = raw.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+                llm_suggestions = json.loads(raw)
+    except Exception as exc:
+        logger.warning("LLM suggestion generation failed, using fallback: %s", exc)
+
+    # ── Fallback: deterministic extraction from knowledge ─────────────────────
+    if not llm_suggestions:
+        # Group by work/topic and propose exploration of less-covered areas
+        from collections import Counter
+        work_counts: Counter = Counter(
+            r["work_title"] or "Library" for r in k_rows
+        )
+        kind_counts: Counter = Counter(r["kind"] for r in k_rows)
+        seen_topics = set()
+        fallback = []
+        for r in k_rows:
+            topic = (r["text"][:80]).split(".")[0].strip()
+            if topic not in seen_topics and len(fallback) < limit:
+                seen_topics.add(topic)
+                fallback.append({
+                    "title": f"Explore: {topic[:55]}",
+                    "rationale": (
+                        f"From your {r['work_title'] or 'Library'} documents — "
+                        f"this concept appears in your knowledge base and has connections worth exploring."
+                    ),
+                    "effort": "1-2 hours",
+                    "kind": "explore",
+                })
+        llm_suggestions = fallback
+
+    # ── Prune stale suggestions ───────────────────────────────────────────────
+    with db._lock:
+        db._conn.execute(
+            "DELETE FROM suggestions WHERE created_at < datetime('now','-7 days')"
+        )
+        db._conn.commit()
+
+    # ── Persist new suggestions ───────────────────────────────────────────────
+    new_rows: list[dict] = []
+    with db._lock:
+        for item in (llm_suggestions or [])[:limit]:
+            sid = str(uuid.uuid4())
+            meta = json.dumps({
+                "rationale": item.get("rationale", ""),
+                "effort":    item.get("effort", ""),
+                "kind":      item.get("kind", "explore"),
+            })
+            db._conn.execute(
+                "INSERT INTO suggestions(id,work_id,kind,text,meta,created_at) VALUES(?,?,?,?,?,?)",
+                (sid, work_id, item.get("kind","explore"), item.get("title",""), meta, now),
+            )
+            new_rows.append({
+                "id": sid, "work_id": work_id, "kind": item.get("kind","explore"),
+                "text": item.get("title",""), "meta": json.loads(meta), "created_at": now,
+            })
+        db._conn.commit()
+
+    return {"suggestions": new_rows, "generated": len(new_rows)}
 
 
 @router.get("/system/jobs")

@@ -1,14 +1,15 @@
 import { useRef, useState } from "react";
-import { useListVoices, useListStudioOutputs, useGetSystemHealth } from "@workspace/api-client-react";
+import { useListVoices, useListStudioOutputs, useGetSystemHealth, useListLibrary } from "@workspace/api-client-react";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Slider } from "@/components/ui/slider";
 import { Textarea } from "@/components/ui/textarea";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Mic, Play, Pause, Settings2, Video, Image as ImageIcon,
-  FileAudio, Loader2, Volume2, Download,
+  FileAudio, Loader2, Volume2, Download, BookHeadphones, FileText,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Link } from "wouter";
@@ -197,6 +198,162 @@ function TTSPanel() {
 }
 
 // ── Image generation panel ─────────────────────────────────────────────────────
+
+// ── Audiobook panel ───────────────────────────────────────────────────────────
+
+function AudiobookPanel() {
+  const { data: voicesResp, isLoading: loadingVoices } = useListVoices();
+  const voices = voicesResp?.voices ?? [];
+
+  const { data: libResp, isLoading: loadingDocs } = useListLibrary(
+    { readiness: "ready" } as any,
+    { query: { staleTime: 20_000 } } as any,
+  );
+  const docs = ((libResp as any)?.documents ?? []) as any[];
+
+  const [docId, setDocId]   = useState<string>("");
+  const [voiceId, setVoiceId] = useState("af_heart");
+  const [speed, setSpeed]   = useState(1.0);
+  const [loading, setLoading] = useState(false);
+  const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  const [audioName, setAudioName] = useState("audiobook.mp3");
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [playing, setPlaying] = useState(false);
+
+  const selectedDoc = docs.find((d: any) => d.id === docId);
+
+  async function handleGenerate() {
+    if (!docId) return;
+    setLoading(true);
+    setAudioUrl(null);
+    setPlaying(false);
+    try {
+      const resp = await apiFetch(`${BASE}/studio/tts/document`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ doc_id: docId, voice: voiceId, speed }),
+      });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        throw new Error((err as any).detail ?? `HTTP ${resp.status}`);
+      }
+      const blob = await resp.blob();
+      const url  = URL.createObjectURL(blob);
+      const name = `${selectedDoc?.title || "audiobook"}.mp3`;
+      setAudioUrl(url);
+      setAudioName(name);
+      toast.success("Audiobook ready — tap play below");
+    } catch (e: any) {
+      toast.error(`Audiobook failed: ${e.message}`, { duration: 10_000 });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function togglePlay() {
+    const el = audioRef.current;
+    if (!el) return;
+    if (playing) { el.pause(); setPlaying(false); }
+    else { el.play().catch(() => {}); setPlaying(true); }
+  }
+
+  return (
+    <Card className="border-border/50">
+      <CardHeader className="pb-3">
+        <CardTitle className="flex items-center gap-2 font-serif text-lg">
+          <BookHeadphones className="w-5 h-5 text-muted-foreground" />
+          Audiobook from Document
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <p className="text-xs text-muted-foreground">
+          Select a processed document from your Library — the full text will be synthesised
+          into an MP3 you can play or download. Large books may take a few minutes.
+        </p>
+
+        {/* Document picker */}
+        <div className="space-y-1">
+          <label className="text-xs font-mono uppercase text-muted-foreground">Document</label>
+          {loadingDocs ? <Skeleton className="h-9 w-full" /> : (
+            <Select value={docId} onValueChange={setDocId}>
+              <SelectTrigger className="text-sm">
+                <SelectValue placeholder="Choose a document from your Library…" />
+              </SelectTrigger>
+              <SelectContent>
+                {docs.length === 0 ? (
+                  <div className="px-3 py-4 text-xs text-muted-foreground text-center">
+                    No processed documents found. Import files in the Library first.
+                  </div>
+                ) : docs.map((d: any) => (
+                  <SelectItem key={d.id} value={d.id} className="text-sm">
+                    <span className="flex items-center gap-2">
+                      <FileText className="w-3 h-3 shrink-0 text-muted-foreground" />
+                      <span className="truncate max-w-[260px]">
+                        {d.title || d.source?.split("/").pop() || d.id}
+                      </span>
+                    </span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+        </div>
+
+        {/* Voice + speed */}
+        <div className="grid grid-cols-2 gap-4">
+          <div className="space-y-1">
+            <label className="text-xs font-mono uppercase text-muted-foreground">Voice</label>
+            {loadingVoices ? <Skeleton className="h-9 w-full" /> : (
+              <Select value={voiceId} onValueChange={setVoiceId}>
+                <SelectTrigger className="text-sm"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {voices.map((v: any) => (
+                    <SelectItem key={v.id} value={v.id} className="text-sm">{v.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+          </div>
+          <div className="space-y-2">
+            <label className="text-xs font-mono uppercase text-muted-foreground">
+              Speed — {speed.toFixed(1)}×
+            </label>
+            <div className="px-1 pt-1">
+              <Slider min={0.5} max={2.0} step={0.1} value={[speed]}
+                onValueChange={([v]) => setSpeed(v)} className="w-full" />
+            </div>
+            <div className="flex justify-between text-[10px] font-mono text-muted-foreground px-1">
+              <span>0.5×</span><span>1.0×</span><span>2.0×</span>
+            </div>
+          </div>
+        </div>
+
+        <Button onClick={handleGenerate} disabled={!docId || loading} className="w-full gap-2">
+          {loading
+            ? <><Loader2 className="w-4 h-4 animate-spin" />Converting to audio… (may take a few minutes)</>
+            : <><BookHeadphones className="w-4 h-4" />Generate Audiobook</>}
+        </Button>
+
+        {audioUrl && (
+          <div className="flex items-center gap-3 p-3 rounded-lg bg-muted/30 border border-border/50">
+            <Button size="icon" variant="secondary" className="h-9 w-9 rounded-full shrink-0"
+              onClick={togglePlay}>
+              {playing ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+            </Button>
+            <audio ref={audioRef} src={audioUrl} onEnded={() => setPlaying(false)}
+              onPause={() => setPlaying(false)} onPlay={() => setPlaying(true)}
+              className="flex-1 h-8" controls style={{ minWidth: 0 }} />
+            <Button size="icon" variant="ghost" className="shrink-0"
+              onClick={() => { const a = document.createElement("a"); a.href = audioUrl; a.download = audioName; a.click(); }}>
+              <Download className="w-4 h-4" />
+            </Button>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 
 function ImageGenPanel() {
   const [prompt, setPrompt] = useState("");
@@ -398,6 +555,8 @@ export default function Studio() {
         <ErrorBoundary label="TTS panel"><TTSPanel /></ErrorBoundary>
         <ErrorBoundary label="image generation panel"><ImageGenPanel /></ErrorBoundary>
       </div>
+
+      <ErrorBoundary label="audiobook panel"><AudiobookPanel /></ErrorBoundary>
 
       <ErrorBoundary label="outputs gallery"><OutputsGallery /></ErrorBoundary>
     </div>
