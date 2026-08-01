@@ -18,8 +18,11 @@ import { Separator } from "@/components/ui/separator";
 import {
   ArrowLeft, FileText, AlertCircle, CheckCircle2, Clock,
   FileQuestion, RefreshCw, Trash2, Hash, Calendar, Database,
-  BookOpen, Cpu, Sparkles, ThumbsUp, ThumbsDown, Link2,
+  BookOpen, Cpu, Sparkles, ThumbsUp, ThumbsDown, Link2, Info,
 } from "lucide-react";
+import {
+  Tooltip, TooltipContent, TooltipProvider, TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
 import { apiFetch } from "@/lib/auth";
@@ -106,19 +109,70 @@ function ReviewBadge({ status }: { status: string | null | undefined }) {
 
 // ── Confidence bar ────────────────────────────────────────────────────────────
 
-function ConfidenceBar({ value }: { value: number }) {
+function confidenceTier(pct: number): { label: string; color: string } {
+  if (pct >= 80) return { label: "High confidence",   color: "bg-emerald-500" };
+  if (pct >= 60) return { label: "Medium confidence", color: "bg-amber-400" };
+  return               { label: "Low confidence",    color: "bg-orange-400" };
+}
+
+function ConfidenceBar({ value, source }: { value: number; source?: string }) {
   const pct = Math.round(value * 100);
-  const color =
-    pct >= 80 ? "bg-emerald-500" :
-    pct >= 60 ? "bg-amber-400" :
-                "bg-orange-400";
+  const { label, color } = confidenceTier(pct);
+  const origin = source === "llm" ? "LLM extraction" : source === "rule" ? "Rule-based" : null;
+  const tipText = origin ? `${pct}% — ${label} · ${origin}` : `${pct}% — ${label}`;
+
   return (
-    <div className="flex items-center gap-1.5 shrink-0" title={`Confidence: ${pct}%`}>
-      <div className="w-14 h-1.5 bg-muted rounded-full overflow-hidden">
-        <div className={`h-full rounded-full ${color}`} style={{ width: `${pct}%` }} />
-      </div>
-      <span className="text-[10px] font-mono text-muted-foreground w-7 text-right">{pct}%</span>
-    </div>
+    <TooltipProvider delayDuration={200}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <div className="flex items-center gap-1.5 shrink-0 cursor-default">
+            <div className="w-14 h-1.5 bg-muted rounded-full overflow-hidden">
+              <div className={`h-full rounded-full ${color}`} style={{ width: `${pct}%` }} />
+            </div>
+            <span className="text-[10px] font-mono text-muted-foreground w-7 text-right">{pct}%</span>
+          </div>
+        </TooltipTrigger>
+        <TooltipContent side="top" className="max-w-xs">
+          {tipText}
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
+
+// ── Confidence legend info button ─────────────────────────────────────────────
+
+function ConfidenceLegend() {
+  return (
+    <TooltipProvider delayDuration={200}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button className="p-0.5 rounded text-muted-foreground/60 hover:text-muted-foreground transition-colors">
+            <Info className="w-3.5 h-3.5" />
+          </button>
+        </TooltipTrigger>
+        <TooltipContent side="top" className="max-w-64 space-y-1.5 py-2">
+          <p className="font-semibold text-xs mb-1">Confidence score</p>
+          <div className="space-y-1 text-[11px]">
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
+              <span>≥ 80% — High · typically LLM-extracted</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-amber-400 shrink-0" />
+              <span>60–79% — Medium · sentence or heading match</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-orange-400 shrink-0" />
+              <span>{"< 60% — Low · heuristic noun-phrase mention"}</span>
+            </div>
+          </div>
+          <p className="text-[10px] text-muted-foreground/80 pt-0.5 border-t border-border/40">
+            LLM items are extracted by AI; rule-based items use pattern matching.
+          </p>
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   );
 }
 
@@ -168,7 +222,7 @@ function AiKindSection({
                 )}
               </div>
               <div className="flex items-center gap-1 shrink-0">
-                {item.confidence != null && <ConfidenceBar value={item.confidence} />}
+                {item.confidence != null && <ConfidenceBar value={item.confidence} source="llm" />}
                 <ReviewBadge status={item.review_status} />
                 {(item.review_status === "ai_auto" || isApproved || isRejected) && (
                   <>
@@ -295,6 +349,7 @@ function KnowledgeTabContent({
                 {aiItems.length} item{aiItems.length !== 1 ? "s" : ""}
               </span>
             )}
+            <ConfidenceLegend />
           </div>
 
           {aiItems.length === 0 ? (
@@ -387,7 +442,7 @@ function KnowledgeTabContent({
                           )}
                         </div>
                         <div className="flex items-center gap-1.5 shrink-0">
-                          {item.confidence != null && <ConfidenceBar value={item.confidence} />}
+                          {item.confidence != null && <ConfidenceBar value={item.confidence} source="rule" />}
                           {(isAI || isApproved || isRejected) && (
                             <>
                               <button
