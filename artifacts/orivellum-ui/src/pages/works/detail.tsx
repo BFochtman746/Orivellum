@@ -96,6 +96,7 @@ export default function WorkDetail() {
     },
   });
   const stats = statsResp as any;
+  const pendingTaskCount: number = stats?.pending_task_count ?? 0;
   const updateWork = useUpdateWork();
   const deleteWork = useDeleteWork();
 
@@ -334,20 +335,25 @@ export default function WorkDetail() {
         <Tabs defaultValue="documents" className="w-full">
           <TabsList className="w-full justify-start border-b border-border/50 rounded-none bg-transparent h-auto p-0 space-x-6">
             {[
-              { value: "documents", icon: FileText, label: "Documents" },
-              { value: "knowledge", icon: Network, label: "Knowledge" },
-              { value: "tasks", icon: CheckSquare, label: "Tasks" },
-              { value: "conversations", icon: MessageSquare, label: "Conversations" },
-              { value: "search", icon: Search, label: "Search" },
-              { value: "quiz",  icon: GraduationCap, label: "Quiz" },
-              { value: "learn", icon: BookOpen,      label: "Learn" },
-            ].map(({ value, icon: Icon, label }) => (
+              { value: "documents", icon: FileText, label: "Documents", badge: null },
+              { value: "knowledge", icon: Network, label: "Knowledge", badge: null },
+              { value: "tasks", icon: CheckSquare, label: "Tasks", badge: pendingTaskCount ?? null },
+              { value: "conversations", icon: MessageSquare, label: "Conversations", badge: null },
+              { value: "search", icon: Search, label: "Search", badge: null },
+              { value: "quiz",  icon: GraduationCap, label: "Quiz", badge: null },
+              { value: "learn", icon: BookOpen,      label: "Learn", badge: null },
+            ].map(({ value, icon: Icon, label, badge }) => (
               <TabsTrigger
                 key={value}
                 value={value}
                 className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent py-3 px-1 font-mono text-xs uppercase tracking-wider"
               >
                 <Icon className="w-4 h-4 mr-2" /> {label}
+                {badge !== null && badge !== undefined && badge > 0 && (
+                  <span className="ml-1.5 px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-primary/10 text-primary leading-none">
+                    {badge}
+                  </span>
+                )}
               </TabsTrigger>
             ))}
           </TabsList>
@@ -1025,15 +1031,17 @@ function TasksTab({ workId }: { workId: string }) {
   const createTask = useCreateWorkTask();
   const updateTask = useUpdateWorkTask();
   const [newTaskText, setNewTaskText] = useState("");
+  const [newTaskPriority, setNewTaskPriority] = useState<number>(0);
 
   const handleAdd = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newTaskText.trim()) return;
     createTask.mutate(
-      { workId, data: { text: newTaskText } },
+      { workId, data: { text: newTaskText, priority: newTaskPriority || undefined } },
       {
         onSuccess: () => {
           setNewTaskText("");
+          setNewTaskPriority(0);
           queryClient.invalidateQueries({ queryKey: getGetWorkTasksQueryKey(workId) });
           queryClient.invalidateQueries({ queryKey: getGetWorkStatsQueryKey(workId) });
           toast.success("Task added");
@@ -1067,8 +1075,19 @@ function TasksTab({ workId }: { workId: string }) {
           placeholder="Add a new task…"
           value={newTaskText}
           onChange={(e) => setNewTaskText(e.target.value)}
-          className="bg-background/50"
+          className="bg-background/50 flex-1"
         />
+        <select
+          value={newTaskPriority}
+          onChange={(e) => setNewTaskPriority(Number(e.target.value))}
+          className="h-9 rounded-md border border-input bg-background px-2 text-xs font-mono text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+          title="Priority (0 = none, higher = more urgent)"
+        >
+          <option value={0}>P0</option>
+          <option value={1}>P1</option>
+          <option value={2}>P2</option>
+          <option value={3}>P3</option>
+        </select>
         <Button type="submit" disabled={!newTaskText.trim() || createTask.isPending}>
           {createTask.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : "Add"}
         </Button>
