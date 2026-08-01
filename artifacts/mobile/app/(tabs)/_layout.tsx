@@ -8,6 +8,35 @@ import { Tabs } from 'expo-router';
 import { Icon, Label, NativeTabs } from 'expo-router/unstable-native-tabs';
 import { SymbolView } from 'expo-symbols';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useGetSystemHealth, getGetSystemHealthQueryKey } from '@workspace/api-client-react';
+
+/** Small coloured dot showing server reachability. */
+function ServerDot() {
+  const { data, isError } = useGetSystemHealth({
+    query: {
+      queryKey: getGetSystemHealthQueryKey(),
+      refetchInterval: 15_000,
+      staleTime: 10_000,
+      retry: false,
+    },
+  });
+  const ok = !isError && data?.status === 'ok';
+  const degraded = !isError && data?.status !== 'ok';
+  const color = isError ? '#ef4444' : degraded ? '#f59e0b' : '#22c55e';
+  return (
+    <View
+      style={{
+        width: 6,
+        height: 6,
+        borderRadius: 3,
+        backgroundColor: color,
+        position: 'absolute',
+        top: 2,
+        right: -2,
+      }}
+    />
+  );
+}
 
 function NativeTabLayout() {
   return (
@@ -76,12 +105,16 @@ function ClassicTabLayout() {
         name="index"
         options={{
           title: 'Dashboard',
-          tabBarIcon: ({ color }) =>
-            isIOS ? (
-              <SymbolView name="house" tintColor={color} size={24} />
-            ) : (
-              <Feather name="home" size={22} color={color} />
-            ),
+          tabBarIcon: ({ color }) => (
+            <View style={{ position: 'relative' }}>
+              {isIOS ? (
+                <SymbolView name="house" tintColor={color} size={24} />
+              ) : (
+                <Feather name="home" size={22} color={color} />
+              )}
+              <ServerDot />
+            </View>
+          ),
         }}
       />
       <Tabs.Screen

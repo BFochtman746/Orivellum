@@ -105,8 +105,9 @@ async def send_message(conv_id: str, body: MessageSend):
 
     # Non-streaming path
     messages = _build_messages(db, conv, body.text)
-    reply = await _call_ai(messages, model=_model_for(conv))
-    msg = db.add_message(conv_id, "assistant", reply)
+    model = _model_for(conv)
+    reply = await _call_ai(messages, model=model)
+    msg = db.add_message(conv_id, "assistant", reply, meta={"model": model})
 
     # Auto-title the conversation after the first exchange
     _maybe_auto_title(db, conv, body.text)
@@ -231,7 +232,12 @@ async def _stream_response(db: Any, conv: dict, user_text: str):
     full_reply = ""
 
     model = _model_for(conv)
+    # Per-chunk silence timeout: if the AI server sends no new token for this
+    # long, we treat the stream as stalled and close it cleanly.
+    _CHUNK_TIMEOUT_SEC = 30
+
     try:
+        import asyncio
         import httpx
         async with httpx.AsyncClient(timeout=cfg.serving.timeout_sec) as client:
             async with client.stream(
@@ -258,6 +264,11 @@ async def _stream_response(db: Any, conv: dict, user_text: str):
                             yield f"data: {json.dumps({'token': token})}\n\n"
                     except Exception:
                         pass
+    except asyncio.TimeoutError:
+        logger.warning("AI stream timed out after %ss of silence", _CHUNK_TIMEOUT_SEC)
+        if not full_reply:
+            full_reply = _UNAVAILABLE
+            yield f"data: {json.dumps({'token': full_reply})}\n\n"
 
     except GeneratorExit:
         # Client disconnected mid-stream — save whatever tokens arrived so the
@@ -265,7 +276,7 @@ async def _stream_response(db: Any, conv: dict, user_text: str):
         if full_reply:
             try:
                 truncated = full_reply + "\n\n*(Response was cut short — re-send to continue.)*"
-                db.add_message(conv_id, "assistant", truncated)
+                db.add_message(conv_id, "assistant", truncated, meta={"model": model})
                 _maybe_auto_title(db, conv, user_text)
             except Exception as save_exc:
                 logger.warning("Could not persist partial reply: %s", save_exc)
@@ -278,7 +289,7 @@ async def _stream_response(db: Any, conv: dict, user_text: str):
 
     # Normal completion path (also reached after AI failure fallback)
     if full_reply:
-        db.add_message(conv_id, "assistant", full_reply)
+        db.add_message(conv_id, "assistant", full_reply, meta={"model": model})
     _maybe_auto_title(db, conv, user_text)
     yield "data: [DONE]\n\n"
 

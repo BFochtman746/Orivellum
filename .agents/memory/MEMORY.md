@@ -15,7 +15,8 @@
 - [Projects detail page](orivellum-projects-detail.md) — /projects/:projectId route added; ProjectDetail component at pages/projects/detail.tsx; fetches GET /api/projects/:id and /concepts; shows mastery progress bar + concept list with masteryLabel/masteryColor helpers.
 - [Library reprocess polling](orivellum-library-reprocess.md) — handleReprocess uses setInterval (2s, max 15 attempts) to poll refetch() until readiness leaves "imported"; shows toast.success/error based on final readiness.
 - [Briefing endpoint](orivellum-briefing.md) — GET /api/system/briefing returns time-of-day greeting; uses pending_task_count from dashboard_summary; Good morning/afternoon/evening based on UTC hour.
-- [Mobile app improvements](mobile-improvements.md) — Library tab added; markdown via react-native-markdown-display in AI bubbles; model picker (ActionSheetIOS/Modal); briefing greeting; tappable activity rows; conv_count on works.
+- [Mobile app improvements](mobile-improvements.md) — URL pattern, missing hooks, navigation, component patterns, styles, and pitfalls for the Expo mobile app.
 - [Library page improvements](library-improvements.md) — Work filter chip added; import dialog uses Select for work picker; duplicate upload navigates to existing doc; backup download; file download hover button.
 - [Orivellum polling patterns](orivellum-polling-patterns.md) — Conditional refetchInterval throughout; docs poll at 4s while "imported"; health polls 10-15s always; dashboard/lists poll 30s always.
+- [Orivellum hardening decisions](orivellum-hardening.md) — Rate limiting, output rotation, streaming timeout, error boundaries, connection indicators, model attribution, single-command startup.
 - [Orivellum media capabilities](orivellum-media-capabilities.md) — TTS via espeak-ng+ffmpeg; OCR via tesseract5 (probe needed); PDF 3-tier fallback; DOCX tables extracted; XLSX 5000-row cap.

@@ -1,40 +1,44 @@
 ---
 name: Mobile app improvements
-description: Key decisions and patterns for the Orivellum mobile app (Expo)
+description: Durable patterns, pitfalls, and decisions made while building the Orivellum Expo mobile app.
 ---
 
-## Mobile tab structure
-Tabs: Dashboard (index), Chats (conversations), Works, Library (new)
-- `_layout.tsx` supports both NativeTabs (iOS Liquid Glass) and classic Tabs
-- Adding a new tab requires updating BOTH NativeTabs and ClassicTabLayout sections
+## URL construction
 
-## Mobile library screen
-- `/app/(tabs)/library.tsx` — uses `useListLibrary` + `useSearchLibrary` (search enabled when query.length > 1)
-- DocItem `onPress` shows Alert with doc details (no mobile doc detail screen yet)
-- `listData.count` is the total count field (not `total`)
+Direct fetch calls in mobile always use:
+```js
+const domain = process.env.EXPO_PUBLIC_DOMAIN;
+const res = await fetch(`https://${domain}/api/...`);
+```
+Generated react-query hooks (from `@workspace/api-client-react`) handle this automatically.
 
-## Mobile markdown rendering
-- Installed `react-native-markdown-display` in mobile app
-- Used in `MessageBubble` for AI (non-user, non-error) messages in `chat/[id].tsx`
-- User messages and error messages still use plain `<Text>` for simplicity
-- `isDark` prop controls code block colors (dark zinc shades vs. light)
+## Missing generated hooks
 
-## Mobile model picker
-- In `chat/[id].tsx` — uses `useGetSystemModels` + `useUpdateConversation`
-- iOS: ActionSheetIOS.showActionSheetWithOptions
-- Android/web: custom Modal with ScrollView of model options
-- Shows current model label in a badge row below the header
+Not every backend endpoint has a generated hook. When a hook does not exist:
+- For simple GET: use `useQuery` + direct fetch (see `app/library/[id].tsx` knowledge fetch)
+- Endpoints added manually to backend routes after the last `orval` codegen run will not appear in the client until `pnpm exec orval --config orval.config.ts` is run from `lib/api-spec/`
 
-## Mobile home dashboard improvements
-- `useGetBriefing` powers the greeting subtitle (replaces hardcoded "Your research workspace")
-- ActivityRow is now tappable: work → `/work/:id`, conversation → `/chat/:id`
+Known missing hooks (as of this session):
+- `useGetDocumentKnowledge` — use direct fetch to `/api/library/{doc_id}/knowledge`
 
-## Works conv_count
-- Added `conv_count` subquery to `list_works()` SQL in `db.py` (was already in `get_work`)
-- Mobile WorkCard footer shows "N chats" chip when conv_count > 0
-- Mobile WorkDetailScreen stats array includes `conv_count`
-- Web works/index.tsx shows "Chats" stat column in work cards
+## Navigation patterns
 
-## Key: conv_count is now in list_works
-- `(SELECT COUNT(*) FROM conversations c WHERE c.work_id=w.id) as conv_count` added to list_works query
-- Frontend must cast as `(work as any).conv_count` since TypeScript types haven't been regenerated
+- Tab routes: `router.push('/library/' + id)` navigates inside the tab stack
+- Work detail → chat: `router.push('/chat/' + id as any)` on native; `router.push('/chat?id=' + id)` on web
+- `(router as any)` cast needed when route doesn't match known TS types
+
+## Component patterns
+
+- `KnowledgeRow` in `work/[id].tsx` — `onReviewed` prop triggers refetch after approve/reject
+- `WorkCard` in `works.tsx` — `onStartChat` prop; handler lives in `WorksScreen`, creates conversation then navigates
+- `ServerDot` in `_layout.tsx` — small green/amber/red dot on home tab icon; polls system health every 15s
+
+## Styles
+
+- `newChatBtn` / `newChatBtnText` — green action button in conversations tab list header
+- `chatBtn` / `chatBtnText` — small chat shortcut in WorkCard footer
+
+## What NOT to do
+
+- Do not call `isLiquidGlassAvailable` inside `NativeTabLayout` — it is only used as the top-level router switch
+- Do not duplicate `useRouter()` inside the same component scope — each sub-component has its own hook call which is fine

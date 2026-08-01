@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   FlatList,
   Platform,
   Pressable,
@@ -180,15 +179,7 @@ export default function LibraryScreen() {
             <DocItem
               doc={item}
               colors={colors}
-              onPress={() => {
-                const title = item.title || item.source?.split('/').pop() || 'Untitled';
-                const status = READINESS_LABEL[item.readiness ?? 'imported'] ?? item.readiness;
-                Alert.alert(
-                  title,
-                  `Kind: ${(item.kind ?? 'file').toUpperCase()}  ·  Status: ${status}${item.word_count ? `\n${item.word_count.toLocaleString()} words` : ''}${item.error_message ? `\n\nError: ${item.error_message}` : ''}`,
-                  [{ text: 'OK' }]
-                );
-              }}
+              onPress={() => router.push(`/library/${item.id}`)}
             />
           )}
           refreshControl={

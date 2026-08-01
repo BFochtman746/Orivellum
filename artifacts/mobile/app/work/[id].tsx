@@ -19,6 +19,8 @@ import {
   useGetWorkKnowledge,
   useGetWorkTasks,
   useCreateConversation,
+  useListConversations,
+  getListConversationsQueryKey,
 } from '@workspace/api-client-react';
 import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -27,7 +29,7 @@ import * as Haptics from 'expo-haptics';
 import type { Document, KnowledgeItem, Task } from '@workspace/api-client-react';
 import { OfflineBanner, ErrorScreen } from '@/components/OfflineBanner';
 
-type Tab = 'overview' | 'docs' | 'knowledge' | 'tasks';
+type Tab = 'overview' | 'docs' | 'knowledge' | 'tasks' | 'conversations';
 
 function TabBar({ active, onSelect, colors }: { active: Tab; onSelect: (t: Tab) => void; colors: any }) {
   const tabs: { key: Tab; label: string }[] = [
@@ -35,6 +37,7 @@ function TabBar({ active, onSelect, colors }: { active: Tab; onSelect: (t: Tab) 
     { key: 'docs', label: 'Docs' },
     { key: 'knowledge', label: 'Knowledge' },
     { key: 'tasks', label: 'Tasks' },
+    { key: 'conversations', label: 'Chats' },
   ];
   return (
     <View style={[styles.tabBar, { borderBottomColor: colors.border, backgroundColor: colors.background }]}>
@@ -83,21 +86,87 @@ function DocItem({ doc }: { doc: Document }) {
   );
 }
 
-function KnowledgeRow({ item }: { item: KnowledgeItem }) {
+function KnowledgeRow({ item, onReviewed }: { item: KnowledgeItem; onReviewed?: () => void }) {
   const colors = useColors();
   const conf = Math.round((item.confidence ?? 0) * 100);
+  const [localStatus, setLocalStatus] = useState<string | null>(null);
+  const [reviewing, setReviewing] = useState(false);
+
+  const status = localStatus ?? (item as any).review_status ?? 'auto';
+  const isAiAuto = (item as any).review_status === 'ai_auto' || (item as any).source === 'llm';
+  const isRejected = status === 'rejected';
+
+  const review = async (action: 'approve' | 'reject') => {
+    setReviewing(true);
+    try {
+      const domain = process.env.EXPO_PUBLIC_DOMAIN;
+      const res = await fetch(`https://${domain}/api/knowledge/${item.id}/review`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: action === 'approve' ? 'approved' : 'rejected' }),
+      });
+      if (res.ok) {
+        setLocalStatus(action === 'approve' ? 'approved' : 'rejected');
+        onReviewed?.();
+      }
+    } catch (_) {
+      // silent — network error
+    } finally {
+      setReviewing(false);
+    }
+  };
+
   return (
-    <View style={[styles.listItem, { borderColor: colors.border }]}>
+    <View style={[styles.listItem, { borderColor: colors.border, opacity: isRejected ? 0.45 : 1 }]}>
       <View style={[styles.itemIcon, { backgroundColor: colors.muted }]}>
-        <Feather name="cpu" size={14} color={colors.primary} />
+        <Feather name="cpu" size={14} color={isAiAuto ? '#8b5cf6' : colors.primary} />
       </View>
       <View style={styles.itemBody}>
         <Text style={[styles.itemTitle, { color: colors.foreground }]} numberOfLines={3}>
           {item.text}
         </Text>
         <Text style={[styles.itemMeta, { color: colors.mutedForeground }]}>
-          {item.kind} · {conf}% confidence
+          {item.kind} · {conf}% · {isAiAuto ? '✦ AI' : 'rule'}
+          {status === 'approved' ? ' · ✓ approved' : status === 'rejected' ? ' · ✗ rejected' : ''}
         </Text>
+        {isAiAuto && status !== 'approved' && status !== 'rejected' && (
+          <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
+            <Pressable
+              onPress={() => review('approve')}
+              disabled={reviewing}
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 4,
+                paddingHorizontal: 10,
+                paddingVertical: 4,
+                borderRadius: 6,
+                backgroundColor: '#dcfce7',
+                opacity: reviewing ? 0.5 : 1,
+              }}
+            >
+              <Feather name="thumbs-up" size={12} color="#16a34a" />
+              <Text style={{ fontSize: 11, color: '#16a34a', fontFamily: 'Inter_600SemiBold' }}>Approve</Text>
+            </Pressable>
+            <Pressable
+              onPress={() => review('reject')}
+              disabled={reviewing}
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 4,
+                paddingHorizontal: 10,
+                paddingVertical: 4,
+                borderRadius: 6,
+                backgroundColor: '#fee2e2',
+                opacity: reviewing ? 0.5 : 1,
+              }}
+            >
+              <Feather name="thumbs-down" size={12} color="#dc2626" />
+              <Text style={{ fontSize: 11, color: '#dc2626', fontFamily: 'Inter_600SemiBold' }}>Reject</Text>
+            </Pressable>
+          </View>
+        )}
       </View>
     </View>
   );
@@ -231,6 +300,10 @@ export default function WorkDetailScreen() {
   const { data: docsData, isLoading: docsLoading, isError: docsError, refetch: refetchDocs } = useGetWorkDocuments(id, { query: { staleTime: 20_000, refetchInterval: (q: any) => (q.state.data?.documents ?? []).some((d: any) => d.readiness === 'imported') ? 4_000 : false } } as any);
   const { data: knData, isLoading: knLoading, isError: knError, refetch: refetchKn } = useGetWorkKnowledge(id, { query: { staleTime: 30_000 } } as any);
   const { data: tasksData, isLoading: tasksLoading, isError: tasksError, refetch: refetchTasks } = useGetWorkTasks(id, { query: { staleTime: 30_000 } } as any);
+  const { data: convsData, isLoading: convsLoading, isError: convsError, refetch: refetchConvs } = useListConversations(
+    { work_id: id, limit: 50 } as any,
+    { query: { staleTime: 20_000, refetchInterval: 30_000 } } as any,
+  );
 
   const { mutateAsync: createConversation, isPending: startingConvo } = useCreateConversation();
 
@@ -328,7 +401,7 @@ export default function WorkDetailScreen() {
             <FlatList
               data={knowledge}
               keyExtractor={(k) => k.id ?? ''}
-              renderItem={({ item }) => <KnowledgeRow item={item} />}
+              renderItem={({ item }) => <KnowledgeRow item={item} onReviewed={refetchKn} />}
               contentContainerStyle={styles.listPad}
               refreshControl={
                 <RefreshControl refreshing={knLoading} onRefresh={refetchKn} tintColor={colors.primary} />
@@ -374,6 +447,71 @@ export default function WorkDetailScreen() {
             />
           </>
         );
+      case 'conversations': {
+        const convs = convsData?.conversations ?? [];
+        if (convsError && convs.length === 0) {
+          return (
+            <ErrorScreen
+              message="Can't load conversations"
+              detail="Check your connection and try again."
+              onRetry={refetchConvs}
+            />
+          );
+        }
+        return (
+          <>
+            {convsError && convs.length > 0 && (
+              <OfflineBanner message="Showing cached conversations" onRetry={refetchConvs} />
+            )}
+            <FlatList
+              data={convs}
+              keyExtractor={(c) => (c as any).id ?? ''}
+              renderItem={({ item: c }) => (
+                <Pressable
+                  onPress={() => router.push(`/chat/${(c as any).id}` as any)}
+                  style={({ pressed }) => [
+                    styles.listItem,
+                    { borderColor: colors.border, opacity: pressed ? 0.7 : 1 },
+                  ]}
+                >
+                  <View style={[styles.itemIcon, { backgroundColor: colors.muted }]}>
+                    <Feather name="message-circle" size={14} color={colors.primary} />
+                  </View>
+                  <View style={styles.itemBody}>
+                    <Text style={[styles.itemTitle, { color: colors.foreground }]} numberOfLines={1}>
+                      {(c as any).title || 'Untitled'}
+                    </Text>
+                    <Text style={[styles.itemMeta, { color: colors.mutedForeground }]}>
+                      {(c as any).message_count ?? 0} messages
+                      {(c as any).updated_at ? ` · ${new Date((c as any).updated_at).toLocaleDateString()}` : ''}
+                    </Text>
+                  </View>
+                  <Feather name="chevron-right" size={14} color={colors.mutedForeground} />
+                </Pressable>
+              )}
+              contentContainerStyle={styles.listPad}
+              refreshControl={
+                <RefreshControl refreshing={convsLoading} onRefresh={refetchConvs} tintColor={colors.primary} />
+              }
+              ListHeaderComponent={
+                <Pressable
+                  onPress={handleStartDiscussion}
+                  style={[styles.newChatBtn, { backgroundColor: colors.primary, borderColor: colors.primary }]}
+                >
+                  <Feather name="plus" size={14} color="#fff" />
+                  <Text style={styles.newChatBtnText}>Start New Discussion</Text>
+                </Pressable>
+              }
+              ListEmptyComponent={
+                <View style={styles.centered}>
+                  <Feather name="message-circle" size={36} color={colors.mutedForeground} />
+                  <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>No conversations yet</Text>
+                </View>
+              }
+            />
+          </>
+        );
+      }
     }
   };
 
@@ -457,6 +595,19 @@ const styles = StyleSheet.create({
   itemMeta: { fontSize: 11, fontFamily: 'Inter_400Regular', marginTop: 2 },
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 40 },
   emptyText: { fontSize: 14, fontFamily: 'Inter_400Regular' },
+  newChatBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    marginHorizontal: 16,
+    marginBottom: 12,
+    marginTop: 4,
+    paddingVertical: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  newChatBtnText: { fontSize: 13, fontFamily: 'Inter_600SemiBold', color: '#fff' },
   // Start Discussion button
   discussBtn: {
     flexDirection: 'row',

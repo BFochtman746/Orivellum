@@ -112,6 +112,27 @@ def works_knowledge(work_id: str, kind: str | None = None):
     return {"knowledge": items, "count": len(items)}
 
 
+@router.get("/works/{work_id}/search")
+def works_search(work_id: str, q: str, limit: int = 20):
+    """Full-text search across a Work's knowledge items and document chunks."""
+    db = get_db()
+    if not db.get_work(work_id):
+        raise HTTPException(404, f"Work {work_id!r} not found")
+    if not q.strip():
+        return {"knowledge": [], "chunks": [], "query": q}
+    try:
+        knowledge = db.search_knowledge(q, work_id=work_id, limit=limit)
+        chunks = db.search_chunks(q, work_id=work_id, limit=limit)
+    except Exception as exc:
+        raise HTTPException(500, f"Search failed: {exc}")
+    return {
+        "knowledge": knowledge,
+        "chunks": chunks,
+        "query": q,
+        "total": len(knowledge) + len(chunks),
+    }
+
+
 @router.get("/works/{work_id}/tasks")
 def works_tasks(work_id: str, status: str | None = None):
     db = get_db()

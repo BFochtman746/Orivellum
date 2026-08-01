@@ -15,6 +15,22 @@ from orivellum.api._deps import get_db, get_config
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api")
 
+_MAX_OUTPUTS = 50  # keep the newest N files; delete the rest
+
+
+def _rotate_outputs(out_dir: Path) -> None:
+    """Delete oldest files in *out_dir* beyond _MAX_OUTPUTS."""
+    try:
+        files = sorted(
+            (f for f in out_dir.iterdir() if f.is_file()),
+            key=lambda f: f.stat().st_mtime,
+            reverse=True,
+        )
+        for old in files[_MAX_OUTPUTS:]:
+            old.unlink(missing_ok=True)
+    except Exception as exc:
+        logger.warning("Output rotation failed: %s", exc)
+
 
 # ── Voices ────────────────────────────────────────────────────────────────────
 
@@ -101,6 +117,7 @@ async def synthesize_speech(body: TTSRequest):
                 )
                 tmp.write(resp.content)
                 tmp.close()
+                _rotate_outputs(out_dir)
                 return FileResponse(tmp.name, media_type="audio/mpeg",
                                     filename="speech.mp3")
     except Exception as exc:
@@ -144,6 +161,7 @@ async def synthesize_speech(body: TTSRequest):
         Path(wav_path).unlink(missing_ok=True)
 
         if ff.returncode == 0:
+            _rotate_outputs(out_dir)
             return FileResponse(mp3_path, media_type="audio/mpeg",
                                 filename="speech.mp3")
         else:

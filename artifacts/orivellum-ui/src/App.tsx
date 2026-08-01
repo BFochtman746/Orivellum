@@ -1,8 +1,10 @@
+import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Toaster } from '@/components/ui/toaster';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { Route, Switch, Router as WouterRouter } from 'wouter';
 import { AppLayout } from '@/components/layout';
+import { ErrorBoundary, RouteErrorFallback } from '@/components/error-boundary';
 
 import Dashboard from '@/pages/dashboard';
 import WorksList from '@/pages/works/index';
@@ -27,22 +29,32 @@ const queryClient = new QueryClient({
   },
 });
 
+function RouteWithBoundary({ component: Page }: { component: React.ComponentType }) {
+  return (
+    <ErrorBoundary
+      fallback={(err, reset) => <RouteErrorFallback error={err} reset={reset} />}
+    >
+      <Page />
+    </ErrorBoundary>
+  );
+}
+
 function Router() {
   return (
     <AppLayout>
       <Switch>
-        <Route path="/" component={Dashboard} />
-        <Route path="/works" component={WorksList} />
-        <Route path="/works/:workId" component={WorkDetail} />
-        <Route path="/chat" component={Chat} />
-        <Route path="/library" component={Library} />
-        <Route path="/library/:docId" component={DocumentDetail} />
-        <Route path="/files" component={Files} />
-        <Route path="/projects" component={Projects} />
-        <Route path="/projects/:projectId" component={ProjectDetail} />
-        <Route path="/studio" component={Studio} />
-        <Route path="/backups" component={Backups} />
-        <Route path="/system" component={System} />
+        <Route path="/">{() => <RouteWithBoundary component={Dashboard} />}</Route>
+        <Route path="/works">{() => <RouteWithBoundary component={WorksList} />}</Route>
+        <Route path="/works/:workId">{() => <RouteWithBoundary component={WorkDetail} />}</Route>
+        <Route path="/chat">{() => <RouteWithBoundary component={Chat} />}</Route>
+        <Route path="/library">{() => <RouteWithBoundary component={Library} />}</Route>
+        <Route path="/library/:docId">{() => <RouteWithBoundary component={DocumentDetail} />}</Route>
+        <Route path="/files">{() => <RouteWithBoundary component={Files} />}</Route>
+        <Route path="/projects">{() => <RouteWithBoundary component={Projects} />}</Route>
+        <Route path="/projects/:projectId">{() => <RouteWithBoundary component={ProjectDetail} />}</Route>
+        <Route path="/studio">{() => <RouteWithBoundary component={Studio} />}</Route>
+        <Route path="/backups">{() => <RouteWithBoundary component={Backups} />}</Route>
+        <Route path="/system">{() => <RouteWithBoundary component={System} />}</Route>
         <Route component={NotFound} />
       </Switch>
     </AppLayout>

@@ -60,6 +60,7 @@ import {
   Trash2,
   MessageSquarePlus,
   Unlink,
+  Search,
 } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -314,6 +315,7 @@ export default function WorkDetail() {
               { value: "knowledge", icon: Network, label: "Knowledge" },
               { value: "tasks", icon: CheckSquare, label: "Tasks" },
               { value: "conversations", icon: MessageSquare, label: "Conversations" },
+              { value: "search", icon: Search, label: "Search" },
             ].map(({ value, icon: Icon, label }) => (
               <TabsTrigger
                 key={value}
@@ -330,6 +332,7 @@ export default function WorkDetail() {
             <TabsContent value="knowledge"><KnowledgeTab workId={workId!} /></TabsContent>
             <TabsContent value="tasks"><TasksTab workId={workId!} /></TabsContent>
             <TabsContent value="conversations"><ConversationsTab workId={workId!} /></TabsContent>
+            <TabsContent value="search"><SearchTab workId={workId!} /></TabsContent>
           </div>
         </Tabs>
       </div>
@@ -663,11 +666,26 @@ function KnowledgeTab({ workId }: { workId: string }) {
                     )}
                   </div>
                   <div className="flex items-center gap-1.5 shrink-0">
-                    {item.confidence !== undefined && item.confidence !== null && (
-                      <div className="text-xs font-mono px-2 py-1 bg-muted rounded">
-                        {(item.confidence * 100).toFixed(0)}%
-                      </div>
-                    )}
+                    {item.confidence !== undefined && item.confidence !== null && (() => {
+                      const pct = item.confidence * 100;
+                      const tier =
+                        pct >= 80 ? { label: "High", color: "text-emerald-700 bg-emerald-50 border-emerald-200" }
+                        : pct >= 50 ? { label: "Med", color: "text-amber-700 bg-amber-50 border-amber-200" }
+                        : { label: "Low", color: "text-red-700 bg-red-50 border-red-200" };
+                      return (
+                        <div className="flex flex-col items-end gap-0.5" title={`Confidence: ${pct.toFixed(1)}% — ${tier.label === "High" ? "Strong signal, likely accurate" : tier.label === "Med" ? "Moderate signal, worth verifying" : "Weak signal, treat with caution"}`}>
+                          <span className={`text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded border ${tier.color}`}>
+                            {pct.toFixed(0)}% {tier.label}
+                          </span>
+                          <div className="w-12 h-1 rounded-full bg-muted overflow-hidden">
+                            <div
+                              className={`h-full rounded-full transition-all ${pct >= 80 ? "bg-emerald-500" : pct >= 50 ? "bg-amber-500" : "bg-red-500"}`}
+                              style={{ width: `${pct}%` }}
+                            />
+                          </div>
+                        </div>
+                      );
+                    })()}
                     {(isAI || isApproved || isRejected) && (
                       <>
                         <button
@@ -931,6 +949,147 @@ function ConversationsTab({ workId }: { workId: string }) {
           <Button size="sm" variant="outline" className="gap-2 mt-4" onClick={handleNewDiscussion} disabled={createConv.isPending}>
             <Plus className="w-4 h-4" /> Start a Discussion
           </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Search tab ───────────────────────────────────────────────────────────────
+
+function SearchTab({ workId }: { workId: string }) {
+  const [, navigate] = useLocation();
+  const [query, setQuery] = useState("");
+  const [submitted, setSubmitted] = useState("");
+  const [results, setResults] = useState<{ knowledge: any[]; chunks: any[] } | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleSearch = async (e?: React.FormEvent) => {
+    e?.preventDefault();
+    const q = query.trim();
+    if (!q) return;
+    setSubmitted(q);
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/works/${workId}/search?q=${encodeURIComponent(q)}&limit=20`);
+      if (!res.ok) throw new Error(`Search failed: ${res.status}`);
+      const data = await res.json();
+      setResults(data);
+    } catch (err: any) {
+      setError(err.message ?? "Search failed");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const total = (results?.knowledge.length ?? 0) + (results?.chunks.length ?? 0);
+
+  return (
+    <div className="space-y-6">
+      <form onSubmit={handleSearch} className="flex gap-3">
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+          <Input
+            className="pl-9 font-mono text-sm"
+            placeholder="Search knowledge and documents…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+        </div>
+        <Button type="submit" disabled={!query.trim() || loading}>
+          {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Search"}
+        </Button>
+      </form>
+
+      {error && (
+        <p className="text-sm text-destructive">{error}</p>
+      )}
+
+      {results && (
+        <div className="space-y-8">
+          <p className="text-xs font-mono text-muted-foreground">
+            {total} result{total !== 1 ? "s" : ""} for <span className="text-foreground">"{submitted}"</span>
+          </p>
+
+          {/* Knowledge hits */}
+          {results.knowledge.length > 0 && (
+            <div className="space-y-3">
+              <h3 className="text-xs font-mono uppercase tracking-wider text-muted-foreground flex items-center gap-2">
+                <Network className="w-3.5 h-3.5" /> Knowledge ({results.knowledge.length})
+              </h3>
+              <div className="space-y-2">
+                {results.knowledge.map((item: any) => (
+                  <Card key={item.id} className="p-3">
+                    <div className="flex items-start gap-3">
+                      <Badge variant="secondary" className="text-[10px] shrink-0 mt-0.5">
+                        {item.kind ?? "fact"}
+                      </Badge>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm">{item.text}</p>
+                        {item.subject && (
+                          <p className="text-xs font-mono text-muted-foreground mt-1">
+                            {item.subject}
+                            {item.relation && <> · {item.relation}</>}
+                            {item.object && <> · {item.object}</>}
+                          </p>
+                        )}
+                      </div>
+                      {item.confidence != null && (
+                        <span className="text-[10px] font-mono text-muted-foreground shrink-0">
+                          {Math.round(item.confidence * 100)}%
+                        </span>
+                      )}
+                    </div>
+                  </Card>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Document chunk hits */}
+          {results.chunks.length > 0 && (
+            <div className="space-y-3">
+              <h3 className="text-xs font-mono uppercase tracking-wider text-muted-foreground flex items-center gap-2">
+                <FileText className="w-3.5 h-3.5" /> Documents ({results.chunks.length})
+              </h3>
+              <div className="space-y-2">
+                {results.chunks.map((chunk: any) => (
+                  <Card
+                    key={chunk.id}
+                    className="p-3 cursor-pointer hover:bg-muted/30 transition-colors"
+                    onClick={() => navigate(`/library/${chunk.doc_id}`)}
+                  >
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-mono font-medium truncate">{chunk.doc_title ?? chunk.doc_id}</span>
+                        {chunk.doc_kind && (
+                          <Badge variant="outline" className="text-[10px]">{chunk.doc_kind}</Badge>
+                        )}
+                      </div>
+                      <p className="text-sm text-muted-foreground line-clamp-3">{chunk.text}</p>
+                    </div>
+                  </Card>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {total === 0 && (
+            <div className="text-center py-12 bg-muted/10 border border-dashed rounded-lg">
+              <Search className="w-8 h-8 mx-auto mb-3 opacity-20" />
+              <p className="text-muted-foreground text-sm">No results found for "{submitted}"</p>
+              <p className="text-xs text-muted-foreground mt-1">Try different keywords or check that documents have been fully extracted.</p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {!results && !loading && (
+        <div className="text-center py-16 text-muted-foreground">
+          <Search className="w-10 h-10 mx-auto mb-4 opacity-15" />
+          <p className="text-sm">Search across all knowledge items and document text in this Work.</p>
         </div>
       )}
     </div>

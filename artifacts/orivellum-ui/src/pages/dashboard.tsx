@@ -3,6 +3,7 @@ import {
   useGetDashboardActivity,
   useGetBriefing,
   useListConversations,
+  useCreateConversation,
   getGetDashboardSummaryQueryKey,
   getGetDashboardActivityQueryKey,
   getGetBriefingQueryKey,
@@ -11,12 +12,31 @@ import {
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { format, formatDistanceToNow } from "date-fns";
-import { BookOpen, Library, MessageSquare, Target, Activity, FileText, CheckCircle2, Clock } from "lucide-react";
-import { Link } from "wouter";
+import { BookOpen, Library, MessageSquare, Target, Activity, FileText, CheckCircle2, Clock, Plus, Upload } from "lucide-react";
+import { Link, useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 
 export default function Dashboard() {
+  const [, setLocation] = useLocation();
+  const queryClient = useQueryClient();
+  const createConv = useCreateConversation();
+
+  const handleNewChat = () => {
+    createConv.mutate(
+      { data: { title: "New Conversation" } },
+      {
+        onSuccess: (res) => {
+          queryClient.invalidateQueries({ queryKey: getListConversationsQueryKey() });
+          if (res?.conversation?.id) setLocation(`/chat?id=${res.conversation.id}`);
+        },
+        onError: () => toast.error("Could not create conversation"),
+      }
+    );
+  };
+
   const { data: summary, isLoading: loadingSummary } = useGetDashboardSummary({
     query: { queryKey: getGetDashboardSummaryQueryKey(), refetchInterval: 30_000, staleTime: 20_000 },
   });
@@ -63,6 +83,26 @@ export default function Dashboard() {
               : "Your workspace is ready."}
           </p>
         )}
+      </div>
+
+      {/* Quick Actions */}
+      <div className="flex items-center gap-3">
+        <Button
+          size="sm"
+          className="gap-2 font-mono text-xs"
+          onClick={handleNewChat}
+          disabled={createConv.isPending}
+        >
+          <Plus className="w-3.5 h-3.5" /> New Conversation
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          className="gap-2 font-mono text-xs"
+          onClick={() => setLocation("/library")}
+        >
+          <Upload className="w-3.5 h-3.5" /> Import Document
+        </Button>
       </div>
 
       {/* Stats Grid */}

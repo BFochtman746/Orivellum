@@ -10,6 +10,7 @@ import {
   SidebarGroup,
   SidebarGroupContent,
   SidebarGroupLabel,
+  SidebarFooter,
 } from "@/components/ui/sidebar";
 import { 
   Library, 
@@ -20,8 +21,47 @@ import {
   Settings, 
   HardDrive, 
   Activity, 
-  Mic 
+  Mic,
+  Wifi,
+  WifiOff,
 } from "lucide-react";
+import {
+  useGetSystemHealth,
+  getGetSystemHealthQueryKey,
+} from "@workspace/api-client-react";
+
+function ServerStatus() {
+  const { data, isError, isFetching } = useGetSystemHealth({
+    query: {
+      queryKey: getGetSystemHealthQueryKey(),
+      refetchInterval: 15_000,
+      staleTime: 10_000,
+      retry: false,
+    },
+  });
+  const ok = !isError && data?.status === "ok";
+  const aiOk = !isError && data?.services?.ai?.status === "ok";
+
+  return (
+    <div className="px-3 py-2.5 border-t border-border/40">
+      <div className="flex items-center gap-2">
+        <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${ok ? "bg-emerald-500" : "bg-red-500"}`} />
+        <span className="text-[10px] font-mono text-muted-foreground flex-1 truncate">
+          {isError ? "Server unreachable" : ok ? "Server online" : "Degraded"}
+        </span>
+        {!aiOk && !isError && (
+          <WifiOff className="w-3 h-3 text-amber-500 shrink-0" aria-label="AI offline" />
+        )}
+        {aiOk && (
+          <Wifi className="w-3 h-3 text-emerald-500 shrink-0" aria-label="AI online" />
+        )}
+        {isFetching && (
+          <span className="w-1 h-1 rounded-full bg-muted-foreground/40 animate-pulse shrink-0" />
+        )}
+      </div>
+    </div>
+  );
+}
 
 export function AppLayout({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
@@ -89,6 +129,10 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
               </SidebarGroupContent>
             </SidebarGroup>
           </SidebarContent>
+
+          <SidebarFooter className="p-0">
+            <ServerStatus />
+          </SidebarFooter>
         </Sidebar>
 
         <main className="flex-1 overflow-auto bg-background selection:bg-primary/20">

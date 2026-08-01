@@ -15,7 +15,10 @@ from __future__ import annotations
 import logging
 import os
 import sys
+import time
+from collections import defaultdict, deque
 from contextlib import asynccontextmanager
+from typing import Deque
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -82,7 +85,44 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    # Request size limit middleware
+    # ── In-memory sliding-window rate limiter ─────────────────────────────────
+    # Keyed by (client_ip, route_prefix) → deque of request timestamps.
+    # Limits are intentionally generous for a single-user local workspace.
+    _rl_windows: dict[tuple[str, str], Deque[float]] = defaultdict(deque)
+
+    _RATE_LIMITS: dict[str, tuple[int, int]] = {
+        # path prefix           max_requests  window_seconds
+        "/api/studio/tts":      (20,  60),   # 20 TTS per minute
+        "/api/studio/ocr":      (30,  60),   # 30 OCR per minute
+        "/api/studio/image":    (10,  60),   # 10 image gen per minute
+        # chat send is /api/conversations/<id>/messages
+        "/api/conversations":   (60,  60),   # 60 chat messages per minute
+    }
+
+    @app.middleware("http")
+    async def rate_limit(request: Request, call_next):
+        path = request.url.path
+        if request.method in ("POST", "PUT", "PATCH"):
+            for prefix, (limit, window) in _RATE_LIMITS.items():
+                if path.startswith(prefix):
+                    ip = request.client.host if request.client else "unknown"
+                    key = (ip, prefix)
+                    now = time.monotonic()
+                    dq = _rl_windows[key]
+                    # Drop timestamps outside the window
+                    while dq and dq[0] < now - window:
+                        dq.popleft()
+                    if len(dq) >= limit:
+                        return JSONResponse(
+                            {"detail": f"Rate limit exceeded — max {limit} requests per {window}s"},
+                            status_code=429,
+                            headers={"Retry-After": str(window)},
+                        )
+                    dq.append(now)
+                    break
+        return await call_next(request)
+
+    # ── Request size limit ────────────────────────────────────────────────────
     @app.middleware("http")
     async def limit_body_size(request: Request, call_next):
         if request.headers.get("content-length"):

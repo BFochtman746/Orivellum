@@ -1,6 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useLocation } from "wouter";
-import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -12,7 +11,10 @@ import {
   useUpdateConversation,
   useGetSystemHealth,
   useGetWork,
+  useGetSystemModels,
+  getGetSystemModelsQueryKey,
   getListConversationsQueryKey,
+  type ModelOption,
   getGetConversationQueryKey,
   getGetSystemHealthQueryKey,
   getGetWorkQueryKey,
@@ -39,7 +41,7 @@ import {
 } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import rehypeHighlight from "rehype-highlight";
-import "highlight.js/styles/github.css";
+import "highlight.js/styles/atom-one-dark.css";
 
 const API_BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
 
@@ -55,30 +57,20 @@ interface LocalMessage {
   incomplete?: boolean;
 }
 
-interface ModelOption {
-  id: string;
-  role: string;
-  label: string;
-  description: string;
-}
-
-// ─── Models hook ──────────────────────────────────────────────────────────────
+// ─── Models hook (generated) ──────────────────────────────────────────────────
 
 function useModels() {
-  return useQuery<{ models: ModelOption[]; default: string }>({
-    queryKey: ["system-models"],
-    queryFn: () =>
-      fetch(`${API_BASE}/system/models`).then((r) => r.json()),
-    staleTime: 60_000,
+  return useGetSystemModels({
+    query: { queryKey: getGetSystemModelsQueryKey(), staleTime: 60_000 },
   });
 }
 
 // ─── Model label helper ───────────────────────────────────────────────────────
 
-function modelLabel(modelId: string | undefined | null, models: ModelOption[], defaultModel: string): string {
+function modelLabel(modelId: string | undefined | null, models: ModelOption[], defaultModel: string | undefined): string {
   if (!modelId) modelId = defaultModel;
   const found = models.find((m) => m.id === modelId);
-  if (found) return found.label;
+  if (found) return found.label ?? found.id ?? "Default";
   // Truncate raw ID for display
   return modelId ? modelId.split("-").slice(0, 3).join("-") : "Default";
 }
@@ -89,7 +81,7 @@ interface ModelPickerProps {
   convId: string;
   currentModel: string | null | undefined;
   models: ModelOption[];
-  defaultModel: string;
+  defaultModel: string | undefined;
   onChanged: () => void;
 }
 
@@ -114,7 +106,7 @@ function ModelPicker({ convId, currentModel, models, defaultModel, onChanged }: 
       </SelectTrigger>
       <SelectContent align="end" className="min-w-[220px]">
         {models.map((m) => (
-          <SelectItem key={m.id} value={m.id} className="text-xs">
+          <SelectItem key={m.id ?? m.label} value={m.id ?? ""} className="text-xs">
             <div className="flex flex-col gap-0.5">
               <span className="font-medium">{m.label}</span>
               {m.description && (
@@ -261,6 +253,7 @@ export default function Chat() {
   const models = modelsData?.models ?? [];
   const defaultModel = modelsData?.default ?? "";
 
+  const [newConvModel, setNewConvModel] = useState<string>("");
   const createConv = useCreateConversation();
   const deleteConv = useDeleteConversation();
   const updateConvMeta = useUpdateConversation();
@@ -313,6 +306,15 @@ export default function Chat() {
     };
   }, [activeId]);
 
+  // #40 — Show a toast when the AI service comes back online after being offline
+  const prevAiOnlineRef = useRef<boolean | undefined>(undefined);
+  useEffect(() => {
+    if (prevAiOnlineRef.current === false && aiOnline === true) {
+      toast.success("AI is back online", { duration: 3000 });
+    }
+    prevAiOnlineRef.current = aiOnline;
+  }, [aiOnline]);
+
   // Tab-focus flush
   const flushAccumulator = useCallback(() => {
     const text = accumulatorRef.current;
@@ -329,9 +331,10 @@ export default function Chat() {
     return () => document.removeEventListener("visibilitychange", onVisible);
   }, [flushAccumulator]);
 
-  const handleCreate = () => {
+  const handleCreate = (modelOverride?: string) => {
+    const chosenModel = modelOverride ?? newConvModel;
     createConv.mutate(
-      { data: { title: "New Conversation" } },
+      { data: { title: "New Conversation", ...(chosenModel ? { model: chosenModel } : {}) } },
       {
         onSuccess: (res) => {
           queryClient.invalidateQueries({ queryKey: getListConversationsQueryKey() });
@@ -466,7 +469,7 @@ export default function Chat() {
               >
                 <Archive className="w-3.5 h-3.5" />
               </button>
-              <Button size="icon" variant="ghost" onClick={handleCreate} disabled={createConv.isPending || showArchived}>
+              <Button size="icon" variant="ghost" onClick={() => handleCreate()} disabled={createConv.isPending || showArchived}>
                 <Plus className="w-4 h-4" />
               </Button>
             </div>
@@ -660,9 +663,10 @@ export default function Chat() {
                         </div>
                         {msg.role === "assistant" && !msg.streaming && (
                           <div className="flex items-center gap-2 px-0.5">
-                            {conv?.model && (
+                            {/* Per-message model attribution: prefer msg.meta.model, fall back to conv.model */}
+                            {((msg as any).meta?.model || conv?.model) && (
                               <span className="text-[10px] font-mono text-muted-foreground/50">
-                                {modelLabel(conv.model, models, defaultModel)}
+                                {modelLabel((msg as any).meta?.model ?? conv?.model, models, defaultModel)}
                               </span>
                             )}
                             <button
@@ -708,6 +712,28 @@ export default function Chat() {
             <MessageSquare className="w-12 h-12 mb-4 opacity-20" />
             <h3 className="font-serif text-xl font-medium text-foreground">No Conversation Selected</h3>
             <p className="mt-2 max-w-sm text-sm">Select a conversation from the sidebar or start a new one.</p>
+
+            {models.length > 0 && (
+              <div className="mt-6 w-full max-w-xs space-y-2 text-left">
+                <label className="text-xs font-mono uppercase text-muted-foreground">Model</label>
+                <Select value={newConvModel || defaultModel} onValueChange={setNewConvModel}>
+                  <SelectTrigger className="text-sm">
+                    <SelectValue placeholder="Default model" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {models.map((m) => (
+                      <SelectItem key={m.id ?? m.label} value={m.id ?? ""} className="text-sm">
+                        <span className="font-medium">{m.label}</span>
+                        {m.description && (
+                          <span className="ml-2 text-xs text-muted-foreground">{m.description}</span>
+                        )}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
             {!aiOnline && (
               <div className="mt-4 px-4 py-3 rounded-lg bg-muted/50 border border-border/50 max-w-sm text-left text-xs text-muted-foreground space-y-1">
                 <p className="font-mono font-medium text-foreground">AI is offline</p>
@@ -715,7 +741,9 @@ export default function Chat() {
                 <p>Set <code>ORIVELLUM_AI_URL</code> if using a custom endpoint.</p>
               </div>
             )}
-            <Button onClick={handleCreate} disabled={createConv.isPending} className="mt-6">Start New Conversation</Button>
+            <Button onClick={() => handleCreate()} disabled={createConv.isPending} className="mt-4">
+              Start New Conversation
+            </Button>
           </div>
         )}
       </Card>

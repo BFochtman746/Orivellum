@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 import { useColors } from '@/hooks/useColors';
 import { Feather } from '@expo/vector-icons';
-import { useListWorks } from '@workspace/api-client-react';
+import { useListWorks, useCreateConversation } from '@workspace/api-client-react';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { Work } from '@workspace/api-client-react';
@@ -25,7 +25,7 @@ const TYPE_ICONS: Record<string, string> = {
   writing: 'edit-3',
 };
 
-function WorkCard({ work }: { work: Work }) {
+function WorkCard({ work, onStartChat }: { work: Work; onStartChat: () => void }) {
   const colors = useColors();
   const router = useRouter();
   const icon = TYPE_ICONS[work.work_type ?? ''] ?? 'file';
@@ -101,6 +101,14 @@ function WorkCard({ work }: { work: Work }) {
             {work.status ?? 'active'}
           </Text>
         </View>
+        <Pressable
+          onPress={(e) => { e.stopPropagation(); onStartChat(); }}
+          style={[styles.chatBtn, { backgroundColor: colors.primary + '18', borderColor: colors.primary + '44' }]}
+          hitSlop={6}
+        >
+          <Feather name="message-circle" size={11} color={colors.primary} />
+          <Text style={[styles.chatBtnText, { color: colors.primary }]}>Chat</Text>
+        </Pressable>
       </View>
     </Pressable>
   );
@@ -110,6 +118,28 @@ export default function WorksScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const isWeb = Platform.OS === 'web';
+  const router = useRouter();
+
+  const createConv = useCreateConversation();
+
+  const handleStartChat = (workId: string, workTitle: string) => {
+    createConv.mutate(
+      { data: { title: `Discussion: ${workTitle}`, work_id: workId } as any },
+      {
+        onSuccess: (res: any) => {
+          const id = res?.conversation?.id;
+          if (id) {
+            // Navigate to web route — works inside Expo web; on native opens the web app
+            if (Platform.OS === 'web') {
+              (router as any).push(`/chat?id=${id}`);
+            } else {
+              router.push(`/chat/${id}` as any);
+            }
+          }
+        },
+      }
+    );
+  };
 
   const { data, isLoading, isError, refetch } = useListWorks({ query: { refetchInterval: 30_000, staleTime: 20_000 } } as any);
   const works = data?.works ?? [];
@@ -167,7 +197,9 @@ export default function WorksScreen() {
         <FlatList
           data={works}
           keyExtractor={(item) => item.id ?? ''}
-          renderItem={({ item }) => <WorkCard work={item} />}
+          renderItem={({ item }) => (
+            <WorkCard work={item} onStartChat={() => handleStartChat(item.id ?? '', item.title ?? '')} />
+          )}
           refreshControl={
             <RefreshControl refreshing={isLoading} onRefresh={refetch} tintColor={colors.primary} />
           }
@@ -238,4 +270,15 @@ const styles = StyleSheet.create({
     borderRadius: 10,
   },
   statusText: { fontSize: 11, fontFamily: 'Inter_500Medium', textTransform: 'capitalize' },
+  chatBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 5,
+    borderWidth: 1,
+    marginLeft: 'auto',
+  },
+  chatBtnText: { fontSize: 11, fontFamily: 'Inter_600SemiBold' },
 });
