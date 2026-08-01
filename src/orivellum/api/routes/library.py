@@ -22,9 +22,17 @@ _KIND_MAP = {
     ".xlsx": "excel", ".xls": "excel", ".csv": "csv",
     ".pptx": "pptx", ".ppt": "pptx",
     ".txt": "text", ".md": "markdown",
-    ".png": "image", ".jpg": "image", ".jpeg": "image",
+    ".png": "image", ".jpg": "image", ".jpeg": "image", ".webp": "image", ".gif": "image",
     ".mp3": "audio", ".wav": "audio", ".m4a": "audio",
     ".py": "code", ".js": "code", ".ts": "code",
+    ".jsx": "code", ".tsx": "code", ".java": "code", ".cpp": "code",
+    ".c": "code", ".cs": "code", ".go": "code", ".rs": "code", ".rb": "code",
+    ".html": "html", ".htm": "html",
+    ".json": "json",
+    ".zip": "zip",
+    ".rtf": "file",   # handled by markitdown fallback
+    ".epub": "file",  # handled by markitdown fallback
+    ".xml": "file",   # handled by markitdown fallback
 }
 
 
@@ -191,7 +199,8 @@ def library_import(body: LibraryImport, background_tasks: BackgroundTasks):
                     doc["id"], "", 0, readiness="imported", error_message=None
                 )
                 kind = doc.get("kind") or _kind_for(name)
-                _EXTRACTABLE = {"pdf", "docx", "excel", "csv", "pptx", "text", "markdown", "code"}
+                _EXTRACTABLE = {"pdf", "docx", "excel", "csv", "pptx", "text", "markdown",
+                               "code", "html", "json", "zip", "file"}
                 if kind in _EXTRACTABLE:
                     logger.info(
                         "Re-queuing extraction for duplicate doc=%s kind=%s (force=%s readiness_was=%s)",
@@ -244,7 +253,8 @@ def library_import(body: LibraryImport, background_tasks: BackgroundTasks):
 
     # Fire extraction + chunking + knowledge harvest in the background.
     # BackgroundTasks runs after the response is sent — safe with SQLite WAL mode.
-    _EXTRACTABLE = {"pdf", "docx", "excel", "csv", "pptx", "text", "markdown", "code"}
+    _EXTRACTABLE = {"pdf", "docx", "excel", "csv", "pptx", "text", "markdown",
+                   "code", "html", "json", "zip", "file"}
     if kind in _EXTRACTABLE:
         logger.info("Queuing extraction for doc=%s kind=%s", doc["id"], kind)
         background_tasks.add_task(

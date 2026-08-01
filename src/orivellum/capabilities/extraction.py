@@ -454,6 +454,144 @@ def _extract_fallback(path: Path, kind: str) -> ExtractionResult:
 
 
 # ---------------------------------------------------------------------------
+# HTML
+# ---------------------------------------------------------------------------
+
+def _extract_html(path: Path) -> ExtractionResult:
+    """Strip tags and extract readable text from an HTML file."""
+    from html.parser import HTMLParser
+
+    class _Stripper(HTMLParser):
+        def __init__(self) -> None:
+            super().__init__()
+            self._skip = False
+            self._parts: list[str] = []
+
+        def handle_starttag(self, tag: str, attrs: object) -> None:
+            if tag in ("script", "style", "head", "nav", "footer"):
+                self._skip = True
+
+        def handle_endtag(self, tag: str) -> None:
+            if tag in ("script", "style", "head", "nav", "footer"):
+                self._skip = False
+            if tag in ("p", "br", "div", "li", "h1", "h2", "h3", "h4", "h5", "h6"):
+                self._parts.append("\n")
+
+        def handle_data(self, data: str) -> None:
+            if not self._skip and data.strip():
+                self._parts.append(data)
+
+    try:
+        raw = path.read_text(encoding="utf-8", errors="replace")
+        stripper = _Stripper()
+        stripper.feed(raw)
+        full_text = " ".join(stripper._parts).strip()
+        pages = [PageSegment(page=1, text=full_text)] if full_text else []
+        return ExtractionResult(
+            kind="html", full_text=full_text,
+            word_count=len(full_text.split()), pages=pages,
+        )
+    except Exception as exc:
+        logger.warning("HTML extraction failed for %s: %s", path.name, exc)
+        return ExtractionResult(kind="html", full_text="", word_count=0)
+
+
+# ---------------------------------------------------------------------------
+# JSON
+# ---------------------------------------------------------------------------
+
+def _extract_json(path: Path) -> ExtractionResult:
+    """Format JSON as indented text for indexing."""
+    import json
+    try:
+        data = json.loads(path.read_text(encoding="utf-8", errors="replace"))
+        full_text = json.dumps(data, indent=2, ensure_ascii=False)
+    except Exception:
+        # Malformed JSON — fall back to plain-text read
+        full_text = path.read_text(encoding="utf-8", errors="replace")
+    pages = [PageSegment(page=1, text=full_text)] if full_text.strip() else []
+    return ExtractionResult(
+        kind="json", full_text=full_text,
+        word_count=len(full_text.split()), pages=pages,
+    )
+
+
+# ---------------------------------------------------------------------------
+# ZIP archive
+# ---------------------------------------------------------------------------
+
+def _extract_zip(path: Path) -> ExtractionResult:
+    """Extract text from every supported file inside a ZIP archive.
+
+    Each member's content is concatenated under a ``=== filename ===`` header
+    so the whole archive becomes one searchable document.
+    """
+    import tempfile
+    import zipfile
+
+    # Extension → kind map (subset of _KIND_MAP; resolved at call-time)
+    _EXT_KIND = {
+        ".pdf": "pdf", ".docx": "docx", ".doc": "docx",
+        ".xlsx": "excel", ".xls": "excel", ".csv": "csv",
+        ".txt": "text", ".md": "markdown",
+        ".png": "image", ".jpg": "image", ".jpeg": "image",
+        ".html": "html", ".htm": "html",
+        ".json": "json",
+        ".py": "code", ".js": "code", ".ts": "code",
+        ".pptx": "pptx", ".ppt": "pptx",
+    }
+
+    all_text: list[str] = []
+    all_pages: list[PageSegment] = []
+    all_headings: list[str] = []
+
+    try:
+        with zipfile.ZipFile(path, "r") as zf:
+            members = [n for n in zf.namelist() if not n.endswith("/")]
+            with tempfile.TemporaryDirectory() as tmpdir:
+                tmp = Path(tmpdir)
+                for name in members:
+                    ext = Path(name).suffix.lower()
+                    kind = _EXT_KIND.get(ext)
+                    if not kind:
+                        continue
+                    # Use only the basename to avoid path traversal in tmpdir
+                    safe_name = Path(name).name
+                    member_path = tmp / safe_name
+                    try:
+                        member_path.write_bytes(zf.read(name))
+                    except Exception as exc:
+                        logger.warning("ZIP: could not read member %s: %s", name, exc)
+                        continue
+                    handler = _DISPATCH.get(kind, lambda p: _extract_fallback(p, kind))
+                    try:
+                        sub = handler(member_path)  # type: ignore[call-arg]
+                    except Exception as exc:
+                        logger.warning("ZIP: extraction failed for %s: %s", name, exc)
+                        continue
+                    if not sub.full_text.strip():
+                        continue
+                    header = f"=== {name} ==="
+                    all_text.append(f"{header}\n{sub.full_text}")
+                    all_headings.append(header)
+                    offset = len(all_pages)
+                    for seg in sub.pages:
+                        all_pages.append(PageSegment(
+                            page=offset + seg.page, text=seg.text, heading=name,
+                        ))
+    except zipfile.BadZipFile as exc:
+        logger.error("Bad ZIP file %s: %s", path.name, exc)
+        return ExtractionResult(kind="zip", full_text="", word_count=0)
+
+    full_text = "\n\n".join(all_text)
+    return ExtractionResult(
+        kind="zip", full_text=full_text,
+        word_count=len(full_text.split()),
+        pages=all_pages, headings=all_headings,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
 
@@ -464,6 +602,9 @@ _DISPATCH: dict[str, object] = {
     "csv": _extract_csv,
     "text": lambda p: _extract_text(p, "text"),
     "markdown": lambda p: _extract_text(p, "markdown"),
+    "html": _extract_html,
+    "json": _extract_json,
+    "zip": _extract_zip,
     "image": _extract_image,
 }
 

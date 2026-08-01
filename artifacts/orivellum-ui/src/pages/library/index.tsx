@@ -147,7 +147,7 @@ function ImportDialog({ onSuccess, defaultOpen = false }: ImportDialogProps) {
             ref={inputRef}
             type="file"
             className="hidden"
-            accept=".pdf,.docx,.doc,.xlsx,.xls,.csv,.pptx,.ppt,.txt,.md,.png,.jpg,.jpeg,.py,.js,.ts"
+            accept=".pdf,.docx,.doc,.xlsx,.xls,.csv,.pptx,.ppt,.txt,.md,.png,.jpg,.jpeg,.webp,.gif,.py,.js,.ts,.jsx,.tsx,.java,.cpp,.c,.cs,.go,.rs,.rb,.html,.htm,.json,.zip,.rtf,.epub,.xml"
             onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }}
           />
           {file ? (
@@ -171,7 +171,7 @@ function ImportDialog({ onSuccess, defaultOpen = false }: ImportDialogProps) {
               <Upload className="w-8 h-8 text-muted-foreground mx-auto mb-2" />
               <p className="text-sm font-medium">Drop a file or click to browse</p>
               <p className="text-xs text-muted-foreground mt-1">
-                PDF, DOCX, XLSX, CSV, TXT, MD, images, code
+                PDF, DOCX, XLSX, CSV, PPTX, TXT, MD, HTML, JSON, ZIP, images, code, and more
               </p>
             </>
           )}
