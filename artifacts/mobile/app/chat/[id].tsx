@@ -18,14 +18,25 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useEffect } from 'react';
 import * as Haptics from 'expo-haptics';
 import type { Message } from '@workspace/api-client-react';
+import { OfflineBanner } from '@/components/OfflineBanner';
 
-function MessageBubble({ message, colors }: { message: Message; colors: any }) {
+function MessageBubble({ message, colors }: { message: Message & { isError?: boolean }; colors: any }) {
   const isUser = message.role === 'user';
+  const isErr = (message as any).isError;
   return (
     <View style={[styles.bubbleRow, isUser ? styles.bubbleRight : styles.bubbleLeft]}>
       {!isUser && (
-        <View style={[styles.avatar, { backgroundColor: colors.primary }]}>
-          <Feather name="cpu" size={12} color={colors.primaryForeground} />
+        <View
+          style={[
+            styles.avatar,
+            { backgroundColor: isErr ? colors.muted : colors.primary },
+          ]}
+        >
+          <Feather
+            name={isErr ? 'alert-circle' : 'cpu'}
+            size={12}
+            color={isErr ? colors.mutedForeground : colors.primaryForeground}
+          />
         </View>
       )}
       <View
@@ -33,6 +44,14 @@ function MessageBubble({ message, colors }: { message: Message; colors: any }) {
           styles.bubble,
           isUser
             ? { backgroundColor: colors.primary, borderBottomRightRadius: 2 }
+            : isErr
+            ? {
+                backgroundColor: colors.card,
+                borderColor: colors.border,
+                borderWidth: 1,
+                borderBottomLeftRadius: 2,
+                borderStyle: 'dashed' as const,
+              }
             : { backgroundColor: colors.card, borderColor: colors.border, borderWidth: 1, borderBottomLeftRadius: 2 },
           { maxWidth: '80%' },
         ]}
@@ -40,7 +59,14 @@ function MessageBubble({ message, colors }: { message: Message; colors: any }) {
         <Text
           style={[
             styles.bubbleText,
-            { color: isUser ? colors.primaryForeground : colors.foreground },
+            {
+              color: isUser
+                ? colors.primaryForeground
+                : isErr
+                ? colors.mutedForeground
+                : colors.foreground,
+              fontStyle: isErr ? 'italic' : 'normal',
+            },
           ]}
         >
           {message.text}
@@ -73,10 +99,11 @@ export default function ChatScreen() {
 
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
-  const [localMessages, setLocalMessages] = useState<Message[]>([]);
+  const [localMessages, setLocalMessages] = useState<(Message & { isError?: boolean })[]>([]);
   const [initialized, setInitialized] = useState(false);
+  const [sendFailed, setSendFailed] = useState(false);
 
-  const { data, isLoading, refetch } = useGetConversation(id);
+  const { data, isLoading, isError, refetch } = useGetConversation(id);
   const conversation = data?.conversation;
   const serverMessages = data?.messages ?? [];
 
@@ -91,11 +118,7 @@ export default function ChatScreen() {
   }, [serverMessages, isLoading, initialized]);
 
   useEffect(() => {
-    if (conversation?.title) {
-      navigation.setOptions({ title: conversation.title });
-    } else {
-      navigation.setOptions({ title: 'Conversation' });
-    }
+    navigation.setOptions({ title: conversation?.title || 'Conversation' });
   }, [conversation?.title, navigation]);
 
   const displayMessages = [...localMessages].reverse();
@@ -106,6 +129,7 @@ export default function ChatScreen() {
 
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setText('');
+    setSendFailed(false);
 
     const userMsg: Message = {
       id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
@@ -127,22 +151,27 @@ export default function ChatScreen() {
         body: JSON.stringify({ text: trimmed, stream: false }),
       });
 
-      if (!resp.ok) throw new Error('Failed to send');
+      if (!resp.ok) throw new Error(`Server returned ${resp.status}`);
       const body = await resp.json();
       const aiMsg: Message = body.message;
       if (aiMsg) {
         setLocalMessages((prev) => [...prev, aiMsg]);
       }
-    } catch {
-      // Optimistically keep user message, show error inline
-      const errMsg: Message = {
+    } catch (err) {
+      const isNetworkError =
+        err instanceof TypeError && err.message.toLowerCase().includes('network');
+      const errMsg: Message & { isError: boolean } = {
         id: Date.now().toString() + 'err',
         conversation_id: id,
         role: 'assistant',
-        text: 'Sorry, something went wrong. Please try again.',
+        text: isNetworkError
+          ? 'Cannot reach the server. Check your connection and try again.'
+          : 'Something went wrong sending your message. Please try again.',
         created_at: new Date().toISOString(),
+        isError: true,
       };
       setLocalMessages((prev) => [...prev, errMsg]);
+      setSendFailed(true);
     } finally {
       setSending(false);
       inputRef.current?.focus();
@@ -151,6 +180,40 @@ export default function ChatScreen() {
 
   const topPad = isWeb ? 67 : insets.top + 44;
 
+  // Full-screen loading
+  if (isLoading && !initialized) {
+    return (
+      <View style={[styles.screen, styles.centered, { backgroundColor: colors.background }]}>
+        <ActivityIndicator color={colors.primary} />
+      </View>
+    );
+  }
+
+  // Full-screen error — no data loaded at all
+  if (isError && !initialized && !data) {
+    return (
+      <View
+        style={[styles.screen, { backgroundColor: colors.background, paddingTop: topPad }]}
+      >
+        <View style={styles.centered}>
+          <Feather name="wifi-off" size={40} color={colors.mutedForeground} />
+          <Text style={[styles.errorTitle, { color: colors.foreground }]}>
+            Can't reach the server
+          </Text>
+          <Text style={[styles.errorDetail, { color: colors.mutedForeground }]}>
+            Make sure Orivellum is running, then tap retry.
+          </Text>
+          <Pressable
+            onPress={() => refetch()}
+            style={[styles.retryBtn, { backgroundColor: colors.primary }]}
+          >
+            <Text style={[styles.retryBtnText, { color: colors.primaryForeground }]}>Retry</Text>
+          </Pressable>
+        </View>
+      </View>
+    );
+  }
+
   return (
     <KeyboardAvoidingView
       style={[styles.screen, { backgroundColor: colors.background }]}
@@ -158,33 +221,39 @@ export default function ChatScreen() {
       keyboardVerticalOffset={0}
     >
       <View style={{ flex: 1, paddingTop: topPad }}>
-        {isLoading && !initialized ? (
-          <View style={styles.centered}>
-            <ActivityIndicator color={colors.primary} />
-          </View>
-        ) : (
-          <FlatList
-            data={displayMessages}
-            keyExtractor={(m) => m.id ?? ''}
-            renderItem={({ item }) => <MessageBubble message={item} colors={colors} />}
-            inverted
-            contentContainerStyle={styles.listContent}
-            keyboardDismissMode="interactive"
-            keyboardShouldPersistTaps="handled"
-            showsVerticalScrollIndicator={false}
-            ListHeaderComponent={sending ? <TypingIndicator colors={colors} /> : null}
-            ListEmptyComponent={
-              !sending ? (
-                <View style={styles.emptyWrap}>
-                  <Feather name="message-circle" size={40} color={colors.mutedForeground} />
-                  <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
-                    Ask anything about your research
-                  </Text>
-                </View>
-              ) : null
+        {/* Soft offline banner — shown when we have loaded data but subsequent fetches fail */}
+        {isError && initialized && (
+          <OfflineBanner
+            message={
+              sendFailed
+                ? 'Messages may not be saving — server unreachable'
+                : 'Server unreachable — showing cached messages'
             }
+            onRetry={refetch}
           />
         )}
+
+        <FlatList
+          data={displayMessages}
+          keyExtractor={(m) => m.id ?? ''}
+          renderItem={({ item }) => <MessageBubble message={item} colors={colors} />}
+          inverted
+          contentContainerStyle={styles.listContent}
+          keyboardDismissMode="interactive"
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+          ListHeaderComponent={sending ? <TypingIndicator colors={colors} /> : null}
+          ListEmptyComponent={
+            !sending ? (
+              <View style={styles.emptyWrap}>
+                <Feather name="message-circle" size={40} color={colors.mutedForeground} />
+                <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
+                  {isError ? 'Server is offline — messages cannot be sent' : 'Ask anything about your research'}
+                </Text>
+              </View>
+            ) : null
+          }
+        />
 
         {/* Input bar */}
         <View
@@ -203,12 +272,12 @@ export default function ChatScreen() {
               styles.input,
               {
                 backgroundColor: colors.card,
-                borderColor: colors.border,
+                borderColor: isError ? colors.border : colors.border,
                 color: colors.foreground,
                 fontFamily: 'Inter_400Regular',
               },
             ]}
-            placeholder="Message…"
+            placeholder={isError ? 'Server offline…' : 'Message…'}
             placeholderTextColor={colors.mutedForeground}
             value={text}
             onChangeText={setText}
@@ -216,15 +285,16 @@ export default function ChatScreen() {
             maxLength={4000}
             returnKeyType="default"
             blurOnSubmit={false}
+            editable={!isError}
           />
           <Pressable
             onPress={handleSend}
-            disabled={!text.trim() || sending}
+            disabled={!text.trim() || sending || isError}
             style={({ pressed }) => [
               styles.sendBtn,
               {
                 backgroundColor:
-                  text.trim() && !sending ? colors.primary : colors.muted,
+                  text.trim() && !sending && !isError ? colors.primary : colors.muted,
                 opacity: pressed ? 0.7 : 1,
               },
             ]}
@@ -232,7 +302,11 @@ export default function ChatScreen() {
             <Feather
               name="arrow-up"
               size={20}
-              color={text.trim() && !sending ? colors.primaryForeground : colors.mutedForeground}
+              color={
+                text.trim() && !sending && !isError
+                  ? colors.primaryForeground
+                  : colors.mutedForeground
+              }
             />
           </Pressable>
         </View>
@@ -243,7 +317,7 @@ export default function ChatScreen() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1 },
-  centered: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  centered: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 10 },
   listContent: { paddingHorizontal: 16, paddingVertical: 12 },
   bubbleRow: { flexDirection: 'row', alignItems: 'flex-end', marginBottom: 10, gap: 8 },
   bubbleLeft: {},
@@ -296,4 +370,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  errorTitle: { fontSize: 16, fontFamily: 'Inter_600SemiBold', textAlign: 'center' },
+  errorDetail: {
+    fontSize: 13,
+    fontFamily: 'Inter_400Regular',
+    textAlign: 'center',
+    lineHeight: 19,
+    paddingHorizontal: 16,
+  },
+  retryBtn: {
+    marginTop: 8,
+    paddingHorizontal: 24,
+    paddingVertical: 10,
+    borderRadius: 20,
+  },
+  retryBtnText: { fontSize: 14, fontFamily: 'Inter_600SemiBold' },
 });

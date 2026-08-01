@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   Platform,
   Pressable,
@@ -17,10 +18,12 @@ import {
   useGetWorkDocuments,
   useGetWorkKnowledge,
   useGetWorkTasks,
+  useCreateConversation,
 } from '@workspace/api-client-react';
-import { useLocalSearchParams, useNavigation } from 'expo-router';
+import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useEffect } from 'react';
+import * as Haptics from 'expo-haptics';
 import type { Document, KnowledgeItem, Task } from '@workspace/api-client-react';
 
 type Tab = 'overview' | 'docs' | 'knowledge' | 'tasks';
@@ -101,7 +104,7 @@ function KnowledgeRow({ item }: { item: KnowledgeItem }) {
 
 function TaskRow({ task }: { task: Task }) {
   const colors = useColors();
-  const done = task.status === 'done' || task.status === 'complete';
+  const done = task.status === 'done' || task.status === 'complete' || task.status === 'completed';
   return (
     <View style={[styles.listItem, { borderColor: colors.border }]}>
       <Feather
@@ -129,7 +132,13 @@ function TaskRow({ task }: { task: Task }) {
   );
 }
 
-function OverviewTab({ workId }: { workId: string }) {
+// ─── Overview tab with "Start Discussion" CTA ────────────────────────────────
+
+function OverviewTab({ workId, onStartDiscussion, starting }: {
+  workId: string;
+  onStartDiscussion: () => void;
+  starting: boolean;
+}) {
   const colors = useColors();
   const { data: workData, isLoading, refetch } = useGetWork(workId);
   const work = workData?.work;
@@ -158,9 +167,9 @@ function OverviewTab({ workId }: { workId: string }) {
         {[
           { label: 'Type', value: work?.work_type ?? '—' },
           { label: 'Status', value: work?.status ?? '—' },
-          { label: 'Documents', value: String(work?.doc_count ?? 0) },
-          { label: 'Knowledge', value: String(work?.knowledge_count ?? 0) },
-          { label: 'Pending Tasks', value: String(work?.pending_tasks ?? 0) },
+          { label: 'Documents', value: String((work as any)?.doc_count ?? 0) },
+          { label: 'Knowledge', value: String((work as any)?.knowledge_count ?? 0) },
+          { label: 'Pending Tasks', value: String((work as any)?.pending_tasks ?? 0) },
           {
             label: 'Updated',
             value: work?.updated_at ? new Date(work.updated_at).toLocaleDateString() : '—',
@@ -172,9 +181,30 @@ function OverviewTab({ workId }: { workId: string }) {
           </View>
         ))}
       </View>
+
+      {/* Start Discussion CTA */}
+      <Pressable
+        onPress={onStartDiscussion}
+        disabled={starting}
+        style={({ pressed }) => [
+          styles.discussBtn,
+          { backgroundColor: colors.primary, opacity: pressed || starting ? 0.7 : 1 },
+        ]}
+      >
+        {starting ? (
+          <ActivityIndicator size="small" color={colors.primaryForeground} />
+        ) : (
+          <Feather name="message-circle" size={16} color={colors.primaryForeground} />
+        )}
+        <Text style={[styles.discussBtnText, { color: colors.primaryForeground }]}>
+          {starting ? 'Starting…' : 'Start a Discussion'}
+        </Text>
+      </Pressable>
     </ScrollView>
   );
 }
+
+// ─── Main screen ──────────────────────────────────────────────────────────────
 
 export default function WorkDetailScreen() {
   const colors = useColors();
@@ -182,12 +212,15 @@ export default function WorkDetailScreen() {
   const isWeb = Platform.OS === 'web';
   const { id } = useLocalSearchParams<{ id: string }>();
   const navigation = useNavigation();
+  const router = useRouter();
   const [activeTab, setActiveTab] = useState<Tab>('overview');
 
   const { data: workData } = useGetWork(id);
   const { data: docsData, isLoading: docsLoading, refetch: refetchDocs } = useGetWorkDocuments(id);
   const { data: knData, isLoading: knLoading, refetch: refetchKn } = useGetWorkKnowledge(id);
   const { data: tasksData, isLoading: tasksLoading, refetch: refetchTasks } = useGetWorkTasks(id);
+
+  const { mutateAsync: createConversation, isPending: startingConvo } = useCreateConversation();
 
   const work = workData?.work;
 
@@ -197,7 +230,27 @@ export default function WorkDetailScreen() {
     }
   }, [work?.title, navigation]);
 
-  const topPad = isWeb ? 67 : insets.top + 44; // account for transparent header
+  // Task #13 — start a conversation linked to this work
+  const handleStartDiscussion = async () => {
+    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    try {
+      const result = await createConversation({
+        data: { title: work?.title ? `Discussion: ${work.title}` : 'New Discussion', work_id: id },
+      });
+      const convoId = result?.conversation?.id;
+      if (convoId) {
+        router.push(`/chat/${convoId}`);
+      }
+    } catch {
+      Alert.alert(
+        'Could not start discussion',
+        'Make sure the Orivellum server is running and try again.',
+        [{ text: 'OK' }]
+      );
+    }
+  };
+
+  const topPad = isWeb ? 67 : insets.top + 44;
 
   const docs = docsData?.documents ?? [];
   const knowledge = knData?.knowledge ?? [];
@@ -206,7 +259,13 @@ export default function WorkDetailScreen() {
   const renderTabContent = () => {
     switch (activeTab) {
       case 'overview':
-        return <OverviewTab workId={id} />;
+        return (
+          <OverviewTab
+            workId={id}
+            onStartDiscussion={handleStartDiscussion}
+            starting={startingConvo}
+          />
+        );
       case 'docs':
         return (
           <FlatList
@@ -266,7 +325,7 @@ export default function WorkDetailScreen() {
 
   return (
     <View style={[styles.screen, { backgroundColor: colors.background, paddingTop: topPad }]}>
-      {/* Work title area */}
+      {/* Work title + type badge */}
       <View style={[styles.workHeader, { paddingHorizontal: 16, paddingBottom: 10 }]}>
         <Text style={[styles.workTitle, { color: colors.foreground }]} numberOfLines={2}>
           {work?.title ?? ''}
@@ -296,15 +355,8 @@ const styles = StyleSheet.create({
     borderRadius: 12,
   },
   typeBadgeText: { fontSize: 12, fontFamily: 'Inter_500Medium', textTransform: 'capitalize' },
-  tabBar: {
-    flexDirection: 'row',
-    borderBottomWidth: 1,
-  },
-  tab: {
-    flex: 1,
-    alignItems: 'center',
-    paddingVertical: 12,
-  },
+  tabBar: { flexDirection: 'row', borderBottomWidth: 1 },
+  tab: { flex: 1, alignItems: 'center', paddingVertical: 12 },
   tabLabel: { fontSize: 13 },
   overviewPad: { padding: 16, paddingBottom: 80 },
   listPad: { padding: 16, paddingBottom: 80 },
@@ -338,4 +390,15 @@ const styles = StyleSheet.create({
   itemMeta: { fontSize: 11, fontFamily: 'Inter_400Regular', marginTop: 2 },
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 40 },
   emptyText: { fontSize: 14, fontFamily: 'Inter_400Regular' },
+  // Start Discussion button
+  discussBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    marginTop: 24,
+    paddingVertical: 14,
+    borderRadius: 12,
+  },
+  discussBtnText: { fontSize: 15, fontFamily: 'Inter_600SemiBold' },
 });

@@ -20,6 +20,7 @@ import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import type { Conversation } from '@workspace/api-client-react';
+import { OfflineBanner, ErrorScreen } from '@/components/OfflineBanner';
 
 function ConversationItem({ item }: { item: Conversation }) {
   const colors = useColors();
@@ -75,8 +76,9 @@ export default function ConversationsScreen() {
   const isWeb = Platform.OS === 'web';
   const router = useRouter();
 
-  const { data, isLoading, refetch } = useListConversations({ archived: false, limit: 100 });
+  const { data, isLoading, isError, refetch } = useListConversations({ archived: false, limit: 100 });
   const conversations = data?.conversations ?? [];
+  const hasData = conversations.length > 0;
 
   const { mutateAsync: createConversation, isPending: creating } = useCreateConversation();
 
@@ -90,7 +92,11 @@ export default function ConversationsScreen() {
         router.push(`/chat/${convoId}`);
       }
     } catch {
-      Alert.alert('Error', 'Could not create conversation.');
+      Alert.alert(
+        'Could not create conversation',
+        'Make sure the Orivellum server is running, then try again.',
+        [{ text: 'OK' }]
+      );
     }
   };
 
@@ -126,11 +132,26 @@ export default function ConversationsScreen() {
         </Pressable>
       </View>
 
-      {/* List */}
-      {isLoading ? (
+      {/* Offline banner — shown only when we have cached data to display */}
+      {isError && hasData && (
+        <OfflineBanner
+          message="Showing cached conversations — server unreachable"
+          onRetry={refetch}
+        />
+      )}
+
+      {/* Body */}
+      {isLoading && !hasData ? (
         <View style={styles.centered}>
           <ActivityIndicator color={colors.primary} />
         </View>
+      ) : isError && !hasData ? (
+        // Hard error — no cached data at all
+        <ErrorScreen
+          message="Can't reach the server"
+          detail="Make sure Orivellum is running on your local machine and your device is on the same network."
+          onRetry={refetch}
+        />
       ) : conversations.length === 0 ? (
         <View style={styles.centered}>
           <Feather name="message-square" size={44} color={colors.mutedForeground} />
