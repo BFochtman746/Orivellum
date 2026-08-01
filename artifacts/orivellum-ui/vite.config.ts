@@ -69,6 +69,18 @@ export default defineConfig({
     strictPort: true,
     host: '0.0.0.0',
     allowedHosts: true,
+    // When running outside Replit (self-hosted), set ORIVELLUM_API_URL to the
+    // Python API base URL (e.g. http://127.0.0.1:8080) so that /api/* requests
+    // from the Vite dev server are proxied to the backend instead of returning 404.
+    proxy: process.env.ORIVELLUM_API_URL
+      ? {
+          '/api': {
+            target: process.env.ORIVELLUM_API_URL,
+            changeOrigin: true,
+            rewrite: (path) => path,
+          },
+        }
+      : undefined,
     fs: {
       strict: true,
     },
