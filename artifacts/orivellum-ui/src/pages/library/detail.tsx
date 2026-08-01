@@ -176,6 +176,25 @@ function ConfidenceLegend() {
   );
 }
 
+// ── Confidence-tier helpers ───────────────────────────────────────────────────
+
+type ConfTier = "all" | "high" | "medium" | "low";
+
+function itemConfTier(item: KnowledgeItem): "high" | "medium" | "low" {
+  if (item.confidence == null) return "low";
+  const pct = Math.round(item.confidence * 100);
+  if (pct >= 80) return "high";
+  if (pct >= 60) return "medium";
+  return "low";
+}
+
+const CONF_FILTERS: { key: ConfTier; label: string; dot: string }[] = [
+  { key: "all",    label: "All",    dot: "" },
+  { key: "high",   label: "High",   dot: "bg-emerald-500" },
+  { key: "medium", label: "Medium", dot: "bg-amber-400" },
+  { key: "low",    label: "Low",    dot: "bg-orange-400" },
+];
+
 // ── AI-extracted knowledge section ────────────────────────────────────────────
 
 function AiKindSection({
@@ -287,6 +306,7 @@ function KnowledgeTabContent({
   onReview: (id: string, status: "approved" | "rejected") => void;
   onDelete: (id: string) => void;
 }) {
+  const [aiConfFilter, setAiConfFilter] = useState<ConfTier>("all");
   if (knLoading) {
     return (
       <div className="space-y-3">
@@ -334,6 +354,11 @@ function KnowledgeTabContent({
     { key: "rejected", label: "Dismissed" },
   ];
 
+  // Apply confidence-tier filter to AI items
+  const filteredAiItems = aiConfFilter === "all"
+    ? aiItems
+    : aiItems.filter((item) => itemConfTier(item) === aiConfFilter);
+
   return (
     <div className="space-y-8">
       {/* ── AI-Extracted Knowledge ─────────────────────────────────────── */}
@@ -341,15 +366,38 @@ function KnowledgeTabContent({
           when AI is enabled (show status/empty-state prompt to the user). */}
       {(aiItems.length > 0 || aiEnabled) && (
         <div>
-          <div className="flex items-center gap-2 mb-4">
+          <div className="flex items-center gap-2 mb-4 flex-wrap">
             <Sparkles className="w-4 h-4 text-violet-500" />
             <h3 className="text-sm font-semibold text-violet-700">AI-Extracted Knowledge</h3>
             {aiItems.length > 0 && (
               <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-violet-100 text-violet-700">
-                {aiItems.length} item{aiItems.length !== 1 ? "s" : ""}
+                {aiConfFilter === "all"
+                  ? `${aiItems.length} item${aiItems.length !== 1 ? "s" : ""}`
+                  : `${filteredAiItems.length} / ${aiItems.length}`}
               </span>
             )}
             <ConfidenceLegend />
+            {/* Confidence filter chips — only shown when there are AI items */}
+            {aiItems.length > 0 && (
+              <div className="ml-auto flex items-center gap-1 p-1 bg-violet-50 border border-violet-100 rounded-lg">
+                {CONF_FILTERS.map(({ key, label, dot }) => (
+                  <button
+                    key={key}
+                    onClick={() => setAiConfFilter(key)}
+                    className={`flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-mono transition-colors ${
+                      aiConfFilter === key
+                        ? "bg-white text-violet-700 shadow-sm font-semibold"
+                        : "text-muted-foreground hover:text-violet-700"
+                    }`}
+                  >
+                    {dot && (
+                      <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${dot}`} />
+                    )}
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
           {aiItems.length === 0 ? (
@@ -363,13 +411,25 @@ function KnowledgeTabContent({
                   : "AI extraction will run once the document is fully processed."}
               </p>
             </div>
+          ) : filteredAiItems.length === 0 ? (
+            <div className="py-6 border border-dashed border-violet-200 rounded-lg bg-violet-50/20 text-center">
+              <p className="text-sm text-muted-foreground">
+                No {aiConfFilter}-confidence items found.{" "}
+                <button
+                  onClick={() => setAiConfFilter("all")}
+                  className="underline text-violet-600 hover:text-violet-700"
+                >
+                  Show all
+                </button>
+              </p>
+            </div>
           ) : (
             <div className="space-y-5 pl-1">
               {AI_KINDS.map((k) => (
                 <AiKindSection
                   key={k}
                   kind={k}
-                  items={aiItems.filter((item) => item.kind === k)}
+                  items={filteredAiItems.filter((item) => item.kind === k)}
                   reviewing={reviewing}
                   onReview={onReview}
                   onDelete={onDelete}
