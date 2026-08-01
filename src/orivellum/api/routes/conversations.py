@@ -54,6 +54,9 @@ class MessageSend(BaseModel):
     stream: bool = False
     deep: bool = False   # When True, route through cognition council
     scope: str = "work"  # "work" = active work only, "all" = all works
+    # Optional base64-encoded image for vision-model chat
+    image_b64: str | None = None
+    image_media_type: str = "image/jpeg"
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -110,7 +113,12 @@ async def send_message(conv_id: str, body: MessageSend):
         raise HTTPException(404, f"Conversation {conv_id!r} not found")
 
     # Store user message first so it appears immediately
-    db.add_message(conv_id, "user", body.text)
+    stored_text = body.text or "What is in this image?"
+    if body.image_b64 and not body.text:
+        stored_text = "[Image attached]"
+    elif body.image_b64:
+        stored_text = f"[Image] {body.text}"
+    db.add_message(conv_id, "user", stored_text)
 
     # Background auto-capture: skip when the user explicitly says "remember that…"
     # to avoid a competing write racing against the intent router's _handle_remember.
@@ -124,7 +132,10 @@ async def send_message(conv_id: str, body: MessageSend):
 
     if body.stream:
         return StreamingResponse(
-            _stream_response(db, conv, body.text, deep=body.deep, scope=body.scope),
+            _stream_response(
+                db, conv, body.text, deep=body.deep, scope=body.scope,
+                image_b64=body.image_b64, image_media_type=body.image_media_type,
+            ),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
@@ -133,8 +144,11 @@ async def send_message(conv_id: str, body: MessageSend):
         )
 
     # Non-streaming path
-    messages = _build_messages(db, conv, body.text, scope=body.scope)
-    model    = _model_for(conv)
+    messages = _build_messages(
+        db, conv, body.text, scope=body.scope,
+        image_b64=body.image_b64, image_media_type=body.image_media_type,
+    )
+    model = _model_for_vision(conv) if body.image_b64 else _model_for(conv)
     cfg      = get_config()
 
     # ── Intent routing (non-streaming) ───────────────────────────────────────
@@ -203,6 +217,15 @@ def _model_for(conv: dict) -> str:
     """
     cfg = get_config()
     return conv.get("model") or cfg.serving.workhorse_model
+
+
+def _model_for_vision(conv: dict) -> str:
+    """Return the vision model for this conversation.
+
+    Priority: conversation.model → config vision_model → workhorse fallback.
+    """
+    cfg = get_config()
+    return conv.get("model") or cfg.serving.vision_model or cfg.serving.workhorse_model
 
 
 def _build_system_prompt(db: Any, conv: dict, scope: str = "work") -> str:
@@ -284,7 +307,14 @@ def _build_system_prompt(db: Any, conv: dict, scope: str = "work") -> str:
     return f"{base}\n\n" + "\n".join(context_parts)
 
 
-def _build_messages(db: Any, conv: dict, new_user_text: str, scope: str = "work") -> list[dict]:
+def _build_messages(
+    db: Any,
+    conv: dict,
+    new_user_text: str,
+    scope: str = "work",
+    image_b64: str | None = None,
+    image_media_type: str = "image/jpeg",
+) -> list[dict]:
     """Build the full OpenAI-format messages array for this conversation."""
     system_prompt = _build_system_prompt(db, conv, scope=scope)
 
@@ -300,7 +330,17 @@ def _build_messages(db: Any, conv: dict, new_user_text: str, scope: str = "work"
     for m in prior:
         role = m["role"] if m["role"] in ("user", "assistant") else "user"
         messages.append({"role": role, "content": m["text"]})
-    messages.append({"role": "user", "content": new_user_text})
+
+    # Final user turn — multipart content when an image is attached
+    if image_b64:
+        messages.append({"role": "user", "content": [
+            {"type": "text", "text": new_user_text or "What is in this image?"},
+            {"type": "image_url", "image_url": {
+                "url": f"data:{image_media_type};base64,{image_b64}",
+            }},
+        ]})
+    else:
+        messages.append({"role": "user", "content": new_user_text})
     return messages
 
 
@@ -337,7 +377,10 @@ async def _call_ai(messages: list[dict], model: str) -> str:
         return _UNAVAILABLE
 
 
-async def _stream_response(db: Any, conv: dict, user_text: str, deep: bool = False, scope: str = "work"):
+async def _stream_response(
+    db: Any, conv: dict, user_text: str, deep: bool = False, scope: str = "work",
+    image_b64: str | None = None, image_media_type: str = "image/jpeg",
+):
     """SSE generator — streams tokens, stores final reply, auto-titles.
 
     When deep=True the cognition gate runs first:
@@ -354,9 +397,12 @@ async def _stream_response(db: Any, conv: dict, user_text: str, deep: bool = Fal
 
     cfg = get_config()
     conv_id = conv["id"]
-    messages = _build_messages(db, conv, user_text, scope=scope)
+    messages = _build_messages(
+        db, conv, user_text, scope=scope,
+        image_b64=image_b64, image_media_type=image_media_type,
+    )
     full_reply = ""
-    model = _model_for(conv)
+    model = _model_for_vision(conv) if image_b64 else _model_for(conv)
 
     # ── Intent routing — runs before deep mode and normal AI ──────────────────
     tool_result = await _maybe_dispatch_intent(db, user_text, cfg.serving.base_url, model)

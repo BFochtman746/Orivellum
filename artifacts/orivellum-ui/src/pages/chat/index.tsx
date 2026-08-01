@@ -39,7 +39,7 @@ import {
   MessageSquare, Plus, Send, Search, Bot, User, Copy, Check,
   Trash2, Wifi, WifiOff, Loader2, Cpu, Pencil, BookOpen, Archive, ArchiveRestore,
   AlertTriangle, FolderOpen, FileText, ChevronRight, X as XIcon, Zap, Brain,
-  Globe, Paperclip, Download, Layers, HelpCircle, Compass, ChevronDown,
+  Globe, Paperclip, Download, Layers, HelpCircle, Compass, ChevronDown, ImageIcon,
 } from "lucide-react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -71,6 +71,10 @@ interface LocalMessage {
   intent?: string;
 
   meta?: Record<string, unknown>;
+
+  /** Base64 image attached to this user message (session-only, not persisted) */
+  image_b64?: string;
+  image_media_type?: string;
 }
 
 /** Suffix appended by the backend when a streaming response is cut short by a timeout. */
@@ -230,11 +234,12 @@ function MarkdownContent({ text }: { text: string }) {
 async function* streamChat(
   convId: string, text: string, signal?: AbortSignal,
   deep = false, scope: "work" | "all" = "work",
+  image_b64?: string, image_media_type?: string,
 ): AsyncGenerator<string> {
   const resp = await fetch(`${API_BASE}/conversations/${convId}/messages`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text, stream: true, deep, scope }),
+    body: JSON.stringify({ text, stream: true, deep, scope, image_b64, image_media_type }),
     keepalive: true,
     signal,
   });
@@ -497,6 +502,8 @@ export default function Chat() {
   const [showArchived, setShowArchived] = useState(false);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
+  const [pendingImage, setPendingImage] = useState<{ data: string; type: string } | null>(null);
+  const imgInputRef = useRef<HTMLInputElement>(null);
   const [localMessages, setLocalMessages] = useState<LocalMessage[]>([]);
   const localOverride = localMessages.length > 0;
 
@@ -694,7 +701,14 @@ export default function Chat() {
         isClarification: !!(m as any).meta?.isClarification,
       }));
 
-      const userMsg: LocalMessage = { id: crypto.randomUUID(), role: "user", text, created_at: new Date().toISOString() };
+      const capturedImage = pendingImage;
+      setPendingImage(null);
+      const userMsg: LocalMessage = {
+        id: crypto.randomUUID(), role: "user", text,
+        created_at: new Date().toISOString(),
+        image_b64: capturedImage?.data,
+        image_media_type: capturedImage?.type,
+      };
       const assistantId = crypto.randomUUID();
       assistantIdRef.current = assistantId;
       accumulatorRef.current = "";
@@ -714,7 +728,7 @@ export default function Chat() {
 
       let streamedIntent: string | undefined;
       try {
-        for await (const token of streamChat(convId, text, controller.signal, deepMode, scopeAll ? "all" : "work")) {
+        for await (const token of streamChat(convId, text, controller.signal, deepMode, scopeAll ? "all" : "work", capturedImage?.data, capturedImage?.type)) {
           if (token.startsWith(CLARIFY_PREFIX)) {
             // Cognition gate requests clarification — backend persisted with { model, isClarification: true }
             const question = token.slice(CLARIFY_PREFIX.length);
@@ -781,19 +795,32 @@ export default function Chat() {
         setLocalMessages((prev) => prev.filter((m) => m.incomplete));
       }
     },
-    [activeId, deepMode, scopeAll, activeConv?.messages, flushAccumulator, queryClient, defaultModel]
+    [activeId, deepMode, scopeAll, pendingImage, activeConv?.messages, flushAccumulator, queryClient, defaultModel]
   );
 
   const handleSend = useCallback(
     (e: React.FormEvent) => {
       e.preventDefault();
       const text = draft.trim();
-      if (!text) return;
+      if (!text && !pendingImage) return;
       setDraft("");
       sendText(text);
     },
-    [draft, sendText]
+    [draft, pendingImage, sendText]
   );
+
+  const handleImageSelect = useCallback((file: File) => {
+    if (!file.type.startsWith("image/")) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const dataUrl = ev.target?.result as string;
+      // dataUrl = "data:image/jpeg;base64,<b64>" — strip the prefix
+      const comma = dataUrl.indexOf(",");
+      const b64 = dataUrl.slice(comma + 1);
+      setPendingImage({ data: b64, type: file.type });
+    };
+    reader.readAsDataURL(file);
+  }, []);
 
   const displayMessages: LocalMessage[] = localOverride
     ? localMessages
@@ -1031,6 +1058,16 @@ export default function Chat() {
                             <span className="text-[10px] text-muted-foreground/40 font-mono">{format(new Date(msg.created_at), "HH:mm")}</span>
                           )}
                         </div>
+                        {/* Image thumbnail — shown on user messages with attached image */}
+                        {msg.role === "user" && msg.image_b64 && (
+                          <div className="mb-1">
+                            <img
+                              src={`data:${msg.image_media_type ?? "image/jpeg"};base64,${msg.image_b64}`}
+                              alt="attached"
+                              className="max-h-48 rounded-lg border border-secondary object-contain"
+                            />
+                          </div>
+                        )}
                         <div className={`px-4 py-3 rounded-lg text-sm break-words
                           ${msg.isClarification
                             ? "bg-amber-50/50 border border-amber-200/60 text-amber-900 dark:bg-amber-950/20 dark:border-amber-800/40 dark:text-amber-100"
@@ -1120,6 +1157,14 @@ export default function Chat() {
             <div className="px-6 py-4 bg-muted/10 border-t border-border/50 shrink-0">
               {/* Made-in-this-chat artifact tracker */}
               <ArtifactTracker messages={displayMessages} />
+              {/* Hidden image file input */}
+              <input
+                ref={imgInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => { const f = e.target.files?.[0]; if (f) handleImageSelect(f); e.target.value = ""; }}
+              />
               <form
                 onSubmit={handleSend}
                 className={`max-w-3xl mx-auto relative transition-colors rounded-lg ${dragOver ? "ring-2 ring-primary/40 bg-primary/5" : ""}`}
@@ -1127,15 +1172,46 @@ export default function Chat() {
                 onDragLeave={() => setDragOver(false)}
                 onDrop={handleDrop}
               >
+                {/* Pending image preview strip */}
+                {pendingImage && (
+                  <div className="flex items-center gap-2 px-3 pt-2 pb-1">
+                    <div className="relative group w-16 h-16 shrink-0">
+                      <img
+                        src={`data:${pendingImage.type};base64,${pendingImage.data}`}
+                        alt="pending"
+                        className="w-full h-full object-cover rounded border border-border"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setPendingImage(null)}
+                        className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-destructive text-destructive-foreground flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                      >
+                        <XIcon className="w-2.5 h-2.5" />
+                      </button>
+                    </div>
+                    <span className="text-xs text-muted-foreground font-mono">Image attached — ask anything about it</span>
+                  </div>
+                )}
                 <Textarea
                   value={draft}
                   onChange={(e) => setDraft(e.target.value)}
                   placeholder={dragOver ? "Drop files to import…" : importing ? "Importing…" : aiOnline ? "Ask anything… or drop a file (Enter to send, Shift+Enter for newline)" : "AI offline — messages saved locally"}
-                  className="pr-24 resize-none py-3 text-sm"
+                  className="pr-32 resize-none py-3 text-sm"
                   rows={2}
                   disabled={sending || importing}
                   onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(e); } }}
                 />
+                {/* Image attach button */}
+                <button
+                  type="button"
+                  onClick={() => imgInputRef.current?.click()}
+                  title="Attach an image"
+                  disabled={sending || importing}
+                  className={`absolute right-20 top-2 h-8 w-8 rounded flex items-center justify-center transition-colors
+                    ${pendingImage ? "text-primary bg-primary/10 border border-primary/30" : "text-muted-foreground/50 hover:text-muted-foreground"}`}
+                >
+                  <ImageIcon className="w-4 h-4" />
+                </button>
                 {/* Deep/Fast toggle */}
                 <button
                   type="button"
@@ -1147,7 +1223,7 @@ export default function Chat() {
                   {deepMode ? <Brain className="w-3.5 h-3.5" /> : <Zap className="w-3.5 h-3.5" />}
                   <span className="hidden sm:inline">{deepMode ? "Deep" : "Fast"}</span>
                 </button>
-                <Button type="submit" size="icon" disabled={!draft.trim() || sending} className="absolute right-2 top-2 h-8 w-8">
+                <Button type="submit" size="icon" disabled={(!draft.trim() && !pendingImage) || sending} className="absolute right-2 top-2 h-8 w-8">
                   {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
                 </Button>
               </form>

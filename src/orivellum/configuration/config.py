@@ -28,6 +28,9 @@ class ServingConfig:
     reasoner_model: str = "gpt-oss-120b"
     coder_model: str = "Qwen3-Coder"
     embedder_model: str = "Qwen3-Embedding-0.6B"
+    # Vision/multimodal model — used for image extraction and image-in-chat.
+    # Leave empty to fall back to workhorse_model.
+    vision_model: str = ""
     timeout_sec: int = 120
     # Dedicated short timeout for background AI extraction so a slow/absent AI
     # service never blocks the pipeline for the full chat timeout.
@@ -155,6 +158,8 @@ def load_config(path: str | None = None) -> OrivellumConfig:
                 "models", {}).get("reasoner", ServingConfig.reasoner_model)),
             coder_model=serving_raw.get("coder_model", serving_raw.get(
                 "models", {}).get("coder", ServingConfig.coder_model)),
+            vision_model=serving_raw.get("vision_model", serving_raw.get(
+                "models", {}).get("vision", ServingConfig.vision_model)),
             timeout_sec=int(serving_raw.get("timeout_sec", ServingConfig.timeout_sec)),
             extraction_timeout_sec=int(serving_raw.get(
                 "extraction_timeout_sec", ServingConfig.extraction_timeout_sec)),

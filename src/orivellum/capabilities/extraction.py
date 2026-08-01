@@ -328,8 +328,79 @@ def _probe_tesseract() -> None:
             return
 
 
+def _extract_image_vision(path: Path) -> "ExtractionResult | None":
+    """Use the configured vision LLM to describe image content.
+
+    Returns an ExtractionResult when the vision model is configured and
+    responds successfully, or None so the caller falls through to Tesseract.
+    """
+    try:
+        from orivellum.configuration.config import load_config
+        cfg = load_config()
+        if not cfg.serving.vision_model:
+            return None
+
+        import base64
+        import io
+        import httpx
+        from PIL import Image as _PIL
+
+        img = _PIL.open(path)
+        if img.mode not in ("RGB", "L"):
+            img = img.convert("RGB")
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=85)
+        b64 = base64.b64encode(buf.getvalue()).decode()
+
+        resp = httpx.post(
+            f"{cfg.serving.base_url}/chat/completions",
+            json={
+                "model": cfg.serving.vision_model,
+                "messages": [{
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": (
+                                "Describe everything in this image in detail. "
+                                "Include all visible text, numbers, labels, "
+                                "diagrams, charts, tables, and visual elements. "
+                                "Be thorough — this description will be used for "
+                                "search and knowledge extraction."
+                            ),
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
+                        },
+                    ],
+                }],
+                "stream": False,
+            },
+            timeout=cfg.serving.extraction_timeout_sec,
+        )
+        resp.raise_for_status()
+        text = resp.json()["choices"][0]["message"]["content"]
+        if text.strip():
+            logger.info("Vision model described %s (%d words)", path.name, len(text.split()))
+            return ExtractionResult(
+                kind="image",
+                full_text=text,
+                word_count=len(text.split()),
+                pages=[PageSegment(page=1, text=text)],
+            )
+    except Exception as exc:
+        logger.warning("Vision extraction failed on %s: %s", path.name, exc)
+    return None
+
+
 def _extract_image(path: Path) -> ExtractionResult:
-    # --- pytesseract (primary: requires tesseract binary) ---
+    # --- vision LLM (primary when configured) ---
+    vision_result = _extract_image_vision(path)
+    if vision_result is not None:
+        return vision_result
+
+    # --- pytesseract (fallback: requires tesseract binary) ---
     try:
         from PIL import Image
         import pytesseract
