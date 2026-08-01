@@ -93,7 +93,14 @@ function ImportDialog({ onSuccess, defaultOpen = false }: ImportDialogProps) {
   const handleImport = async () => {
     if (!file) return;
     const bytes = await file.arrayBuffer();
-    const b64 = btoa(String.fromCharCode(...new Uint8Array(bytes)));
+    // Spread-into-String.fromCharCode crashes for large files (stack overflow).
+    // Process in 8 KB chunks instead.
+    const u8 = new Uint8Array(bytes);
+    let binary = "";
+    for (let i = 0; i < u8.length; i += 8192) {
+      binary += String.fromCharCode(...u8.subarray(i, i + 8192));
+    }
+    const b64 = btoa(binary);
     importDoc.mutate(
       { data: { filename: file.name, content_b64: b64, work_id: workId || undefined } },
       {
