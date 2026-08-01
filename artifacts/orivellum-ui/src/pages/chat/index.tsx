@@ -14,6 +14,8 @@ import {
   useGetWork,
   getListConversationsQueryKey,
   getGetConversationQueryKey,
+  getGetSystemHealthQueryKey,
+  getGetWorkQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
@@ -135,7 +137,7 @@ function MarkdownContent({ text }: { text: string }) {
       rehypePlugins={[rehypeHighlight]}
       components={{
         p: ({ children }) => <p className="mb-2 last:mb-0 leading-relaxed">{children}</p>,
-        code: ({ className, children, ...props }) => {
+        code: ({ className, children }) => {
           const lang = className?.replace("language-", "").replace(/\s*hljs.*/, "") ?? "";
           const isBlock = className?.startsWith("language-") || className?.startsWith("hljs");
           return isBlock ? (
@@ -147,13 +149,12 @@ function MarkdownContent({ text }: { text: string }) {
               )}
               <code
                 className={`block bg-zinc-900 text-zinc-100 px-4 py-3 text-xs font-mono whitespace-pre-wrap leading-relaxed overflow-x-auto ${className ?? ""}`}
-                {...props}
               >
                 {children}
               </code>
             </span>
           ) : (
-            <code className="bg-zinc-800 text-zinc-200 rounded px-1.5 py-0.5 text-[0.8em] font-mono" {...props}>
+            <code className="bg-zinc-800 text-zinc-200 rounded px-1.5 py-0.5 text-[0.8em] font-mono">
               {children}
             </code>
           );
@@ -254,7 +255,7 @@ export default function Chat() {
   const { data: activeConv, isLoading: loadingActive } = useGetConversation(activeId!, {
     query: { enabled: !!activeId, queryKey: getGetConversationQueryKey(activeId!) },
   });
-  const { data: sysHealth } = useGetSystemHealth({ query: { refetchInterval: 15_000, staleTime: 10_000 } });
+  const { data: sysHealth } = useGetSystemHealth({ query: { queryKey: getGetSystemHealthQueryKey(), refetchInterval: 15_000, staleTime: 10_000 } });
   const { data: modelsData } = useModels();
   const aiOnline = sysHealth?.services?.ai?.status === "ok";
   const models = modelsData?.models ?? [];
@@ -263,6 +264,10 @@ export default function Chat() {
   const createConv = useCreateConversation();
   const deleteConv = useDeleteConversation();
   const updateConvMeta = useUpdateConversation();
+
+  const invalidateActive = useCallback(() => {
+    if (activeId) queryClient.invalidateQueries({ queryKey: getGetConversationQueryKey(activeId) });
+  }, [activeId, queryClient]);
 
   // Rename state for sidebar
   const [renamingId, setRenamingId] = useState<string | null>(null);
@@ -289,11 +294,11 @@ export default function Chat() {
   };
 
   // Resolve linked work title for the chat header (use activeConv to avoid ordering issues)
-  const convWorkId = (activeConv?.conversation as any)?.work_id as string | undefined;
+  const convWorkId = activeConv?.conversation?.work_id ?? undefined;
   const { data: linkedWorkResp } = useGetWork(convWorkId ?? "", {
-    query: { enabled: !!convWorkId },
+    query: { queryKey: getGetWorkQueryKey(convWorkId ?? ""), enabled: !!convWorkId },
   });
-  const linkedWorkTitle = (linkedWorkResp?.work as any)?.title as string | undefined;
+  const linkedWorkTitle = linkedWorkResp?.work?.title ?? undefined;
 
   useEffect(() => { setLocalMessages([]); setDraft(""); }, [activeId]);
   useEffect(() => { if (activeConv?.messages && !sending) setLocalMessages([]); }, [activeConv?.messages, sending]);
@@ -508,7 +513,7 @@ export default function Chat() {
                       )}
                       <div className="flex items-center justify-between gap-1 mt-0.5">
                         <div className="text-xs text-muted-foreground truncate flex-1 flex items-center gap-1">
-                          {(c as any).work_id && <BookOpen className="w-2.5 h-2.5 shrink-0 text-primary/50" />}
+                          {c.work_id && <BookOpen className="w-2.5 h-2.5 shrink-0 text-primary/50" />}
                           {c.last_message ? c.last_message.slice(0, 45) : "No messages"}
                         </div>
                         {c.updated_at && (
@@ -528,7 +533,7 @@ export default function Chat() {
                       </div>
                     </div>
                     <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 mt-0.5">
-                      {!(c as any).archived && (
+                      {!c.archived && (
                         <button
                           onClick={(e) => { e.stopPropagation(); updateConvMeta.mutate({ convId: c.id!, data: { archived: true } }, { onSuccess: () => { queryClient.invalidateQueries({ queryKey: getListConversationsQueryKey() }); toast.success("Archived"); }, onError: () => toast.error("Could not archive") }); }}
                           title="Archive"
@@ -537,7 +542,7 @@ export default function Chat() {
                           <Archive className="w-3 h-3" />
                         </button>
                       )}
-                      {(c as any).archived && (
+                      {!!c.archived && (
                         <button
                           onClick={(e) => { e.stopPropagation(); updateConvMeta.mutate({ convId: c.id!, data: { archived: false } }, { onSuccess: () => { queryClient.invalidateQueries({ queryKey: getListConversationsQueryKey() }); toast.success("Restored"); }, onError: () => toast.error("Could not restore") }); }}
                           title="Restore"
@@ -546,7 +551,7 @@ export default function Chat() {
                           <ArchiveRestore className="w-3 h-3" />
                         </button>
                       )}
-                      {!(c as any).archived && (
+                      {!c.archived && (
                         <button
                           onClick={(e) => startRename(e, c.id!, c.title ?? "")}
                           className="p-0.5 rounded hover:text-foreground text-muted-foreground"

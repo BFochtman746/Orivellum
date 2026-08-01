@@ -1,5 +1,5 @@
 import { useParams, useLocation } from "wouter";
-import { useGetProject } from "@workspace/api-client-react";
+import { useGetProject, getGetProjectQueryKey } from "@workspace/api-client-react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -43,7 +43,7 @@ export default function ProjectDetail() {
   const [, navigate] = useLocation();
 
   const { data: projData, isLoading: projLoading } = useGetProject(projectId ?? "", {
-    query: { enabled: !!projectId },
+    query: { queryKey: getGetProjectQueryKey(projectId ?? ""), enabled: !!projectId },
   });
 
   const { data: conceptsData, isLoading: conceptsLoading } = useQuery<{ concepts: Concept[] }>({

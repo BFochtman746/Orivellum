@@ -77,6 +77,7 @@ export default function WorkDetail() {
   const work = workResp?.work;
   const { data: statsResp } = useGetWorkStats(workId!, {
     query: {
+      queryKey: getGetWorkStatsQueryKey(workId!),
       enabled: !!workId,
       // Poll while any docs are still processing so the readiness strip stays current
       refetchInterval: (query) => {
@@ -248,7 +249,7 @@ export default function WorkDetail() {
             <Badge variant="secondary" className="font-mono text-xs uppercase">{work.work_type}</Badge>
             <span className="text-sm font-mono text-muted-foreground flex items-center gap-1">
               <Clock className="w-3 h-3" />
-              Created {(work.obj_created || work.created_at) ? format(new Date(work.obj_created || work.created_at), "MMM d, yyyy") : "Unknown"}
+              Created {work.created_at ? format(new Date(work.created_at), "MMM d, yyyy") : "Unknown"}
             </span>
           </div>
           {stats && (
@@ -671,7 +672,7 @@ function KnowledgeTab({ workId }: { workId: string }) {
                       <>
                         <button
                           disabled={isReviewing || isApproved}
-                          onClick={() => handleReview(item.id, "approved")}
+                          onClick={() => handleReview(item.id!, "approved")}
                           title="Approve"
                           className={`p-1.5 rounded transition-colors ${
                             isApproved
@@ -683,7 +684,7 @@ function KnowledgeTab({ workId }: { workId: string }) {
                         </button>
                         <button
                           disabled={isReviewing || isRejected}
-                          onClick={() => handleReview(item.id, "rejected")}
+                          onClick={() => handleReview(item.id!, "rejected")}
                           title="Dismiss"
                           className={`p-1.5 rounded transition-colors ${
                             isRejected
@@ -696,7 +697,7 @@ function KnowledgeTab({ workId }: { workId: string }) {
                       </>
                     )}
                     <button
-                      onClick={() => handleDeleteKnowledge(item.id)}
+                      onClick={() => handleDeleteKnowledge(item.id!)}
                       title="Delete item"
                       className="p-1.5 rounded text-muted-foreground/40 hover:text-destructive hover:bg-destructive/5 transition-colors"
                     >

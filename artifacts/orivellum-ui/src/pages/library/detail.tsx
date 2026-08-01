@@ -6,7 +6,7 @@
  */
 import { useState } from "react";
 import { useParams, useLocation } from "wouter";
-import { useGetDocument, useDeleteDocument, useGetWork, useDeleteKnowledgeItem, useUpdateDocument, useListWorks, getGetDocumentQueryKey } from "@workspace/api-client-react";
+import { useGetDocument, useDeleteDocument, useGetWork, useDeleteKnowledgeItem, useUpdateDocument, useListWorks, getGetDocumentQueryKey, getGetWorkQueryKey } from "@workspace/api-client-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { Card, CardContent } from "@/components/ui/card";
@@ -282,6 +282,7 @@ export default function DocumentDetail() {
 
   const { data, isLoading, error, refetch } = useGetDocument(docId ?? "", {
     query: {
+      queryKey: getGetDocumentQueryKey(docId ?? ""),
       // Auto-poll every 3 s while the document is still being processed
       refetchInterval: (query) => {
         const r = (query.state.data?.document as any)?.readiness;
@@ -296,7 +297,7 @@ export default function DocumentDetail() {
 
   // Resolve work title when this document is linked to a work
   const { data: workData } = useGetWork(workId ?? "", {
-    query: { enabled: !!workId },
+    query: { queryKey: getGetWorkQueryKey(workId ?? ""), enabled: !!workId },
   });
 
   // Knowledge items for this document

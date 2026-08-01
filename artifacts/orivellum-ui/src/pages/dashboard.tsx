@@ -1,4 +1,13 @@
-import { useGetDashboardSummary, useGetDashboardActivity, useGetBriefing, useListConversations } from "@workspace/api-client-react";
+import {
+  useGetDashboardSummary,
+  useGetDashboardActivity,
+  useGetBriefing,
+  useListConversations,
+  getGetDashboardSummaryQueryKey,
+  getGetDashboardActivityQueryKey,
+  getGetBriefingQueryKey,
+  getListConversationsQueryKey,
+} from "@workspace/api-client-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { format, formatDistanceToNow } from "date-fns";
@@ -9,18 +18,18 @@ import { Badge } from "@/components/ui/badge";
 
 export default function Dashboard() {
   const { data: summary, isLoading: loadingSummary } = useGetDashboardSummary({
-    query: { refetchInterval: 30_000, staleTime: 20_000 },
+    query: { queryKey: getGetDashboardSummaryQueryKey(), refetchInterval: 30_000, staleTime: 20_000 },
   });
   const { data: activityResp, isLoading: loadingActivity } = useGetDashboardActivity(
     { limit: 10 },
-    { query: { refetchInterval: 30_000, staleTime: 20_000 } },
+    { query: { queryKey: getGetDashboardActivityQueryKey({ limit: 10 }), refetchInterval: 30_000, staleTime: 20_000 } },
   );
   const { data: briefing, isLoading: loadingBriefing } = useGetBriefing({
-    query: { staleTime: 300_000 },
+    query: { queryKey: getGetBriefingQueryKey(), staleTime: 300_000 },
   });
   const { data: convsResp, isLoading: loadingConvs } = useListConversations(
     { limit: 5 },
-    { query: { refetchInterval: 30_000, staleTime: 20_000 } },
+    { query: { queryKey: getListConversationsQueryKey({ limit: 5 }), refetchInterval: 30_000, staleTime: 20_000 } },
   );
 
   const docTotal = summary?.document_count ?? 0;

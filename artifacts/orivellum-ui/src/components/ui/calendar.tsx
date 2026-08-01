@@ -128,6 +128,7 @@ function Calendar({
           return (
             <div
               data-slot="calendar"
+              // @ts-expect-error — react-day-picker Ref type differs across React 19 declarations
               ref={rootRef}
               className={cn(className)}
               {...props}

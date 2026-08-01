@@ -1,4 +1,4 @@
-import { useGetSystemHealth, useListCapabilities } from "@workspace/api-client-react";
+import { useGetSystemHealth, useListCapabilities, getGetSystemHealthQueryKey } from "@workspace/api-client-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
@@ -39,7 +39,7 @@ function useSetAiExtractionSetting() {
 }
 
 export default function System() {
-  const { data: health, isLoading: loadingHealth } = useGetSystemHealth({ query: { refetchInterval: 10_000, staleTime: 8_000 } });
+  const { data: health, isLoading: loadingHealth } = useGetSystemHealth({ query: { queryKey: getGetSystemHealthQueryKey(), refetchInterval: 10_000, staleTime: 8_000 } });
   const { data: capsResp, isLoading: loadingCaps } = useListCapabilities();
   const { data: aiExtraction, isLoading: loadingAiExt } = useAiExtractionSetting();
   const setAiExtraction = useSetAiExtractionSetting();
