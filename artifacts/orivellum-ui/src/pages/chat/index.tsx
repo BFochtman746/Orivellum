@@ -35,6 +35,8 @@ import {
   Trash2, Wifi, WifiOff, Loader2, Cpu, Pencil, BookOpen, Archive, ArchiveRestore,
 } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import rehypeHighlight from "rehype-highlight";
+import "highlight.js/styles/github.css";
 
 const API_BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
 
@@ -127,11 +129,12 @@ function MarkdownContent({ text }: { text: string }) {
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
+      rehypePlugins={[rehypeHighlight]}
       components={{
         p: ({ children }) => <p className="mb-2 last:mb-0 leading-relaxed">{children}</p>,
         code: ({ className, children, ...props }) => {
-          const lang = className?.replace("language-", "") ?? "";
-          const isBlock = !!className?.startsWith("language-");
+          const lang = className?.replace("language-", "").replace(/\s*hljs.*/, "") ?? "";
+          const isBlock = className?.startsWith("language-") || className?.startsWith("hljs");
           return isBlock ? (
             <span className="block my-3 rounded-lg overflow-hidden border border-white/10 shadow-md">
               {lang && (
@@ -140,7 +143,7 @@ function MarkdownContent({ text }: { text: string }) {
                 </span>
               )}
               <code
-                className="block bg-zinc-900 text-zinc-100 px-4 py-3 text-xs font-mono whitespace-pre-wrap leading-relaxed overflow-x-auto"
+                className={`block bg-zinc-900 text-zinc-100 px-4 py-3 text-xs font-mono whitespace-pre-wrap leading-relaxed overflow-x-auto ${className ?? ""}`}
                 {...props}
               >
                 {children}
