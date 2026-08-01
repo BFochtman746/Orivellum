@@ -74,6 +74,13 @@ onlyBuiltDependencies:
   - msw
   - unrs-resolver
 
+# pnpm v10+ uses allowBuilds map (written by `pnpm approve-builds`)
+allowBuilds:
+  esbuild: true
+  '@swc/core': true
+  msw: true
+  unrs-resolver: true
+
 overrides:
   # drizzle-kit uses esbuild internally on an older version that's vulnerable, this overrides it
   "@esbuild-kit/esm-loader": "npm:tsx@^4.21.0"
