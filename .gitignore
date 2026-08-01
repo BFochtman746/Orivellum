@@ -47,3 +47,11 @@ Thumbs.db
 # Replit
 .cache/
 .local/
+
+# SQLite runtime files
+data/orivellum.db
+data/orivellum.db-shm
+data/orivellum.db-wal
+data/*.db
+data/*.db-shm
+data/*.db-wal
