@@ -52,16 +52,25 @@ const API_BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/
 
 interface LocalMessage {
   id: string;
+
   role: "user" | "assistant";
+
   text: string;
+
   created_at: string;
+
   streaming?: boolean;
   /** Set when the stream was aborted before completion */
+
   incomplete?: boolean;
   /** Set when this message is a clarifying question from the cognition gate */
+
   isClarification?: boolean;
   /** Tool intent that produced this message, e.g. "web_search", "weather" */
+
   intent?: string;
+
+  meta?: Record<string, unknown>;
 }
 
 /** Sentinel prefix carried through the token stream when the gate returns "clarify". */
@@ -680,14 +689,18 @@ export default function Chat() {
         role: m.role as "user" | "assistant",
         text: m.text ?? "",
         created_at: m.created_at ?? new Date().toISOString(),
+        meta: (m as any).meta as Record<string, unknown> | undefined,
+        isClarification: !!(m as any).meta?.isClarification,
       }));
 
       const userMsg: LocalMessage = { id: crypto.randomUUID(), role: "user", text, created_at: new Date().toISOString() };
       const assistantId = crypto.randomUUID();
       assistantIdRef.current = assistantId;
       accumulatorRef.current = "";
+      // Capture the effective model so the attribution label shows during streaming
+      const effectiveModel = conv?.model || defaultModel || undefined;
 
-      setLocalMessages([...serverMsgs, userMsg, { id: assistantId, role: "assistant", text: "", created_at: new Date().toISOString(), streaming: true }]);
+      setLocalMessages([...serverMsgs, userMsg, { id: assistantId, role: "assistant", text: "", created_at: new Date().toISOString(), streaming: true, meta: effectiveModel ? { model: effectiveModel } : undefined }]);
 
       // Use sendingRef (not stale-closure `sending`) so the RAF loop continues in background tabs
       const scheduleFlush = () => {
@@ -702,11 +715,12 @@ export default function Chat() {
       try {
         for await (const token of streamChat(convId, text, controller.signal, deepMode, scopeAll ? "all" : "work")) {
           if (token.startsWith(CLARIFY_PREFIX)) {
-            // Cognition gate requests clarification — render as a distinct amber bubble
+            // Cognition gate requests clarification — backend persisted with { model, isClarification: true }
             const question = token.slice(CLARIFY_PREFIX.length);
             setLocalMessages((prev) => prev.map((m) =>
               m.id === assistantId
-                ? { ...m, text: question, streaming: false, isClarification: true }
+                ? { ...m, text: question, streaming: false, isClarification: true,
+                    meta: { ...(m.meta ?? {}), model: effectiveModel, isClarification: true } }
                 : m
             ));
             break;
@@ -766,7 +780,7 @@ export default function Chat() {
         setLocalMessages((prev) => prev.filter((m) => m.incomplete));
       }
     },
-    [draft, activeId, sending, deepMode, scopeAll, activeConv?.messages, flushAccumulator, queryClient]
+    [draft, activeId, sending, deepMode, scopeAll, activeConv?.messages, flushAccumulator, queryClient, defaultModel]
   );
 
   const displayMessages: LocalMessage[] = localOverride
@@ -776,6 +790,7 @@ export default function Chat() {
         role: m.role as "user" | "assistant",
         text: m.text ?? "",
         created_at: m.created_at ?? "",
+        meta: (m as any).meta as Record<string, unknown> | undefined,
         // Restore amber bubble style for persisted clarification messages
         isClarification: !!(m as any).meta?.isClarification,
         // Surface the tool intent badge from persisted meta
@@ -990,7 +1005,8 @@ export default function Chat() {
                           <span className={`text-[10px] font-mono uppercase tracking-wider ${msg.isClarification ? "text-amber-600/70" : "text-muted-foreground"}`}>
                             {msg.isClarification ? "Needs clarification" : msg.role}
                           </span>
-                          {msg.created_at && (
+                          {/* Show timestamp in header only for user messages; assistant time appears in model label */}
+                          {msg.role === "user" && msg.created_at && (
                             <span className="text-[10px] text-muted-foreground/40 font-mono">{format(new Date(msg.created_at), "HH:mm")}</span>
                           )}
                         </div>
@@ -1028,7 +1044,7 @@ export default function Chat() {
                             </span>
                           )}
                         </div>
-                        {msg.role === "assistant" && !msg.streaming && !msg.isClarification && (
+                        {msg.role === "assistant" && (
                           <div className="flex items-center gap-2 px-0.5 flex-wrap">
                             {/* Intent badge */}
                             {msg.intent && INTENT_LABELS[msg.intent] && (
@@ -1038,12 +1054,15 @@ export default function Chat() {
                               </span>
                             )}
                             {/* Per-message model attribution: prefer msg.meta.model, fall back to conv.model */}
-                            {((msg as any).meta?.model || conv?.model) && !msg.intent && (
+                            {(msg.meta?.model || conv?.model) && (
                               <span className="text-[10px] font-mono text-muted-foreground/50">
-                                {modelLabel((msg as any).meta?.model ?? conv?.model, models, defaultModel)}
+                                {modelLabel((msg.meta?.model ?? conv?.model) as string | undefined, models, defaultModel)}
+                                {msg.created_at && !msg.streaming && (
+                                  <> · {format(new Date(msg.created_at), "HH:mm")}</>
+                                )}
                               </span>
                             )}
-                            {(msg as any).meta?.council && (
+                            {!!msg.meta?.council && (
                               <span className="text-[10px] font-mono text-primary/50 flex items-center gap-0.5">
                                 <Brain className="w-2.5 h-2.5" /> council
                               </span>

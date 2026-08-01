@@ -160,7 +160,7 @@ async def send_message(conv_id: str, body: MessageSend):
                 get_clarifying_question, body.text, cfg.serving.base_url, model
             )
             msg = db.add_message(conv_id, "assistant", question,
-                                 meta={"isClarification": True})
+                                 meta={"model": model, "isClarification": True})
             _maybe_auto_title(db, conv, body.text)
             return {"message": msg}
 
@@ -388,7 +388,7 @@ async def _stream_response(db: Any, conv: dict, user_text: str, deep: bool = Fal
             )
             # Persist the clarifying question so it survives refetch/reload.
             # The isClarification flag lets the frontend render it with the amber bubble style.
-            db.add_message(conv_id, "assistant", question, meta={"isClarification": True})
+            db.add_message(conv_id, "assistant", question, meta={"model": model, "isClarification": True})
             _maybe_auto_title(db, conv, user_text)
             # Also emit a typed SSE event so the frontend can display immediately
             # without waiting for the query invalidation round-trip.
