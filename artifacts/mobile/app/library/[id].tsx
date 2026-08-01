@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { mobileFetch } from '@/lib/api';
 import {
   ActivityIndicator,
+  Alert,
+  Modal,
   Platform,
   Pressable,
   RefreshControl,
@@ -14,8 +16,8 @@ import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import { useColors } from '@/hooks/useColors';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useGetDocument } from '@workspace/api-client-react';
-import { useQuery } from '@tanstack/react-query';
+import { useGetDocument, useListWorks } from '@workspace/api-client-react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
 
 const READINESS_COLOR: Record<string, string> = {
@@ -38,16 +40,21 @@ export default function LibraryDocDetail() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const navigation = useNavigation();
+  const qc = useQueryClient();
   const isWeb = Platform.OS === 'web';
 
   const [refreshing, setRefreshing] = useState(false);
+  const [reviewing, setReviewing] = useState<string | null>(null);
+  const [showWorkPicker, setShowWorkPicker] = useState(false);
+  const [linkingWork, setLinkingWork] = useState(false);
+
+  const domain = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
 
   const { data: docData, isLoading: docLoading, isError: docError, refetch: refetchDoc } =
     useGetDocument(id ?? '', { query: { enabled: !!id, staleTime: 15_000 } } as any);
   const { data: knData, isLoading: knLoading, refetch: refetchKn } = useQuery({
     queryKey: ['library-knowledge', id],
     queryFn: async () => {
-      const domain = process.env.EXPO_PUBLIC_DOMAIN;
       const res = await mobileFetch(`https://${domain}/api/library/${id}/knowledge`);
       if (!res.ok) throw new Error('Failed to load knowledge');
       return res.json();
@@ -55,13 +62,51 @@ export default function LibraryDocDetail() {
     enabled: !!id,
     staleTime: 30_000,
   });
+  const { data: worksData } = useListWorks({} as any);
 
   const doc = (docData as any)?.document;
   const knowledge = (knData as any)?.knowledge ?? [];
+  const works = (worksData as any)?.works ?? [];
 
   const handleRefresh = async () => {
     setRefreshing(true);
     try { await Promise.all([refetchDoc(), refetchKn()]); } finally { setRefreshing(false); }
+  };
+
+  const handleReview = async (itemId: string, status: 'approved' | 'rejected') => {
+    setReviewing(itemId);
+    try {
+      const res = await mobileFetch(`https://${domain}/api/knowledge/${itemId}/review`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ review_status: status }),
+      });
+      if (!res.ok) throw new Error('Review failed');
+      await refetchKn();
+    } catch {
+      Alert.alert('Error', 'Could not update review status');
+    } finally {
+      setReviewing(null);
+    }
+  };
+
+  const handleLinkWork = async (workId: string | null) => {
+    setLinkingWork(true);
+    try {
+      const res = await mobileFetch(`https://${domain}/api/library/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ work_id: workId }),
+      });
+      if (!res.ok) throw new Error('Link failed');
+      await refetchDoc();
+      qc.invalidateQueries({ queryKey: ['getGetDocument', id] });
+    } catch {
+      Alert.alert('Error', 'Could not update work assignment');
+    } finally {
+      setLinkingWork(false);
+      setShowWorkPicker(false);
+    }
   };
 
   useEffect(() => {
@@ -98,6 +143,11 @@ export default function LibraryDocDetail() {
   const readinessColor = READINESS_COLOR[doc.readiness ?? 'imported'] ?? colors.mutedForeground;
   const readinessLabel = READINESS_LABEL[doc.readiness ?? 'imported'] ?? doc.readiness;
   const docTitle = doc.title || doc.source?.split('/').pop() || 'Untitled';
+  const linkedWork = works.find((w: any) => w.id === doc.work_id);
+
+  const pendingKnowledge = knowledge.filter((k: any) => k.review_status === 'ai_auto');
+  const approvedKnowledge = knowledge.filter((k: any) => k.review_status === 'approved');
+  const otherKnowledge = knowledge.filter((k: any) => k.review_status !== 'ai_auto' && k.review_status !== 'approved' && k.review_status !== 'rejected');
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
@@ -105,11 +155,7 @@ export default function LibraryDocDetail() {
       <View
         style={[
           styles.header,
-          {
-            paddingTop: topPad + 8,
-            borderBottomColor: colors.border,
-            backgroundColor: colors.background,
-          },
+          { paddingTop: topPad + 8, borderBottomColor: colors.border, backgroundColor: colors.background },
         ]}
       >
         <Pressable onPress={() => router.back()} style={styles.backRow} hitSlop={8}>
@@ -137,13 +183,8 @@ export default function LibraryDocDetail() {
       </View>
 
       <ScrollView
-        contentContainerStyle={{
-          padding: 16,
-          paddingBottom: isWeb ? 50 : insets.bottom + 40,
-        }}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />
-        }
+        contentContainerStyle={{ padding: 16, paddingBottom: isWeb ? 50 : insets.bottom + 40 }}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />}
       >
         {/* Error message */}
         {doc.error_message && (
@@ -178,9 +219,23 @@ export default function LibraryDocDetail() {
               <Text style={[styles.rowValue, { color: colors.foreground }]}>{doc.chunk_count}</Text>
             </View>
           )}
+          {/* Work assignment */}
+          <View style={styles.row}>
+            <Text style={[styles.rowLabel, { color: colors.mutedForeground }]}>Work</Text>
+            <Pressable
+              onPress={() => setShowWorkPicker(true)}
+              style={[styles.workChip, { backgroundColor: colors.primary + '14', borderColor: colors.primary + '40' }]}
+            >
+              <Feather name="briefcase" size={11} color={colors.primary} />
+              <Text style={[styles.workChipText, { color: colors.primary }]}>
+                {linkedWork ? linkedWork.title : 'Link to Work'}
+              </Text>
+              <Feather name="chevron-down" size={11} color={colors.primary} />
+            </Pressable>
+          </View>
         </View>
 
-        {/* Knowledge */}
+        {/* Knowledge — AI review items first */}
         <View style={[styles.section, { borderColor: colors.border }]}>
           <Text style={[styles.sectionTitle, { color: colors.mutedForeground }]}>
             KNOWLEDGE {knowledge.length > 0 ? `(${knowledge.length})` : ''}
@@ -192,21 +247,118 @@ export default function LibraryDocDetail() {
               No knowledge extracted yet
             </Text>
           ) : (
-            knowledge.map((item: any) => (
-              <View
-                key={item.id}
-                style={[styles.knowledgeItem, { borderColor: colors.border, backgroundColor: colors.muted + '55' }]}
-              >
-                <Text style={[styles.knText, { color: colors.foreground }]}>{item.text}</Text>
-                <Text style={[styles.knMeta, { color: colors.mutedForeground }]}>
-                  {item.kind} · {Math.round((item.confidence ?? 0) * 100)}%
-                  {item.review_status === 'ai_auto' || item.source === 'llm' ? ' · ✦ AI' : ''}
+            <>
+              {pendingKnowledge.length > 0 && (
+                <Text style={[styles.reviewHeader, { color: colors.primary }]}>
+                  ✦ {pendingKnowledge.length} AI item{pendingKnowledge.length !== 1 ? 's' : ''} need review
                 </Text>
-              </View>
-            ))
+              )}
+              {[...pendingKnowledge, ...approvedKnowledge, ...otherKnowledge].map((item: any) => {
+                const isPending = item.review_status === 'ai_auto';
+                const isApproved = item.review_status === 'approved';
+                const isRejected = item.review_status === 'rejected';
+                return (
+                  <View
+                    key={item.id}
+                    style={[
+                      styles.knowledgeItem,
+                      {
+                        borderColor: isPending ? colors.primary + '44' : isApproved ? '#4A8C6544' : colors.border,
+                        backgroundColor: isPending ? colors.primary + '08' : isApproved ? '#4A8C6508' : colors.muted + '55',
+                        opacity: isRejected ? 0.45 : 1,
+                      },
+                    ]}
+                  >
+                    <Text style={[styles.knText, { color: colors.foreground }]}>{item.text}</Text>
+                    <View style={styles.knFooter}>
+                      <Text style={[styles.knMeta, { color: colors.mutedForeground }]}>
+                        {item.kind} · {Math.round((item.confidence ?? 0) * 100)}%
+                        {isPending ? ' · ✦ AI' : isApproved ? ' · ✓' : isRejected ? ' · ✗' : ''}
+                      </Text>
+                      {(isPending || isApproved) && (
+                        <View style={styles.reviewButtons}>
+                          {!isApproved && (
+                            <Pressable
+                              onPress={() => handleReview(item.id, 'approved')}
+                              disabled={reviewing === item.id}
+                              style={[styles.reviewBtn, { backgroundColor: '#4A8C6522' }]}
+                              hitSlop={6}
+                            >
+                              {reviewing === item.id ? (
+                                <ActivityIndicator size="small" color="#4A8C65" />
+                              ) : (
+                                <Feather name="thumbs-up" size={13} color="#4A8C65" />
+                              )}
+                            </Pressable>
+                          )}
+                          {!isRejected && (
+                            <Pressable
+                              onPress={() => handleReview(item.id, 'rejected')}
+                              disabled={reviewing === item.id}
+                              style={[styles.reviewBtn, { backgroundColor: '#dc262622' }]}
+                              hitSlop={6}
+                            >
+                              <Feather name="thumbs-down" size={13} color="#dc2626" />
+                            </Pressable>
+                          )}
+                        </View>
+                      )}
+                    </View>
+                  </View>
+                );
+              })}
+            </>
           )}
         </View>
       </ScrollView>
+
+      {/* Work Picker Modal */}
+      <Modal visible={showWorkPicker} transparent animationType="slide" onRequestClose={() => setShowWorkPicker(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalSheet, { backgroundColor: colors.background, borderTopColor: colors.border }]}>
+            <View style={styles.modalHeader}>
+              <Text style={[styles.modalTitle, { color: colors.foreground }]}>Link to Work</Text>
+              <Pressable onPress={() => setShowWorkPicker(false)} hitSlop={8}>
+                <Feather name="x" size={20} color={colors.mutedForeground} />
+              </Pressable>
+            </View>
+            <ScrollView>
+              <Pressable
+                onPress={() => handleLinkWork(null)}
+                style={[styles.workOption, { borderColor: colors.border }]}
+                disabled={linkingWork}
+              >
+                <Feather name="x-circle" size={16} color={colors.mutedForeground} />
+                <Text style={[styles.workOptionText, { color: colors.mutedForeground }]}>No Work (unlink)</Text>
+              </Pressable>
+              {works.map((w: any) => (
+                <Pressable
+                  key={w.id}
+                  onPress={() => handleLinkWork(w.id)}
+                  style={[
+                    styles.workOption,
+                    { borderColor: colors.border },
+                    w.id === doc.work_id && { backgroundColor: colors.primary + '10' },
+                  ]}
+                  disabled={linkingWork}
+                >
+                  <Feather name="briefcase" size={16} color={w.id === doc.work_id ? colors.primary : colors.foreground} />
+                  <Text style={[styles.workOptionText, { color: w.id === doc.work_id ? colors.primary : colors.foreground }]}>
+                    {w.title}
+                  </Text>
+                  {w.id === doc.work_id && <Feather name="check" size={16} color={colors.primary} />}
+                </Pressable>
+              ))}
+            </ScrollView>
+            {linkingWork && (
+              <View style={styles.modalLoading}>
+                <ActivityIndicator color={colors.primary} />
+                <Text style={[styles.modalLoadingText, { color: colors.mutedForeground }]}>Saving…</Text>
+              </View>
+            )}
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -214,57 +366,49 @@ export default function LibraryDocDetail() {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   centered: { justifyContent: 'center', alignItems: 'center' },
-  header: {
-    paddingHorizontal: 16,
-    paddingBottom: 14,
-    borderBottomWidth: 1,
-  },
+  header: { paddingHorizontal: 16, paddingBottom: 14, borderBottomWidth: 1 },
   backRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 10 },
   backLabel: { fontSize: 14, fontFamily: 'Inter_500Medium' },
   title: { fontSize: 22, fontFamily: 'Inter_700Bold', letterSpacing: -0.3, marginBottom: 8 },
   metaRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
-  badge: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 5,
-  },
+  badge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 5 },
   badgeText: { fontSize: 11, fontFamily: 'Inter_600SemiBold', letterSpacing: 0.3 },
   metaText: { fontSize: 12, fontFamily: 'Inter_400Regular' },
-  section: {
-    borderWidth: 1,
-    borderRadius: 10,
-    padding: 14,
-    marginBottom: 14,
-  },
+  section: { borderWidth: 1, borderRadius: 10, padding: 14, marginBottom: 14 },
   sectionTitle: { fontSize: 10, fontFamily: 'Inter_700Bold', letterSpacing: 1, marginBottom: 10 },
-  row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 },
+  row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
   rowLabel: { fontSize: 13, fontFamily: 'Inter_400Regular', flex: 1 },
   rowValue: { fontSize: 13, fontFamily: 'Inter_500Medium', flex: 2, textAlign: 'right' },
+  workChip: {
+    flexDirection: 'row', alignItems: 'center', gap: 5,
+    paddingHorizontal: 10, paddingVertical: 5, borderRadius: 7, borderWidth: 1,
+  },
+  workChipText: { fontSize: 12, fontFamily: 'Inter_500Medium', maxWidth: 140 },
   errorBox: {
-    flexDirection: 'row',
-    gap: 8,
-    padding: 12,
-    borderRadius: 8,
-    borderWidth: 1,
-    marginBottom: 14,
-    alignItems: 'flex-start',
+    flexDirection: 'row', gap: 8, padding: 12,
+    borderRadius: 8, borderWidth: 1, marginBottom: 14, alignItems: 'flex-start',
   },
   errorText: { fontSize: 13, fontFamily: 'Inter_400Regular', flex: 1 },
-  knowledgeItem: {
-    padding: 10,
-    borderRadius: 8,
-    borderWidth: 1,
-    marginBottom: 8,
-  },
+  reviewHeader: { fontSize: 12, fontFamily: 'Inter_600SemiBold', marginBottom: 8 },
+  knowledgeItem: { padding: 10, borderRadius: 8, borderWidth: 1, marginBottom: 8 },
   knText: { fontSize: 13, fontFamily: 'Inter_400Regular', lineHeight: 18 },
-  knMeta: { fontSize: 11, fontFamily: 'Inter_400Regular', marginTop: 4 },
+  knFooter: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 4 },
+  knMeta: { fontSize: 11, fontFamily: 'Inter_400Regular', flex: 1 },
+  reviewButtons: { flexDirection: 'row', gap: 6 },
+  reviewBtn: { padding: 6, borderRadius: 6, minWidth: 28, alignItems: 'center' },
   emptyText: { fontSize: 13, fontFamily: 'Inter_400Regular', textAlign: 'center', marginVertical: 12 },
-  backBtn: {
-    marginTop: 16,
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    borderRadius: 8,
-    borderWidth: 1,
-  },
+  backBtn: { marginTop: 16, paddingHorizontal: 20, paddingVertical: 10, borderRadius: 8, borderWidth: 1 },
   backBtnText: { fontSize: 14, fontFamily: 'Inter_500Medium' },
+  // Modal
+  modalOverlay: { flex: 1, backgroundColor: '#00000060', justifyContent: 'flex-end' },
+  modalSheet: { borderTopWidth: 1, borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '70%' },
+  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16 },
+  modalTitle: { fontSize: 17, fontFamily: 'Inter_700Bold' },
+  workOption: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: 1,
+  },
+  workOptionText: { fontSize: 15, fontFamily: 'Inter_500Medium', flex: 1 },
+  modalLoading: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 16, justifyContent: 'center' },
+  modalLoadingText: { fontSize: 13, fontFamily: 'Inter_400Regular' },
 });

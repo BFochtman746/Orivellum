@@ -1235,6 +1235,7 @@ function SearchTab({ workId }: { workId: string }) {
             placeholder="Search knowledge and documents…"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
+            autoFocus
           />
         </div>
         <Button type="submit" disabled={!query.trim() || loading}>
