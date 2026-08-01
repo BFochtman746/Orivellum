@@ -53,16 +53,10 @@ function TTSPanel() {
       const blob = await resp.blob();
       const url = URL.createObjectURL(blob);
       setAudioUrl(url);
-
-      // Auto-play
-      setTimeout(() => {
-        if (audioRef.current) {
-          audioRef.current.play().catch(() => {});
-          setPlaying(true);
-        }
-      }, 50);
+      // Do NOT autoplay — iOS Safari blocks audio from async code.
+      // The audio player below has native controls; user taps play.
     } catch (e: any) {
-      toast.error(`TTS failed: ${e.message}`);
+      toast.error(`TTS failed: ${e.message}`, { duration: 8000 });
     } finally {
       setLoading(false);
     }
