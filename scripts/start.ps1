@@ -181,23 +181,13 @@ Write-Host "[web]  Starting web UI on port $WebPort ..." -ForegroundColor $Cyan
 $env:PORT              = "$WebPort"
 $env:BASE_PATH         = "/"
 $env:ORIVELLUM_API_URL = "http://127.0.0.1:$ApiPort"
-# Use cmd.exe /c so shims, .cmd wrappers, and .exe files all work
-$uiDir  = Join-Path $root "artifacts\orivellum-ui"
-$webTmp = [System.IO.Path]::GetTempFileName() -replace '\.tmp$', '.cmd'
-$webBatch  = "@echo off`r`n"
-$webBatch += "echo [web-batch] Starting pnpm run dev ...`r`n"
-$webBatch += "cd /d `"$uiDir`"`r`n"
-$webBatch += "echo [web-batch] cwd=%CD%`r`n"
-$webBatch += "`"$pnpmExe`" run dev`r`n"
-$webBatch += "echo [web-batch] pnpm exited with %ERRORLEVEL%`r`n"
-[System.IO.File]::WriteAllText($webTmp, $webBatch, [System.Text.Encoding]::ASCII)
-
+# pnpm silently skips launching Vite when stdout is redirected (non-TTY).
+# Open a dedicated window so pnpm gets a real console — same as running manually.
+$uiDir = Join-Path $root "artifacts\orivellum-ui"
 $webProc = Start-Process -FilePath "cmd.exe" `
-  -ArgumentList "/c `"$webTmp`"" `
-  -PassThru -NoNewWindow `
+  -ArgumentList "/k title Orivellum Web && cd /d `"$uiDir`" && `"$pnpmExe`" run dev" `
   -WorkingDirectory $uiDir `
-  -RedirectStandardOutput (Join-Path $logsDir "web.log") `
-  -RedirectStandardError  (Join-Path $logsDir "web-err.log")
+  -PassThru
 $children.Add($webProc)
 
 # ---- Mobile (optional) ------------------------------------------------------
