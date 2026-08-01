@@ -339,7 +339,7 @@ export default function Chat() {
     (c) => c.title?.toLowerCase().includes(search.toLowerCase()) || c.last_message?.toLowerCase().includes(search.toLowerCase())
   );
 
-  const conv = activeConv?.conversation as any;
+  const conv = activeConv?.conversation;
 
   return (
     <div className="h-[calc(100vh-6rem)] flex gap-6 animate-in fade-in duration-500">

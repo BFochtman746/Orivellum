@@ -604,7 +604,10 @@ class OrivellumDB:
                 "SELECT COUNT(*) FROM tasks WHERE status='pending'"
             ).fetchone()[0]
             recent_works = self._conn.execute(
-                """SELECT w.id, w.title, w.work_type, w.status, o.updated_at
+                """SELECT w.id, w.title, w.work_type, w.status, w.description, o.updated_at,
+                          (SELECT COUNT(*) FROM documents d WHERE d.work_id=w.id) AS document_count,
+                          (SELECT COUNT(*) FROM knowledge k WHERE k.work_id=w.id) AS knowledge_count,
+                          (SELECT COUNT(*) FROM tasks t WHERE t.work_id=w.id AND t.status='pending') AS pending_tasks
                    FROM works w JOIN objects o ON o.id=w.id
                    WHERE o.lifecycle='active' ORDER BY o.updated_at DESC LIMIT 5"""
             ).fetchall()

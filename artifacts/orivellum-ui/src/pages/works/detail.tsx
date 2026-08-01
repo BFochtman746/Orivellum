@@ -1,56 +1,73 @@
 import { useState } from "react";
-import { useParams, Link } from "wouter";
-import { 
-  useGetWork, 
-  useGetWorkDocuments, 
-  useGetWorkKnowledge, 
+import { useParams, Link, useLocation } from "wouter";
+import {
+  useGetWork,
+  useGetWorkDocuments,
+  useGetWorkKnowledge,
   useGetWorkTasks,
   useGetWorkConversations,
   useCreateWorkTask,
+  useUpdateWorkTask,
+  useCreateConversation,
+  useListLibrary,
   getGetWorkQueryKey,
   getGetWorkTasksQueryKey,
   getGetWorkDocumentsQueryKey,
   getGetWorkKnowledgeQueryKey,
-  getGetWorkConversationsQueryKey
+  getGetWorkConversationsQueryKey,
+  getListConversationsQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
-import { 
-  ArrowLeft, 
-  FileText, 
-  Network, 
-  CheckSquare, 
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog";
+import {
+  ArrowLeft,
+  FileText,
+  Network,
+  CheckSquare,
   MessageSquare,
   Plus,
   Clock,
-  MoreVertical
+  Loader2,
 } from "lucide-react";
+import { ScrollArea } from "@/components/ui/scroll-area";
+
+// ─── Work detail shell ────────────────────────────────────────────────────────
 
 export default function WorkDetail() {
   const { workId } = useParams();
-  const queryClient = useQueryClient();
-  
-  const { data: workResp, isLoading: loadingWork } = useGetWork(workId!, { query: { enabled: !!workId, queryKey: getGetWorkQueryKey(workId!) }});
-  
+  const { data: workResp, isLoading: loadingWork } = useGetWork(workId!, {
+    query: { enabled: !!workId, queryKey: getGetWorkQueryKey(workId!) },
+  });
   const work = workResp?.work;
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500 pb-20">
+      {/* Breadcrumb */}
       <div className="flex items-center gap-4 text-sm font-mono uppercase tracking-widest text-muted-foreground mb-8">
         <Link href="/works" className="hover:text-foreground transition-colors flex items-center gap-1">
           <ArrowLeft className="w-3 h-3" /> Works
         </Link>
         <span>/</span>
-        <span className="text-foreground">{loadingWork ? <Skeleton className="w-20 h-4 inline-block align-middle" /> : work?.title}</span>
+        <span className="text-foreground">
+          {loadingWork ? <Skeleton className="w-20 h-4 inline-block align-middle" /> : work?.title}
+        </span>
       </div>
 
+      {/* Header */}
       {loadingWork ? (
         <div className="space-y-4">
           <Skeleton className="h-12 w-3/4" />
@@ -58,60 +75,52 @@ export default function WorkDetail() {
         </div>
       ) : work ? (
         <div className="space-y-4">
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <h1 className="text-4xl font-serif font-semibold tracking-tight">{work.title}</h1>
-              {work.description && (
-                <p className="text-lg text-muted-foreground font-serif italic mt-2 max-w-3xl leading-relaxed">
-                  {work.description}
-                </p>
-              )}
-            </div>
-            <div className="flex items-center gap-2">
-              <Button variant="outline" size="icon"><MoreVertical className="w-4 h-4" /></Button>
-            </div>
+          <div>
+            <h1 className="text-4xl font-serif font-semibold tracking-tight">{work.title}</h1>
+            {work.description && (
+              <p className="text-lg text-muted-foreground font-serif italic mt-2 max-w-3xl leading-relaxed">
+                {work.description}
+              </p>
+            )}
           </div>
           <div className="flex items-center gap-3">
-            <Badge variant="outline" className="font-mono text-xs uppercase bg-primary/5 text-primary border-primary/20">{work.status}</Badge>
+            <Badge variant="outline" className="font-mono text-xs uppercase bg-primary/5 text-primary border-primary/20">
+              {work.status}
+            </Badge>
             <Badge variant="secondary" className="font-mono text-xs uppercase">{work.work_type}</Badge>
             <span className="text-sm font-mono text-muted-foreground flex items-center gap-1">
               <Clock className="w-3 h-3" />
-              Created {work.created_at ? format(new Date(work.created_at), 'MMM d, yyyy') : 'Unknown'}
+              Created {work.created_at ? format(new Date(work.created_at), "MMM d, yyyy") : "Unknown"}
             </span>
           </div>
         </div>
       ) : null}
 
+      {/* Tabs */}
       <div className="pt-8">
         <Tabs defaultValue="documents" className="w-full">
           <TabsList className="w-full justify-start border-b border-border/50 rounded-none bg-transparent h-auto p-0 space-x-6">
-            <TabsTrigger value="documents" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent py-3 px-1 font-mono text-xs uppercase tracking-wider">
-              <FileText className="w-4 h-4 mr-2" /> Documents
-            </TabsTrigger>
-            <TabsTrigger value="knowledge" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent py-3 px-1 font-mono text-xs uppercase tracking-wider">
-              <Network className="w-4 h-4 mr-2" /> Knowledge
-            </TabsTrigger>
-            <TabsTrigger value="tasks" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent py-3 px-1 font-mono text-xs uppercase tracking-wider">
-              <CheckSquare className="w-4 h-4 mr-2" /> Tasks
-            </TabsTrigger>
-            <TabsTrigger value="conversations" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent py-3 px-1 font-mono text-xs uppercase tracking-wider">
-              <MessageSquare className="w-4 h-4 mr-2" /> Conversations
-            </TabsTrigger>
+            {[
+              { value: "documents", icon: FileText, label: "Documents" },
+              { value: "knowledge", icon: Network, label: "Knowledge" },
+              { value: "tasks", icon: CheckSquare, label: "Tasks" },
+              { value: "conversations", icon: MessageSquare, label: "Conversations" },
+            ].map(({ value, icon: Icon, label }) => (
+              <TabsTrigger
+                key={value}
+                value={value}
+                className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent py-3 px-1 font-mono text-xs uppercase tracking-wider"
+              >
+                <Icon className="w-4 h-4 mr-2" /> {label}
+              </TabsTrigger>
+            ))}
           </TabsList>
 
           <div className="mt-8">
-            <TabsContent value="documents">
-              <DocumentsTab workId={workId!} />
-            </TabsContent>
-            <TabsContent value="knowledge">
-              <KnowledgeTab workId={workId!} />
-            </TabsContent>
-            <TabsContent value="tasks">
-              <TasksTab workId={workId!} />
-            </TabsContent>
-            <TabsContent value="conversations">
-              <ConversationsTab workId={workId!} />
-            </TabsContent>
+            <TabsContent value="documents"><DocumentsTab workId={workId!} /></TabsContent>
+            <TabsContent value="knowledge"><KnowledgeTab workId={workId!} /></TabsContent>
+            <TabsContent value="tasks"><TasksTab workId={workId!} /></TabsContent>
+            <TabsContent value="conversations"><ConversationsTab workId={workId!} /></TabsContent>
           </div>
         </Tabs>
       </div>
@@ -119,33 +128,61 @@ export default function WorkDetail() {
   );
 }
 
-// Separate components for tabs to keep file clean and lazy load data ideally
+// ─── Documents tab ────────────────────────────────────────────────────────────
 
 function DocumentsTab({ workId }: { workId: string }) {
-  const { data: docsResp, isLoading } = useGetWorkDocuments(workId, { query: { enabled: !!workId, queryKey: getGetWorkDocumentsQueryKey(workId) } });
-  
+  const queryClient = useQueryClient();
+  const [open, setOpen] = useState(false);
+
+  const { data: docsResp, isLoading } = useGetWorkDocuments(workId, {
+    query: { enabled: !!workId, queryKey: getGetWorkDocumentsQueryKey(workId) },
+  });
+
+  // Library documents not yet linked to this work — for the picker
+  const { data: libraryResp } = useListLibrary();
+  const unlinked = (libraryResp?.documents ?? []).filter(
+    (d) => !d.work_id && d.id !== workId
+  );
+
+  const [linking, setLinking] = useState(false);
+
+  const handleLink = async (docId: string) => {
+    setLinking(true);
+    try {
+      const base = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
+      await fetch(`${base}/library/${docId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ work_id: workId }),
+      });
+      await queryClient.invalidateQueries({ queryKey: getGetWorkDocumentsQueryKey(workId) });
+      setOpen(false);
+    } finally {
+      setLinking(false);
+    }
+  };
+
   if (isLoading) return <Skeleton className="h-64 w-full" />;
-  
-  const docs = docsResp?.documents || [];
+  const docs = docsResp?.documents ?? [];
 
   return (
     <div className="space-y-4">
       <div className="flex justify-between items-center">
         <h3 className="text-xl font-serif font-medium">Source Material</h3>
-        <Button size="sm" variant="outline" className="gap-2">
+        <Button size="sm" variant="outline" className="gap-2" onClick={() => setOpen(true)}>
           <Plus className="w-4 h-4" /> Add Document
         </Button>
       </div>
-      
+
       {docs.length > 0 ? (
         <div className="grid gap-3">
-          {docs.map(doc => (
-            <Card key={doc.id} className="hover-elevate cursor-pointer">
+          {docs.map((doc) => (
+            <Card key={doc.id} className="hover-elevate">
               <CardContent className="p-4 flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   <FileText className="w-5 h-5 text-muted-foreground" />
                   <div>
-                    <h4 className="font-medium">{doc.title || doc.source || 'Untitled'}</h4>
+                    <h4 className="font-medium">{doc.title || doc.source || "Untitled"}</h4>
                     <div className="flex gap-2 mt-1">
                       <Badge variant="secondary" className="text-[10px] uppercase font-mono">{doc.kind}</Badge>
                       <Badge variant="outline" className="text-[10px] uppercase font-mono">{doc.readiness}</Badge>
@@ -153,7 +190,7 @@ function DocumentsTab({ workId }: { workId: string }) {
                   </div>
                 </div>
                 <div className="text-xs font-mono text-muted-foreground">
-                  {doc.created_at ? format(new Date(doc.created_at), 'MMM d, yyyy') : ''}
+                  {doc.created_at ? format(new Date(doc.created_at), "MMM d, yyyy") : ""}
                 </div>
               </CardContent>
             </Card>
@@ -162,35 +199,84 @@ function DocumentsTab({ workId }: { workId: string }) {
       ) : (
         <div className="text-center py-12 bg-muted/10 border border-dashed rounded-lg">
           <p className="text-muted-foreground">No documents added to this work yet.</p>
+          <Button size="sm" variant="outline" className="gap-2 mt-4" onClick={() => setOpen(true)}>
+            <Plus className="w-4 h-4" /> Add from Library
+          </Button>
         </div>
       )}
+
+      {/* Document picker dialog */}
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="font-serif">Link a Document</DialogTitle>
+            <DialogDescription>
+              Choose a document from your library to associate with this work.
+            </DialogDescription>
+          </DialogHeader>
+          <ScrollArea className="max-h-80 mt-2">
+            {unlinked.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-8">
+                No unlinked documents in your library.{" "}
+                <Link href="/library" className="underline">Import one</Link> first.
+              </p>
+            ) : (
+              <div className="space-y-2 pr-2">
+                {unlinked.map((doc) => (
+                  <button
+                    key={doc.id}
+                    disabled={linking}
+                    onClick={() => handleLink(doc.id!)}
+                    className="w-full text-left flex items-center gap-3 p-3 rounded-lg border border-border/50 hover:bg-muted/50 transition-colors disabled:opacity-50"
+                  >
+                    <FileText className="w-4 h-4 text-muted-foreground shrink-0" />
+                    <div className="min-w-0 flex-1">
+                      <div className="font-medium text-sm truncate">{doc.title || doc.source || "Untitled"}</div>
+                      <div className="flex gap-1.5 mt-0.5">
+                        <Badge variant="secondary" className="text-[10px] uppercase font-mono">{doc.kind}</Badge>
+                        <Badge variant="outline" className="text-[10px] uppercase font-mono">{doc.readiness}</Badge>
+                      </div>
+                    </div>
+                    {linking && <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />}
+                  </button>
+                ))}
+              </div>
+            )}
+          </ScrollArea>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
 
+// ─── Knowledge tab ────────────────────────────────────────────────────────────
+
 function KnowledgeTab({ workId }: { workId: string }) {
-  const { data: knowResp, isLoading } = useGetWorkKnowledge(workId, {}, { query: { enabled: !!workId, queryKey: getGetWorkKnowledgeQueryKey(workId, {}) } });
-  
+  const { data: knowResp, isLoading } = useGetWorkKnowledge(workId, {}, {
+    query: { enabled: !!workId, queryKey: getGetWorkKnowledgeQueryKey(workId, {}) },
+  });
+
   if (isLoading) return <Skeleton className="h-64 w-full" />;
-  
-  const knowledge = knowResp?.knowledge || [];
+  const knowledge = knowResp?.knowledge ?? [];
 
   return (
     <div className="space-y-4">
-      <div className="flex justify-between items-center">
-        <h3 className="text-xl font-serif font-medium">Structured Knowledge</h3>
-      </div>
-      
+      <h3 className="text-xl font-serif font-medium">Structured Knowledge</h3>
+
       {knowledge.length > 0 ? (
         <div className="grid gap-3">
-          {knowledge.map(item => (
+          {knowledge.map((item) => (
             <Card key={item.id}>
               <CardContent className="p-4">
                 <div className="flex items-start justify-between gap-4">
-                  <div>
+                  <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-2">
-                      <Badge variant="outline" className="text-[10px] uppercase font-mono border-primary/30 text-primary">{item.kind}</Badge>
-                      <Badge variant="secondary" className="text-[10px] uppercase font-mono">{item.review_status}</Badge>
+                      <Badge variant="outline" className="text-[10px] uppercase font-mono border-primary/30 text-primary">
+                        {item.kind}
+                      </Badge>
+                      <Badge variant="secondary" className="text-[10px] uppercase font-mono">
+                        {item.review_status}
+                      </Badge>
                     </div>
                     {item.subject && item.predicate && item.object ? (
                       <div className="font-mono text-sm bg-muted/30 p-2 rounded border border-border/50">
@@ -202,8 +288,8 @@ function KnowledgeTab({ workId }: { workId: string }) {
                       <p className="text-sm font-serif leading-relaxed">{item.text}</p>
                     )}
                   </div>
-                  {item.confidence && (
-                    <div className="text-xs font-mono px-2 py-1 bg-muted rounded">
+                  {item.confidence !== undefined && item.confidence !== null && (
+                    <div className="text-xs font-mono px-2 py-1 bg-muted rounded shrink-0">
                       {(item.confidence * 100).toFixed(0)}%
                     </div>
                   )}
@@ -215,102 +301,166 @@ function KnowledgeTab({ workId }: { workId: string }) {
       ) : (
         <div className="text-center py-12 bg-muted/10 border border-dashed rounded-lg">
           <p className="text-muted-foreground">No knowledge extracted yet.</p>
+          <p className="text-xs text-muted-foreground mt-1">
+            Link a document and Orivellum will extract concepts, facts, and excerpts automatically.
+          </p>
         </div>
       )}
     </div>
   );
 }
 
+// ─── Tasks tab ────────────────────────────────────────────────────────────────
+
 function TasksTab({ workId }: { workId: string }) {
   const queryClient = useQueryClient();
-  const { data: tasksResp, isLoading } = useGetWorkTasks(workId, {}, { query: { enabled: !!workId, queryKey: getGetWorkTasksQueryKey(workId) } });
+  const { data: tasksResp, isLoading } = useGetWorkTasks(workId, {}, {
+    query: { enabled: !!workId, queryKey: getGetWorkTasksQueryKey(workId) },
+  });
   const createTask = useCreateWorkTask();
+  const updateTask = useUpdateWorkTask();
   const [newTaskText, setNewTaskText] = useState("");
 
-  const handleAddTask = (e: React.FormEvent) => {
+  const handleAdd = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newTaskText.trim()) return;
-    createTask.mutate({ workId, data: { text: newTaskText } }, {
-      onSuccess: () => {
-        setNewTaskText("");
-        queryClient.invalidateQueries({ queryKey: getGetWorkTasksQueryKey(workId) });
+    createTask.mutate(
+      { workId, data: { text: newTaskText } },
+      {
+        onSuccess: () => {
+          setNewTaskText("");
+          queryClient.invalidateQueries({ queryKey: getGetWorkTasksQueryKey(workId) });
+        },
       }
-    });
+    );
   };
-  
+
+  const handleToggle = (taskId: string, current: string) => {
+    const next = current === "completed" ? "pending" : "completed";
+    updateTask.mutate(
+      { workId, taskId, data: { status: next } },
+      { onSuccess: () => queryClient.invalidateQueries({ queryKey: getGetWorkTasksQueryKey(workId) }) }
+    );
+  };
+
   if (isLoading) return <Skeleton className="h-64 w-full" />;
-  
-  const tasks = tasksResp?.tasks || [];
+  const tasks = tasksResp?.tasks ?? [];
 
   return (
     <div className="space-y-6 max-w-3xl">
-      <form onSubmit={handleAddTask} className="flex gap-2">
-        <Input 
-          placeholder="Add a new task..." 
+      <form onSubmit={handleAdd} className="flex gap-2">
+        <Input
+          placeholder="Add a new task…"
           value={newTaskText}
           onChange={(e) => setNewTaskText(e.target.value)}
           className="bg-background/50"
         />
-        <Button type="submit" disabled={!newTaskText.trim() || createTask.isPending}>Add</Button>
+        <Button type="submit" disabled={!newTaskText.trim() || createTask.isPending}>
+          {createTask.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : "Add"}
+        </Button>
       </form>
 
       <div className="space-y-2">
         {tasks.length > 0 ? (
-          tasks.map(task => (
-            <div key={task.id} className="flex items-start gap-3 p-3 rounded-lg hover:bg-muted/30 transition-colors group border border-transparent hover:border-border/50">
-              <Checkbox id={task.id} className="mt-1" checked={task.status === 'completed'} />
+          tasks.map((task) => (
+            <div
+              key={task.id}
+              className="flex items-start gap-3 p-3 rounded-lg hover:bg-muted/30 transition-colors group border border-transparent hover:border-border/50"
+            >
+              <Checkbox
+                id={task.id}
+                className="mt-1"
+                checked={task.status === "completed"}
+                onCheckedChange={() => handleToggle(task.id!, task.status ?? "pending")}
+                disabled={updateTask.isPending}
+              />
               <div className="flex-1 space-y-1">
-                <label 
+                <label
                   htmlFor={task.id}
-                  className={`text-sm font-medium leading-none cursor-pointer ${task.status === 'completed' ? 'line-through text-muted-foreground' : ''}`}
+                  className={`text-sm font-medium leading-none cursor-pointer ${
+                    task.status === "completed" ? "line-through text-muted-foreground" : ""
+                  }`}
                 >
                   {task.text}
                 </label>
               </div>
-              <Badge variant="outline" className="text-[9px] uppercase font-mono opacity-0 group-hover:opacity-100 transition-opacity">
+              <Badge
+                variant="outline"
+                className="text-[9px] uppercase font-mono opacity-0 group-hover:opacity-100 transition-opacity"
+              >
                 Priority {task.priority || 0}
               </Badge>
             </div>
           ))
         ) : (
-          <p className="text-sm text-muted-foreground italic">No tasks pending for this work.</p>
+          <p className="text-sm text-muted-foreground italic">No tasks yet for this work.</p>
         )}
       </div>
     </div>
   );
 }
 
+// ─── Conversations tab ────────────────────────────────────────────────────────
+
 function ConversationsTab({ workId }: { workId: string }) {
-  const { data: convResp, isLoading } = useGetWorkConversations(workId, { query: { enabled: !!workId, queryKey: getGetWorkConversationsQueryKey(workId) } });
-  
+  const [, setLocation] = useLocation();
+  const queryClient = useQueryClient();
+  const { data: convResp, isLoading } = useGetWorkConversations(workId, {
+    query: { enabled: !!workId, queryKey: getGetWorkConversationsQueryKey(workId) },
+  });
+  const createConv = useCreateConversation();
+
+  const handleNewDiscussion = () => {
+    createConv.mutate(
+      { data: { title: "New Discussion", work_id: workId } },
+      {
+        onSuccess: (res) => {
+          queryClient.invalidateQueries({ queryKey: getGetWorkConversationsQueryKey(workId) });
+          queryClient.invalidateQueries({ queryKey: getListConversationsQueryKey() });
+          if (res?.conversation?.id) setLocation(`/chat?id=${res.conversation.id}`);
+        },
+      }
+    );
+  };
+
   if (isLoading) return <Skeleton className="h-64 w-full" />;
-  
-  const conversations = convResp?.conversations || [];
+  const conversations = convResp?.conversations ?? [];
 
   return (
     <div className="space-y-4">
       <div className="flex justify-between items-center">
         <h3 className="text-xl font-serif font-medium">Conversations</h3>
-        <Button size="sm" variant="outline" className="gap-2">
-          <Plus className="w-4 h-4" /> New Discussion
+        <Button
+          size="sm"
+          variant="outline"
+          className="gap-2"
+          onClick={handleNewDiscussion}
+          disabled={createConv.isPending}
+        >
+          {createConv.isPending ? (
+            <Loader2 className="w-4 h-4 animate-spin" />
+          ) : (
+            <Plus className="w-4 h-4" />
+          )}
+          New Discussion
         </Button>
       </div>
-      
+
       {conversations.length > 0 ? (
         <div className="grid gap-3">
-          {conversations.map(conv => (
+          {conversations.map((conv) => (
             <Link key={conv.id} href={`/chat?id=${conv.id}`}>
               <Card className="hover-elevate cursor-pointer">
                 <CardContent className="p-4 flex items-center justify-between">
                   <div className="space-y-1">
-                    <h4 className="font-medium text-lg">{conv.title || 'Untitled Conversation'}</h4>
+                    <h4 className="font-medium text-lg">{conv.title || "Untitled Conversation"}</h4>
                     <p className="text-sm text-muted-foreground truncate max-w-xl">
-                      {conv.last_message || 'No messages yet.'}
+                      {conv.last_message || "No messages yet."}
                     </p>
                   </div>
                   <div className="text-right text-xs font-mono text-muted-foreground space-y-1 shrink-0">
                     <div>{conv.message_count || 0} msgs</div>
-                    <div>{conv.updated_at ? format(new Date(conv.updated_at), 'MMM d') : ''}</div>
+                    <div>{conv.updated_at ? format(new Date(conv.updated_at), "MMM d") : ""}</div>
                   </div>
                 </CardContent>
               </Card>
@@ -319,7 +469,11 @@ function ConversationsTab({ workId }: { workId: string }) {
         </div>
       ) : (
         <div className="text-center py-12 bg-muted/10 border border-dashed rounded-lg">
+          <MessageSquare className="w-8 h-8 mx-auto mb-3 opacity-20" />
           <p className="text-muted-foreground">No conversations linked to this work.</p>
+          <Button size="sm" variant="outline" className="gap-2 mt-4" onClick={handleNewDiscussion} disabled={createConv.isPending}>
+            <Plus className="w-4 h-4" /> Start a Discussion
+          </Button>
         </div>
       )}
     </div>

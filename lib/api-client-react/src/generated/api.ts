@@ -61,6 +61,7 @@ import type {
   ListWorks200,
   ListWorksParams,
   MessageSend,
+  ModelList,
   OkResponse,
   ProjectCreate,
   SearchKnowledge200,
@@ -70,8 +71,10 @@ import type {
   SendMessage200,
   SystemHealth,
   TaskCreate,
+  TaskUpdate,
   UpdateConversation200,
   UpdateWork200,
+  UpdateWorkTask200,
   UploadRequest,
   UploadResponse,
   VerifyBackup200,
@@ -962,6 +965,80 @@ export function useGetWorkKnowledge<TData = Awaited<ReturnType<typeof getWorkKno
 
 
 
+
+export const getUpdateWorkTaskUrl = (workId: string,
+    taskId: string,) => {
+
+
+
+
+  return `/api/works/${workId}/tasks/${taskId}`
+}
+
+/**
+ * @summary Update a task (status, text)
+ */
+export const updateWorkTask = async (workId: string,
+    taskId: string,
+    taskUpdate: TaskUpdate, options?: Parameters<typeof customFetch>[1]): Promise<UpdateWorkTask200> => {
+
+  return customFetch<UpdateWorkTask200>(getUpdateWorkTaskUrl(workId,taskId),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(taskUpdate)
+  }
+);}
+
+
+
+
+
+export const getUpdateWorkTaskMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateWorkTask>>, TError,{workId: string;taskId: string;data: BodyType<TaskUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateWorkTask>>, TError,{workId: string;taskId: string;data: BodyType<TaskUpdate>}, TContext> => {
+
+const mutationKey = ['updateWorkTask'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateWorkTask>>, {workId: string;taskId: string;data: BodyType<TaskUpdate>}> = (props) => {
+          const {workId,taskId,data} = props ?? {};
+
+          return  updateWorkTask(workId,taskId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateWorkTaskMutationResult = NonNullable<Awaited<ReturnType<typeof updateWorkTask>>>
+    export type UpdateWorkTaskMutationBody = BodyType<TaskUpdate>
+    export type UpdateWorkTaskMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Update a task (status, text)
+ */
+export const useUpdateWorkTask = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateWorkTask>>, TError,{workId: string;taskId: string;data: BodyType<TaskUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateWorkTask>>,
+        TError,
+        {workId: string;taskId: string;data: BodyType<TaskUpdate>},
+        TContext
+      > => {
+      return useMutation(getUpdateWorkTaskMutationOptions(options));
+    }
 
 export const getGetWorkTasksUrl = (workId: string,
     params?: GetWorkTasksParams,) => {
@@ -1962,6 +2039,77 @@ export const useImportDocument = <TError = ErrorType<unknown>,
         TContext
       > => {
       return useMutation(getImportDocumentMutationOptions(options));
+    }
+
+export const getReprocessDocumentUrl = (docId: string,) => {
+
+
+
+
+  return `/api/library/${docId}/reprocess`
+}
+
+/**
+ * @summary Re-queue extraction for a document
+ */
+export const reprocessDocument = async (docId: string, options?: Parameters<typeof customFetch>[1]): Promise<OkResponse> => {
+
+  return customFetch<OkResponse>(getReprocessDocumentUrl(docId),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getReprocessDocumentMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof reprocessDocument>>, TError,{docId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof reprocessDocument>>, TError,{docId: string}, TContext> => {
+
+const mutationKey = ['reprocessDocument'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof reprocessDocument>>, {docId: string}> = (props) => {
+          const {docId} = props ?? {};
+
+          return  reprocessDocument(docId,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ReprocessDocumentMutationResult = NonNullable<Awaited<ReturnType<typeof reprocessDocument>>>
+
+    export type ReprocessDocumentMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Re-queue extraction for a document
+ */
+export const useReprocessDocument = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof reprocessDocument>>, TError,{docId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof reprocessDocument>>,
+        TError,
+        {docId: string},
+        TContext
+      > => {
+      return useMutation(getReprocessDocumentMutationOptions(options));
     }
 
 export const getGetDocumentUrl = (docId: string,) => {
@@ -3038,6 +3186,83 @@ export const useUploadFile = <TError = ErrorType<unknown>,
       > => {
       return useMutation(getUploadFileMutationOptions(options));
     }
+
+export const getGetSystemModelsUrl = () => {
+
+
+
+
+  return `/api/system/models`
+}
+
+/**
+ * @summary List available AI models
+ */
+export const getSystemModels = async ( options?: Parameters<typeof customFetch>[1]): Promise<ModelList> => {
+
+  return customFetch<ModelList>(getGetSystemModelsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetSystemModelsQueryKey = () => {
+    return [
+    `/api/system/models`
+    ] as const;
+    }
+
+
+export const getGetSystemModelsQueryOptions = <TData = Awaited<ReturnType<typeof getSystemModels>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getSystemModels>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetSystemModelsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getSystemModels>>> = ({ signal }) => getSystemModels({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getSystemModels>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetSystemModelsQueryResult = NonNullable<Awaited<ReturnType<typeof getSystemModels>>>
+export type GetSystemModelsQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary List available AI models
+ */
+
+export function useGetSystemModels<TData = Awaited<ReturnType<typeof getSystemModels>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getSystemModels>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetSystemModelsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
 
 export const getGetSystemHealthUrl = () => {
 

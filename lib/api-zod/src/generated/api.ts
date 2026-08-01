@@ -225,6 +225,8 @@ export const GetWorkDocumentsResponse = zod.object({
   "kind": zod.string().nullish(),
   "classification": zod.string().nullish(),
   "readiness": zod.string().optional(),
+  "word_count": zod.int().nullish(),
+  "error_message": zod.string().nullish(),
   "meta": zod.looseObject({
 
 }).optional(),
@@ -259,6 +261,31 @@ export const GetWorkKnowledgeResponse = zod.object({
   "created_at": zod.string().optional()
 })).optional(),
   "count": zod.int().optional()
+})
+
+
+/**
+ * @summary Update a task (status, text)
+ */
+export const UpdateWorkTaskParams = zod.object({
+  "workId": zod.coerce.string(),
+  "taskId": zod.coerce.string()
+})
+
+export const UpdateWorkTaskBody = zod.object({
+  "status": zod.string().nullish(),
+  "text": zod.string().nullish()
+})
+
+export const UpdateWorkTaskResponse = zod.object({
+  "task": zod.object({
+  "id": zod.string().optional(),
+  "work_id": zod.string().nullish(),
+  "text": zod.string().optional(),
+  "status": zod.string().optional(),
+  "priority": zod.int().optional(),
+  "created_at": zod.string().optional()
+}).optional()
 })
 
 
@@ -346,6 +373,7 @@ export const GetWorkConversationsResponse = zod.object({
   "work_id": zod.string().nullish(),
   "title": zod.string().nullish(),
   "archived": zod.int().optional(),
+  "model": zod.string().nullish(),
   "last_message": zod.string().nullish(),
   "message_count": zod.int().optional(),
   "created_at": zod.string().optional(),
@@ -371,6 +399,7 @@ export const ListConversationsResponse = zod.object({
   "work_id": zod.string().nullish(),
   "title": zod.string().nullish(),
   "archived": zod.int().optional(),
+  "model": zod.string().nullish(),
   "last_message": zod.string().nullish(),
   "message_count": zod.int().optional(),
   "created_at": zod.string().optional(),
@@ -385,7 +414,8 @@ export const ListConversationsResponse = zod.object({
  */
 export const CreateConversationBody = zod.object({
   "title": zod.string().nullish(),
-  "work_id": zod.string().nullish()
+  "work_id": zod.string().nullish(),
+  "model": zod.string().nullish()
 })
 
 export const CreateConversationResponse = zod.object({
@@ -394,6 +424,7 @@ export const CreateConversationResponse = zod.object({
   "work_id": zod.string().nullish(),
   "title": zod.string().nullish(),
   "archived": zod.int().optional(),
+  "model": zod.string().nullish(),
   "last_message": zod.string().nullish(),
   "message_count": zod.int().optional(),
   "created_at": zod.string().optional(),
@@ -415,6 +446,7 @@ export const GetConversationResponse = zod.object({
   "work_id": zod.string().nullish(),
   "title": zod.string().nullish(),
   "archived": zod.int().optional(),
+  "model": zod.string().nullish(),
   "last_message": zod.string().nullish(),
   "message_count": zod.int().optional(),
   "created_at": zod.string().optional(),
@@ -442,7 +474,8 @@ export const UpdateConversationParams = zod.object({
 
 export const UpdateConversationBody = zod.object({
   "title": zod.string().nullish(),
-  "archived": zod.boolean().nullish()
+  "archived": zod.boolean().nullish(),
+  "model": zod.string().nullish()
 })
 
 export const UpdateConversationResponse = zod.object({
@@ -451,6 +484,7 @@ export const UpdateConversationResponse = zod.object({
   "work_id": zod.string().nullish(),
   "title": zod.string().nullish(),
   "archived": zod.int().optional(),
+  "model": zod.string().nullish(),
   "last_message": zod.string().nullish(),
   "message_count": zod.int().optional(),
   "created_at": zod.string().optional(),
@@ -521,6 +555,8 @@ export const ListLibraryResponse = zod.object({
   "kind": zod.string().nullish(),
   "classification": zod.string().nullish(),
   "readiness": zod.string().optional(),
+  "word_count": zod.int().nullish(),
+  "error_message": zod.string().nullish(),
   "meta": zod.looseObject({
 
 }).optional(),
@@ -572,12 +608,26 @@ export const ImportDocumentResponse = zod.object({
   "kind": zod.string().nullish(),
   "classification": zod.string().nullish(),
   "readiness": zod.string().optional(),
+  "word_count": zod.int().nullish(),
+  "error_message": zod.string().nullish(),
   "meta": zod.looseObject({
 
 }).optional(),
   "created_at": zod.string().optional()
 }).optional(),
   "duplicate": zod.boolean().optional()
+})
+
+
+/**
+ * @summary Re-queue extraction for a document
+ */
+export const ReprocessDocumentParams = zod.object({
+  "docId": zod.coerce.string()
+})
+
+export const ReprocessDocumentResponse = zod.object({
+  "ok": zod.boolean().optional()
 })
 
 
@@ -598,6 +648,8 @@ export const GetDocumentResponse = zod.object({
   "kind": zod.string().nullish(),
   "classification": zod.string().nullish(),
   "readiness": zod.string().optional(),
+  "word_count": zod.int().nullish(),
+  "error_message": zod.string().nullish(),
   "meta": zod.looseObject({
 
 }).optional(),
@@ -832,6 +884,20 @@ export const UploadFileResponse = zod.object({
   "filename": zod.string().optional(),
   "path": zod.string().optional(),
   "size_bytes": zod.int().optional()
+})
+
+
+/**
+ * @summary List available AI models
+ */
+export const GetSystemModelsResponse = zod.object({
+  "models": zod.array(zod.object({
+  "id": zod.string().optional(),
+  "role": zod.string().optional(),
+  "label": zod.string().optional(),
+  "description": zod.string().optional()
+})).optional(),
+  "default": zod.string().optional()
 })
 
 

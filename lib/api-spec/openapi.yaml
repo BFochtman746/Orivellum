@@ -211,6 +211,35 @@ paths:
                   knowledge: { type: array, items: { $ref: "#/components/schemas/KnowledgeItem" } }
                   count: { type: integer }
 
+  /works/{workId}/tasks/{taskId}:
+    patch:
+      operationId: updateWorkTask
+      summary: Update a task (status, text)
+      tags: [works]
+      parameters:
+        - name: workId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: taskId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TaskUpdate" }
+      responses:
+        "200":
+          description: Updated task
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  task: { $ref: "#/components/schemas/Task" }
+
   /works/{workId}/tasks:
     get:
       operationId: getWorkTasks
@@ -500,6 +529,23 @@ paths:
                   document: { $ref: "#/components/schemas/Document" }
                   duplicate: { type: boolean }
 
+  /library/{docId}/reprocess:
+    post:
+      operationId: reprocessDocument
+      summary: Re-queue extraction for a document
+      tags: [library]
+      parameters:
+        - name: docId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Reprocess queued
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OkResponse" }
+
   /library/{docId}:
     get:
       operationId: getDocument
@@ -763,6 +809,18 @@ paths:
               schema: { $ref: "#/components/schemas/UploadResponse" }
 
   # ─── System ───────────────────────────────────────────────────────────────
+  /system/models:
+    get:
+      operationId: getSystemModels
+      summary: List available AI models
+      tags: [system]
+      responses:
+        "200":
+          description: Available models
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ModelList" }
+
   /system/health:
     get:
       operationId: getSystemHealth
@@ -887,6 +945,8 @@ components:
         kind: { type: string, nullable: true }
         classification: { type: string, nullable: true }
         readiness: { type: string }
+        word_count: { type: integer, nullable: true }
+        error_message: { type: string, nullable: true }
         meta: { type: object }
         created_at: { type: string }
 
@@ -923,6 +983,12 @@ components:
         priority: { type: integer }
         created_at: { type: string }
 
+    TaskUpdate:
+      type: object
+      properties:
+        status: { type: string, nullable: true }
+        text: { type: string, nullable: true }
+
     TaskCreate:
       type: object
       required: [text]
@@ -937,22 +1003,39 @@ components:
         work_id: { type: string, nullable: true }
         title: { type: string, nullable: true }
         archived: { type: integer }
+        model: { type: string, nullable: true }
         last_message: { type: string, nullable: true }
         message_count: { type: integer }
         created_at: { type: string }
         updated_at: { type: string }
+
+    ModelOption:
+      type: object
+      properties:
+        id: { type: string }
+        role: { type: string }
+        label: { type: string }
+        description: { type: string }
+
+    ModelList:
+      type: object
+      properties:
+        models: { type: array, items: { $ref: "#/components/schemas/ModelOption" } }
+        default: { type: string }
 
     ConversationCreate:
       type: object
       properties:
         title: { type: string, nullable: true }
         work_id: { type: string, nullable: true }
+        model: { type: string, nullable: true }
 
     ConversationUpdate:
       type: object
       properties:
         title: { type: string, nullable: true }
         archived: { type: boolean, nullable: true }
+        model: { type: string, nullable: true }
 
     Message:
       type: object

@@ -1,3 +1,4 @@
 - [Orivellum stack decisions](orivellum-stack.md) — Python/FastAPI/SQLite backend; React+Vite frontend; Orval 8.23 + Zod v4 codegen; startup order enforced in lifespan.
 - [Orval 8.23 / Zod compatibility](orval-zod-compat.md) — Orval 8.23 always generates Zod v4 syntax; catalog must pin zod@^4; use mode:"single" for zod target to avoid split-barrel TS2308 duplicates.
 - [Works table has no created_at](orivellum-schema-quirks.md) — works table has no own timestamp; all timestamps join through objects table on works.id = objects.id.
+- [OpenAPI codegen workflow](orivellum-codegen.md) — run `pnpm exec orval --config orval.config.ts` from `lib/api-spec/`; generates both react-query hooks and zod schemas; spec lives at `lib/api-spec/openapi.yaml`.

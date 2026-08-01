@@ -106,6 +106,10 @@ export interface Document {
   /** @nullable */
   classification?: string | null;
   readiness?: string;
+  /** @nullable */
+  word_count?: number | null;
+  /** @nullable */
+  error_message?: string | null;
   meta?: DocumentMeta;
   created_at?: string;
 }
@@ -147,6 +151,13 @@ export interface Task {
   created_at?: string;
 }
 
+export interface TaskUpdate {
+  /** @nullable */
+  status?: string | null;
+  /** @nullable */
+  text?: string | null;
+}
+
 export interface TaskCreate {
   text: string;
   priority?: number;
@@ -160,10 +171,24 @@ export interface Conversation {
   title?: string | null;
   archived?: number;
   /** @nullable */
+  model?: string | null;
+  /** @nullable */
   last_message?: string | null;
   message_count?: number;
   created_at?: string;
   updated_at?: string;
+}
+
+export interface ModelOption {
+  id?: string;
+  role?: string;
+  label?: string;
+  description?: string;
+}
+
+export interface ModelList {
+  models?: ModelOption[];
+  default?: string;
 }
 
 export interface ConversationCreate {
@@ -171,6 +196,8 @@ export interface ConversationCreate {
   title?: string | null;
   /** @nullable */
   work_id?: string | null;
+  /** @nullable */
+  model?: string | null;
 }
 
 export interface ConversationUpdate {
@@ -178,6 +205,8 @@ export interface ConversationUpdate {
   title?: string | null;
   /** @nullable */
   archived?: boolean | null;
+  /** @nullable */
+  model?: string | null;
 }
 
 export type MessageMeta = { [key: string]: unknown };
@@ -328,6 +357,10 @@ kind?: string;
 export type GetWorkKnowledge200 = {
   knowledge?: KnowledgeItem[];
   count?: number;
+};
+
+export type UpdateWorkTask200 = {
+  task?: Task;
 };
 
 export type GetWorkTasksParams = {
