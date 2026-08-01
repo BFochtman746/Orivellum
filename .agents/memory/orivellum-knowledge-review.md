@@ -17,5 +17,5 @@ description: How approve/dismiss works for AI-extracted knowledge items
 - Both `works/detail.tsx` KnowledgeTab and `library/detail.tsx` Knowledge tab have this UI
 - Endpoint registered in openapi.yaml as `reviewKnowledgeItem`; codegen run after adding it
 
-## Future consideration
-Chat context injection currently injects all knowledge items regardless of review_status. Eventually filter to only `auto` and `approved` items, excluding `rejected` ones.
+## Chat context filtering
+`_build_system_prompt()` uses an **allowlist** `{"auto", "approved"}` in both `scope="work"` and `scope="all"` paths. `ai_auto` (pending review) and `rejected` items are both excluded. Tests live in `src/tests/test_knowledge_review_filter.py` (11 cases).
