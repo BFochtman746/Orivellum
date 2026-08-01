@@ -1,4 +1,5 @@
 import { useGetSystemHealth, useListCapabilities, getGetSystemHealthQueryKey } from "@workspace/api-client-react";
+import { apiFetch } from "@/lib/auth";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
@@ -16,7 +17,7 @@ function NightshiftCard() {
   const { data, isLoading } = useQuery({
     queryKey: ["system", "jobs"],
     queryFn: async () => {
-      const r = await fetch(`${API_BASE}/api/system/jobs`);
+      const r = await apiFetch(`${API_BASE}/api/system/jobs`);
       if (!r.ok) throw new Error("jobs fetch failed");
       return r.json() as Promise<{ nightshift: { ran_at: string; docs_processed: number; items_added: number; report_path: string | null } | null }>;
     },
@@ -69,7 +70,7 @@ function UserMemoryCard() {
   const { data, isLoading } = useQuery({
     queryKey: ["system", "user-memory"],
     queryFn: async () => {
-      const r = await fetch(`${API_BASE}/api/system/user-memory`);
+      const r = await apiFetch(`${API_BASE}/api/system/user-memory`);
       if (!r.ok) throw new Error("memory fetch failed");
       return r.json() as Promise<{ memories: { id: string; key: string; value: string; created_at: string }[] }>;
     },
@@ -78,7 +79,7 @@ function UserMemoryCard() {
 
   const del = useMutation({
     mutationFn: async (id: string) => {
-      const r = await fetch(`${API_BASE}/api/system/user-memory/${id}`, { method: "DELETE" });
+      const r = await apiFetch(`${API_BASE}/api/system/user-memory/${id}`, { method: "DELETE" });
       if (!r.ok) throw new Error("delete failed");
     },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["system", "user-memory"] }); toast.success("Memory deleted"); },
@@ -131,7 +132,7 @@ function useAiExtractionSetting() {
   return useQuery({
     queryKey: ["system", "ai-extraction"],
     queryFn: async () => {
-      const r = await fetch(`${API_BASE}/api/system/settings/ai-extraction`);
+      const r = await apiFetch(`${API_BASE}/api/system/settings/ai-extraction`);
       if (!r.ok) throw new Error("Failed to fetch AI extraction setting");
       return r.json() as Promise<{ enabled: boolean }>;
     },
@@ -143,7 +144,7 @@ function useSetAiExtractionSetting() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (enabled: boolean) => {
-      const r = await fetch(`${API_BASE}/api/system/settings/ai-extraction`, {
+      const r = await apiFetch(`${API_BASE}/api/system/settings/ai-extraction`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ enabled }),

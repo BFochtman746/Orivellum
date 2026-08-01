@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import { useListFiles, useUploadFile, getListFilesQueryKey } from "@workspace/api-client-react";
+import { apiFetch } from "@/lib/auth";
 import { useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -154,13 +155,22 @@ export default function Files() {
                         <button
                           title="Download"
                           className="opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-foreground"
-                          onClick={() => {
+                          onClick={async () => {
                             const base = (import.meta.env.BASE_URL ?? "/").replace(/\/$/, "");
                             const filePath = currentPath ? `${currentPath}/${fileName}` : fileName;
-                            const a = document.createElement("a");
-                            a.href = `${base}/api/download/${encodeURIComponent(filePath)}`;
-                            a.download = fileName;
-                            a.click();
+                            try {
+                              const resp = await apiFetch(`${base}/api/download/${encodeURIComponent(filePath)}`);
+                              if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                              const blob = await resp.blob();
+                              const url = URL.createObjectURL(blob);
+                              const a = document.createElement("a");
+                              a.href = url;
+                              a.download = fileName;
+                              a.click();
+                              setTimeout(() => URL.revokeObjectURL(url), 10_000);
+                            } catch {
+                              toast.error("Download failed");
+                            }
                           }}
                         >
                           <Download className="w-4 h-4" />

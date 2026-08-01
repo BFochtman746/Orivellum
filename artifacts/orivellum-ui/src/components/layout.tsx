@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
+import { apiFetch } from "@/lib/auth";
 import { Link, useLocation } from "wouter";
 import { format, isToday, isYesterday, subDays, isAfter } from "date-fns";
 import {
@@ -546,7 +547,7 @@ function useJobs(open: boolean) {
     queryKey: ["system", "jobs"],
     queryFn: async () => {
       const base = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
-      const r = await fetch(`${base}/system/jobs`);
+      const r = await apiFetch(`${base}/system/jobs`);
       if (!r.ok) throw new Error("jobs fetch failed");
       return r.json() as Promise<{ jobs: Job[]; total: number; nightshift: { ran_at: string } | null }>;
     },

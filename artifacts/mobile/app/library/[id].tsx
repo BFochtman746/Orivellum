@@ -1,4 +1,5 @@
 import React from 'react';
+import { mobileFetch } from '@/lib/api';
 import {
   ActivityIndicator,
   Platform,
@@ -44,7 +45,7 @@ export default function LibraryDocDetail() {
     queryKey: ['library-knowledge', id],
     queryFn: async () => {
       const domain = process.env.EXPO_PUBLIC_DOMAIN;
-      const res = await fetch(`https://${domain}/api/library/${id}/knowledge`);
+      const res = await mobileFetch(`https://${domain}/api/library/${id}/knowledge`);
       if (!res.ok) throw new Error('Failed to load knowledge');
       return res.json();
     },

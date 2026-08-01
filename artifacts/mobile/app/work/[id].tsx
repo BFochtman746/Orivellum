@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { mobileFetch } from '@/lib/api';
 import {
   ActivityIndicator,
   Alert,
@@ -101,7 +102,7 @@ function KnowledgeRow({ item, onReviewed }: { item: KnowledgeItem; onReviewed?: 
     setReviewing(true);
     try {
       const domain = process.env.EXPO_PUBLIC_DOMAIN;
-      const res = await fetch(`https://${domain}/api/knowledge/${item.id}/review`, {
+      const res = await mobileFetch(`https://${domain}/api/knowledge/${item.id}/review`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: action === 'approve' ? 'approved' : 'rejected' }),
@@ -319,7 +320,7 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
   const apiBase = `https://${domain}/api`;
 
   const fetchSummary = async () => {
-    const r = await fetch(`${apiBase}/works/${workId}/learning/summary`);
+    const r = await mobileFetch(`${apiBase}/works/${workId}/learning/summary`);
     if (!r.ok) throw new Error('Could not load summary');
     return r.json();
   };
@@ -331,7 +332,7 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
     const url = conceptId
       ? `${apiBase}/works/${workId}/learning/question?concept_id=${conceptId}`
       : `${apiBase}/works/${workId}/learning/question`;
-    const r = await fetch(url);
+    const r = await mobileFetch(url);
     if (r.status === 422) { setPhase('all_done'); return; }
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const d = await r.json();
@@ -352,7 +353,7 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
       setSummary(data);
       if (data.total === 0) {
         setPhase('seeding');
-        const sr = await fetch(`${apiBase}/works/${workId}/learning/seed`, { method: 'POST' });
+        const sr = await mobileFetch(`${apiBase}/works/${workId}/learning/seed`, { method: 'POST' });
         if (!sr.ok) throw new Error('Could not seed concepts');
         const sd = await sr.json();
         if (!(sd.concepts ?? []).length) throw new Error('No knowledge found — import documents first.');
@@ -375,7 +376,7 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setPhase('assessing');
     try {
-      const r = await fetch(`${apiBase}/works/${workId}/learning/assess`, {
+      const r = await mobileFetch(`${apiBase}/works/${workId}/learning/assess`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -421,7 +422,7 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
   if (phase === 'all_done') {
     const handleReset = async () => {
       try {
-        await fetch(`${apiBase}/works/${workId}/learning/reset`, { method: 'POST' });
+        await mobileFetch(`${apiBase}/works/${workId}/learning/reset`, { method: 'POST' });
         init();
       } catch { init(); }
     };

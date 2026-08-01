@@ -102,9 +102,10 @@ class _PipelineBase(unittest.TestCase):
 
     def setUp(self):
         from fastapi.testclient import TestClient
+        from tests.conftest import AUTH_HEADERS
         self._tmpdir = tempfile.TemporaryDirectory()
         self.app, self.db = _make_app(self._tmpdir.name)
-        self.client = TestClient(self.app, raise_server_exceptions=True)
+        self.client = TestClient(self.app, raise_server_exceptions=True, headers=AUTH_HEADERS)
 
     def tearDown(self):
         self.db.close()

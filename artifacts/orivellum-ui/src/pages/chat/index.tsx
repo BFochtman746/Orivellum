@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useLocation } from "wouter";
 import { toast } from "sonner";
+import { apiFetch, buildAuthHeaders } from "@/lib/auth";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
@@ -238,8 +239,9 @@ async function* streamChat(
 ): AsyncGenerator<string> {
   const resp = await fetch(`${API_BASE}/conversations/${convId}/messages`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...buildAuthHeaders() },
     body: JSON.stringify({ text, stream: true, deep, scope, image_b64, image_media_type }),
+    credentials: "same-origin",
     keepalive: true,
     signal,
   });
@@ -440,7 +442,7 @@ function useCompass(workId: string | undefined) {
   return useQuery({
     queryKey: ["works", workId, "compass"],
     queryFn: async (): Promise<{ compass: CompassData }> => {
-      const r = await fetch(`${API_BASE}/works/${workId}/compass`);
+      const r = await apiFetch(`${API_BASE}/works/${workId}/compass`);
       if (!r.ok) return { compass: {} };
       return r.json();
     },
@@ -628,7 +630,7 @@ export default function Chat() {
         bytes.forEach(b => { binary += String.fromCharCode(b); });
         const content_b64 = btoa(binary);
 
-        const r = await fetch(`${API_BASE}/library/import`, {
+        const r = await apiFetch(`${API_BASE}/library/import`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({

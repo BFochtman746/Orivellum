@@ -1,4 +1,5 @@
 import React, { useRef, useState } from 'react';
+import { mobileFetch } from '@/lib/api';
 import {
   ActionSheetIOS,
   ActivityIndicator,
@@ -227,7 +228,7 @@ export default function ChatScreen() {
     try {
       const domain = process.env.EXPO_PUBLIC_DOMAIN;
       const url = `https://${domain}/api/conversations/${id}/messages`;
-      const resp = await fetch(url, {
+      const resp = await mobileFetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text: trimmed, stream: false }),

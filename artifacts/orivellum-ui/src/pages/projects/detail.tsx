@@ -1,6 +1,7 @@
 import { useParams, useLocation } from "wouter";
 import { useGetProject, getGetProjectQueryKey } from "@workspace/api-client-react";
 import { useQuery } from "@tanstack/react-query";
+import { apiFetch } from "@/lib/auth";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -48,7 +49,7 @@ export default function ProjectDetail() {
 
   const { data: conceptsData, isLoading: conceptsLoading } = useQuery<{ concepts: Concept[] }>({
     queryKey: ["project-concepts", projectId],
-    queryFn: () => fetch(`${BASE}/projects/${projectId}/concepts`).then((r) => r.json()),
+    queryFn: () => apiFetch(`${BASE}/projects/${projectId}/concepts`).then((r) => r.json()),
     enabled: !!projectId,
     staleTime: 30_000,
   });

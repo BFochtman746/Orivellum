@@ -15,6 +15,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { toast } from "sonner";
+import { apiFetch } from "@/lib/auth";
 
 const BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
 
@@ -39,7 +40,7 @@ function TTSPanel() {
     setPlaying(false);
 
     try {
-      const resp = await fetch(`${BASE}/studio/tts`, {
+      const resp = await apiFetch(`${BASE}/studio/tts`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text: text.trim(), voice: voiceId, speed }),
@@ -217,7 +218,7 @@ function ImageGenPanel() {
     setLoading(true);
     setResult(null);
     try {
-      const resp = await fetch(`${BASE}/studio/image`, {
+      const resp = await apiFetch(`${BASE}/studio/image`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ prompt: prompt.trim(), width, height }),

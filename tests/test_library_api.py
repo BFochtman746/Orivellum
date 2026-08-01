@@ -16,6 +16,8 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
+from tests.conftest import AUTH_HEADERS
+
 
 # ---------------------------------------------------------------------------
 # Test app factory — uses a real temp DB, bypasses background extraction
@@ -57,7 +59,7 @@ class TestLibraryListWarnings(unittest.TestCase):
     def test_error_doc_has_warnings_in_list(self):
         with tempfile.TemporaryDirectory() as tmp:
             app, db = _make_app(tmp)
-            client = TestClient(app, raise_server_exceptions=True)
+            client = TestClient(app, raise_server_exceptions=True, headers=AUTH_HEADERS)
 
             doc_id = _seed_failed_doc(db, "error", "file_not_found")
 
@@ -75,7 +77,7 @@ class TestLibraryListWarnings(unittest.TestCase):
     def test_no_text_doc_has_warnings_in_list(self):
         with tempfile.TemporaryDirectory() as tmp:
             app, db = _make_app(tmp)
-            client = TestClient(app, raise_server_exceptions=True)
+            client = TestClient(app, raise_server_exceptions=True, headers=AUTH_HEADERS)
 
             doc_id = _seed_failed_doc(db, "no_text", "no_readable_text")
 
@@ -91,7 +93,7 @@ class TestLibraryListWarnings(unittest.TestCase):
     def test_ready_doc_has_empty_warnings_in_list(self):
         with tempfile.TemporaryDirectory() as tmp:
             app, db = _make_app(tmp)
-            client = TestClient(app, raise_server_exceptions=True)
+            client = TestClient(app, raise_server_exceptions=True, headers=AUTH_HEADERS)
 
             doc = db.create_document(title="ok.txt", kind="text", work_id=None)
             db.update_document_extracted(doc["id"], "hello world", 2,
@@ -116,7 +118,7 @@ class TestLibraryDetailWarnings(unittest.TestCase):
     def test_error_doc_detail_has_warnings(self):
         with tempfile.TemporaryDirectory() as tmp:
             app, db = _make_app(tmp)
-            client = TestClient(app, raise_server_exceptions=True)
+            client = TestClient(app, raise_server_exceptions=True, headers=AUTH_HEADERS)
 
             doc_id = _seed_failed_doc(db, "error", "pipeline_exception")
 
@@ -131,7 +133,7 @@ class TestLibraryDetailWarnings(unittest.TestCase):
     def test_no_text_doc_detail_has_warnings(self):
         with tempfile.TemporaryDirectory() as tmp:
             app, db = _make_app(tmp)
-            client = TestClient(app, raise_server_exceptions=True)
+            client = TestClient(app, raise_server_exceptions=True, headers=AUTH_HEADERS)
 
             doc_id = _seed_failed_doc(db, "no_text", "no_readable_text")
 
@@ -145,7 +147,7 @@ class TestLibraryDetailWarnings(unittest.TestCase):
     def test_ready_doc_detail_has_empty_warnings(self):
         with tempfile.TemporaryDirectory() as tmp:
             app, db = _make_app(tmp)
-            client = TestClient(app, raise_server_exceptions=True)
+            client = TestClient(app, raise_server_exceptions=True, headers=AUTH_HEADERS)
 
             base_doc = db.create_document(title="good.txt", kind="text", work_id=None)
             db.update_document_extracted(base_doc["id"], "content", 1, readiness="ready")
@@ -183,7 +185,7 @@ class TestReprocessClearsWarnings(unittest.TestCase):
     def test_reprocess_clears_warnings(self):
         with tempfile.TemporaryDirectory() as tmp:
             app, db = _make_app(tmp)
-            client = TestClient(app, raise_server_exceptions=True)
+            client = TestClient(app, raise_server_exceptions=True, headers=AUTH_HEADERS)
 
             doc_id, _ = self._make_file_backed_doc(db, tmp)
 
@@ -205,7 +207,7 @@ class TestReprocessClearsWarnings(unittest.TestCase):
     def test_extract_alias_clears_warnings(self):
         with tempfile.TemporaryDirectory() as tmp:
             app, db = _make_app(tmp)
-            client = TestClient(app, raise_server_exceptions=True)
+            client = TestClient(app, raise_server_exceptions=True, headers=AUTH_HEADERS)
 
             doc_id, _ = self._make_file_backed_doc(db, tmp)
 

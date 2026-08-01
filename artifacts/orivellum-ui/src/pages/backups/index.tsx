@@ -1,4 +1,5 @@
 import { useListBackups, useCreateBackup, verifyBackup, getListBackupsQueryKey } from "@workspace/api-client-react";
+import { apiFetch } from "@/lib/auth";
 import { useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -93,12 +94,21 @@ export default function Backups() {
                     variant="secondary"
                     size="sm"
                     className="gap-2"
-                    onClick={() => {
+                    onClick={async () => {
                       const base = (import.meta.env.BASE_URL ?? "/").replace(/\/$/, "");
-                      const a = document.createElement("a");
-                      a.href = `${base}/api/backups/${encodeURIComponent(backup.name!)}/download`;
-                      a.download = backup.name!;
-                      a.click();
+                      try {
+                        const resp = await apiFetch(`${base}/api/backups/${encodeURIComponent(backup.name!)}/download`);
+                        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                        const blob = await resp.blob();
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement("a");
+                        a.href = url;
+                        a.download = backup.name!;
+                        a.click();
+                        setTimeout(() => URL.revokeObjectURL(url), 10_000);
+                      } catch {
+                        toast.error("Download failed");
+                      }
                     }}
                   >
                     <Download className="w-4 h-4" /> Download

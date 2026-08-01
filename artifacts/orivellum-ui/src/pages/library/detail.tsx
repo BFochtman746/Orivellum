@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
+import { apiFetch } from "@/lib/auth";
 
 const BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
 
@@ -438,7 +439,7 @@ function KnowledgeTabContent({
 // ── Reprocess helper ──────────────────────────────────────────────────────────
 
 async function reprocessDoc(docId: string): Promise<void> {
-  const resp = await fetch(`${BASE}/library/${docId}/reprocess`, { method: "POST" });
+  const resp = await apiFetch(`${BASE}/library/${docId}/reprocess`, { method: "POST" });
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({}));
     throw new Error((err as any).detail ?? "Reprocess failed");
@@ -448,7 +449,7 @@ async function reprocessDoc(docId: string): Promise<void> {
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 async function setKnowledgeReview(itemId: string, status: string): Promise<void> {
-  const resp = await fetch(`${BASE}/knowledge/${itemId}/review`, {
+  const resp = await apiFetch(`${BASE}/knowledge/${itemId}/review`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ review_status: status }),
@@ -488,7 +489,7 @@ export default function DocumentDetail() {
   // Knowledge items for this document
   const { data: knData, isLoading: knLoading } = useQuery<{ knowledge: KnowledgeItem[]; count: number }>({
     queryKey: ["doc-knowledge", docId],
-    queryFn: () => fetch(`${BASE}/library/${docId}/knowledge`).then((r) => r.json()),
+    queryFn: () => apiFetch(`${BASE}/library/${docId}/knowledge`).then((r) => r.json()),
     enabled: !!docId && activeTab === "knowledge",
     staleTime: 30_000,
   });
@@ -496,7 +497,7 @@ export default function DocumentDetail() {
   // AI extraction setting — used to gate the AI section in the knowledge tab
   const { data: aiExtData } = useQuery<{ enabled: boolean }>({
     queryKey: ["system", "ai-extraction"],
-    queryFn: () => fetch(`${BASE}/system/settings/ai-extraction`).then((r) => r.json()),
+    queryFn: () => apiFetch(`${BASE}/system/settings/ai-extraction`).then((r) => r.json()),
     staleTime: 60_000,
   });
 
@@ -516,7 +517,7 @@ export default function DocumentDetail() {
   // Work assignment — PATCH /api/library/:docId
   const updateDoc = useMutation<void, Error, { work_id: string | null }>({
     mutationFn: (body) =>
-      fetch(`${BASE}/library/${docId}`, {
+      apiFetch(`${BASE}/library/${docId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
@@ -541,7 +542,7 @@ export default function DocumentDetail() {
   // Delete a knowledge item — DELETE /api/knowledge/:itemId
   const deleteKnowledge = useMutation<void, Error, string>({
     mutationFn: (itemId) =>
-      fetch(`${BASE}/knowledge/${itemId}`, { method: "DELETE" }).then((r) => {
+      apiFetch(`${BASE}/knowledge/${itemId}`, { method: "DELETE" }).then((r) => {
         if (!r.ok) throw new Error("Delete failed");
       }),
   });

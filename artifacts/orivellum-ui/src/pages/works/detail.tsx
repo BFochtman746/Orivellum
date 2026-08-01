@@ -25,6 +25,7 @@ import {
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
+import { apiFetch } from "@/lib/auth";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -355,7 +356,7 @@ export default function WorkDetail() {
 const DOC_BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
 
 async function reprocessWorkDoc(docId: string): Promise<void> {
-  const resp = await fetch(`${DOC_BASE}/library/${docId}/reprocess`, { method: "POST" });
+  const resp = await apiFetch(`${DOC_BASE}/library/${docId}/reprocess`, { method: "POST" });
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({}));
     throw new Error((err as any).detail ?? "Reprocess failed");
@@ -395,7 +396,7 @@ function DocumentsTab({ workId }: { workId: string }) {
   const handleLink = async (docId: string) => {
     setLinking(true);
     try {
-      const r = await fetch(`${DOC_BASE}/library/${docId}`, {
+      const r = await apiFetch(`${DOC_BASE}/library/${docId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ work_id: workId }),
@@ -582,7 +583,7 @@ function DocumentsTab({ workId }: { workId: string }) {
                   <button
                     onClick={async (e) => {
                       e.stopPropagation();
-                      const r = await fetch(`${DOC_BASE}/library/${doc.id}`, {
+                      const r = await apiFetch(`${DOC_BASE}/library/${doc.id}`, {
                         method: "PATCH",
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({ work_id: null }),
@@ -680,7 +681,7 @@ function DocumentsTab({ workId }: { workId: string }) {
 const BASE_KN = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
 
 async function setKnowledgeReview(itemId: string, status: string): Promise<void> {
-  const resp = await fetch(`${BASE_KN}/knowledge/${itemId}/review`, {
+  const resp = await apiFetch(`${BASE_KN}/knowledge/${itemId}/review`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ review_status: status }),
@@ -1173,7 +1174,7 @@ function SearchTab({ workId }: { workId: string }) {
     setError(null);
     try {
       const base = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
-      const res = await fetch(`${base}/works/${workId}/search?q=${encodeURIComponent(q)}&limit=20`);
+      const res = await apiFetch(`${base}/works/${workId}/search?q=${encodeURIComponent(q)}&limit=20`);
       if (!res.ok) throw new Error(`Search failed: ${res.status}`);
       const data = await res.json();
       setResults(data);
@@ -1333,7 +1334,7 @@ function LearnTab({ workId }: { workId: string }) {
   const apiBase = API_BASE_WORKS;
 
   const loadSummary = async () => {
-    const r = await fetch(`${apiBase}/works/${workId}/learning/summary`);
+    const r = await apiFetch(`${apiBase}/works/${workId}/learning/summary`);
     if (!r.ok) throw new Error("Could not load learning summary");
     return r.json();
   };
@@ -1347,7 +1348,7 @@ function LearnTab({ workId }: { workId: string }) {
       const url = conceptId
         ? `${apiBase}/works/${workId}/learning/question?concept_id=${conceptId}`
         : `${apiBase}/works/${workId}/learning/question`;
-      const r = await fetch(url);
+      const r = await apiFetch(url);
       if (r.status === 422) {
         setPhase("all_done");
         return;
@@ -1377,7 +1378,7 @@ function LearnTab({ workId }: { workId: string }) {
       if (data.total === 0) {
         // Auto-seed
         setPhase("seeding");
-        const sr = await fetch(`${apiBase}/works/${workId}/learning/seed`, { method: "POST" });
+        const sr = await apiFetch(`${apiBase}/works/${workId}/learning/seed`, { method: "POST" });
         if (!sr.ok) throw new Error("Could not seed concepts");
         const sd = await sr.json();
         if ((sd.concepts ?? []).length === 0) {
@@ -1408,7 +1409,7 @@ function LearnTab({ workId }: { workId: string }) {
     setPhase("assessing");
     setError(null);
     try {
-      const r = await fetch(`${apiBase}/works/${workId}/learning/assess`, {
+      const r = await apiFetch(`${apiBase}/works/${workId}/learning/assess`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1464,7 +1465,7 @@ function LearnTab({ workId }: { workId: string }) {
   if (phase === "all_done") {
     const handleReset = async () => {
       try {
-        await fetch(`${apiBase}/works/${workId}/learning/reset`, { method: "POST" });
+        await apiFetch(`${apiBase}/works/${workId}/learning/reset`, { method: "POST" });
         await init();
       } catch {/* init handles errors */}
     };
@@ -1661,7 +1662,7 @@ function QuizTab({ workId, workTitle }: { workId: string; workTitle: string }) {
     setError(null);
     setAnswers({});
     try {
-      const r = await fetch(`${API_BASE_WORKS}/works/${workId}/quiz`, { method: "POST" });
+      const r = await apiFetch(`${API_BASE_WORKS}/works/${workId}/quiz`, { method: "POST" });
       if (!r.ok) {
         const body = await r.json().catch(() => ({}));
         throw new Error((body as any).detail ?? `HTTP ${r.status}`);

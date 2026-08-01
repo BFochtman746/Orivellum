@@ -1,9 +1,8 @@
 import path from 'path';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
-import { defineConfig } from 'vite';
-
 import runtimeErrorOverlay from '@replit/vite-plugin-runtime-error-modal';
+import { defineConfig } from 'vite';
 
 const rawPort = process.env.PORT ?? '5173';
 const port = Number(rawPort);
@@ -12,8 +11,8 @@ if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
 }
 
-// BASE_PATH is set by Replit's artifact routing; default to '/' for local dev
-const basePath = process.env.BASE_PATH ?? '/';
+// BASE_PATH is set by Replit's artifact routing; default to '/orivellum-ui/' for local dev
+const basePath = process.env.BASE_PATH ?? '/orivellum-ui/';
 
 export default defineConfig({
   base: basePath,
@@ -65,7 +64,7 @@ export default defineConfig({
           '/api': {
             target: process.env.ORIVELLUM_API_URL,
             changeOrigin: true,
-            rewrite: (path) => path,
+            rewrite: (p) => p,
           },
         }
       : undefined,

@@ -1,5 +1,6 @@
 import { useRef, useState, useEffect } from "react";
 import { useLocation, useSearch } from "wouter";
+import { apiFetch } from "@/lib/auth";
 import {
   useListLibrary,
   useSearchLibrary,
@@ -57,7 +58,7 @@ function ReadinessBadge({ readiness }: { readiness: string }) {
 // ── Reprocess helper ──────────────────────────────────────────────────────────
 
 async function reprocessDoc(docId: string): Promise<void> {
-  const resp = await fetch(`${BASE}/library/${docId}/reprocess`, { method: "POST" });
+  const resp = await apiFetch(`${BASE}/library/${docId}/reprocess`, { method: "POST" });
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({}));
     throw new Error((err as any).detail ?? "Reprocess failed");
