@@ -12,7 +12,7 @@ import {
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { format, formatDistanceToNow } from "date-fns";
-import { BookOpen, Library, MessageSquare, Target, Activity, FileText, CheckCircle2, Clock, Plus, Upload } from "lucide-react";
+import { BookOpen, Library, MessageSquare, Target, Activity, FileText, CheckCircle2, Clock, Plus, Upload, FolderPlus } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -86,7 +86,7 @@ export default function Dashboard() {
       </div>
 
       {/* Quick Actions */}
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-3 flex-wrap">
         <Button
           size="sm"
           className="gap-2 font-mono text-xs"
@@ -99,9 +99,17 @@ export default function Dashboard() {
           size="sm"
           variant="outline"
           className="gap-2 font-mono text-xs"
-          onClick={() => setLocation("/library")}
+          onClick={() => setLocation("/library?import=1")}
         >
           <Upload className="w-3.5 h-3.5" /> Import Document
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          className="gap-2 font-mono text-xs"
+          onClick={() => setLocation("/works?create=1")}
+        >
+          <FolderPlus className="w-3.5 h-3.5" /> Create Work
         </Button>
       </div>
 

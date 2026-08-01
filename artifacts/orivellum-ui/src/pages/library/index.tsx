@@ -1,5 +1,5 @@
-import { useRef, useState } from "react";
-import { useLocation } from "wouter";
+import { useRef, useState, useEffect } from "react";
+import { useLocation, useSearch } from "wouter";
 import {
   useListLibrary,
   useSearchLibrary,
@@ -68,10 +68,11 @@ async function reprocessDoc(docId: string): Promise<void> {
 
 interface ImportDialogProps {
   onSuccess: () => void;
+  defaultOpen?: boolean;
 }
 
-function ImportDialog({ onSuccess }: ImportDialogProps) {
-  const [open, setOpen] = useState(false);
+function ImportDialog({ onSuccess, defaultOpen = false }: ImportDialogProps) {
+  const [open, setOpen] = useState(defaultOpen);
   const [file, setFile] = useState<File | null>(null);
   const [workId, setWorkId] = useState("");
   const [dragging, setDragging] = useState(false);
@@ -216,6 +217,8 @@ export default function Library() {
   const [reprocessingIds, setReprocessingIds] = useState<Set<string>>(new Set());
   const queryClient = useQueryClient();
   const [, navigate] = useLocation();
+  const searchStr = useSearch();
+  const openImport = new URLSearchParams(searchStr).get("import") === "1";
 
   const { data: listResp, isLoading: loadingList } = useListLibrary(
     {},
@@ -314,7 +317,7 @@ export default function Library() {
               {isLoading ? "Loading…" : `${docs.length} document${docs.length !== 1 ? "s" : ""}${search || readinessFilter !== "all" || kindFilter !== "all" || workFilter !== "all" ? " matching filters" : ""}`}
             </p>
           </div>
-          <ImportDialog onSuccess={invalidate} />
+          <ImportDialog onSuccess={invalidate} defaultOpen={openImport} />
         </div>
 
         {/* Search */}

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link } from "wouter";
+import { Link, useSearch } from "wouter";
 import { useListWorks, useCreateWork, useGetWorkTypes, getListWorksQueryKey } from "@workspace/api-client-react";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
@@ -16,9 +16,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 
 export default function WorksList() {
+  const searchStr = useSearch();
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "active" | "archived">("all");
-  const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [isCreateOpen, setIsCreateOpen] = useState(
+    () => new URLSearchParams(searchStr).get("create") === "1"
+  );
   const queryClient = useQueryClient();
   
   const { data: worksResp, isLoading } = useListWorks({ query: { refetchInterval: 30_000, staleTime: 20_000 } } as any);
