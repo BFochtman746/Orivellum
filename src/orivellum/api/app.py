@@ -75,6 +75,8 @@ def create_app() -> FastAPI:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=allowed_origins,
+        # Also allow all *.replit.dev subdomains (Expo web preview, dev proxy)
+        allow_origin_regex=r"https://.*\.replit\.dev",
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
