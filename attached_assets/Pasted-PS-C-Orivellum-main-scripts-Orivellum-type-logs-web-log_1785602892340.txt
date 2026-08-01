@@ -1,0 +1,25 @@
+PS C:\Orivellum-main\scripts\Orivellum> type logs\web.log
+Scope: all 10 workspace projects
+âœ“ Lockfile passes supply-chain policies (verified 8m ago)
+Lockfile is up to date, resolution step is skipped
+Already up to date
+
+. preinstall$ sh -c 'rm -f package-lock.json yarn.lock; case "$npm_config_user_agent" in pnpm/*) ;; *) echo "Use pnpm instead" >&2; exit 1 ;; esac'
+. preinstall: 'sh' is not recognized as an internal or external command,
+. preinstall: operable program or batch file.
+. preinstall: Failed
+[ELIFECYCLE] Command failed with exit code 1.
+[ERROR] Command failed with exit code 1: "C:\Users\BFoch\AppData\Local\Microsoft\WinGet\Packages\pnpm.pnpm_Microsoft.Winget.Source_8wekyb3d8bbwe\pnpm.exe" install
+
+pnpm: Command failed with exit code 1: "C:\Users\BFoch\AppData\Local\Microsoft\WinGet\Packages\pnpm.pnpm_Microsoft.Winget.Source_8wekyb3d8bbwe\pnpm.exe" install
+    at getFinalError (file:///C:/Users/BFoch/AppData/Local/Microsoft/WinGet/Packages/pnpm.pnpm_Microsoft.Winget.Source_8wekyb3d8bbwe/dist/pnpm.mjs:88127:14)
+    at makeError (file:///C:/Users/BFoch/AppData/Local/Microsoft/WinGet/Packages/pnpm.pnpm_Microsoft.Winget.Source_8wekyb3d8bbwe/dist/pnpm.mjs:90434:21)
+    at getSyncResult (file:///C:/Users/BFoch/AppData/Local/Microsoft/WinGet/Packages/pnpm.pnpm_Microsoft.Winget.Source_8wekyb3d8bbwe/dist/pnpm.mjs:92278:10)
+    at spawnSubprocessSync (file:///C:/Users/BFoch/AppData/Local/Microsoft/WinGet/Packages/pnpm.pnpm_Microsoft.Winget.Source_8wekyb3d8bbwe/dist/pnpm.mjs:92238:14)
+    at execaCoreSync (file:///C:/Users/BFoch/AppData/Local/Microsoft/WinGet/Packages/pnpm.pnpm_Microsoft.Winget.Source_8wekyb3d8bbwe/dist/pnpm.mjs:92168:23)
+    at callBoundExeca (file:///C:/Users/BFoch/AppData/Local/Microsoft/WinGet/Packages/pnpm.pnpm_Microsoft.Winget.Source_8wekyb3d8bbwe/dist/pnpm.mjs:94696:23)
+    at boundExeca (file:///C:/Users/BFoch/AppData/Local/Microsoft/WinGet/Packages/pnpm.pnpm_Microsoft.Winget.Source_8wekyb3d8bbwe/dist/pnpm.mjs:94673:49)
+    at sync2 (file:///C:/Users/BFoch/AppData/Local/Microsoft/WinGet/Packages/pnpm.pnpm_Microsoft.Winget.Source_8wekyb3d8bbwe/dist/pnpm.mjs:94832:10)
+    at runPnpmCli (file:///C:/Users/BFoch/AppData/Local/Microsoft/WinGet/Packages/pnpm.pnpm_Microsoft.Winget.Source_8wekyb3d8bbwe/dist/pnpm.mjs:248742:5)
+    at runDepsStatusCheck (file:///C:/Users/BFoch/AppData/Local/Microsoft/WinGet/Packages/pnpm.pnpm_Microsoft.Winget.Source_8wekyb3d8bbwe/dist/pnpm.mjs:250510:7)
+PS C:\Orivellum-main\scripts\Orivellum>
