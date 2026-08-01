@@ -191,7 +191,21 @@ def _extract_excel(path: Path) -> ExtractionResult:
     headings: list[str] = []
     pages: list[PageSegment] = []
     try:
+        # data_only=True reads cached values; formula-only files (never opened in Excel)
+        # have no cached values → every cell is None → empty.  We detect that and retry
+        # with data_only=False so formulas themselves are visible as text.
         wb = openpyxl.load_workbook(str(path), read_only=True, data_only=True)
+        has_any_value = any(
+            cell.value is not None
+            for sheet in wb.worksheets
+            for row in sheet.iter_rows()
+            for cell in row
+        )
+        if not has_any_value:
+            wb.close()
+            logger.info("Excel %s has no cached values — retrying with data_only=False", path.name)
+            wb = openpyxl.load_workbook(str(path), read_only=True, data_only=False)
+
         for idx, sheet in enumerate(wb.worksheets, 1):
             rows_text: list[str] = []
             for row in sheet.iter_rows(values_only=True):
@@ -525,6 +539,12 @@ def _extract_zip(path: Path) -> ExtractionResult:
 
     Each member's content is concatenated under a ``=== filename ===`` header
     so the whole archive becomes one searchable document.
+
+    Hardening:
+    - Skips macOS metadata (``__MACOSX/`` entries and ``._*`` dotfiles)
+    - Avoids basename collisions by prefixing each extracted file with its index
+    - Records per-member failure reasons in the returned meta dict
+    - Falls back to markitdown for formats not in the known list
     """
     import tempfile
     import zipfile
@@ -544,33 +564,53 @@ def _extract_zip(path: Path) -> ExtractionResult:
     all_text: list[str] = []
     all_pages: list[PageSegment] = []
     all_headings: list[str] = []
+    # Collect per-member results for informative error messages
+    member_results: list[dict] = []   # {name, status, reason}
 
     try:
         with zipfile.ZipFile(path, "r") as zf:
             members = [n for n in zf.namelist() if not n.endswith("/")]
             with tempfile.TemporaryDirectory() as tmpdir:
                 tmp = Path(tmpdir)
-                for name in members:
+                for idx, name in enumerate(members):
+                    basename = Path(name).name
+
+                    # ── Skip macOS metadata ────────────────────────────────────
+                    if name.startswith("__MACOSX/") or basename.startswith("._"):
+                        continue
+
                     ext = Path(name).suffix.lower()
                     kind = _EXT_KIND.get(ext)
                     if not kind:
+                        member_results.append({"name": name, "status": "skipped",
+                                               "reason": f"unsupported type ({ext or 'no extension'})"})
                         continue
-                    # Use only the basename to avoid path traversal in tmpdir
-                    safe_name = Path(name).name
+
+                    # ── Collision-safe extraction: prefix with index ────────────
+                    safe_name = f"{idx:04d}_{basename}"
                     member_path = tmp / safe_name
                     try:
                         member_path.write_bytes(zf.read(name))
                     except Exception as exc:
                         logger.warning("ZIP: could not read member %s: %s", name, exc)
+                        member_results.append({"name": name, "status": "error",
+                                               "reason": f"read error: {exc}"})
                         continue
+
                     handler = _DISPATCH.get(kind, lambda p: _extract_fallback(p, kind))
                     try:
                         sub = handler(member_path)  # type: ignore[call-arg]
                     except Exception as exc:
                         logger.warning("ZIP: extraction failed for %s: %s", name, exc)
+                        member_results.append({"name": name, "status": "error",
+                                               "reason": f"extraction error: {exc}"})
                         continue
+
                     if not sub.full_text.strip():
+                        member_results.append({"name": name, "status": "empty",
+                                               "reason": "no readable text found"})
                         continue
+
                     header = f"=== {name} ==="
                     all_text.append(f"{header}\n{sub.full_text}")
                     all_headings.append(header)
@@ -579,15 +619,50 @@ def _extract_zip(path: Path) -> ExtractionResult:
                         all_pages.append(PageSegment(
                             page=offset + seg.page, text=seg.text, heading=name,
                         ))
+                    member_results.append({"name": name, "status": "ok",
+                                           "reason": f"{sub.word_count} words"})
+
     except zipfile.BadZipFile as exc:
         logger.error("Bad ZIP file %s: %s", path.name, exc)
-        return ExtractionResult(kind="zip", full_text="", word_count=0)
+        return ExtractionResult(kind="zip", full_text="", word_count=0,
+                                meta={"error": f"Invalid ZIP file: {exc}"})
 
     full_text = "\n\n".join(all_text)
+    ok_count   = sum(1 for r in member_results if r["status"] == "ok")
+    fail_count = sum(1 for r in member_results if r["status"] in ("error", "empty"))
+    skip_count = sum(1 for r in member_results if r["status"] == "skipped")
+
+    meta: dict = {
+        "zip_members": member_results,
+        "zip_summary": f"{ok_count} extracted, {fail_count} empty/failed, {skip_count} skipped",
+    }
+
+    if not full_text.strip():
+        # Build a human-readable explanation from member_results
+        lines = []
+        if not member_results:
+            lines.append("ZIP archive is empty or contains no files.")
+        else:
+            tried = [r for r in member_results if r["status"] != "skipped"]
+            if not tried:
+                exts = list({Path(r["name"]).suffix.lower() for r in member_results})
+                lines.append(
+                    f"ZIP contains {len(member_results)} file(s) but none have a "
+                    f"supported format. Found: {', '.join(exts) or 'unknown'}"
+                )
+            else:
+                lines.append(f"ZIP contains {len(member_results)} file(s); none produced readable text:")
+                for r in tried[:8]:
+                    lines.append(f"  • {Path(r['name']).name}: {r['reason']}")
+                if len(tried) > 8:
+                    lines.append(f"  … and {len(tried) - 8} more")
+        meta["user_message"] = " ".join(lines)
+
     return ExtractionResult(
         kind="zip", full_text=full_text,
         word_count=len(full_text.split()),
         pages=all_pages, headings=all_headings,
+        meta=meta,
     )
 
 

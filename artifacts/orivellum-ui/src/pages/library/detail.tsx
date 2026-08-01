@@ -888,6 +888,38 @@ export default function DocumentDetail() {
               <span className="text-sm font-mono text-right break-all ml-4">{String(value)}</span>
             </div>
           ))}
+          {/* ZIP manifest — show when meta.zip_members is available */}
+          {doc.kind === "zip" && Array.isArray((doc as any).meta?.zip_members) && (
+            <div className="rounded-lg border border-border/40 bg-muted/10 overflow-hidden">
+              <div className="flex items-center justify-between px-4 py-2 border-b border-border/40 bg-muted/20">
+                <span className="text-xs font-mono text-muted-foreground uppercase tracking-wide">
+                  Contents ({(doc as any).meta.zip_members.filter((m: any) => m.status !== "skipped").length} files)
+                </span>
+                <span className="text-xs font-mono text-muted-foreground">
+                  {(doc as any).meta.zip_summary}
+                </span>
+              </div>
+              <div className="divide-y divide-border/30 max-h-48 overflow-y-auto">
+                {(doc as any).meta.zip_members
+                  .filter((m: any) => m.status !== "skipped")
+                  .map((m: any, i: number) => (
+                    <div key={i} className="flex items-center gap-3 px-4 py-2">
+                      <span className={`w-2 h-2 rounded-full shrink-0 ${
+                        m.status === "ok" ? "bg-emerald-500" :
+                        m.status === "empty" ? "bg-amber-400" : "bg-red-400"
+                      }`} />
+                      <span className="text-xs font-mono flex-1 truncate text-foreground/80">
+                        {m.name.split("/").pop()}
+                      </span>
+                      <span className="text-[10px] font-mono text-muted-foreground shrink-0">
+                        {m.reason}
+                      </span>
+                    </div>
+                  ))}
+              </div>
+            </div>
+          )}
+
           {/* Work assignment row */}
           <div className="flex items-center justify-between py-2.5 px-4 rounded-lg bg-muted/20 border border-border/40">
             <span className="text-xs font-mono text-muted-foreground uppercase tracking-wide w-24 shrink-0 flex items-center gap-1.5">

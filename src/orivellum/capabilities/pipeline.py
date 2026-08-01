@@ -78,13 +78,28 @@ def process_document(doc_id: str, file_path: str, kind: str,
         # Step 1: extract text
         result = extract(path, kind)
         if not result.ok:
-            msg = f"Extraction produced no readable text (kind={kind})"
+            # Use the extractor's own diagnostic when available (e.g. ZIP manifest)
+            meta_msg = (result.meta or {}).get("user_message", "")
+            msg = meta_msg or f"Extraction produced no readable text (kind={kind})"
             logger.warning("Doc %s — %s", doc_id, msg)
             db.add_extraction_warning(doc_id, kind="no_readable_text", detail=msg)
             db.update_document_extracted(doc_id, "", 0,
                                          readiness="no_text",
                                          error_message=msg)
             return
+
+        # Store ZIP manifest / extractor meta so the UI can show per-member status
+        if result.meta:
+            try:
+                import json as _json
+                with db._lock:
+                    db._conn.execute(
+                        "UPDATE documents SET meta=? WHERE id=?",
+                        (_json.dumps(result.meta), doc_id),
+                    )
+                    db._conn.commit()
+            except Exception as meta_exc:
+                logger.debug("Could not persist extraction meta for %s: %s", doc_id, meta_exc)
 
         # Step 2: chunk and index
         chunk_and_store(result, doc_id, db)
