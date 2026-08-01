@@ -117,6 +117,27 @@ function Stop-All {
   }
 }
 
+# Launch an executable (or .cmd/.bat wrapper) via a temp batch file so that
+# paths with spaces and shim wrappers work reliably with Start-Process.
+function Start-Via-Batch {
+  param(
+    [string]$Exe,
+    [string]$CmdArgs,
+    [string]$WorkDir,
+    [string]$OutLog,
+    [string]$ErrLog
+  )
+  $tmp = [System.IO.Path]::GetTempFileName() -replace '\.tmp$', '.cmd'
+  $batch = "@echo off`r`ncd /d `"$WorkDir`"`r`n`"$Exe`" $CmdArgs`r`n"
+  [System.IO.File]::WriteAllText($tmp, $batch, [System.Text.Encoding]::ASCII)
+  return Start-Process -FilePath "cmd.exe" `
+    -ArgumentList "/c `"$tmp`"" `
+    -PassThru -NoNewWindow `
+    -WorkingDirectory $WorkDir `
+    -RedirectStandardOutput $OutLog `
+    -RedirectStandardError $ErrLog
+}
+
 # ---- API server -------------------------------------------------------------
 Write-Host "[api]  Starting API server on port $ApiPort ..." -ForegroundColor $Cyan
 $env:PORT = "$ApiPort"
@@ -158,21 +179,19 @@ $env:PORT              = "$WebPort"
 $env:BASE_PATH         = "/"
 $env:ORIVELLUM_API_URL = "http://127.0.0.1:$ApiPort"
 # Use cmd.exe /c so shims, .cmd wrappers, and .exe files all work
-$webProc = Start-Process -FilePath "cmd.exe" `
-  -ArgumentList "/c `"$pnpmExe`" --filter @workspace/orivellum-ui run dev" `
-  -PassThru -NoNewWindow `
-  -WorkingDirectory $root `
-  -RedirectStandardOutput (Join-Path $logsDir "web.log") `
-  -RedirectStandardError  (Join-Path $logsDir "web-err.log")
+$webProc = Start-Via-Batch -Exe $pnpmExe `
+  -CmdArgs "--filter @workspace/orivellum-ui run dev" `
+  -WorkDir $root `
+  -OutLog (Join-Path $logsDir "web.log") `
+  -ErrLog (Join-Path $logsDir "web-err.log")
 $children.Add($webProc)
 
 # ---- Mobile (optional) ------------------------------------------------------
 if ($Mobile) {
   Write-Host "[mob]  Starting Expo ..." -ForegroundColor $Cyan
-  $mobProc = Start-Process -FilePath "cmd.exe" `
-    -ArgumentList "/c `"$pnpmExe`" --filter @workspace/mobile run dev" `
-    -PassThru -NoNewWindow `
-    -WorkingDirectory $root
+  $mobTmp = [System.IO.Path]::GetTempFileName() -replace '\.tmp$', '.cmd'
+  [System.IO.File]::WriteAllText($mobTmp, "@echo off`r`ncd /d `"$root`"`r`n`"$pnpmExe`" --filter @workspace/mobile run dev`r`n", [System.Text.Encoding]::ASCII)
+  $mobProc = Start-Process -FilePath "cmd.exe" -ArgumentList "/c `"$mobTmp`"" -PassThru -NoNewWindow -WorkingDirectory $root
   $children.Add($mobProc)
 }
 
