@@ -471,8 +471,9 @@ async def _stream_response(
             # Council failed → fall through to the direct streaming path
 
     # ── Per-chunk silence timeout ─────────────────────────────────────────────
-    # Per-chunk silence timeout: if the AI server sends no new token for this
-    # long, we treat the stream as stalled and close it cleanly.
+    # If the AI server sends no new token for this long, treat the stream as
+    # stalled and close it cleanly. The timeout is enforced per-chunk (not just
+    # for the initial connection) using asyncio.wait_for on each __anext__ call.
     _CHUNK_TIMEOUT_SEC = 30
 
     try:
@@ -488,7 +489,14 @@ async def _stream_response(
                 },
             ) as resp:
                 resp.raise_for_status()
-                async for line in resp.aiter_lines():
+                _line_iter = resp.aiter_lines().__aiter__()
+                while True:
+                    try:
+                        line = await asyncio.wait_for(
+                            _line_iter.__anext__(), timeout=_CHUNK_TIMEOUT_SEC
+                        )
+                    except StopAsyncIteration:
+                        break
                     if not line.startswith("data: "):
                         continue
                     chunk = line[6:]
