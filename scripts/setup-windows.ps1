@@ -65,8 +65,8 @@ function Add-ToUserPath {
 function Download-File {
   param([string]$url, [string]$dest)
   Write-Step "Downloading $(Split-Path $dest -Leaf) ..."
-  $wc = New-Object System.Net.WebClient
-  $wc.DownloadFile($url, $dest)
+  [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+  Invoke-WebRequest -Uri $url -OutFile $dest -UseBasicParsing
 }
 
 # -- Python -------------------------------------------------------------------
@@ -189,21 +189,34 @@ if (Test-CommandExists ffmpeg) {
   Write-Ok "FFmpeg installed"
 }
 
-# -- espeak-ng ----------------------------------------------------------------
+# -- espeak-ng (optional -- only needed for text-to-speech) ------------------
 
 Write-Host ""
-Write-Host "Checking espeak-ng ..." -ForegroundColor $Yellow
+Write-Host "Checking espeak-ng (optional TTS) ..." -ForegroundColor $Yellow
 if (Test-CommandExists espeak-ng) {
   Write-Ok "espeak-ng found: $(Get-Version espeak-ng)"
+} elseif (Test-CommandExists winget) {
+  try {
+    Write-Step "Installing espeak-ng via winget ..."
+    winget install -e --id eSpeak.eSpeakNG --accept-package-agreements --accept-source-agreements
+    Add-ToUserPath "C:\Program Files\eSpeak NG"
+    Write-Ok "espeak-ng installed"
+  } catch {
+    Write-Warn "espeak-ng install failed (TTS will be unavailable). Install manually from https://github.com/espeak-ng/espeak-ng/releases"
+  }
 } else {
-  Write-Step "Downloading espeak-ng installer ..."
-  $espeakInstaller = "$env:TEMP\espeak-ng-setup.msi"
-  $espeakUrl = "https://github.com/espeak-ng/espeak-ng/releases/download/1.52.0/espeak-ng-20230428-b702bcd-x64.msi"
-  Download-File $espeakUrl $espeakInstaller
-  Write-Step "Running espeak-ng installer (may require UAC elevation) ..."
-  Start-Process -FilePath "msiexec.exe" -ArgumentList "/i `"$espeakInstaller`" /quiet /norestart" -Wait
-  Add-ToUserPath "C:\Program Files\eSpeak NG"
-  Write-Ok "espeak-ng installed"
+  try {
+    Write-Step "Downloading espeak-ng installer ..."
+    $espeakInstaller = "$env:TEMP\espeak-ng-setup.msi"
+    $espeakUrl = "https://github.com/espeak-ng/espeak-ng/releases/download/1.52.0/espeak-ng-20230428-b702bcd-x64.msi"
+    Download-File $espeakUrl $espeakInstaller
+    Write-Step "Running espeak-ng installer (may require UAC elevation) ..."
+    Start-Process -FilePath "msiexec.exe" -ArgumentList "/i `"$espeakInstaller`" /quiet /norestart" -Wait
+    Add-ToUserPath "C:\Program Files\eSpeak NG"
+    Write-Ok "espeak-ng installed"
+  } catch {
+    Write-Warn "espeak-ng install failed (TTS will be unavailable). Install manually from https://github.com/espeak-ng/espeak-ng/releases"
+  }
 }
 
 # -- Python + Node dependencies -----------------------------------------------
