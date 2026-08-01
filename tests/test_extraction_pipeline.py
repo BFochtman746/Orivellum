@@ -335,5 +335,194 @@ class TestContentPathFallback(_PipelineBase):
                            "Chunks must be re-created via content_path fallback")
 
 
+# ---------------------------------------------------------------------------
+# Edge-case: password-protected PDF
+# ---------------------------------------------------------------------------
+
+def _make_encrypted_pdf_bytes() -> bytes:
+    """Return a minimal PDF encrypted with a user password using pypdf."""
+    from reportlab.pdfgen import canvas as rl_canvas
+    import pypdf
+
+    buf = io.BytesIO()
+    c = rl_canvas.Canvas(buf)
+    c.drawString(72, 720, "Secret content — should not be extractable without password.")
+    c.save()
+    buf.seek(0)
+
+    reader = pypdf.PdfReader(buf)
+    writer = pypdf.PdfWriter()
+    for page in reader.pages:
+        writer.add_page(page)
+    writer.encrypt("hunter2")
+
+    out = io.BytesIO()
+    writer.write(out)
+    return out.getvalue()
+
+
+class TestEncryptedPdfPipeline(_PipelineBase):
+    """Password-protected PDF must land in 'error' or 'no_text' with an error_message."""
+
+    def setUp(self):
+        super().setUp()
+        result = _import(self.client, "secret.pdf", _make_encrypted_pdf_bytes())
+        self.doc_id = result["document"]["id"]
+
+    def test_readiness_is_error_or_no_text(self):
+        doc = self.db.get_document(self.doc_id)
+        self.assertIn(
+            doc["readiness"], ("error", "no_text"),
+            f"Expected error/no_text for encrypted PDF, got {doc['readiness']!r}",
+        )
+
+    def test_error_message_is_set(self):
+        doc = self.db.get_document(self.doc_id)
+        self.assertIn(
+            doc["readiness"], ("error", "no_text"),
+            "readiness must be non-ready before checking error_message",
+        )
+        self.assertTrue(
+            doc.get("error_message"),
+            "error_message must be a non-empty string for an encrypted PDF",
+        )
+
+
+# ---------------------------------------------------------------------------
+# Edge-case: corrupt / malformed DOCX
+# ---------------------------------------------------------------------------
+
+def _make_corrupt_docx_bytes() -> bytes:
+    """Return bytes that look vaguely like a DOCX but are not valid."""
+    # Starts with the PK zip magic to fool naive sniffers, then garbage
+    return b"PK\x03\x04" + b"\xff\xfe\xfa\x00" * 200 + b"not a valid docx"
+
+
+class TestCorruptDocxPipeline(_PipelineBase):
+    """Malformed DOCX must land in 'error' or 'no_text' with an error_message."""
+
+    def setUp(self):
+        super().setUp()
+        result = _import(self.client, "broken.docx", _make_corrupt_docx_bytes())
+        self.doc_id = result["document"]["id"]
+
+    def test_readiness_is_error_or_no_text(self):
+        doc = self.db.get_document(self.doc_id)
+        self.assertIn(
+            doc["readiness"], ("error", "no_text"),
+            f"Expected error/no_text for corrupt DOCX, got {doc['readiness']!r}",
+        )
+
+    def test_error_message_is_set(self):
+        doc = self.db.get_document(self.doc_id)
+        self.assertIn(
+            doc["readiness"], ("error", "no_text"),
+            "readiness must be non-ready before checking error_message",
+        )
+        self.assertTrue(
+            doc.get("error_message"),
+            "error_message must be a non-empty string for a corrupt DOCX",
+        )
+
+
+# ---------------------------------------------------------------------------
+# Edge-case: zero-byte upload
+# ---------------------------------------------------------------------------
+
+class TestZeroBytePipeline(_PipelineBase):
+    """A zero-byte file must land in 'no_text' with an error_message."""
+
+    def setUp(self):
+        super().setUp()
+        result = _import(self.client, "empty.txt", b"")
+        self.doc_id = result["document"]["id"]
+
+    def test_readiness_is_no_text(self):
+        doc = self.db.get_document(self.doc_id)
+        self.assertIn(
+            doc["readiness"], ("error", "no_text"),
+            f"Expected no_text/error for zero-byte file, got {doc['readiness']!r}",
+        )
+
+    def test_error_message_is_set(self):
+        doc = self.db.get_document(self.doc_id)
+        self.assertIn(
+            doc["readiness"], ("error", "no_text"),
+            "readiness must be non-ready before checking error_message",
+        )
+        self.assertTrue(
+            doc.get("error_message"),
+            "error_message must be a non-empty string for a zero-byte upload",
+        )
+
+
+# ---------------------------------------------------------------------------
+# Happy-path: Excel (.xlsx) with multiple sheets
+# ---------------------------------------------------------------------------
+
+def _make_xlsx_multi_sheet_bytes() -> bytes:
+    """Return a minimal .xlsx workbook with two named sheets."""
+    import openpyxl
+    wb = openpyxl.Workbook()
+
+    ws1 = wb.active
+    ws1.title = "Revenue"
+    ws1.append(["Quarter", "Amount"])
+    ws1.append(["Q1", 100_000])
+    ws1.append(["Q2", 150_000])
+    ws1.append(["Q3", 130_000])
+
+    ws2 = wb.create_sheet("Expenses")
+    ws2.append(["Category", "Cost"])
+    ws2.append(["Marketing", 50_000])
+    ws2.append(["Operations", 30_000])
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+class TestXlsxMultiSheetPipeline(_PipelineBase):
+    """Excel workbook with multiple sheets: readiness, chunks, both sheet names in text."""
+
+    def setUp(self):
+        super().setUp()
+        result = _import(self.client, "financials.xlsx", _make_xlsx_multi_sheet_bytes())
+        self.doc_id = result["document"]["id"]
+
+    def test_readiness_is_ready(self):
+        doc = self.db.get_document(self.doc_id)
+        self.assertEqual(
+            doc["readiness"], "ready",
+            f"Expected readiness=ready for multi-sheet XLSX, got {doc['readiness']!r}; "
+            f"error_message={doc.get('error_message')!r}",
+        )
+
+    def test_chunks_created(self):
+        self.assertGreater(
+            _chunk_count(self.db, self.doc_id), 0,
+            "At least one chunk must be created from the XLSX workbook",
+        )
+
+    def test_both_sheet_names_in_extracted_text(self):
+        doc = self.db.get_document(self.doc_id)
+        extracted = doc.get("extracted_text", "") or ""
+        self.assertIn(
+            "Revenue", extracted,
+            "Sheet name 'Revenue' must appear in the extracted text",
+        )
+        self.assertIn(
+            "Expenses", extracted,
+            "Sheet name 'Expenses' must appear in the extracted text",
+        )
+
+    def test_fts_search_returns_result(self):
+        resp = self.client.get("/api/library/search", params={"q": "Revenue"})
+        self.assertEqual(resp.status_code, 200)
+        doc_ids = [r["doc_id"] for r in resp.json()["results"]]
+        self.assertIn(self.doc_id, doc_ids,
+                      "FTS search must return the imported XLSX document")
+
+
 if __name__ == "__main__":
     unittest.main()
