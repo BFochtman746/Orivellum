@@ -6,6 +6,7 @@
  */
 import { useState } from "react";
 import { useParams, useLocation } from "wouter";
+import { ErrorBoundary } from "@/components/error-boundary";
 import { useGetDocument, useDeleteDocument, useGetWork, useListWorks, getGetDocumentQueryKey, getGetWorkQueryKey } from "@workspace/api-client-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
@@ -824,18 +825,20 @@ export default function DocumentDetail() {
       )}
 
       {activeTab === "knowledge" && (
-        <KnowledgeTabContent
-          knLoading={knLoading}
-          items={knData?.knowledge ?? []}
-          docWorkId={doc?.work_id}
-          docReadiness={readiness}
-          aiEnabled={aiExtData?.enabled ?? false}
-          knFilter={knFilter}
-          setKnFilter={setKnFilter}
-          reviewing={reviewing}
-          onReview={handleReview}
-          onDelete={handleDeleteKnowledge}
-        />
+        <ErrorBoundary label="knowledge tab">
+          <KnowledgeTabContent
+            knLoading={knLoading}
+            items={knData?.knowledge ?? []}
+            docWorkId={doc?.work_id}
+            docReadiness={readiness}
+            aiEnabled={aiExtData?.enabled ?? false}
+            knFilter={knFilter}
+            setKnFilter={setKnFilter}
+            reviewing={reviewing}
+            onReview={handleReview}
+            onDelete={handleDeleteKnowledge}
+          />
+        </ErrorBoundary>
       )}
     </div>
   );

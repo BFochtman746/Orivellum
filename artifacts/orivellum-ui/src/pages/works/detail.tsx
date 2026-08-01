@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useParams, Link, useLocation } from "wouter";
+import { ErrorBoundary } from "@/components/error-boundary";
 import {
   useGetWork,
   useGetWorkStats,
@@ -337,13 +338,13 @@ export default function WorkDetail() {
           </TabsList>
 
           <div className="mt-8">
-            <TabsContent value="documents"><DocumentsTab workId={workId!} /></TabsContent>
-            <TabsContent value="knowledge"><KnowledgeTab workId={workId!} /></TabsContent>
-            <TabsContent value="tasks"><TasksTab workId={workId!} /></TabsContent>
-            <TabsContent value="conversations"><ConversationsTab workId={workId!} /></TabsContent>
-            <TabsContent value="search"><SearchTab workId={workId!} /></TabsContent>
-            <TabsContent value="quiz"><QuizTab workId={workId!} workTitle={(work as any)?.title ?? "this Work"} /></TabsContent>
-            <TabsContent value="learn"><LearnTab workId={workId!} /></TabsContent>
+            <TabsContent value="documents"><ErrorBoundary label="documents tab"><DocumentsTab workId={workId!} /></ErrorBoundary></TabsContent>
+            <TabsContent value="knowledge"><ErrorBoundary label="knowledge tab"><KnowledgeTab workId={workId!} /></ErrorBoundary></TabsContent>
+            <TabsContent value="tasks"><ErrorBoundary label="tasks tab"><TasksTab workId={workId!} /></ErrorBoundary></TabsContent>
+            <TabsContent value="conversations"><ErrorBoundary label="conversations tab"><ConversationsTab workId={workId!} /></ErrorBoundary></TabsContent>
+            <TabsContent value="search"><ErrorBoundary label="search tab"><SearchTab workId={workId!} /></ErrorBoundary></TabsContent>
+            <TabsContent value="quiz"><ErrorBoundary label="quiz tab"><QuizTab workId={workId!} workTitle={(work as any)?.title ?? "this Work"} /></ErrorBoundary></TabsContent>
+            <TabsContent value="learn"><ErrorBoundary label="learn tab"><LearnTab workId={workId!} /></ErrorBoundary></TabsContent>
           </div>
         </Tabs>
       </div>

@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useLocation } from "wouter";
+import { ErrorBoundary } from "@/components/error-boundary";
 import { toast } from "sonner";
 import { apiFetch, buildAuthHeaders } from "@/lib/auth";
 import ReactMarkdown from "react-markdown";
@@ -1048,7 +1049,8 @@ export default function Chat() {
                     <p className="text-sm">{aiOnline ? "Send a message to start the conversation." : "AI is offline — start Lemonade or Ollama to enable responses."}</p>
                   </div>
                 ) : (
-                  displayMessages.map((msg, msgIdx) => (
+                  <ErrorBoundary label="message list">
+                  {displayMessages.map((msg, msgIdx) => (
                     <div key={msg.id} className={`flex gap-3 ${msg.role === "user" ? "flex-row-reverse" : ""}`}>
                       <div className={`w-7 h-7 shrink-0 rounded-sm flex items-center justify-center
                         ${msg.isClarification
@@ -1157,7 +1159,8 @@ export default function Chat() {
                         )}
                       </div>
                     </div>
-                  ))
+                  ))}
+                  </ErrorBoundary>
                 )}
                 <div ref={messagesEndRef} />
               </div>
