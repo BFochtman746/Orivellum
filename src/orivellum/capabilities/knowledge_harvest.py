@@ -269,8 +269,9 @@ def llm_harvest(result: "ExtractionResult", doc_id: str,
 
     base_url = cfg.serving.base_url
     model = cfg.serving.workhorse_model
-    # Use the short extraction-specific timeout, not the general chat timeout
-    timeout = _EXTRACTION_TIMEOUT_SEC
+    # Use the short extraction-specific timeout, not the general chat timeout.
+    # Falls back to the module-level default if not set in config.
+    timeout = getattr(cfg.serving, "extraction_timeout_sec", _EXTRACTION_TIMEOUT_SEC)
 
     created = 0
     segments = result.pages[:_MAX_LLM_CHUNKS]

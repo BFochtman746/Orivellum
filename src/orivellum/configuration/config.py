@@ -29,6 +29,9 @@ class ServingConfig:
     coder_model: str = "Qwen3-Coder"
     embedder_model: str = "Qwen3-Embedding-0.6B"
     timeout_sec: int = 120
+    # Dedicated short timeout for background AI extraction so a slow/absent AI
+    # service never blocks the pipeline for the full chat timeout.
+    extraction_timeout_sec: int = 30
 
 
 @dataclass
@@ -74,6 +77,7 @@ class OrivellumConfig:
                 "base_url": self.serving.base_url,
                 "workhorse_model": self.serving.workhorse_model,
                 "timeout_sec": self.serving.timeout_sec,
+                "extraction_timeout_sec": self.serving.extraction_timeout_sec,
             },
             "server": {
                 "host": self.server.host,
@@ -124,6 +128,7 @@ def load_config(path: str | None = None) -> OrivellumConfig:
         "ORIVELLUM_HOST": ("server.host", str),
         "ORIVELLUM_AI_URL": ("serving.base_url", str),
         "ORIVELLUM_DB_PATH": ("database.path", str),
+        "ORIVELLUM_EXTRACTION_TIMEOUT": ("serving.extraction_timeout_sec", int),
     }
     for env_key, (cfg_path, cast) in env_map.items():
         val = os.environ.get(env_key)
@@ -151,6 +156,8 @@ def load_config(path: str | None = None) -> OrivellumConfig:
             coder_model=serving_raw.get("coder_model", serving_raw.get(
                 "models", {}).get("coder", ServingConfig.coder_model)),
             timeout_sec=int(serving_raw.get("timeout_sec", ServingConfig.timeout_sec)),
+            extraction_timeout_sec=int(serving_raw.get(
+                "extraction_timeout_sec", ServingConfig.extraction_timeout_sec)),
         ),
         server=ServerConfig(
             host=str(server_raw.get("host", ServerConfig.host)),
