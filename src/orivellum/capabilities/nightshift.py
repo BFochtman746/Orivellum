@@ -35,7 +35,7 @@ def _get_docs_needing_work(db: "OrivellumDB") -> list[dict]:
             """SELECT d.id, d.work_id, d.title, d.source,
                       COUNT(k.id) AS kcount
                FROM documents d
-               LEFT JOIN knowledge k ON k.doc_id = d.id
+               LEFT JOIN knowledge k ON k.source_doc_id = d.id
                WHERE d.readiness = 'ready'
                GROUP BY d.id
                HAVING kcount < ?
@@ -86,6 +86,8 @@ def run_nightshift(db: "OrivellumDB", cfg: "OrivellumConfig") -> None:
     report_lines: list[str] = []
     ai_enabled    = db.get_setting("ai_extraction_enabled", "false").lower() == "true"
 
+    from orivellum.capabilities.extraction import ExtractionResult, PageSegment
+
     for doc in docs:
         doc_id  = doc["id"]
         work_id = doc.get("work_id")
@@ -99,15 +101,29 @@ def run_nightshift(db: "OrivellumDB", cfg: "OrivellumConfig") -> None:
             if not full_text.strip():
                 continue
 
+            # Reconstruct a minimal ExtractionResult so harvest() and llm_harvest()
+            # receive the correct type (they expect ExtractionResult, not raw text).
+            doc_info = db.get_document(doc_id)
+            doc_kind = (doc_info or {}).get("kind") or "text"
+            pages = [
+                PageSegment(page=i + 1, text=r["text"])
+                for i, r in enumerate(chunks_row)
+            ]
+            result = ExtractionResult(
+                kind=doc_kind,
+                full_text=full_text,
+                word_count=len(full_text.split()),
+                pages=pages,
+            )
+
             before = len(db.list_knowledge(work_id=work_id, limit=500))
-            harvest(full_text, doc_id=doc_id, work_id=work_id, db=db)
+            harvest(result, doc_id=doc_id, work_id=work_id, doc_title=title, db=db)
 
             if ai_enabled:
                 try:
                     from orivellum.capabilities.knowledge_harvest import llm_harvest
-                    result_stub = {"text": full_text}
-                    llm_harvest(result_stub, doc_id=doc_id, work_id=work_id,
-                                base_url=cfg.serving.base_url, model=cfg.serving.model, db=db)
+                    llm_harvest(result, doc_id=doc_id, work_id=work_id,
+                                doc_title=title, db=db)
                 except Exception as ai_exc:
                     logger.warning("Nightshift LLM harvest failed for %s: %s", doc_id, ai_exc)
 
