@@ -113,14 +113,24 @@ def create_app() -> FastAPI:
         "http://localhost:5173,http://localhost:3000,http://localhost:80",
     ).split(",")
 
-    # Build an exact regex for THIS repl's Replit dev domain only.
-    # REPLIT_DEV_DOMAIN is set by the Replit runtime; for self-hosted
-    # deployments it will be empty and the regex is not added.
+    # Build a regex that covers:
+    #   • This repl's Replit dev domain (REPLIT_DEV_DOMAIN, https only)
+    #   • Private LAN ranges: 192.168.x.x, 10.x.x.x on any port
+    #   • Tailscale CGNAT range: 100.64–127.x.x on any port
+    # These are all trusted local networks; a public attacker cannot
+    # spoof a private-range origin in a credentialed browser request.
     _replit_domain = os.environ.get("REPLIT_DEV_DOMAIN", "").strip()
-    _origin_regex: str | None = (
-        r"https://" + re.escape(_replit_domain)
-        if _replit_domain
-        else None
+    _local_net_regex = (
+        r"http://(localhost|127\.0\.0\.1"
+        r"|192\.168\.\d{1,3}\.\d{1,3}"
+        r"|10\.\d{1,3}\.\d{1,3}\.\d{1,3}"
+        r"|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d{1,3}\.\d{1,3}"  # Tailscale
+        r")(:\d+)?"
+    )
+    _replit_regex = (r"https://" + re.escape(_replit_domain)) if _replit_domain else None
+    _origin_regex = (
+        f"({_local_net_regex}|{_replit_regex})" if _replit_regex
+        else _local_net_regex
     )
 
     app.add_middleware(

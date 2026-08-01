@@ -3,6 +3,7 @@ import { useLocation } from "wouter";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { toast } from "sonner";
 import { apiFetch, buildAuthHeaders } from "@/lib/auth";
+import { randomUUID, copyToClipboard } from "@/lib/uuid";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
@@ -696,7 +697,7 @@ export default function Chat() {
       abortRef.current = controller;
 
       const serverMsgs: LocalMessage[] = (activeConv?.messages ?? []).map((m) => ({
-        id: m.id ?? crypto.randomUUID(),
+        id: m.id ?? randomUUID(),
         role: m.role as "user" | "assistant",
         text: m.text ?? "",
         created_at: m.created_at ?? new Date().toISOString(),
@@ -707,12 +708,12 @@ export default function Chat() {
       const capturedImage = pendingImage;
       setPendingImage(null);
       const userMsg: LocalMessage = {
-        id: crypto.randomUUID(), role: "user", text,
+        id: randomUUID(), role: "user", text,
         created_at: new Date().toISOString(),
         image_b64: capturedImage?.data,
         image_media_type: capturedImage?.type,
       };
-      const assistantId = crypto.randomUUID();
+      const assistantId = randomUUID();
       assistantIdRef.current = assistantId;
       accumulatorRef.current = "";
       // Capture the effective model so the attribution label shows during streaming
@@ -1143,8 +1144,7 @@ export default function Chat() {
                             )}
                             <button
                               onClick={() => {
-                                navigator.clipboard.writeText(msg.text ?? "");
-                                toast.success("Copied");
+                                copyToClipboard(msg.text ?? "").then(() => toast.success("Copied"));
                               }}
                               className="text-muted-foreground/30 hover:text-muted-foreground/70 transition-colors"
                               title="Copy response"
