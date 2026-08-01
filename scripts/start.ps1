@@ -115,6 +115,9 @@ function Stop-All {
       try { $p.Kill($true) } catch {}
     }
   }
+  # Also kill whatever is still listening on our ports (handles detached Vite)
+  Clear-Port $ApiPort
+  Clear-Port $WebPort
 }
 
 # Launch an executable (or .cmd/.bat wrapper) via a temp batch file so that
@@ -206,6 +209,28 @@ if ($Mobile) {
   $children.Add($mobProc)
 }
 
+# ---- Wait for Vite to be ready (port check, not process check) --------------
+# pnpm on Windows may detach Vite as a child process and exit itself (code 0).
+# We verify Vite is actually serving before declaring success.
+Write-Host "[web]  Waiting for web UI to be ready ..." -ForegroundColor $Cyan
+$webMaxWait = 45
+$webElapsed = 0
+$webReady   = $false
+while ($webElapsed -lt $webMaxWait) {
+  try {
+    $wr = Invoke-WebRequest -Uri "http://127.0.0.1:$WebPort/" `
+      -UseBasicParsing -TimeoutSec 2 -ErrorAction Stop
+    if ($wr.StatusCode -lt 500) { $webReady = $true; break }
+  } catch {}
+  Start-Sleep -Seconds 1
+  $webElapsed++
+}
+if (-not $webReady) {
+  Write-Host "[web]  ERROR: Web UI not responding after ${webMaxWait}s. Check logs\web.log" -ForegroundColor $Red
+  Stop-All; exit 1
+}
+Write-Host "[web]  Ready [OK]" -ForegroundColor $Green
+
 Write-Host ""
 Write-Host "  API  -> http://localhost:$ApiPort" -ForegroundColor White
 Write-Host "  Web  -> http://localhost:$WebPort" -ForegroundColor White
@@ -215,15 +240,27 @@ Write-Host "  Press Ctrl+C to stop all services." -ForegroundColor $Gray
 Write-Host "---------------------------------------" -ForegroundColor $Cyan
 
 # ---- Keep alive; clean up on Ctrl+C ----------------------------------------
+# Monitor the API process (must stay alive) and the web port (Vite may be
+# a detached child, so we check the port rather than the pnpm process).
+$webFailCount = 0
 try {
   while ($true) {
-    foreach ($p in $children) {
-      if ($p -ne $null -and $p.HasExited) {
-        Write-Host "  A service stopped unexpectedly (PID $($p.Id)). Shutting down." -ForegroundColor $Red
+    if ($apiProc.HasExited) {
+      Write-Host "  API stopped unexpectedly. Shutting down." -ForegroundColor $Red
+      Stop-All; exit 1
+    }
+    try {
+      Invoke-WebRequest -Uri "http://127.0.0.1:$WebPort/" `
+        -UseBasicParsing -TimeoutSec 2 -ErrorAction Stop | Out-Null
+      $webFailCount = 0
+    } catch {
+      $webFailCount++
+      if ($webFailCount -ge 3) {
+        Write-Host "  Web UI stopped responding. Shutting down." -ForegroundColor $Red
         Stop-All; exit 1
       }
     }
-    Start-Sleep -Seconds 2
+    Start-Sleep -Seconds 5
   }
 } finally {
   Write-Host ""
