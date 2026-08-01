@@ -696,10 +696,25 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
             {/* Mobile top bar */}
             <div className="lg:hidden flex items-center gap-2 px-4 py-3 border-b border-border/30 bg-background/80 backdrop-blur sticky top-0 z-10">
               <MobileMenuButton />
-              <div className="font-serif font-bold text-base tracking-tight">Orivellum</div>
+              <div className="font-serif font-bold text-base tracking-tight flex-1">Orivellum</div>
+              {/* Progress button — pinned in mobile top bar so it never floats over content */}
+              <button
+                onClick={() => setProgressOpen(true)}
+                className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-mono border shadow-sm transition-all
+                  ${activeJobCount > 0
+                    ? "bg-primary text-primary-foreground border-primary animate-pulse"
+                    : "bg-muted/60 text-muted-foreground border-border/50"}`}
+                title="View background jobs"
+              >
+                {activeJobCount > 0 ? (
+                  <><Loader2 className="w-3 h-3 animate-spin" />{activeJobCount}</>
+                ) : (
+                  <><Activity className="w-3 h-3" />Progress</>
+                )}
+              </button>
             </div>
-            {/* Progress badge — top right of content area */}
-            <div className="sticky top-0 z-10 pointer-events-none flex justify-end px-6 lg:px-8 pt-4 lg:pt-6">
+            {/* Progress badge — desktop only, floats top-right of content area */}
+            <div className="sticky top-0 z-10 pointer-events-none hidden lg:flex justify-end px-8 pt-6">
               <button
                 onClick={() => setProgressOpen(true)}
                 className={`pointer-events-auto flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-mono border shadow-sm transition-all
@@ -715,7 +730,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
                 )}
               </button>
             </div>
-            <div className="h-full w-full max-w-[1400px] mx-auto px-6 lg:px-8 pb-6 lg:pb-8 -mt-10">
+            <div className="h-full w-full max-w-[1400px] mx-auto px-6 lg:px-8 pb-6 lg:pb-8 lg:-mt-10">
               {children}
             </div>
           </main>

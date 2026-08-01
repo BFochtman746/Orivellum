@@ -39,7 +39,7 @@ import {
 import {
   MessageSquare, Plus, Send, Search, Bot, User, Copy, Check,
   Trash2, Wifi, WifiOff, Loader2, Cpu, Pencil, BookOpen, Archive, ArchiveRestore,
-  AlertTriangle, FolderOpen, FileText, ChevronRight, X as XIcon, Zap, Brain,
+  AlertTriangle, FolderOpen, FileText, ChevronRight, ChevronLeft, X as XIcon, Zap, Brain,
   Globe, Paperclip, Download, Layers, HelpCircle, Compass, ChevronDown, ImageIcon,
 } from "lucide-react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -859,9 +859,9 @@ export default function Chat() {
   const conv = activeConv?.conversation;
 
   return (
-    <div className="h-[calc(100vh-6rem)] flex gap-6 animate-in fade-in duration-500">
-      {/* ── Sidebar ────────────────────────────────────────────────────── */}
-      <Card className="w-72 flex flex-col shrink-0 rounded-xl overflow-hidden border-border/50">
+    <div className="h-[calc(100vh-6rem)] flex gap-0 md:gap-6 animate-in fade-in duration-500">
+      {/* ── Sidebar — full-width on mobile when no conv selected ─────── */}
+      <Card className={`flex flex-col shrink-0 rounded-xl overflow-hidden border-border/50 w-full md:w-72 ${activeId ? "hidden md:flex" : "flex"}`}>
         <div className="p-4 border-b border-border/50 bg-muted/10 space-y-3">
           <div className="flex items-center justify-between">
             <h2 className="font-serif text-lg font-medium">Conversations</h2>
@@ -980,13 +980,21 @@ export default function Chat() {
       </Card>
 
       {/* ── Main chat ──────────────────────────────────────────────────── */}
-      <Card className="flex-1 flex flex-col rounded-xl overflow-hidden border-border/50 min-w-0">
+      <Card className={`flex-1 flex flex-col rounded-xl overflow-hidden border-border/50 min-w-0 ${!activeId ? "hidden md:flex" : "flex"}`}>
         {activeId ? (
           <>
             {/* Header */}
-            <div className="px-6 py-3.5 border-b border-border/50 bg-muted/10 flex justify-between items-center shrink-0">
-              <div>
-                <h2 className="font-serif text-lg font-medium leading-tight">{conv?.title || "Conversation"}</h2>
+            <div className="px-4 md:px-6 py-3.5 border-b border-border/50 bg-muted/10 flex justify-between items-center shrink-0">
+              {/* Back button — mobile only */}
+              <button
+                onClick={() => setLocation("/chat")}
+                className="md:hidden mr-2 p-1 rounded hover:bg-muted/50 text-muted-foreground hover:text-foreground transition-colors shrink-0"
+                aria-label="Back to conversations"
+              >
+                <ChevronLeft className="w-5 h-5" />
+              </button>
+              <div className="min-w-0 flex-1">
+                <h2 className="font-serif text-lg font-medium leading-tight truncate">{conv?.title || "Conversation"}</h2>
                 <div className="flex items-center gap-2 mt-0.5">
                   <span className="text-xs font-mono text-muted-foreground">{conv?.message_count ?? 0} messages</span>
                   {convWorkId && (
