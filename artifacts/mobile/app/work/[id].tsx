@@ -25,6 +25,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useEffect } from 'react';
 import * as Haptics from 'expo-haptics';
 import type { Document, KnowledgeItem, Task } from '@workspace/api-client-react';
+import { OfflineBanner, ErrorScreen } from '@/components/OfflineBanner';
 
 type Tab = 'overview' | 'docs' | 'knowledge' | 'tasks';
 
@@ -140,14 +141,24 @@ function OverviewTab({ workId, onStartDiscussion, starting }: {
   starting: boolean;
 }) {
   const colors = useColors();
-  const { data: workData, isLoading, refetch } = useGetWork(workId);
+  const { data: workData, isLoading, isError, refetch } = useGetWork(workId);
   const work = workData?.work;
 
-  if (isLoading) {
+  if (isLoading && !work) {
     return (
       <View style={styles.centered}>
         <ActivityIndicator color={colors.primary} />
       </View>
+    );
+  }
+
+  if (isError && !work) {
+    return (
+      <ErrorScreen
+        message="Can't load work details"
+        detail="Check your connection and try again."
+        onRetry={refetch}
+      />
     );
   }
 
@@ -216,10 +227,10 @@ export default function WorkDetailScreen() {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<Tab>('overview');
 
-  const { data: workData } = useGetWork(id, { query: { staleTime: 30_000 } } as any);
-  const { data: docsData, isLoading: docsLoading, refetch: refetchDocs } = useGetWorkDocuments(id, { query: { staleTime: 20_000, refetchInterval: (q: any) => (q.state.data?.documents ?? []).some((d: any) => d.readiness === 'imported') ? 4_000 : false } } as any);
-  const { data: knData, isLoading: knLoading, refetch: refetchKn } = useGetWorkKnowledge(id, { query: { staleTime: 30_000 } } as any);
-  const { data: tasksData, isLoading: tasksLoading, refetch: refetchTasks } = useGetWorkTasks(id, { query: { staleTime: 30_000 } } as any);
+  const { data: workData, isError: workError, refetch: refetchWork } = useGetWork(id, { query: { staleTime: 30_000 } } as any);
+  const { data: docsData, isLoading: docsLoading, isError: docsError, refetch: refetchDocs } = useGetWorkDocuments(id, { query: { staleTime: 20_000, refetchInterval: (q: any) => (q.state.data?.documents ?? []).some((d: any) => d.readiness === 'imported') ? 4_000 : false } } as any);
+  const { data: knData, isLoading: knLoading, isError: knError, refetch: refetchKn } = useGetWorkKnowledge(id, { query: { staleTime: 30_000 } } as any);
+  const { data: tasksData, isLoading: tasksLoading, isError: tasksError, refetch: refetchTasks } = useGetWorkTasks(id, { query: { staleTime: 30_000 } } as any);
 
   const { mutateAsync: createConversation, isPending: startingConvo } = useCreateConversation();
 
@@ -268,61 +279,116 @@ export default function WorkDetailScreen() {
           />
         );
       case 'docs':
+        if (docsError && docs.length === 0) {
+          return (
+            <ErrorScreen
+              message="Can't load documents"
+              detail="Check your connection and try again."
+              onRetry={refetchDocs}
+            />
+          );
+        }
         return (
-          <FlatList
-            data={docs}
-            keyExtractor={(d) => d.id ?? ''}
-            renderItem={({ item }) => <DocItem doc={item} />}
-            contentContainerStyle={styles.listPad}
-            refreshControl={
-              <RefreshControl refreshing={docsLoading} onRefresh={refetchDocs} tintColor={colors.primary} />
-            }
-            ListEmptyComponent={
-              <View style={styles.centered}>
-                <Feather name="file-text" size={36} color={colors.mutedForeground} />
-                <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>No documents</Text>
-              </View>
-            }
-          />
+          <>
+            {docsError && docs.length > 0 && (
+              <OfflineBanner message="Showing cached documents — server unreachable" onRetry={refetchDocs} />
+            )}
+            <FlatList
+              data={docs}
+              keyExtractor={(d) => d.id ?? ''}
+              renderItem={({ item }) => <DocItem doc={item} />}
+              contentContainerStyle={styles.listPad}
+              refreshControl={
+                <RefreshControl refreshing={docsLoading} onRefresh={refetchDocs} tintColor={colors.primary} />
+              }
+              ListEmptyComponent={
+                <View style={styles.centered}>
+                  <Feather name="file-text" size={36} color={colors.mutedForeground} />
+                  <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>No documents</Text>
+                </View>
+              }
+            />
+          </>
         );
       case 'knowledge':
+        if (knError && knowledge.length === 0) {
+          return (
+            <ErrorScreen
+              message="Can't load knowledge"
+              detail="Check your connection and try again."
+              onRetry={refetchKn}
+            />
+          );
+        }
         return (
-          <FlatList
-            data={knowledge}
-            keyExtractor={(k) => k.id ?? ''}
-            renderItem={({ item }) => <KnowledgeRow item={item} />}
-            contentContainerStyle={styles.listPad}
-            refreshControl={
-              <RefreshControl refreshing={knLoading} onRefresh={refetchKn} tintColor={colors.primary} />
-            }
-            ListEmptyComponent={
-              <View style={styles.centered}>
-                <Feather name="cpu" size={36} color={colors.mutedForeground} />
-                <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>No knowledge nodes</Text>
-              </View>
-            }
-          />
+          <>
+            {knError && knowledge.length > 0 && (
+              <OfflineBanner message="Showing cached knowledge — server unreachable" onRetry={refetchKn} />
+            )}
+            <FlatList
+              data={knowledge}
+              keyExtractor={(k) => k.id ?? ''}
+              renderItem={({ item }) => <KnowledgeRow item={item} />}
+              contentContainerStyle={styles.listPad}
+              refreshControl={
+                <RefreshControl refreshing={knLoading} onRefresh={refetchKn} tintColor={colors.primary} />
+              }
+              ListEmptyComponent={
+                <View style={styles.centered}>
+                  <Feather name="cpu" size={36} color={colors.mutedForeground} />
+                  <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>No knowledge nodes</Text>
+                </View>
+              }
+            />
+          </>
         );
       case 'tasks':
+        if (tasksError && tasks.length === 0) {
+          return (
+            <ErrorScreen
+              message="Can't load tasks"
+              detail="Check your connection and try again."
+              onRetry={refetchTasks}
+            />
+          );
+        }
         return (
-          <FlatList
-            data={tasks}
-            keyExtractor={(t) => t.id ?? ''}
-            renderItem={({ item }) => <TaskRow task={item} />}
-            contentContainerStyle={styles.listPad}
-            refreshControl={
-              <RefreshControl refreshing={tasksLoading} onRefresh={refetchTasks} tintColor={colors.primary} />
-            }
-            ListEmptyComponent={
-              <View style={styles.centered}>
-                <Feather name="check-square" size={36} color={colors.mutedForeground} />
-                <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>No tasks</Text>
-              </View>
-            }
-          />
+          <>
+            {tasksError && tasks.length > 0 && (
+              <OfflineBanner message="Showing cached tasks — server unreachable" onRetry={refetchTasks} />
+            )}
+            <FlatList
+              data={tasks}
+              keyExtractor={(t) => t.id ?? ''}
+              renderItem={({ item }) => <TaskRow task={item} />}
+              contentContainerStyle={styles.listPad}
+              refreshControl={
+                <RefreshControl refreshing={tasksLoading} onRefresh={refetchTasks} tintColor={colors.primary} />
+              }
+              ListEmptyComponent={
+                <View style={styles.centered}>
+                  <Feather name="check-square" size={36} color={colors.mutedForeground} />
+                  <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>No tasks</Text>
+                </View>
+              }
+            />
+          </>
         );
     }
   };
+
+  // Full-screen error when the work itself can't be loaded
+  if (workError && !work) {
+    return (
+      <View style={[styles.screen, { backgroundColor: colors.background, paddingTop: topPad }]}>
+        <ErrorScreen
+          message="Can't reach your workspace"
+          detail="Check your connection and make sure the Orivellum server is running."
+          onRetry={refetchWork}
+        />
+      </View>
+    );
+  }
 
   return (
     <View style={[styles.screen, { backgroundColor: colors.background, paddingTop: topPad }]}>

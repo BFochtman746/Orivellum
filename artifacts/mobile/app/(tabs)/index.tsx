@@ -15,6 +15,7 @@ import { useGetDashboardSummary, useGetDashboardActivity, useGetBriefing } from 
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { Work, ActivityItem } from '@workspace/api-client-react';
+import { OfflineBanner, ErrorScreen } from '@/components/OfflineBanner';
 
 function StatCard({ label, value, icon }: { label: string; value: number | undefined; icon: string }) {
   const colors = useColors();
@@ -100,20 +101,24 @@ export default function DashboardScreen() {
   const {
     data: summary,
     isLoading: summaryLoading,
+    isError: summaryError,
     refetch: refetchSummary,
   } = useGetDashboardSummary({ query: { refetchInterval: 30_000, staleTime: 20_000 } } as any);
 
   const {
     data: activityData,
     isLoading: activityLoading,
+    isError: activityError,
     refetch: refetchActivity,
   } = useGetDashboardActivity({ limit: 10 }, { query: { refetchInterval: 30_000, staleTime: 20_000 } } as any);
 
   const { data: briefing } = useGetBriefing({ query: { staleTime: 300_000 } } as any);
 
   const isLoading = summaryLoading || activityLoading;
+  const isError = summaryError || activityError;
   const recentWorks = summary?.recent_works ?? [];
   const activity = activityData?.activity ?? [];
+  const hasData = recentWorks.length > 0 || activity.length > 0;
 
   const topPad = isWeb ? 67 : insets.top;
   const botPad = isWeb ? 34 : 0;
@@ -122,6 +127,22 @@ export default function DashboardScreen() {
     refetchSummary();
     refetchActivity();
   };
+
+  // Full-screen error when there's no cached data to show
+  if (!isLoading && isError && !hasData) {
+    return (
+      <View style={[styles.container, { backgroundColor: colors.background, paddingTop: topPad + 16 }]}>
+        <View style={styles.header}>
+          <Text style={[styles.brand, { color: colors.foreground }]}>Orivellum</Text>
+        </View>
+        <ErrorScreen
+          message="Can't reach your workspace"
+          detail="Check your connection and make sure the Orivellum server is running."
+          onRetry={handleRefresh}
+        />
+      </View>
+    );
+  }
 
   return (
     <FlatList
@@ -152,6 +173,14 @@ export default function DashboardScreen() {
               {briefing?.greeting ?? 'Your research workspace'}
             </Text>
           </View>
+
+          {/* Offline banner — shown when we have cached data but server is unreachable */}
+          {isError && hasData && (
+            <OfflineBanner
+              message="Can't reach your workspace — showing cached data"
+              onRetry={handleRefresh}
+            />
+          )}
 
           {/* Stats */}
           {summaryLoading ? (
@@ -189,7 +218,7 @@ export default function DashboardScreen() {
             </>
           )}
 
-          {!isLoading && recentWorks.length === 0 && activity.length === 0 && (
+          {!isLoading && !isError && recentWorks.length === 0 && activity.length === 0 && (
             <View style={styles.emptyState}>
               <Feather name="inbox" size={40} color={colors.mutedForeground} />
               <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
