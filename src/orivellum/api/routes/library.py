@@ -164,6 +164,52 @@ def library_import(body: LibraryImport, background_tasks: BackgroundTasks):
     return {"document": doc, "duplicate": False}
 
 
+@router.post("/library/{doc_id}/reprocess")
+def library_reprocess(doc_id: str, background_tasks: BackgroundTasks):
+    """Re-run extraction on a document that previously failed or produced no text.
+
+    Resolves the file from the stored content_path so this works after a
+    server restart even if the original absolute path has changed.
+    """
+    db = get_db()
+    doc = db.get_document(doc_id)
+    if not doc:
+        raise HTTPException(404, f"Document {doc_id!r} not found")
+
+    current = doc.get("readiness", "")
+    if current == "ready":
+        return {"ok": True, "message": "Document is already ready — skipping reprocess"}
+
+    # Resolve the file path
+    content_path = doc.get("content_path")
+    if not content_path:
+        raise HTTPException(400, "Document has no stored file path (content_path is empty)")
+
+    lib_root = _library_root()
+    file_path = lib_root / content_path
+    if not file_path.exists():
+        raise HTTPException(
+            404,
+            f"File not found at {file_path}. The file may have been moved or deleted.",
+        )
+
+    # Reset status so the UI shows processing
+    db.update_document_extracted(doc_id, "", 0, readiness="imported", error_message=None)
+
+    kind = doc.get("kind") or _kind_for(doc.get("title", ""))
+    background_tasks.add_task(
+        process_document,
+        doc_id=doc_id,
+        file_path=str(file_path),
+        kind=kind,
+        work_id=doc.get("work_id"),
+        title=doc.get("title", ""),
+        db=db,
+    )
+    logger.info("Queued reprocess for doc=%s kind=%s", doc_id, kind)
+    return {"ok": True, "doc_id": doc_id, "message": "Reprocessing queued"}
+
+
 @router.get("/library/active-work")
 def library_get_active_work():
     db = get_db()

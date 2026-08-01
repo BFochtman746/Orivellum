@@ -536,12 +536,13 @@ class OrivellumDB:
             self._conn.commit()
 
     def update_document_extracted(self, doc_id: str, extracted_text: str,
-                                  word_count: int, readiness: str = "ready") -> None:
+                                  word_count: int, readiness: str = "ready",
+                                  error_message: str | None = None) -> None:
         """Persist extraction results back on the document row."""
         with self._lock:
             self._conn.execute(
-                "UPDATE documents SET extracted_text=?, word_count=?, readiness=? WHERE id=?",
-                (extracted_text, word_count, readiness, doc_id),
+                "UPDATE documents SET extracted_text=?, word_count=?, readiness=?, error_message=? WHERE id=?",
+                (extracted_text, word_count, readiness, error_message, doc_id),
             )
             self._conn.commit()
 

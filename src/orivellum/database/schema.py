@@ -584,6 +584,11 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         CREATE INDEX IF NOT EXISTS conv_work_arch ON conversations(work_id, archived);
     """),
 
+    # v38 — Documents error_message column
+    (38, "Documents error_message column", """
+        ALTER TABLE documents ADD COLUMN error_message TEXT;
+    """),
+
     # v35 — Documents word_count; Knowledge accessed_at
     (35, "Documents word_count; Knowledge accessed_at", """
         ALTER TABLE documents ADD COLUMN word_count INTEGER;

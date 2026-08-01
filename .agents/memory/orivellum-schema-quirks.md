@@ -22,6 +22,11 @@ FROM works w JOIN objects o ON o.id = w.id
 ## Tables that DO have own created_at
 documents, knowledge, conversations, messages, tasks — all have their own `created_at` column.
 
+## Documents error_message column (v38)
+Migration v38 adds `error_message TEXT` to the `documents` table.
+`update_document_extracted()` now accepts an optional `error_message` kwarg.
+The pipeline stores a descriptive error string on any failure so the UI can surface it.
+
 ## chunks.id and knowledge.id are FKs to objects(id)
 Both `chunks` and `knowledge` use `id TEXT PRIMARY KEY REFERENCES objects(id) ON DELETE CASCADE`.
 You cannot INSERT a chunk or knowledge row using a plain `uuid4()` — the id must first be registered via `create_object("chunk")` / `create_object("knowledge")`.

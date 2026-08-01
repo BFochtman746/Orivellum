@@ -22,26 +22,66 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def resolve_file_path(file_path: str, doc_id: str, db: "OrivellumDB") -> Path | None:
+    """Return the file as a Path, falling back to content_path from the DB.
+
+    This makes reprocessing after a server restart safe: even if the original
+    absolute path is stale, content_path (relative to lib_root) still works.
+    """
+    p = Path(file_path)
+    if p.exists():
+        return p
+
+    # Fallback: resolve from content_path stored in the document record
+    doc = db.get_document(doc_id)
+    if not doc:
+        return None
+    content_path = doc.get("content_path")
+    if not content_path:
+        return None
+
+    # content_path is relative to data_dir/library
+    try:
+        from orivellum.api._deps import get_config
+        cfg = get_config()
+        lib_root = Path(cfg.data_dir) / "library"
+        fallback = lib_root / content_path
+        if fallback.exists():
+            logger.info("Resolved %s via content_path fallback: %s", doc_id[:8], fallback)
+            return fallback
+    except Exception:
+        pass
+    return None
+
+
 def process_document(doc_id: str, file_path: str, kind: str,
                      work_id: str | None, title: str,
                      db: "OrivellumDB") -> None:
     """Extract, chunk, and harvest a single document.
 
     Safe to call from a daemon thread — catches and logs all exceptions.
+    Stores a descriptive error_message on the document when anything fails
+    so callers can surface the reason in the UI.
     """
+    logger.info("Processing doc %s (%s) kind=%s", doc_id, title, kind)
     try:
-        logger.info("Processing doc %s (%s) kind=%s", doc_id, title, kind)
-        path = Path(file_path)
-        if not path.exists():
-            logger.warning("Doc file not found: %s", file_path)
-            db.update_document_extracted(doc_id, "", 0, readiness="error")
+        path = resolve_file_path(file_path, doc_id, db)
+        if path is None:
+            msg = f"File not found: {file_path}"
+            logger.warning("Doc %s — %s", doc_id, msg)
+            db.update_document_extracted(doc_id, "", 0,
+                                         readiness="error",
+                                         error_message=msg)
             return
 
         # Step 1: extract text
         result = extract(path, kind)
         if not result.ok:
-            logger.warning("Extraction produced no text for %s", doc_id)
-            db.update_document_extracted(doc_id, "", 0, readiness="no_text")
+            msg = f"Extraction produced no readable text (kind={kind})"
+            logger.warning("Doc %s — %s", doc_id, msg)
+            db.update_document_extracted(doc_id, "", 0,
+                                         readiness="no_text",
+                                         error_message=msg)
             return
 
         # Step 2: chunk and index
@@ -61,8 +101,11 @@ def process_document(doc_id: str, file_path: str, kind: str,
         logger.info("Doc %s processed — %d words, ready", doc_id, result.word_count)
 
     except Exception as exc:
-        logger.error("Pipeline failed for doc %s: %s", doc_id, exc, exc_info=True)
+        msg = f"{type(exc).__name__}: {exc}"
+        logger.error("Pipeline failed for doc %s: %s", doc_id, msg, exc_info=True)
         try:
-            db.update_document_extracted(doc_id, "", 0, readiness="error")
+            db.update_document_extracted(doc_id, "", 0,
+                                         readiness="error",
+                                         error_message=msg)
         except Exception:
             pass
