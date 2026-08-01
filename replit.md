@@ -12,6 +12,7 @@ A sovereign, local-first knowledge management and AI assistant platform. All dat
 | `PORT=5173 BASE_PATH=/ ORIVELLUM_API_URL=http://127.0.0.1:8080 pnpm --filter @workspace/orivellum-ui run dev` | Start the web frontend |
 | `pnpm --filter @workspace/mobile run dev` | Start the Expo mobile dev server |
 | `pnpm --filter @workspace/api-spec run codegen` | Regenerate React Query hooks + Zod schemas from OpenAPI spec |
+| `pnpm --filter @workspace/api-spec run sync-client` | Regenerate hooks/schemas **and** rebuild `api-client-react` declarations — run this after any OpenAPI change |
 | `pnpm run typecheck` | Full typecheck across all packages |
 
 ---
@@ -107,7 +108,7 @@ sudo apt-get install -y tesseract-ocr poppler-utils
 ## Gotchas
 
 - Run `uv sync` before `pnpm install`; the Python package must exist before codegen runs.
-- After any OpenAPI spec change, run codegen: `pnpm --filter @workspace/api-spec run codegen`
+- After any OpenAPI spec change, run `pnpm --filter @workspace/api-spec run sync-client` (not just `codegen`) — this rebuilds both the generated hooks/schemas and the `api-client-react` declarations so TypeScript stays in sync.
 - The Vite dev server requires `PORT`, `BASE_PATH`, and `ORIVELLUM_API_URL` — without `ORIVELLUM_API_URL` the `/api` proxy is disabled and all API calls 404.
 - Tesseract and Poppler must be installed at the OS level — `uv sync` cannot install them.
 - `works` timestamps require joining through the `objects` table — do not query `works` for `created_at` directly.

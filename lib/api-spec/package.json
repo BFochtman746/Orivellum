@@ -3,7 +3,8 @@
   "version": "0.0.0",
   "private": true,
   "scripts": {
-    "codegen": "orval --config ./orval.config.ts && pnpm -w run typecheck:libs"
+    "codegen": "orval --config ./orval.config.ts && pnpm -w run typecheck:libs",
+    "sync-client": "orval --config ./orval.config.ts && pnpm --filter @workspace/api-client-react run build"
   },
   "devDependencies": {
     "orval": "^8.23.0"
