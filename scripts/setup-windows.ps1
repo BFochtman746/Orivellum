@@ -254,7 +254,10 @@ if ($null -eq $uvExe) {
   Write-Fail "uv not found. Please restart your terminal and run: uv sync"
 } else {
   Push-Location $root
-  & $uvExe sync
+  Write-Step "Ensuring Python 3.12 is available ..."
+  & $uvExe python install 3.12
+  Write-Step "Running: uv sync --python 3.12"
+  & $uvExe sync --python 3.12
   Pop-Location
   Write-Ok "Python dependencies installed"
 }
