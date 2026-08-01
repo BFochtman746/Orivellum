@@ -346,31 +346,40 @@ export default function System() {
                 <p className="text-xs text-muted-foreground">
                   Lemonade is a local model server tuned for Orivellum. It listens on port 13305 by default.
                 </p>
-                <pre className="text-xs font-mono bg-muted/60 rounded px-3 py-2 overflow-x-auto">
-{`# Install Lemonade (once)
-pip install lemonade-server
-
-# Start the server
+                <div className="space-y-1.5">
+                  <p className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">macOS / Linux</p>
+                  <pre className="text-xs font-mono bg-muted/60 rounded px-3 py-2 overflow-x-auto">
+{`pip install lemonade-server
 lemonade-server --port 13305`}
-                </pre>
+                  </pre>
+                  <p className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Windows (PowerShell)</p>
+                  <pre className="text-xs font-mono bg-muted/60 rounded px-3 py-2 overflow-x-auto">
+{`pip install lemonade-server
+lemonade-server --port 13305`}
+                  </pre>
+                </div>
               </div>
 
               {/* Ollama */}
               <div className="rounded-lg bg-background/60 border border-border/60 p-4 space-y-2">
                 <p className="text-sm font-semibold">Option B — Ollama</p>
                 <p className="text-xs text-muted-foreground">
-                  Ollama listens on port 11434. Point Orivellum at it with the env var below, then pull a model.
+                  Ollama listens on port 11434. Pull a model then point Orivellum at it.
                 </p>
-                <pre className="text-xs font-mono bg-muted/60 rounded px-3 py-2 overflow-x-auto">
-{`# Start Ollama
-ollama serve
-
-# Pull a model (one-time)
+                <div className="space-y-1.5">
+                  <p className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">macOS / Linux</p>
+                  <pre className="text-xs font-mono bg-muted/60 rounded px-3 py-2 overflow-x-auto">
+{`ollama serve
 ollama pull llama3.2
-
-# Tell Orivellum where to find it
 export ORIVELLUM_AI_URL=http://127.0.0.1:11434/v1`}
-                </pre>
+                  </pre>
+                  <p className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Windows (PowerShell)</p>
+                  <pre className="text-xs font-mono bg-muted/60 rounded px-3 py-2 overflow-x-auto">
+{`ollama serve
+ollama pull llama3.2
+$env:ORIVELLUM_AI_URL="http://127.0.0.1:11434/v1"`}
+                  </pre>
+                </div>
               </div>
 
               {/* Custom */}

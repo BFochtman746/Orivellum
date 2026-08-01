@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   Platform,
   Pressable,
@@ -10,6 +11,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import * as DocumentPicker from 'expo-document-picker';
 import { useColors } from '@/hooks/useColors';
 import { Feather } from '@expo/vector-icons';
 import { useListLibrary, useSearchLibrary } from '@workspace/api-client-react';
@@ -90,6 +92,56 @@ export default function LibraryScreen() {
   const router = useRouter();
 
   const [search, setSearch] = useState('');
+  const [uploading, setUploading] = useState(false);
+
+  const handleUpload = async () => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: '*/*',
+        copyToCacheDirectory: true,
+      });
+      if (result.canceled || !result.assets?.length) return;
+      const asset = result.assets[0];
+      setUploading(true);
+      // Read file as base64 using fetch
+      const fileResp = await fetch(asset.uri);
+      const blob = await fileResp.blob();
+      const reader = new FileReader();
+      const b64: string = await new Promise((resolve, reject) => {
+        reader.onload = () => {
+          const dataUrl = reader.result as string;
+          resolve(dataUrl.split(',')[1] ?? '');
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+      const apiBase = (global as any).__ORIVELLUM_API_BASE__ ?? 'http://localhost:8000';
+      const resp = await fetch(`${apiBase}/api/library/import`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          filename: asset.name,
+          content_b64: b64,
+          mime_type: asset.mimeType ?? 'application/octet-stream',
+        }),
+      });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        Alert.alert('Upload failed', err.detail ?? 'Could not import document');
+        return;
+      }
+      const data = await resp.json();
+      Alert.alert('Uploaded', `"${asset.name}" added to your library`);
+      refetchList();
+      if (data?.document?.id) router.push(`/library/${data.document.id}` as any);
+    } catch (err: any) {
+      if (!String(err).includes('cancel')) {
+        Alert.alert('Error', err?.message ?? 'Upload failed');
+      }
+    } finally {
+      setUploading(false);
+    }
+  };
 
   const {
     data: listData,
@@ -121,10 +173,34 @@ export default function LibraryScreen() {
           { paddingTop: topPad + 12, borderBottomColor: colors.border, backgroundColor: colors.background },
         ]}
       >
-        <Text style={[styles.title, { color: colors.foreground }]}>Library</Text>
-        <Text style={[styles.subtitle, { color: colors.mutedForeground }]}>
-          {isLoading ? '…' : `${listData?.count ?? docs.length} documents`}
-        </Text>
+        <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+          <View>
+            <Text style={[styles.title, { color: colors.foreground }]}>Library</Text>
+            <Text style={[styles.subtitle, { color: colors.mutedForeground }]}>
+              {isLoading ? '…' : `${listData?.count ?? docs.length} documents`}
+            </Text>
+          </View>
+          <Pressable
+            onPress={handleUpload}
+            disabled={uploading}
+            style={({ pressed }) => ({
+              backgroundColor: colors.primary + (pressed ? 'cc' : ''),
+              borderRadius: 10,
+              paddingHorizontal: 14,
+              paddingVertical: 9,
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 6,
+              opacity: uploading ? 0.6 : 1,
+              marginTop: 4,
+            })}
+          >
+            <Feather name={uploading ? 'loader' : 'upload'} size={14} color="#fff" />
+            <Text style={{ color: '#fff', fontSize: 13, fontFamily: 'Inter_600SemiBold' }}>
+              {uploading ? 'Uploading…' : 'Import'}
+            </Text>
+          </Pressable>
+        </View>
       </View>
 
       {/* Search */}

@@ -286,6 +286,21 @@ export default function WorkDetail() {
                   <div className="text-[10px] font-mono uppercase text-muted-foreground mt-0.5">{label}</div>
                 </div>
               ))}
+              {/* Mastery bar — shown when concepts exist for this work */}
+              {(stats as any).concept_count > 0 && (
+                <div className="flex items-center gap-3 ml-2 pl-4 border-l border-border/50">
+                  <div className="text-center">
+                    <div className="text-lg font-semibold font-mono leading-none">{(stats as any).avg_mastery_pct ?? 0}%</div>
+                    <div className="text-[10px] font-mono uppercase text-muted-foreground mt-0.5">Mastery</div>
+                  </div>
+                  <div className="w-20 h-1.5 bg-muted rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-emerald-500/70 rounded-full transition-all duration-700"
+                      style={{ width: `${(stats as any).avg_mastery_pct ?? 0}%` }}
+                    />
+                  </div>
+                </div>
+              )}
               {/* Readiness strip — shown when any doc is still processing or has errors */}
               {(() => {
                 const byR = stats.documents_by_readiness as Record<string, number> ?? {};
@@ -753,16 +768,38 @@ function KnowledgeTab({ workId }: { workId: string }) {
     return true;
   });
 
+  // API search fallback — used when the knowledge list is large and user has typed 3+ chars
+  const useApiSearch = allKnowledge.length > 100 && searchText.trim().length >= 3;
+  const [apiSearchResults, setApiSearchResults] = useState<typeof allKnowledge>([]);
+  useEffect(() => {
+    if (!useApiSearch) { setApiSearchResults([]); return; }
+    const controller = new AbortController();
+    const timer = setTimeout(async () => {
+      try {
+        const base = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
+        const r = await fetch(`${base}/works/${workId}/search?q=${encodeURIComponent(searchText)}&limit=50`, {
+          signal: controller.signal,
+        });
+        if (!r.ok) return;
+        const d = await r.json();
+        setApiSearchResults(d.knowledge ?? []);
+      } catch {}
+    }, 350);
+    return () => { clearTimeout(timer); controller.abort(); };
+  }, [useApiSearch, searchText, workId]);
+
   const knowledge = searchText.trim()
-    ? reviewFiltered.filter((k) => {
-        const q = searchText.trim().toLowerCase();
-        return (
-          (k.text ?? "").toLowerCase().includes(q) ||
-          ((k as any).subject ?? "").toLowerCase().includes(q) ||
-          ((k as any).object ?? "").toLowerCase().includes(q) ||
-          (k.kind ?? "").toLowerCase().includes(q)
-        );
-      })
+    ? (useApiSearch && apiSearchResults.length > 0
+        ? apiSearchResults
+        : reviewFiltered.filter((k) => {
+            const q = searchText.trim().toLowerCase();
+            return (
+              (k.text ?? "").toLowerCase().includes(q) ||
+              ((k as any).subject ?? "").toLowerCase().includes(q) ||
+              ((k as any).object ?? "").toLowerCase().includes(q) ||
+              (k.kind ?? "").toLowerCase().includes(q)
+            );
+          }))
     : reviewFiltered;
 
   const FILTERS: { key: KnowledgeFilter; label: string }[] = [

@@ -159,6 +159,49 @@ function ModelPicker({ convId, currentModel, models, defaultModel, onChanged }: 
   );
 }
 
+// ─── Sources footer ───────────────────────────────────────────────────────────
+
+function SourcesFooter({ sources }: { sources: Array<{doc_id?: string; doc_title?: string; kind?: string}> }) {
+  const [open, setOpen] = useState(false);
+  const unique = sources.filter((s, i, arr) =>
+    arr.findIndex(x => (x.doc_id && x.doc_id === s.doc_id) || x.doc_title === s.doc_title) === i
+  );
+  if (unique.length === 0) return null;
+  return (
+    <div className="mt-1.5">
+      <button
+        onClick={() => setOpen(v => !v)}
+        className="flex items-center gap-1.5 text-[10px] font-mono text-muted-foreground/50 hover:text-muted-foreground/80 transition-colors"
+      >
+        <BookOpen className="w-2.5 h-2.5" />
+        <span>{unique.length} source{unique.length !== 1 ? "s" : ""}</span>
+        <ChevronDown className={`w-2.5 h-2.5 transition-transform duration-200 ${open ? "rotate-180" : ""}`} />
+      </button>
+      {open && (
+        <div className="mt-1.5 flex flex-col gap-0.5 pl-1 border-l border-border/30">
+          {unique.map((s, i) => (
+            s.doc_id ? (
+              <a
+                key={i}
+                href={`${import.meta.env.BASE_URL}library/${s.doc_id}`}
+                className="flex items-center gap-1.5 text-[10px] font-mono text-primary/60 hover:text-primary/90 transition-colors truncate max-w-xs"
+              >
+                <FileText className="w-2.5 h-2.5 shrink-0" />
+                <span className="truncate">{s.doc_title ?? "Document"}</span>
+              </a>
+            ) : (
+              <span key={i} className="flex items-center gap-1.5 text-[10px] font-mono text-muted-foreground/60 truncate max-w-xs">
+                <FileText className="w-2.5 h-2.5 shrink-0" />
+                <span className="truncate">{s.doc_title ?? "Knowledge"}</span>
+              </span>
+            )
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Markdown renderer ────────────────────────────────────────────────────────
 
 function MarkdownContent({ text }: { text: string }) {
@@ -258,6 +301,7 @@ async function* streamChat(
   const decoder = new TextDecoder();
   let buf = "";
   let intentEmitted = false;
+  const SOURCES_PREFIX = "\x02SOURCES\x02";
 
   while (true) {
     const { done, value } = await reader.read();
@@ -272,7 +316,6 @@ async function* streamChat(
       try {
         const parsed = JSON.parse(data);
         if (parsed.event === "clarify") {
-          // Cognition gate needs clarification — yield a sentinel then stop
           yield `${CLARIFY_PREFIX}${parsed.question ?? "Could you clarify what you mean?"}`;
           return;
         }
@@ -280,6 +323,10 @@ async function* streamChat(
         if (parsed.intent && !intentEmitted) {
           intentEmitted = true;
           yield `${INTENT_PREFIX}${parsed.intent}${INTENT_PREFIX}`;
+        }
+        // Sources sentinel — emit before any token on this event
+        if (parsed.sources) {
+          yield `${SOURCES_PREFIX}${JSON.stringify(parsed.sources)}${SOURCES_PREFIX}`;
         }
         if (parsed.token) yield parsed.token as string;
       } catch { /* ignore */ }
@@ -734,8 +781,16 @@ export default function Chat() {
       scheduleFlush();
 
       let streamedIntent: string | undefined;
+      let streamedSources: Array<{doc_id?: string; doc_title?: string; kind?: string}> | undefined;
+      const SOURCES_PREFIX = "\x02SOURCES\x02";
       try {
         for await (const token of streamChat(convId, text, controller.signal, deepMode, scopeAll ? "all" : "work", capturedImage?.data, capturedImage?.type)) {
+          if (token.startsWith(SOURCES_PREFIX) && token.endsWith(SOURCES_PREFIX) && token.length > SOURCES_PREFIX.length * 2) {
+            try {
+              streamedSources = JSON.parse(token.slice(SOURCES_PREFIX.length, -SOURCES_PREFIX.length));
+            } catch {}
+            continue;
+          }
           if (token.startsWith(CLARIFY_PREFIX)) {
             // Cognition gate requests clarification — backend persisted with { model, isClarification: true }
             const question = token.slice(CLARIFY_PREFIX.length);
@@ -762,7 +817,8 @@ export default function Chat() {
         if (finalText) {
           setLocalMessages((prev) => prev.map((m) =>
             m.id === assistantId
-              ? { ...m, text: finalText, streaming: false, intent: streamedIntent ?? m.intent }
+              ? { ...m, text: finalText, streaming: false, intent: streamedIntent ?? m.intent,
+                  meta: { ...(m.meta ?? {}), ...(streamedSources ? { sources: streamedSources } : {}) } }
               : m
           ));
         }
@@ -1125,6 +1181,7 @@ export default function Chat() {
                           )}
                         </div>
                         {msg.role === "assistant" && (
+                          <>
                           <div className="flex items-center gap-2 px-0.5 flex-wrap">
                             {/* Intent badge */}
                             {msg.intent && INTENT_LABELS[msg.intent] && (
@@ -1155,6 +1212,11 @@ export default function Chat() {
                               <Copy className="w-3 h-3" />
                             </button>
                           </div>
+                          {/* Sources section — shown when knowledge context was injected */}
+                          {!msg.streaming && msg.meta?.sources && (msg.meta.sources as any[]).length > 0 && (
+                            <SourcesFooter sources={msg.meta.sources as any[]} />
+                          )}
+                          </>
                         )}
                         {/* Compass footer — shown on the last AI message for Work-scoped chats */}
                         {msg.id === lastAiMsgId && convWorkId && !msg.isClarification && (

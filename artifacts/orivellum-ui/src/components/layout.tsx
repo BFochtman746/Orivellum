@@ -393,7 +393,12 @@ function ConvRow({
         ${isActive ? "bg-primary/10 text-primary" : "text-foreground/80 hover:bg-muted/50"}
         ${isArchived ? "opacity-50" : ""}`}
     >
-      <span className="flex-1 truncate">{conv.title ?? "Untitled"}</span>
+      <span className="flex-1 truncate min-w-0">{conv.title ?? "Untitled"}</span>
+      {(conv as any).model && (
+        <span className="shrink-0 text-[8px] font-mono text-muted-foreground/30 group-hover:hidden leading-none px-1 py-0.5 rounded bg-muted/20 max-w-[60px] truncate">
+          {((conv as any).model as string).split("/").pop()?.split(":")[0] ?? ""}
+        </span>
+      )}
       <button
         onClick={e => { e.stopPropagation(); onStartRename(conv); }}
         className="opacity-0 group-hover:opacity-60 [@media(hover:none)]:opacity-60 hover:!opacity-100 p-0.5 transition-opacity"

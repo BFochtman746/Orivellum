@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useRef } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -9,6 +9,7 @@ import {
   Text,
   View,
 } from 'react-native';
+import { Swipeable } from 'react-native-gesture-handler';
 import { useColors } from '@/hooks/useColors';
 import { Feather } from '@expo/vector-icons';
 import { useListWorks, useCreateConversation } from '@workspace/api-client-react';
@@ -37,7 +38,39 @@ function WorkCard({ work, onStartChat }: { work: Work; onStartChat: () => void }
       ? '#4A8C65'
       : colors.mutedForeground;
 
+  const swipeRef = useRef<Swipeable>(null);
+
+  const renderRightActions = () => (
+    <View style={{ flexDirection: 'row', alignItems: 'center', paddingRight: 12, gap: 8, marginVertical: 6 }}>
+      <Pressable
+        onPress={() => { swipeRef.current?.close(); onStartChat(); }}
+        style={{
+          backgroundColor: colors.primary, borderRadius: 10,
+          paddingHorizontal: 14, paddingVertical: 10,
+          alignItems: 'center', justifyContent: 'center', gap: 3,
+        }}
+        hitSlop={4}
+      >
+        <Feather name="message-circle" size={16} color="#fff" />
+        <Text style={{ color: '#fff', fontSize: 10, fontFamily: 'Inter_600SemiBold' }}>Chat</Text>
+      </Pressable>
+      <Pressable
+        onPress={() => { swipeRef.current?.close(); router.push(`/work/${work.id}`); }}
+        style={{
+          backgroundColor: colors.muted, borderRadius: 10,
+          paddingHorizontal: 14, paddingVertical: 10,
+          alignItems: 'center', justifyContent: 'center', gap: 3,
+        }}
+        hitSlop={4}
+      >
+        <Feather name="arrow-right" size={16} color={colors.foreground} />
+        <Text style={{ color: colors.foreground, fontSize: 10, fontFamily: 'Inter_600SemiBold' }}>Open</Text>
+      </Pressable>
+    </View>
+  );
+
   return (
+    <Swipeable ref={swipeRef} renderRightActions={renderRightActions} overshootRight={false} friction={2}>
     <Pressable
       onPress={() => router.push(`/work/${work.id}`)}
       style={({ pressed }) => [
@@ -111,6 +144,7 @@ function WorkCard({ work, onStartChat }: { work: Work; onStartChat: () => void }
         </Pressable>
       </View>
     </Pressable>
+    </Swipeable>
   );
 }
 

@@ -145,10 +145,19 @@ async def send_message(conv_id: str, body: MessageSend):
         )
 
     # Non-streaming path
+    _ns_sources: list = []
     messages = _build_messages(
         db, conv, body.text, scope=body.scope,
         image_b64=body.image_b64, image_media_type=body.image_media_type,
+        out_sources=_ns_sources,
     )
+    _seen_ns: set = set()
+    ns_sources: list = []
+    for s in _ns_sources:
+        key = s.get("doc_id") or s.get("doc_title")
+        if key and key not in _seen_ns:
+            _seen_ns.add(key)
+            ns_sources.append(s)
     model = _model_for_vision(conv) if body.image_b64 else _model_for(conv)
     cfg      = get_config()
 
@@ -202,7 +211,10 @@ async def send_message(conv_id: str, body: MessageSend):
     else:
         reply = await _call_ai(messages, model=model)
 
-    msg = db.add_message(conv_id, "assistant", reply, meta={"model": model})
+    ns_meta: dict = {"model": model}
+    if ns_sources:
+        ns_meta["sources"] = ns_sources
+    msg = db.add_message(conv_id, "assistant", reply, meta=ns_meta)
     _maybe_auto_title(db, conv, body.text)
     return {"message": msg}
 
@@ -230,7 +242,8 @@ def _model_for_vision(conv: dict) -> str:
 
 
 def _build_system_prompt(db: Any, conv: dict, scope: str = "work",
-                         user_query: str | None = None) -> str:
+                         user_query: str | None = None,
+                         out_sources: list | None = None) -> str:
     """Build a system prompt enriched with relevant knowledge from the database.
 
     Knowledge retrieval strategy (always global):
@@ -329,11 +342,23 @@ def _build_system_prompt(db: Any, conv: dict, scope: str = "work",
                         kind = k.get("kind", "note")
                         if text:
                             context_parts.append(f"  [{kind}] {text[:400]}")
+                            if out_sources is not None and k.get("source_doc_id"):
+                                out_sources.append({
+                                    "doc_id": k.get("source_doc_id"),
+                                    "doc_title": group["title"],
+                                    "kind": kind,
+                                })
                     for c in group["chunks"]:
                         text = c.get("text", "").strip()
                         doc  = c.get("doc_title") or "document"
                         if text:
                             context_parts.append(f"  [from '{doc}'] {text[:400]}")
+                            if out_sources is not None:
+                                out_sources.append({
+                                    "doc_id": c.get("doc_id"),
+                                    "doc_title": doc,
+                                    "kind": "document",
+                                })
 
                 return f"{base}\n\n" + "\n".join(context_parts)
         except Exception:
@@ -377,10 +402,12 @@ def _build_messages(
     scope: str = "work",
     image_b64: str | None = None,
     image_media_type: str = "image/jpeg",
+    out_sources: list | None = None,
 ) -> list[dict]:
     """Build the full OpenAI-format messages array for this conversation."""
     system_prompt = _build_system_prompt(db, conv, scope=scope,
-                                         user_query=new_user_text)
+                                         user_query=new_user_text,
+                                         out_sources=out_sources)
 
     # Fetch recent history (excluding the message we just stored)
     history = db.get_messages(conv["id"], limit=_HISTORY_LIMIT + 1)
@@ -461,10 +488,20 @@ async def _stream_response(
 
     cfg = get_config()
     conv_id = conv["id"]
+    _sources: list = []
     messages = _build_messages(
         db, conv, user_text, scope=scope,
         image_b64=image_b64, image_media_type=image_media_type,
+        out_sources=_sources,
     )
+    # Deduplicate sources by doc_id
+    _seen: set = set()
+    sources: list = []
+    for s in _sources:
+        key = s.get("doc_id") or s.get("doc_title")
+        if key and key not in _seen:
+            _seen.add(key)
+            sources.append(s)
     full_reply = ""
     model = _model_for_vision(conv) if image_b64 else _model_for(conv)
 
@@ -599,8 +636,14 @@ async def _stream_response(
 
     # Normal completion path (also reached after AI failure fallback)
     if full_reply:
-        db.add_message(conv_id, "assistant", full_reply, meta={"model": model})
+        meta: dict = {"model": model}
+        if sources:
+            meta["sources"] = sources
+        db.add_message(conv_id, "assistant", full_reply, meta=meta)
     _maybe_auto_title(db, conv, user_text)
+    if sources:
+        import json as _json
+        yield f"data: {_json.dumps({'sources': sources})}\n\n"
     yield "data: [DONE]\n\n"
 
 

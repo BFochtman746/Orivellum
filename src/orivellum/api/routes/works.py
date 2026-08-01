@@ -275,6 +275,15 @@ def works_stats(work_id: str):
             "SELECT readiness, COUNT(*) as n FROM documents WHERE work_id=? GROUP BY readiness",
             (work_id,)
         ).fetchall()
+        try:
+            mastery_row = db._conn.execute(
+                "SELECT AVG(mastery) as avg_m, COUNT(*) as cnt FROM learning_concepts WHERE work_id=?",
+                (work_id,)
+            ).fetchone()
+            avg_mastery = mastery_row["avg_m"] or 0.0
+            concept_count = mastery_row["cnt"] or 0
+        except Exception:
+            avg_mastery, concept_count = 0.0, 0
     return {
         "work_id": work_id,
         "documents_by_kind": {r["kind"] or "unknown": r["n"] for r in doc_by_kind},
@@ -282,6 +291,8 @@ def works_stats(work_id: str):
         "knowledge_by_kind": {r["kind"]: r["n"] for r in knowledge_by_kind},
         "tasks_by_status": {r["status"]: r["n"] for r in task_by_status},
         "conversation_count": conv_count,
+        "avg_mastery_pct": round(avg_mastery * 100),
+        "concept_count": concept_count,
     }
 
 
