@@ -21,3 +21,4 @@
 - [Orivellum hardening decisions](orivellum-hardening.md) — Rate limiting, output rotation, streaming timeout, error boundaries, connection indicators, model attribution, single-command startup.
 - [Orivellum media capabilities](orivellum-media-capabilities.md) — TTS via espeak-ng+ffmpeg; OCR via tesseract5 (probe needed); PDF 3-tier fallback; DOCX tables extracted; XLSX 5000-row cap.
 - [Sidebar, cognition, nightshift, progress panel](orivellum-sidebar-cognition.md) — useConnectivity single source of truth; deepMode toggle; schema v40/v41; nightshift daemon; automemory; quiz tab; work files drawer.
+- [Windows compatibility](orivellum-windows-compat.md) — bash/nix probes guarded by sys.platform; tesseract Windows path; espeak error message; disk_usage drive; setup-windows.ps1 + start.ps1 scripts.

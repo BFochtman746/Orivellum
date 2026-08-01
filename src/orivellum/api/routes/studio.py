@@ -182,10 +182,16 @@ async def synthesize_speech(body: TTSRequest):
                                 filename="speech.wav")
 
     except FileNotFoundError:
-        raise HTTPException(
-            503,
-            "espeak-ng is not installed. Run: nix-env -iA nixpkgs.espeak-ng"
-        )
+        import sys as _sys
+        if _sys.platform == "win32":
+            hint = (
+                "espeak-ng is not installed. "
+                "Run scripts\\setup-windows.ps1 to install it automatically, "
+                "or download manually from https://github.com/espeak-ng/espeak-ng/releases"
+            )
+        else:
+            hint = "espeak-ng is not installed. Run: nix-env -iA nixpkgs.espeak-ng"
+        raise HTTPException(503, hint)
     except Exception as exc:
         logger.error("TTS espeak-ng failed: %s", exc)
         raise HTTPException(500, f"TTS synthesis failed: {exc}")
@@ -262,26 +268,34 @@ def _probe_tesseract_cmd() -> None:
     if shutil.which("tesseract"):
         return
 
-    # Ask the login shell — it has a broader PATH than the API process
-    try:
-        r = _sp.run(["bash", "-lc", "which tesseract"],
-                    capture_output=True, text=True, timeout=5)
-        c = r.stdout.strip()
-        if c and _P(c).is_file():
-            _pt.pytesseract.tesseract_cmd = c
-            return
-    except Exception:
-        pass
+    import sys as _sys
+    if _sys.platform != "win32":
+        # On Unix/NixOS ask the login shell — it has a broader PATH than the API process
+        try:
+            r = _sp.run(["bash", "-lc", "which tesseract"],
+                        capture_output=True, text=True, timeout=5)
+            c = r.stdout.strip()
+            if c and _P(c).is_file():
+                _pt.pytesseract.tesseract_cmd = c
+                return
+        except Exception:
+            pass
 
-    # Walk /nix/store at depth-1 only — fast, avoids timeout
-    nix = _P("/nix/store")
-    if nix.exists():
-        for d in nix.iterdir():
-            if "tesseract" in d.name:
-                cand = d / "bin" / "tesseract"
-                if cand.is_file():
-                    _pt.pytesseract.tesseract_cmd = str(cand)
-                    return
+        # Walk /nix/store at depth-1 only — fast, avoids timeout
+        nix = _P("/nix/store")
+        if nix.exists():
+            for d in nix.iterdir():
+                if "tesseract" in d.name:
+                    cand = d / "bin" / "tesseract"
+                    if cand.is_file():
+                        _pt.pytesseract.tesseract_cmd = str(cand)
+                        return
+    else:
+        # Common Windows install location from the UB-Mannheim installer
+        win_default = _P(r"C:\Program Files\Tesseract-OCR\tesseract.exe")
+        if win_default.is_file():
+            _pt.pytesseract.tesseract_cmd = str(win_default)
+            return
 
 
 @router.post("/studio/ocr")

@@ -21,24 +21,49 @@ sudo apt-get install -y tesseract-ocr poppler-utils
 ```
 
 **Windows**
-- Tesseract: download installer from https://github.com/UB-Mannheim/tesseract/wiki
-- Poppler: download from https://github.com/oschwartz10612/poppler-windows/releases and add `bin/` to your `PATH`
+
+Run the automated setup script — it checks for and installs every prerequisite
+(Tesseract, Poppler, FFmpeg, espeak-ng, uv, pnpm):
+
+```powershell
+# One-time setup (run once; skip on subsequent starts)
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned   # allow local scripts
+.\scripts\setup-windows.ps1
+```
+
+If you prefer manual installation:
+- Tesseract: https://github.com/UB-Mannheim/tesseract/wiki
+- Poppler: https://github.com/oschwartz10612/poppler-windows/releases (add `Library\bin\` to PATH)
+- FFmpeg: https://ffmpeg.org/download.html (add `bin\` to PATH)
+- espeak-ng: https://github.com/espeak-ng/espeak-ng/releases
 
 > **Runtime requirement:** Python ≥ 3.12, Node.js ≥ 20, pnpm ≥ 9, uv ≥ 0.4
 
 ### 1. Install dependencies
 
+**macOS / Linux**
 ```bash
 uv sync && pnpm install
 # or: make install
 ```
 
+**Windows (PowerShell)**
+```powershell
+# setup-windows.ps1 already runs this, but you can re-run it any time:
+uv sync; pnpm install
+```
+
 ### 2. Start everything
 
+**macOS / Linux**
 ```bash
 ./start.sh
 # or: make dev
-# or: pnpm dev
+```
+
+**Windows (PowerShell)**
+```powershell
+.\scripts\start.ps1
 ```
 
 That's it. The script starts the API server, waits until it passes its health check, then launches the Vite frontend. Press **Ctrl+C** to stop both processes cleanly.
@@ -47,15 +72,27 @@ Open **http://localhost:5173** once you see the `Ready ✓` line.
 
 #### With Expo mobile
 
+**macOS / Linux**
 ```bash
 ./start.sh --mobile
 # or: make dev-mobile
 ```
 
+**Windows**
+```powershell
+.\scripts\start.ps1 -Mobile
+```
+
 #### Port overrides
 
+**macOS / Linux**
 ```bash
 API_PORT=9000 WEB_PORT=4000 ./start.sh
+```
+
+**Windows**
+```powershell
+.\scripts\start.ps1 -ApiPort 9000 -WebPort 4000
 ```
 
 ---

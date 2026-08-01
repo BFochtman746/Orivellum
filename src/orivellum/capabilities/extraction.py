@@ -296,28 +296,36 @@ def _probe_tesseract() -> None:
     if shutil.which("tesseract"):
         return  # already on PATH
 
-    # Ask the shell for the path (shell PATH is broader than process PATH on Replit)
-    try:
-        result = _sp.run(
-            ["bash", "-lc", "which tesseract"],
-            capture_output=True, text=True, timeout=5,
-        )
-        candidate = result.stdout.strip()
-        if candidate and Path(candidate).is_file():
-            _pt.pytesseract.tesseract_cmd = candidate
-            return
-    except Exception:
-        pass
+    import sys as _sys
+    if _sys.platform != "win32":
+        # On Unix/NixOS ask the login shell — it has a broader PATH
+        try:
+            result = _sp.run(
+                ["bash", "-lc", "which tesseract"],
+                capture_output=True, text=True, timeout=5,
+            )
+            candidate = result.stdout.strip()
+            if candidate and Path(candidate).is_file():
+                _pt.pytesseract.tesseract_cmd = candidate
+                return
+        except Exception:
+            pass
 
-    # Known nix store prefix pattern — walk /nix/store at depth-3 only
-    nix_store = Path("/nix/store")
-    if nix_store.exists():
-        for pkg_dir in nix_store.iterdir():
-            if "tesseract" in pkg_dir.name:
-                candidate = pkg_dir / "bin" / "tesseract"
-                if candidate.is_file():
-                    _pt.pytesseract.tesseract_cmd = str(candidate)
-                    return
+        # Known nix store prefix pattern — walk /nix/store at depth-1 only
+        nix_store = Path("/nix/store")
+        if nix_store.exists():
+            for pkg_dir in nix_store.iterdir():
+                if "tesseract" in pkg_dir.name:
+                    candidate = pkg_dir / "bin" / "tesseract"
+                    if candidate.is_file():
+                        _pt.pytesseract.tesseract_cmd = str(candidate)
+                        return
+    else:
+        # Common Windows install location from the UB-Mannheim installer
+        win_default = Path(r"C:\Program Files\Tesseract-OCR\tesseract.exe")
+        if win_default.is_file():
+            _pt.pytesseract.tesseract_cmd = str(win_default)
+            return
 
 
 def _extract_image(path: Path) -> ExtractionResult:

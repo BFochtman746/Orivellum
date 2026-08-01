@@ -61,7 +61,9 @@ def diagnostics():
     db = get_db()
     cfg = get_config()
     mem = psutil.virtual_memory()
-    disk = psutil.disk_usage("/")
+    import sys as _sys
+    _disk_path = "C:\\" if _sys.platform == "win32" else "/"
+    disk = psutil.disk_usage(_disk_path)
     return {
         "version": __version__,
         "database": db.health(),
