@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
+import { mobileFetch } from '@/lib/api';
 import {
   ActivityIndicator,
   Alert,
@@ -115,8 +116,8 @@ export default function LibraryScreen() {
         reader.onerror = reject;
         reader.readAsDataURL(blob);
       });
-      const apiBase = (global as any).__ORIVELLUM_API_BASE__ ?? 'http://localhost:8000';
-      const resp = await fetch(`${apiBase}/api/library/import`, {
+      const domain = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
+      const resp = await mobileFetch(`https://${domain}/api/library/import`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -150,15 +151,30 @@ export default function LibraryScreen() {
     refetch: refetchList,
   } = useListLibrary({}, { query: { refetchInterval: 30_000, staleTime: 20_000 } } as any);
 
+  // Offline search cache — keep last successful results so they remain visible
+  // even when the network drops mid-search.
+  const lastSearchCache = useRef<{ query: string; results: any[] }>({ query: '', results: [] });
+
   const {
     data: searchData,
     isLoading: searchLoading,
-  } = useSearchLibrary({ q: search }, { query: { enabled: search.length > 1 } } as any);
+    isError: searchError,
+  } = useSearchLibrary({ q: search }, { query: { enabled: search.length > 1, staleTime: 60_000 } } as any);
+
+  // Update cache whenever we get fresh results
+  if (searchData?.results && search === (searchData as any)._q ?? search) {
+    lastSearchCache.current = { query: search, results: searchData.results };
+  } else if (searchData?.results) {
+    lastSearchCache.current = { query: search, results: searchData.results };
+  }
 
   const isSearching = search.length > 1;
   const isLoading = isSearching ? searchLoading : listLoading;
+  // When offline during a search, fall back to last cached results for that query
+  const searchResults: any[] = searchData?.results ?? (searchError && lastSearchCache.current.results.length > 0 ? lastSearchCache.current.results : []);
+  const isOfflineSearch = searchError && lastSearchCache.current.results.length > 0;
   const docs: any[] = isSearching
-    ? (searchData?.results ?? [])
+    ? searchResults
     : (listData?.documents ?? []);
   const hasData = docs.length > 0 || (listData?.documents?.length ?? 0) > 0;
 
@@ -221,9 +237,12 @@ export default function LibraryScreen() {
         )}
       </View>
 
-      {/* Offline banner */}
-      {listError && hasData && (
+      {/* Offline banners */}
+      {listError && hasData && !isSearching && (
         <OfflineBanner message="Showing cached documents — server unreachable" onRetry={refetchList} />
+      )}
+      {isOfflineSearch && (
+        <OfflineBanner message="Showing last search results — you appear to be offline" />
       )}
 
       {/* Body */}

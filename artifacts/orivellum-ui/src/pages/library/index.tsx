@@ -77,6 +77,7 @@ function ImportDialog({ onSuccess, defaultOpen = false }: ImportDialogProps) {
   const [file, setFile] = useState<File | null>(null);
   const [workId, setWorkId] = useState("");
   const [dragging, setDragging] = useState(false);
+  const [uploadPct, setUploadPct] = useState<number | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const importDoc = useImportDocument();
   const [, navigateTo] = useLocation();
@@ -93,23 +94,35 @@ function ImportDialog({ onSuccess, defaultOpen = false }: ImportDialogProps) {
 
   const handleImport = async () => {
     if (!file) return;
+    setUploadPct(0);
     const bytes = await file.arrayBuffer();
     // Spread-into-String.fromCharCode crashes for large files (stack overflow).
-    // Process in 8 KB chunks instead.
+    // Process in 8 KB chunks instead and report progress.
     const u8 = new Uint8Array(bytes);
+    const chunkSize = 8192;
     let binary = "";
-    for (let i = 0; i < u8.length; i += 8192) {
-      binary += String.fromCharCode(...u8.subarray(i, i + 8192));
+    const total = u8.length;
+    for (let i = 0; i < total; i += chunkSize) {
+      binary += String.fromCharCode(...u8.subarray(i, i + chunkSize));
+      // Yield to the browser every 512 chunks to keep UI responsive
+      if ((i / chunkSize) % 512 === 0 && i > 0) {
+        setUploadPct(Math.round((i / total) * 90));
+        await new Promise((r) => setTimeout(r, 0));
+      }
     }
+    setUploadPct(92);
     const b64 = btoa(binary);
+    setUploadPct(95);
     importDoc.mutate(
       { data: { filename: file.name, content_b64: b64, work_id: workId || undefined } },
       {
         onSuccess: (res) => {
+          setUploadPct(100);
           onSuccess();
           setOpen(false);
           setFile(null);
           setWorkId("");
+          setUploadPct(null);
           if ((res as any).duplicate) {
             toast.info(`${file.name} already exists — opening existing document`);
             const existingId = (res as any).document?.id;
@@ -118,7 +131,7 @@ function ImportDialog({ onSuccess, defaultOpen = false }: ImportDialogProps) {
             toast.success(`${file.name} imported — extraction running`);
           }
         },
-        onError: () => toast.error("Import failed"),
+        onError: () => { setUploadPct(null); toast.error("Import failed"); },
       }
     );
   };
@@ -204,8 +217,24 @@ function ImportDialog({ onSuccess, defaultOpen = false }: ImportDialogProps) {
           </Select>
         </div>
 
+        {/* Upload progress bar — shown during base64 conversion + upload */}
+        {uploadPct !== null && (
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between text-xs font-mono text-muted-foreground">
+              <span>{uploadPct < 95 ? "Preparing file…" : uploadPct < 100 ? "Uploading…" : "Done"}</span>
+              <span>{uploadPct}%</span>
+            </div>
+            <div className="h-1.5 w-full rounded-full bg-secondary overflow-hidden">
+              <div
+                className="h-full bg-primary transition-all duration-200 rounded-full"
+                style={{ width: `${uploadPct}%` }}
+              />
+            </div>
+          </div>
+        )}
+
         <DialogFooter>
-          <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
+          <Button variant="outline" onClick={() => setOpen(false)} disabled={importDoc.isPending}>Cancel</Button>
           <Button
             onClick={handleImport}
             disabled={!file || importDoc.isPending}

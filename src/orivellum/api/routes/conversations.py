@@ -119,7 +119,22 @@ async def send_message(conv_id: str, body: MessageSend):
         stored_text = "[Image attached]"
     elif body.image_b64:
         stored_text = f"[Image] {body.text}"
-    db.add_message(conv_id, "user", stored_text)
+
+    # Duplicate-send guard: skip storing user message if an identical one was stored
+    # within the last 5 seconds (protects against React StrictMode double-calls,
+    # client retries, and accidental double-taps).  We still proceed with the AI
+    # response so the user does not see a silent failure.
+    with db._lock:
+        recent_dup = db._conn.execute(
+            """SELECT id FROM messages
+               WHERE conv_id=? AND role='user' AND text=?
+               AND created_at > datetime('now','-5 seconds')""",
+            (conv_id, stored_text)
+        ).fetchone()
+    if recent_dup:
+        logger.debug("Duplicate user message suppressed for conv %s", conv_id)
+    else:
+        db.add_message(conv_id, "user", stored_text)
 
     # Background auto-capture: skip when the user explicitly says "remember that…"
     # to avoid a competing write racing against the intent router's _handle_remember.
