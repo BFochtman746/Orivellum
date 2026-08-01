@@ -26,3 +26,7 @@
 - [API auth design](orivellum-api-auth.md) — session-cookie auth for web; SecureStore bearer token for mobile; SessionMiddleware must be added LAST; CORS origin regex must be exact domain, not wildcard *.replit.dev.
 - [Safari HTTP compatibility](safari-http-compat.md) — crypto.randomUUID/clipboard blocked over HTTP; polyfills in lib/uuid.ts; CORS regex covers Tailscale 100.64–127.x.x range.
 - [Chat global knowledge search](orivellum-chat-knowledge.md) — _build_system_prompt now accepts user_query; uses search_knowledge+search_chunks globally, grouped by Work/topic; recency fallback when no query.
+- [Mobile library detail](mobile-library-detail.md) — knowledge review (thumbs up/down via PATCH /api/knowledge/{id}/review) and work linking (bottom-sheet modal picker via PATCH /api/library/{id}) both live in artifacts/mobile/app/library/[id].tsx; uses mobileFetch + useListWorks.
+- [Chat send failure UX](orivellum-chat-failure.md) — on thrown stream errors, message stays as a red "failed" bubble (failed:true); finally block filters to keep m.incomplete||m.failed; web only; mobile still needs this (task #140).
+- [Upload progress tracking](orivellum-upload-progress.md) — web library import dialog tracks base64 chunking progress via uploadPct state (0→92 during chunks, 95 after btoa, 100 on success); shown as a progress bar in the dialog.
+- [Duplicate send guard](orivellum-dup-send.md) — conversations.py checks db._conn directly for a matching user message within 5s before storing; uses db._lock; should be moved to a public db method (task #139).
