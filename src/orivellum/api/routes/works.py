@@ -290,6 +290,7 @@ def works_stats(work_id: str):
         "documents_by_readiness": {r["readiness"] or "unknown": r["n"] for r in doc_by_readiness},
         "knowledge_by_kind": {r["kind"]: r["n"] for r in knowledge_by_kind},
         "tasks_by_status": {r["status"]: r["n"] for r in task_by_status},
+        "pending_task_count": sum(r["n"] for r in task_by_status if r["status"] not in ("completed", "done", "complete")),
         "conversation_count": conv_count,
         "avg_mastery_pct": round(avg_mastery * 100),
         "concept_count": concept_count,

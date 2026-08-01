@@ -20,10 +20,13 @@ import {
   useGetWorkDocuments,
   useGetWorkKnowledge,
   useGetWorkTasks,
+  useCreateWorkTask,
   useCreateConversation,
   useListConversations,
   getListConversationsQueryKey,
+  getGetWorkTasksQueryKey,
 } from '@workspace/api-client-react';
+import { useQueryClient } from '@tanstack/react-query';
 import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';

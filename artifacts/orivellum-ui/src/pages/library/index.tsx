@@ -281,6 +281,7 @@ export default function Library() {
   const [kindFilter, setKindFilter] = useState<string>("all");
   const [workFilter, setWorkFilter] = useState<string>("all");
   const [showFilters, setShowFilters] = useState(false);
+  const [sortBy, setSortBy] = useState<"newest" | "oldest" | "a-z" | "z-a">("newest");
   const { data: worksResp } = useListWorks();
   const workTitles: Record<string, string> = {};
   for (const w of worksResp?.works ?? []) {
@@ -299,22 +300,32 @@ export default function Library() {
   // Derive available kinds from the list for dynamic filter chips
   const availableKinds = Array.from(new Set(rawDocs.map((d) => d.kind ?? "file").filter(Boolean))).sort();
 
-  const docs = rawDocs.filter((d) => {
-    const matchesReadiness = (() => {
-      if (readinessFilter === "all") return true;
-      if (readinessFilter === "ready") return d.readiness === "ready";
-      if (readinessFilter === "processing") return d.readiness === "imported";
-      if (readinessFilter === "error") return d.readiness === "error" || d.readiness === "no_text";
-      return true;
-    })();
-    const matchesKind = kindFilter === "all" || (d.kind ?? "file") === kindFilter;
-    const matchesWork = workFilter === "all"
-      ? true
-      : workFilter === "__none__"
-        ? !d.work_id
-        : d.work_id === workFilter;
-    return matchesReadiness && matchesKind && matchesWork;
-  });
+  const docs = rawDocs
+    .filter((d) => {
+      const matchesReadiness = (() => {
+        if (readinessFilter === "all") return true;
+        if (readinessFilter === "ready") return d.readiness === "ready";
+        if (readinessFilter === "processing") return d.readiness === "imported";
+        if (readinessFilter === "error") return d.readiness === "error" || d.readiness === "no_text";
+        return true;
+      })();
+      const matchesKind = kindFilter === "all" || (d.kind ?? "file") === kindFilter;
+      const matchesWork = workFilter === "all"
+        ? true
+        : workFilter === "__none__"
+          ? !d.work_id
+          : d.work_id === workFilter;
+      return matchesReadiness && matchesKind && matchesWork;
+    })
+    .sort((a, b) => {
+      if (sortBy === "newest") return new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime();
+      if (sortBy === "oldest") return new Date(a.created_at ?? 0).getTime() - new Date(b.created_at ?? 0).getTime();
+      const aTitle = (a.title || a.source?.split("/").pop() || "").toLowerCase();
+      const bTitle = (b.title || b.source?.split("/").pop() || "").toLowerCase();
+      if (sortBy === "a-z") return aTitle.localeCompare(bTitle);
+      if (sortBy === "z-a") return bTitle.localeCompare(aTitle);
+      return 0;
+    });
 
   const invalidate = () =>
     queryClient.invalidateQueries({ queryKey: getListLibraryQueryKey({}) });
@@ -369,6 +380,17 @@ export default function Library() {
                 className="pl-9 bg-background/50"
               />
             </div>
+            <select
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
+              className="h-9 rounded-md border border-input bg-background px-2 text-xs font-mono text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring shrink-0"
+              title="Sort order"
+            >
+              <option value="newest">Newest</option>
+              <option value="oldest">Oldest</option>
+              <option value="a-z">A → Z</option>
+              <option value="z-a">Z → A</option>
+            </select>
             <Button
               variant={showFilters ? "secondary" : "outline"}
               size="icon"
