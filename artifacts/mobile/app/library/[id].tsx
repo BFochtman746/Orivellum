@@ -1,9 +1,10 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { mobileFetch } from '@/lib/api';
 import {
   ActivityIndicator,
   Platform,
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -39,9 +40,11 @@ export default function LibraryDocDetail() {
   const navigation = useNavigation();
   const isWeb = Platform.OS === 'web';
 
-  const { data: docData, isLoading: docLoading, isError: docError } =
+  const [refreshing, setRefreshing] = useState(false);
+
+  const { data: docData, isLoading: docLoading, isError: docError, refetch: refetchDoc } =
     useGetDocument(id ?? '', { query: { enabled: !!id, staleTime: 15_000 } } as any);
-  const { data: knData, isLoading: knLoading } = useQuery({
+  const { data: knData, isLoading: knLoading, refetch: refetchKn } = useQuery({
     queryKey: ['library-knowledge', id],
     queryFn: async () => {
       const domain = process.env.EXPO_PUBLIC_DOMAIN;
@@ -55,6 +58,11 @@ export default function LibraryDocDetail() {
 
   const doc = (docData as any)?.document;
   const knowledge = (knData as any)?.knowledge ?? [];
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    try { await Promise.all([refetchDoc(), refetchKn()]); } finally { setRefreshing(false); }
+  };
 
   useEffect(() => {
     if (doc?.title) navigation.setOptions({ title: doc.title });
@@ -133,6 +141,9 @@ export default function LibraryDocDetail() {
           padding: 16,
           paddingBottom: isWeb ? 50 : insets.bottom + 40,
         }}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />
+        }
       >
         {/* Error message */}
         {doc.error_message && (

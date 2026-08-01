@@ -6,7 +6,7 @@ import logging
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Body, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Body, HTTPException
 from pydantic import BaseModel
 
 from orivellum.api._deps import get_db, get_config
@@ -306,9 +306,19 @@ def generate_suggestions(work_id: str | None = Body(None), limit: int = Body(6))
     return {"suggestions": new_rows, "generated": len(new_rows)}
 
 
+@router.post("/system/nightshift/run")
+async def trigger_nightshift(background_tasks: BackgroundTasks):
+    """Manually trigger a nightshift pass in the background."""
+    from orivellum.capabilities.nightshift import run_nightshift
+    db = get_db()
+    cfg = get_config()
+    background_tasks.add_task(run_nightshift, db, cfg)
+    return {"ok": True, "message": "Nightshift started in background"}
+
+
 @router.get("/system/jobs")
 def system_jobs():
-    """Return documents currently in-progress (not ready/error/no_text) and the last nightshift run."""
+    """Return documents currently in-progress (not ready/error/no_text), recently completed, and the last nightshift run."""
     db = get_db()
     with db._lock:
         docs = db._conn.execute(
@@ -320,6 +330,23 @@ def system_jobs():
                ORDER BY d.created_at DESC
                LIMIT 50"""
         ).fetchall()
+        # Recently completed: docs that became ready/errored in the last 30 min
+        # Use the objects table timestamp (works share the same id via objects)
+        try:
+            recent = db._conn.execute(
+                """SELECT d.id, d.title, d.source, d.readiness, d.work_id,
+                          w.title AS work_title,
+                          o.created_at AS completed_at
+                   FROM documents d
+                   LEFT JOIN works w ON w.id = d.work_id
+                   LEFT JOIN objects o ON o.id = d.id
+                   WHERE d.readiness IN ('ready', 'error', 'no_text')
+                   AND o.created_at > datetime('now', '-30 minutes')
+                   ORDER BY o.created_at DESC
+                   LIMIT 10"""
+            ).fetchall()
+        except Exception:
+            recent = []
         try:
             nightshift = db._conn.execute(
                 "SELECT * FROM nightshift_runs ORDER BY ran_at DESC LIMIT 1"
@@ -329,6 +356,7 @@ def system_jobs():
     return {
         "jobs": [dict(d) for d in docs],
         "total": len(docs),
+        "recently_done": [dict(d) for d in recent],
         "nightshift": dict(nightshift) if nightshift else None,
     }
 

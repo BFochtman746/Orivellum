@@ -139,36 +139,48 @@ function ClassicTabLayout() {
         name="conversations"
         options={{
           title: 'Chats',
-          tabBarIcon: ({ color }) =>
-            isIOS ? (
-              <SymbolView name="bubble.left" tintColor={color} size={24} />
-            ) : (
-              <Feather name="message-circle" size={22} color={color} />
-            ),
+          tabBarIcon: ({ color }) => (
+            <View style={{ position: 'relative' }}>
+              {isIOS ? (
+                <SymbolView name="bubble.left" tintColor={color} size={24} />
+              ) : (
+                <Feather name="message-circle" size={22} color={color} />
+              )}
+              <ServerDot />
+            </View>
+          ),
         }}
       />
       <Tabs.Screen
         name="works"
         options={{
           title: 'Works',
-          tabBarIcon: ({ color }) =>
-            isIOS ? (
-              <SymbolView name="books.vertical" tintColor={color} size={24} />
-            ) : (
-              <Feather name="book-open" size={22} color={color} />
-            ),
+          tabBarIcon: ({ color }) => (
+            <View style={{ position: 'relative' }}>
+              {isIOS ? (
+                <SymbolView name="books.vertical" tintColor={color} size={24} />
+              ) : (
+                <Feather name="book-open" size={22} color={color} />
+              )}
+              <ServerDot />
+            </View>
+          ),
         }}
       />
       <Tabs.Screen
         name="library"
         options={{
           title: 'Library',
-          tabBarIcon: ({ color }) =>
-            isIOS ? (
-              <SymbolView name="folder" tintColor={color} size={24} />
-            ) : (
-              <Feather name="folder" size={22} color={color} />
-            ),
+          tabBarIcon: ({ color }) => (
+            <View style={{ position: 'relative' }}>
+              {isIOS ? (
+                <SymbolView name="folder" tintColor={color} size={24} />
+              ) : (
+                <Feather name="folder" size={22} color={color} />
+              )}
+              <ServerDot />
+            </View>
+          ),
         }}
       />
     </Tabs>

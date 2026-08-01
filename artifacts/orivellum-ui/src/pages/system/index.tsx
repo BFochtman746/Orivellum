@@ -14,6 +14,7 @@ const API_BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") || "";
 // ─── Nightshift card ──────────────────────────────────────────────────────────
 
 function NightshiftCard() {
+  const qc = useQueryClient();
   const { data, isLoading } = useQuery({
     queryKey: ["system", "jobs"],
     queryFn: async () => {
@@ -25,13 +26,41 @@ function NightshiftCard() {
     refetchInterval: 60_000,
   });
 
+  const trigger = useMutation({
+    mutationFn: async () => {
+      const r = await apiFetch(`${API_BASE}/api/system/nightshift/run`, { method: "POST" });
+      if (!r.ok) throw new Error("trigger failed");
+      return r.json();
+    },
+    onSuccess: () => {
+      toast.success("Nightshift started — re-processes documents with sparse knowledge");
+      setTimeout(() => qc.invalidateQueries({ queryKey: ["system", "jobs"] }), 5000);
+    },
+    onError: () => toast.error("Could not start nightshift"),
+  });
+
   const ns = data?.nightshift;
   return (
     <Card>
       <CardContent className="p-6">
-        <div className="flex items-center gap-3 mb-4">
-          <Moon className="w-5 h-5 text-primary" />
-          <h2 className="text-lg font-serif font-medium">Nightshift</h2>
+        <div className="flex items-center justify-between gap-3 mb-4">
+          <div className="flex items-center gap-3">
+            <Moon className="w-5 h-5 text-primary" />
+            <h2 className="text-lg font-serif font-medium">Nightshift</h2>
+          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            className="gap-1.5 text-xs"
+            onClick={() => trigger.mutate()}
+            disabled={trigger.isPending}
+          >
+            {trigger.isPending ? (
+              <><Activity className="w-3 h-3 animate-spin" />Running…</>
+            ) : (
+              <><Moon className="w-3 h-3" />Run Now</>
+            )}
+          </Button>
         </div>
         {isLoading ? (
           <Skeleton className="h-8 w-full" />
@@ -55,7 +84,7 @@ function NightshiftCard() {
           </div>
         ) : (
           <p className="text-sm text-muted-foreground">
-            No nightshift runs yet — the daemon fires daily at 03:00 local time and re-processes documents with sparse knowledge.
+            No nightshift runs yet — fires daily at 03:00 and re-processes documents with sparse knowledge. Use "Run Now" to trigger it manually.
           </p>
         )}
       </CardContent>

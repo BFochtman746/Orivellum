@@ -27,13 +27,26 @@ import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useEffect } from 'react';
 import * as Haptics from 'expo-haptics';
+import * as Clipboard from 'expo-clipboard';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { Message } from '@workspace/api-client-react';
 import { OfflineBanner } from '@/components/OfflineBanner';
+
+const LAST_MODEL_KEY = 'orivellum:lastModel';
 
 function MessageBubble({ message, colors, isDark }: { message: Message & { isError?: boolean }; colors: any; isDark: boolean }) {
   const isUser = message.role === 'user';
   const isErr = (message as any).isError;
   const textColor = isUser ? colors.primaryForeground : isErr ? colors.mutedForeground : colors.foreground;
+  const [copied, setCopied] = useState(false);
+
+  const handleLongPress = async () => {
+    if (!message.text) return;
+    await Clipboard.setStringAsync(message.text);
+    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
 
   const markdownStyles = {
     body: { color: textColor, fontSize: 15, fontFamily: 'Inter_400Regular', lineHeight: 21 },
@@ -77,8 +90,43 @@ function MessageBubble({ message, colors, isDark }: { message: Message & { isErr
     },
   };
 
+  // Custom fence renderer: shows code + a copy button overlay
+  const fenceRule = (node: any) => {
+    const code: string = node.content ?? '';
+    return (
+      <View
+        key={node.key}
+        style={{
+          backgroundColor: isDark ? '#18181b' : '#27272a',
+          borderRadius: 6,
+          padding: 10,
+          marginVertical: 4,
+          position: 'relative',
+        }}
+      >
+        <Text style={{ color: '#d4d4d8', fontFamily: 'Inter_400Regular', fontSize: 12, lineHeight: 18 }}>
+          {code.trimEnd()}
+        </Text>
+        <Pressable
+          style={{ position: 'absolute', top: 6, right: 6, padding: 4, opacity: 0.7 }}
+          onPress={async () => {
+            await Clipboard.setStringAsync(code);
+            await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+          }}
+          hitSlop={8}
+        >
+          <Feather name="copy" size={12} color="#a1a1aa" />
+        </Pressable>
+      </View>
+    );
+  };
+
   return (
-    <View style={[styles.bubbleRow, isUser ? styles.bubbleRight : styles.bubbleLeft]}>
+    <Pressable
+      onLongPress={handleLongPress}
+      delayLongPress={400}
+      style={[styles.bubbleRow, isUser ? styles.bubbleRight : styles.bubbleLeft]}
+    >
       {!isUser && (
         <View
           style={[
@@ -93,37 +141,44 @@ function MessageBubble({ message, colors, isDark }: { message: Message & { isErr
           />
         </View>
       )}
-      <View
-        style={[
-          styles.bubble,
-          isUser
-            ? { backgroundColor: colors.primary, borderBottomRightRadius: 2 }
-            : isErr
-            ? {
-                backgroundColor: colors.card,
-                borderColor: colors.border,
-                borderWidth: 1,
-                borderBottomLeftRadius: 2,
-                borderStyle: 'dashed' as const,
-              }
-            : { backgroundColor: colors.card, borderColor: colors.border, borderWidth: 1, borderBottomLeftRadius: 2 },
-          { maxWidth: '80%' },
-        ]}
-      >
-        {isUser || isErr ? (
-          <Text
-            style={[
-              styles.bubbleText,
-              { color: textColor, fontStyle: isErr ? 'italic' : 'normal' },
-            ]}
-          >
-            {message.text}
+      <View style={{ flexShrink: 1, alignItems: isUser ? 'flex-end' : 'flex-start' }}>
+        <View
+          style={[
+            styles.bubble,
+            isUser
+              ? { backgroundColor: colors.primary, borderBottomRightRadius: 2 }
+              : isErr
+              ? {
+                  backgroundColor: colors.card,
+                  borderColor: colors.border,
+                  borderWidth: 1,
+                  borderBottomLeftRadius: 2,
+                  borderStyle: 'dashed' as const,
+                }
+              : { backgroundColor: colors.card, borderColor: colors.border, borderWidth: 1, borderBottomLeftRadius: 2 },
+            { maxWidth: '100%' },
+          ]}
+        >
+          {isUser || isErr ? (
+            <Text
+              style={[
+                styles.bubbleText,
+                { color: textColor, fontStyle: isErr ? 'italic' : 'normal' },
+              ]}
+            >
+              {message.text}
+            </Text>
+          ) : (
+            <Markdown style={markdownStyles as any} rules={{ fence: fenceRule }}>{message.text ?? ''}</Markdown>
+          )}
+        </View>
+        {copied && (
+          <Text style={{ fontSize: 10, color: colors.mutedForeground, marginTop: 2, fontFamily: 'Inter_400Regular' }}>
+            Copied ✓
           </Text>
-        ) : (
-          <Markdown style={markdownStyles as any}>{message.text ?? ''}</Markdown>
         )}
       </View>
-    </View>
+    </Pressable>
   );
 }
 
@@ -168,6 +223,24 @@ export default function ChatScreen() {
   const currentModelId = (conversation as any)?.model;
   const currentModelLabel =
     models.find((m: any) => m.id === currentModelId)?.label ?? currentModelId ?? 'Default';
+
+  // Persist last-used model so new conversations default to it (#69)
+  useEffect(() => {
+    if (currentModelId) {
+      AsyncStorage.setItem(LAST_MODEL_KEY, currentModelId).catch(() => {});
+    }
+  }, [currentModelId]);
+
+  // Apply last-used model when conversation has none (#69)
+  useEffect(() => {
+    if (!currentModelId && models.length > 0 && id) {
+      AsyncStorage.getItem(LAST_MODEL_KEY).then((saved) => {
+        if (saved && models.some((m: any) => m.id === saved)) {
+          updateConv.mutate({ convId: id, data: { model: saved } });
+        }
+      }).catch(() => {});
+    }
+  }, [currentModelId, models.length, id]);
 
   const handlePickModel = () => {
     if (models.length === 0) return;

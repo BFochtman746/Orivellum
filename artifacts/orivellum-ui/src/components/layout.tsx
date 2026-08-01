@@ -540,7 +540,7 @@ function SidebarInner({ onNavigate }: { onNavigate: () => void }) {
 
 // ─── Progress panel ────────────────────────────────────────────────────────────
 
-interface Job { id: string; title?: string | null; source?: string | null; readiness: string; work_title?: string | null; }
+interface Job { id: string; title?: string | null; source?: string | null; readiness: string; work_title?: string | null; completed_at?: string | null; }
 
 function useJobs(open: boolean) {
   return useQuery({
@@ -549,7 +549,7 @@ function useJobs(open: boolean) {
       const base = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
       const r = await apiFetch(`${base}/system/jobs`);
       if (!r.ok) throw new Error("jobs fetch failed");
-      return r.json() as Promise<{ jobs: Job[]; total: number; nightshift: { ran_at: string } | null }>;
+      return r.json() as Promise<{ jobs: Job[]; total: number; recently_done: Job[]; nightshift: { ran_at: string } | null }>;
     },
     refetchInterval: open ? 3_000 : 15_000,
     staleTime: 2_000,
@@ -561,8 +561,9 @@ const READINESS_STEPS = ["queued", "imported", "chunked", "extracted", "harveste
 function ProgressPanel({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { data, isLoading } = useJobs(open);
   const jobs = data?.jobs ?? [];
+  const recentlyDone = data?.recently_done ?? [];
 
-  // Group by work
+  // Group active jobs by work
   const byWork: Record<string, { title: string; jobs: Job[] }> = {};
   for (const j of jobs) {
     const wid = j.work_title ?? "No Work";
@@ -586,45 +587,73 @@ function ProgressPanel({ open, onClose }: { open: boolean; onClose: () => void }
               <div className="space-y-2">
                 {[1, 2].map(i => <div key={i} className="h-14 rounded-lg bg-muted/40 animate-pulse" />)}
               </div>
-            ) : jobs.length === 0 ? (
+            ) : jobs.length === 0 && recentlyDone.length === 0 ? (
               <div className="text-center py-12">
                 <CheckCircle2 className="w-8 h-8 mx-auto mb-3 text-emerald-500/40" />
                 <p className="text-sm text-muted-foreground">All caught up — no jobs running</p>
               </div>
             ) : (
-              Object.entries(byWork).map(([wid, { title, jobs: wjobs }]) => (
-                <div key={wid} className="space-y-2">
-                  <p className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">{title}</p>
-                  {wjobs.map(j => {
-                    const step = READINESS_STEPS.indexOf(j.readiness);
-                    const pct  = step < 0 ? 0 : Math.round((step / (READINESS_STEPS.length - 1)) * 100);
-                    const name = j.title || (j.source ? j.source.split("/").pop() : j.id);
-                    return (
-                      <div key={j.id} className="p-3 rounded-lg bg-muted/20 border border-border/40 space-y-2">
-                        <div className="flex items-center gap-2">
-                          <Loader2 className="w-3 h-3 text-primary animate-spin shrink-0" />
-                          <span className="text-xs font-medium truncate flex-1">{name}</span>
-                          <span className="text-[10px] font-mono text-muted-foreground shrink-0">{j.readiness}</span>
+              <>
+                {Object.entries(byWork).map(([wid, { title, jobs: wjobs }]) => (
+                  <div key={wid} className="space-y-2">
+                    <p className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">{title}</p>
+                    {wjobs.map(j => {
+                      const step = READINESS_STEPS.indexOf(j.readiness);
+                      const pct  = step < 0 ? 0 : Math.round((step / (READINESS_STEPS.length - 1)) * 100);
+                      const name = j.title || (j.source ? j.source.split("/").pop() : j.id);
+                      return (
+                        <div key={j.id} className="p-3 rounded-lg bg-muted/20 border border-border/40 space-y-2">
+                          <div className="flex items-center gap-2">
+                            <Loader2 className="w-3 h-3 text-primary animate-spin shrink-0" />
+                            <span className="text-xs font-medium truncate flex-1">{name}</span>
+                            <span className="text-[10px] font-mono text-muted-foreground shrink-0">{j.readiness}</span>
+                            <Link
+                              href={`/library/${j.id}`}
+                              onClick={onClose}
+                              className="shrink-0 text-muted-foreground/50 hover:text-primary transition-colors"
+                              title="Open in Library"
+                            >
+                              <ExternalLink className="w-3 h-3" />
+                            </Link>
+                          </div>
+                          <div className="h-1.5 bg-muted rounded-full overflow-hidden">
+                            <div
+                              className="h-full bg-primary/60 rounded-full transition-all duration-500"
+                              style={{ width: `${pct}%` }}
+                            />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ))}
+                {recentlyDone.length > 0 && (
+                  <div className="space-y-2">
+                    {jobs.length > 0 && <div className="border-t border-border/30 pt-2" />}
+                    <p className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Recently completed</p>
+                    {recentlyDone.map(j => {
+                      const name = j.title || (j.source ? j.source.split("/").pop() : j.id);
+                      const isErr = j.readiness === "error" || j.readiness === "no_text";
+                      return (
+                        <div key={j.id} className="p-3 rounded-lg bg-muted/10 border border-border/30 flex items-center gap-2">
+                          {isErr
+                            ? <span className="w-3 h-3 rounded-full bg-red-400 shrink-0" />
+                            : <CheckCircle2 className="w-3 h-3 text-emerald-500 shrink-0" />}
+                          <span className="text-xs text-muted-foreground truncate flex-1">{name}</span>
                           <Link
                             href={`/library/${j.id}`}
                             onClick={onClose}
-                            className="shrink-0 text-muted-foreground/50 hover:text-primary transition-colors"
+                            className="shrink-0 text-muted-foreground/40 hover:text-primary transition-colors"
                             title="Open in Library"
                           >
                             <ExternalLink className="w-3 h-3" />
                           </Link>
                         </div>
-                        <div className="h-1.5 bg-muted rounded-full overflow-hidden">
-                          <div
-                            className="h-full bg-primary/60 rounded-full transition-all duration-500"
-                            style={{ width: `${pct}%` }}
-                          />
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              ))
+                      );
+                    })}
+                  </div>
+                )}
+              </>
             )}
             {data?.nightshift && (
               <div className="pt-2 border-t border-border/30">
@@ -659,6 +688,17 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
   const [progressOpen,  setProgressOpen]  = useState(false);
   const { data: jobsData } = useJobs(false);
   const activeJobCount = jobsData?.total ?? 0;
+
+  // Auto-dismiss the progress panel 2 s after all jobs finish
+  const prevJobCount = useRef(0);
+  useEffect(() => {
+    let t: ReturnType<typeof setTimeout> | undefined;
+    if (prevJobCount.current > 0 && activeJobCount === 0 && progressOpen) {
+      t = setTimeout(() => setProgressOpen(false), 2000);
+    }
+    prevJobCount.current = activeJobCount;
+    return () => { if (t) clearTimeout(t); };
+  }, [activeJobCount, progressOpen]);
 
   return (
     <SidebarProvider>

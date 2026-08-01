@@ -128,6 +128,7 @@ function ModelPicker({ convId, currentModel, models, defaultModel, onChanged }: 
   const effective = currentModel || defaultModel;
 
   const handleChange = (value: string) => {
+    try { localStorage.setItem("orivellum:lastModel", value); } catch {}
     updateConv.mutate(
       { convId, data: { model: value } },
       { onSuccess: onChanged, onError: () => toast.error("Could not switch model") }
@@ -538,7 +539,9 @@ export default function Chat() {
   const [scopeAll,   setScopeAll]   = useState(false); // false = "This work", true = "All works"
   const [dragOver,   setDragOver]   = useState(false);
   const [importing,  setImporting]  = useState(false);
-  const [newConvModel, setNewConvModel] = useState<string>("");
+  const [newConvModel, setNewConvModel] = useState<string>(() => {
+    try { return localStorage.getItem("orivellum:lastModel") ?? ""; } catch { return ""; }
+  });
   const createConv = useCreateConversation();
   const deleteConv = useDeleteConversation();
   const updateConvMeta = useUpdateConversation();
