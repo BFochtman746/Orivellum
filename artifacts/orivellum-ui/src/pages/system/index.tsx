@@ -155,6 +155,37 @@ function UserMemoryCard() {
   );
 }
 
+// ─── Version card ─────────────────────────────────────────────────────────────
+
+function VersionCard() {
+  const { data, isLoading } = useQuery({
+    queryKey: ["system", "version"],
+    queryFn: async () => {
+      const r = await apiFetch(`${API_BASE}/api/version`);
+      if (!r.ok) throw new Error("version fetch failed");
+      return r.json() as Promise<{ version: string; product: string; python: string; platform: string }>;
+    },
+    staleTime: Infinity,
+  });
+  return (
+    <Card>
+      <CardContent className="p-6">
+        <div className="flex items-center gap-3 mb-3">
+          <Terminal className="w-5 h-5 text-primary" />
+          <h2 className="text-lg font-serif font-medium">About</h2>
+        </div>
+        {isLoading ? <Skeleton className="h-8 w-40" /> : (
+          <div className="space-y-1 font-mono text-xs text-muted-foreground">
+            <p><span className="text-foreground font-semibold">{data?.product}</span> v{data?.version}</p>
+            <p>Python {data?.python?.split(" ")[0]}</p>
+            <p className="truncate">{data?.platform}</p>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 // ─── AI Extraction toggle ─────────────────────────────────────────────────────
 
 function useAiExtractionSetting() {
@@ -409,6 +440,9 @@ $env:ORIVELLUM_AI_URL="http://127.0.0.1:11434/v1"`}
 
       {/* User Memory */}
       <UserMemoryCard />
+
+      {/* Version info */}
+      <VersionCard />
 
       {/* Capabilities */}
       <div className="space-y-4">

@@ -16,14 +16,17 @@ import { Feather } from '@expo/vector-icons';
 import {
   useListConversations,
   useCreateConversation,
+  getListConversationsQueryKey,
 } from '@workspace/api-client-react';
+import { useQueryClient } from '@tanstack/react-query';
+import { mobileFetch } from '@/lib/api';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import type { Conversation } from '@workspace/api-client-react';
 import { OfflineBanner, ErrorScreen } from '@/components/OfflineBanner';
 
-function ConversationItem({ item }: { item: Conversation }) {
+function ConversationItem({ item, onArchive }: { item: Conversation; onArchive?: (id: string) => void }) {
   const colors = useColors();
   const router = useRouter();
 
@@ -31,9 +34,24 @@ function ConversationItem({ item }: { item: Conversation }) {
     ? new Date(item.updated_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
     : '';
 
+  const handleLongPress = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    const archived = !!(item as any).archived;
+    Alert.alert(
+      item.title ?? 'Conversation',
+      '',
+      [
+        { text: archived ? 'Unarchive' : 'Archive', onPress: () => onArchive?.(item.id ?? '') },
+        { text: 'Cancel', style: 'cancel' },
+      ]
+    );
+  };
+
   return (
     <Pressable
       onPress={() => router.push(`/chat/${item.id}`)}
+      onLongPress={handleLongPress}
+      delayLongPress={400}
       style={({ pressed }) => [
         styles.item,
         {
@@ -108,6 +126,24 @@ export default function ConversationsScreen() {
   const hasData = allConversations.length > 0;
 
   const { mutateAsync: createConversation, isPending: creating } = useCreateConversation();
+  const queryClient = useQueryClient();
+
+  const handleArchive = async (convId: string) => {
+    try {
+      const domain = process.env.EXPO_PUBLIC_DOMAIN;
+      const r = await mobileFetch(`https://${domain}/api/conversations/${convId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ archived: true }),
+      });
+      if (r.ok) {
+        queryClient.invalidateQueries({ queryKey: getListConversationsQueryKey({ archived: false, limit: 200 }) });
+        refetch();
+      }
+    } catch {
+      Alert.alert('Could not archive', 'Check your connection and try again.', [{ text: 'OK' }]);
+    }
+  };
 
   const handleNew = async () => {
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);

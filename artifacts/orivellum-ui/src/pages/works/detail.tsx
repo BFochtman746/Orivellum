@@ -713,6 +713,7 @@ async function setKnowledgeReview(itemId: string, status: string): Promise<void>
 
 type KnowledgeFilter = "all" | "pending" | "approved" | "rejected";
 type KnowledgeKindFilter = "all" | "entity" | "claim" | "relationship" | "summary";
+type KnowledgeConfFilter = "all" | "high" | "med" | "low";
 
 function KnowledgeTab({ workId }: { workId: string }) {
   const queryClient = useQueryClient();
@@ -720,6 +721,7 @@ function KnowledgeTab({ workId }: { workId: string }) {
   const [reviewing, setReviewing] = useState<string | null>(null);
   const [filter, setFilter] = useState<KnowledgeFilter>("all");
   const [kindFilter, setKindFilter] = useState<KnowledgeKindFilter>("all");
+  const [confFilter, setConfFilter] = useState<KnowledgeConfFilter>("all");
   const [searchText, setSearchText] = useState("");
   const deleteKnowledge = useDeleteKnowledgeItem();
   const { data: knowResp, isLoading } = useGetWorkKnowledge(workId, {}, {
@@ -777,6 +779,13 @@ function KnowledgeTab({ workId }: { workId: string }) {
   }).filter((k) => {
     if (kindFilter === "all") return true;
     return (k.kind ?? "").toLowerCase() === kindFilter;
+  }).filter((k) => {
+    if (confFilter === "all") return true;
+    const pct = Math.round((k.confidence ?? 0) * 100);
+    if (confFilter === "high") return pct >= 80;
+    if (confFilter === "med")  return pct >= 50 && pct < 80;
+    if (confFilter === "low")  return pct < 50;
+    return true;
   });
 
   // Collect distinct kinds for the kind filter pills
@@ -831,6 +840,13 @@ function KnowledgeTab({ workId }: { workId: string }) {
     ...availableKinds.map((k) => ({ key: k as KnowledgeKindFilter, label: KIND_LABELS[k] ?? k })),
   ];
 
+  const CONF_FILTERS: { key: KnowledgeConfFilter; label: string }[] = [
+    { key: "all",  label: "All" },
+    { key: "high", label: "High ≥80%" },
+    { key: "med",  label: "Med" },
+    { key: "low",  label: "Low" },
+  ];
+
   return (
     <div className="space-y-4">
       <div className="flex items-start justify-between flex-wrap gap-3">
@@ -858,6 +874,24 @@ function KnowledgeTab({ workId }: { workId: string }) {
                       onClick={() => setKindFilter(key)}
                       className={`px-2.5 py-1 rounded text-xs font-mono transition-colors ${
                         kindFilter === key
+                          ? "bg-background text-foreground shadow-sm font-semibold"
+                          : "text-muted-foreground hover:text-foreground"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {/* Confidence filter */}
+              {allKnowledge.some((k) => k.confidence !== null && k.confidence !== undefined) && (
+                <div className="flex items-center gap-1 p-1 bg-muted/40 rounded-lg">
+                  {CONF_FILTERS.map(({ key, label }) => (
+                    <button
+                      key={key}
+                      onClick={() => setConfFilter(key)}
+                      className={`px-2.5 py-1 rounded text-xs font-mono transition-colors ${
+                        confFilter === key
                           ? "bg-background text-foreground shadow-sm font-semibold"
                           : "text-muted-foreground hover:text-foreground"
                       }`}
