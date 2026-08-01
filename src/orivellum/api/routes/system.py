@@ -39,23 +39,28 @@ def system_health():
 
 @router.get("/system/models")
 def system_models():
-    """Return the models configured in the serving section.
+    """Return available models for the model picker.
 
-    The frontend uses this to populate the model picker.
-    Each entry includes a short role label so the UI can show friendly names.
+    Fetches the live model list from the configured AI endpoint
+    (GET /v1/models — standard OpenAI-compat format).  Falls back to the
+    models declared in config if the endpoint is unreachable.
+
+    Config-declared models (workhorse / reasoner / coder) are annotated with
+    friendly role labels and descriptions so the UI can display them nicely.
+    Any additional models returned by the live endpoint are included with a
+    generic "available" label.
     """
     cfg = get_config()
-    seen: set[str] = set()
-    models = []
+
+    # Build role metadata from config so we can annotate live results
+    role_meta: dict[str, dict] = {}
     for role, model_id in [
         ("workhorse", cfg.serving.workhorse_model),
         ("reasoner",  cfg.serving.reasoner_model),
         ("coder",     cfg.serving.coder_model),
     ]:
-        if model_id and model_id not in seen:
-            seen.add(model_id)
-            models.append({
-                "id": model_id,
+        if model_id and model_id not in role_meta:
+            role_meta[model_id] = {
                 "role": role,
                 "label": role.capitalize(),
                 "description": {
@@ -63,8 +68,55 @@ def system_models():
                     "reasoner":  "Deeper reasoning · slower",
                     "coder":     "Code generation · analysis",
                 }.get(role, ""),
+            }
+
+    # Try to fetch live models from the AI endpoint
+    live_model_ids: list[str] = []
+    try:
+        import httpx
+        r = httpx.get(f"{cfg.serving.base_url}/models", timeout=2.0)
+        if r.status_code == 200:
+            data = r.json()
+            # OpenAI format: {"data": [{"id": "...", ...}, ...]}
+            # Some servers return {"models": [...]} or a plain list
+            raw_list = (
+                data.get("data")
+                or data.get("models")
+                or (data if isinstance(data, list) else [])
+            )
+            for entry in raw_list:
+                mid = entry.get("id") or entry.get("name") or str(entry)
+                if mid:
+                    live_model_ids.append(mid)
+    except Exception:
+        pass  # fall back to config-only below
+
+    # If we got live models, build the final list from them
+    if live_model_ids:
+        seen: set[str] = set()
+        models = []
+        for mid in live_model_ids:
+            if mid in seen:
+                continue
+            seen.add(mid)
+            meta = role_meta.get(mid, {})
+            models.append({
+                "id": mid,
+                "role": meta.get("role", "available"),
+                "label": meta.get("label", mid.split("/")[-1]),
+                "description": meta.get("description", ""),
             })
-    return {"models": models, "default": cfg.serving.workhorse_model}
+        return {"models": models, "default": cfg.serving.workhorse_model}
+
+    # Fall back to config-declared models when AI endpoint is unavailable
+    seen2: set[str] = set()
+    models_fallback = []
+    for model_id, meta in role_meta.items():
+        if model_id in seen2:
+            continue
+        seen2.add(model_id)
+        models_fallback.append({"id": model_id, **meta})
+    return {"models": models_fallback, "default": cfg.serving.workhorse_model}
 
 
 @router.get("/system/tools")
