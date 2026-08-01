@@ -34,7 +34,8 @@ _EXPLICIT_REMEMBER_RE = re.compile(
     re.IGNORECASE,
 )
 # Max knowledge items to inject as context
-_CONTEXT_KNOWLEDGE = 8
+_CONTEXT_KNOWLEDGE = 12   # max knowledge items injected per turn
+_CONTEXT_CHUNKS    = 5    # max raw document passages injected per turn
 
 
 class ConversationCreate(BaseModel):
@@ -228,17 +229,25 @@ def _model_for_vision(conv: dict) -> str:
     return conv.get("model") or cfg.serving.vision_model or cfg.serving.workhorse_model
 
 
-def _build_system_prompt(db: Any, conv: dict, scope: str = "work") -> str:
-    """Build a system prompt, optionally enriched with work knowledge and user memory.
+def _build_system_prompt(db: Any, conv: dict, scope: str = "work",
+                         user_query: str | None = None) -> str:
+    """Build a system prompt enriched with relevant knowledge from the database.
 
-    scope="work"  → inject knowledge from the conversation's Work only (default)
-    scope="all"   → inject top knowledge across ALL works
+    Knowledge retrieval strategy (always global):
+      1. If user_query is provided → full-text search across ALL knowledge + document
+         chunks, ranked by relevance, grouped by Work/topic.
+      2. If no query (e.g. first message) → fall back to most-recent knowledge
+         from the linked Work, or across all Works if none is linked.
+
+    Only trusted items (rule-based "auto" + user-approved "approved") are injected.
+    Pending AI items ("ai_auto") are excluded until the user approves them.
     """
     base = (
         "You are Orivellum, a sovereign local-first AI assistant. "
         "You help the user think through their research, synthesise documents, "
         "generate ideas, and manage knowledge. Be concise, precise, and honest. "
-        "Never fabricate citations or facts."
+        "Never fabricate citations or facts. "
+        "When answering, draw on the knowledge and document passages provided below."
     )
 
     # Prepend durable user memory facts
@@ -255,54 +264,100 @@ def _build_system_prompt(db: Any, conv: dict, scope: str = "work") -> str:
     except Exception:
         pass  # user_memory table may not exist yet on old schemas
 
+    _TRUSTED = {"auto", "approved"}
     work_id = conv.get("work_id")
 
-    # Trusted statuses: rule-based extractions ("auto") and user-approved AI items.
-    # "ai_auto" items are pending review and must not influence chat until approved.
-    _TRUSTED = {"auto", "approved"}
+    # ── 1. Query-matched global search (primary path) ──────────────────────────
+    if user_query and user_query.strip():
+        try:
+            # Search knowledge items and raw document chunks across ALL works
+            knowledge_hits = db.search_knowledge(user_query, work_id=None,
+                                                 limit=_CONTEXT_KNOWLEDGE * 2)
+            trusted_k = [k for k in knowledge_hits
+                         if k.get("review_status") in _TRUSTED][:_CONTEXT_KNOWLEDGE]
 
-    if scope == "all":
-        # Inject knowledge across ALL works (no work_id filter)
+            chunk_hits = db.search_chunks(user_query, work_id=None,
+                                          limit=_CONTEXT_CHUNKS * 2)
+            trusted_c = chunk_hits[:_CONTEXT_CHUNKS]
+
+            if trusted_k or trusted_c:
+                # Group by work so the AI sees topics clearly
+                by_work: dict[str, dict] = {}
+                work_title_cache: dict[str, str] = {}
+
+                def _work_title(wid: str | None) -> str:
+                    if not wid:
+                        return "General"
+                    if wid not in work_title_cache:
+                        w = db.get_work(wid)
+                        work_title_cache[wid] = (w.get("title") or wid) if w else wid
+                    return work_title_cache[wid]
+
+                for k in trusted_k:
+                    wid = k.get("work_id") or "__general__"
+                    by_work.setdefault(wid, {"title": _work_title(k.get("work_id")),
+                                             "knowledge": [], "chunks": []})
+                    by_work[wid]["knowledge"].append(k)
+
+                for c in trusted_c:
+                    wid = c.get("work_id") or "__general__"
+                    by_work.setdefault(wid, {"title": _work_title(c.get("work_id")),
+                                             "knowledge": [], "chunks": []})
+                    by_work[wid]["chunks"].append(c)
+
+                # Boost the linked Work to the top if present
+                ordered = sorted(
+                    by_work.items(),
+                    key=lambda kv: (0 if kv[0] == work_id else 1, kv[1]["title"])
+                )
+
+                context_parts = [
+                    "KNOWLEDGE FROM YOUR DATABASE (most relevant to this question):"
+                ]
+                for wid, group in ordered:
+                    context_parts.append(f"\n[Topic: {group['title']}]")
+                    for k in group["knowledge"]:
+                        text = k.get("text", "").strip()
+                        kind = k.get("kind", "note")
+                        if text:
+                            context_parts.append(f"  [{kind}] {text[:400]}")
+                    for c in group["chunks"]:
+                        text = c.get("text", "").strip()
+                        doc  = c.get("doc_title") or "document"
+                        if text:
+                            context_parts.append(f"  [from '{doc}'] {text[:400]}")
+
+                return f"{base}\n\n" + "\n".join(context_parts)
+        except Exception:
+            pass  # fall through to recency-based fallback
+
+    # ── 2. Recency fallback (no query or search failed) ────────────────────────
+    fallback_wid = work_id  # prefer linked Work; None = all works
+    all_knowledge = db.list_knowledge(work_id=fallback_wid,
+                                      limit=_CONTEXT_KNOWLEDGE * 4)
+    knowledge = [k for k in all_knowledge
+                 if k.get("review_status") in _TRUSTED][:_CONTEXT_KNOWLEDGE]
+
+    if not knowledge and fallback_wid:
+        # No knowledge in the linked Work — broaden to all works
         all_knowledge = db.list_knowledge(work_id=None, limit=_CONTEXT_KNOWLEDGE * 4)
-        knowledge = [
-            k for k in all_knowledge
-            if k.get("review_status") in _TRUSTED
-        ][:_CONTEXT_KNOWLEDGE]
-        if knowledge:
-            context_parts = ["Relevant knowledge from all your works:"]
-            for k in knowledge:
-                kind = k.get("kind", "note")
-                text = k.get("text", "").strip()
-                if text:
-                    context_parts.append(f"  [{kind}] {text[:300]}")
-            return f"{base}\n\n" + "\n".join(context_parts)
+        knowledge = [k for k in all_knowledge
+                     if k.get("review_status") in _TRUSTED][:_CONTEXT_KNOWLEDGE]
+
+    if not knowledge:
         return base
 
-    if not work_id:
-        return base
-
-    # Inject work title and top knowledge items as context
-    work = db.get_work(work_id)
-    if not work:
-        return base
-
-    work_title = work.get("title", "")
-    all_knowledge = db.list_knowledge(work_id=work_id, limit=_CONTEXT_KNOWLEDGE * 4)
-    # Only inject trusted items: rule-based ("auto") and user-approved AI extractions.
-    # Pending AI items ("ai_auto") are excluded until the user explicitly approves them.
-    knowledge = [
-        k for k in all_knowledge
-        if k.get("review_status") in _TRUSTED
-    ][:_CONTEXT_KNOWLEDGE]
-
-    context_parts = [f"You are assisting with a research work titled \"{work_title}\"."]
-    if knowledge:
-        context_parts.append("Relevant knowledge from the user's documents:")
-        for k in knowledge:
-            kind = k.get("kind", "note")
-            text = k.get("text", "").strip()
-            if text:
-                context_parts.append(f"  [{kind}] {text[:300]}")
+    header = (
+        f"You are assisting with the work \"{db.get_work(work_id).get('title', '')}\". "
+        if work_id and db.get_work(work_id) else
+        "Knowledge from your database:"
+    )
+    context_parts = [header]
+    for k in knowledge:
+        kind = k.get("kind", "note")
+        text = k.get("text", "").strip()
+        if text:
+            context_parts.append(f"  [{kind}] {text[:400]}")
 
     return f"{base}\n\n" + "\n".join(context_parts)
 
@@ -316,7 +371,8 @@ def _build_messages(
     image_media_type: str = "image/jpeg",
 ) -> list[dict]:
     """Build the full OpenAI-format messages array for this conversation."""
-    system_prompt = _build_system_prompt(db, conv, scope=scope)
+    system_prompt = _build_system_prompt(db, conv, scope=scope,
+                                         user_query=new_user_text)
 
     # Fetch recent history (excluding the message we just stored)
     history = db.get_messages(conv["id"], limit=_HISTORY_LIMIT + 1)
