@@ -108,7 +108,7 @@ function KnowledgeRow({ item, onReviewed }: { item: KnowledgeItem; onReviewed?: 
       const res = await mobileFetch(`https://${domain}/api/knowledge/${item.id}/review`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: action === 'approve' ? 'approved' : 'rejected' }),
+        body: JSON.stringify({ review_status: action === 'approve' ? 'approved' : 'rejected' }),
       });
       if (res.ok) {
         setLocalStatus(action === 'approve' ? 'approved' : 'rejected');
@@ -668,6 +668,10 @@ export default function WorkDetailScreen() {
   const navigation = useNavigation();
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<Tab>('overview');
+  const [newTaskText, setNewTaskText] = useState('');
+  const [addingTask, setAddingTask] = useState(false);
+  const queryClient = useQueryClient();
+  const { mutateAsync: createTask } = useCreateWorkTask();
 
   const { data: workData, isError: workError, refetch: refetchWork } = useGetWork(id, { query: { staleTime: 30_000 } } as any);
   const { data: docsData, isLoading: docsLoading, isError: docsError, refetch: refetchDocs } = useGetWorkDocuments(id, { query: { staleTime: 20_000, refetchInterval: (q: any) => (q.state.data?.documents ?? []).some((d: any) => d.readiness === 'imported') ? 4_000 : false } } as any);
@@ -705,6 +709,22 @@ export default function WorkDetailScreen() {
         'Make sure the Orivellum server is running and try again.',
         [{ text: 'OK' }]
       );
+    }
+  };
+
+  const handleAddTask = async () => {
+    const trimmed = newTaskText.trim();
+    if (!trimmed) return;
+    setAddingTask(true);
+    try {
+      await createTask({ workId: id, data: { text: trimmed } });
+      setNewTaskText('');
+      await refetchTasks();
+      queryClient.invalidateQueries({ queryKey: getGetWorkTasksQueryKey(id) });
+    } catch {
+      Alert.alert('Could not add task', 'Check your connection and try again.', [{ text: 'OK' }]);
+    } finally {
+      setAddingTask(false);
     }
   };
 
@@ -803,6 +823,29 @@ export default function WorkDetailScreen() {
             {tasksError && tasks.length > 0 && (
               <OfflineBanner message="Showing cached tasks — server unreachable" onRetry={refetchTasks} />
             )}
+            {/* Add task input */}
+            <View style={[styles.taskInputRow, { borderBottomColor: colors.border, backgroundColor: colors.background }]}>
+              <TextInput
+                style={[styles.taskInput, { backgroundColor: colors.card, borderColor: colors.border, color: colors.foreground }]}
+                placeholder="Add a task…"
+                placeholderTextColor={colors.mutedForeground}
+                value={newTaskText}
+                onChangeText={setNewTaskText}
+                onSubmitEditing={handleAddTask}
+                returnKeyType="done"
+                editable={!addingTask}
+              />
+              <Pressable
+                onPress={handleAddTask}
+                disabled={!newTaskText.trim() || addingTask}
+                style={[styles.taskAddBtn, { backgroundColor: newTaskText.trim() && !addingTask ? colors.primary : colors.muted }]}
+              >
+                {addingTask
+                  ? <ActivityIndicator size="small" color={colors.primaryForeground} />
+                  : <Feather name="plus" size={18} color={newTaskText.trim() ? colors.primaryForeground : colors.mutedForeground} />
+                }
+              </Pressable>
+            </View>
             <FlatList
               data={tasks}
               keyExtractor={(t) => t.id ?? ''}
@@ -814,7 +857,7 @@ export default function WorkDetailScreen() {
               ListEmptyComponent={
                 <View style={styles.centered}>
                   <Feather name="check-square" size={36} color={colors.mutedForeground} />
-                  <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>No tasks</Text>
+                  <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>No tasks yet — add one above</Text>
                 </View>
               }
             />
@@ -939,6 +982,18 @@ const styles = StyleSheet.create({
   tab: { flex: 1, alignItems: 'center', paddingVertical: 12 },
   tabLabel: { fontSize: 13 },
   overviewPad: { padding: 16, paddingBottom: 80 },
+  taskInputRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    paddingHorizontal: 16, paddingVertical: 10, borderBottomWidth: 1,
+  },
+  taskInput: {
+    flex: 1, height: 38, borderWidth: 1, borderRadius: 8,
+    paddingHorizontal: 10, fontSize: 14, fontFamily: 'Inter_400Regular',
+  },
+  taskAddBtn: {
+    width: 38, height: 38, borderRadius: 8,
+    alignItems: 'center', justifyContent: 'center',
+  },
   listPad: { padding: 16, paddingBottom: 80 },
   description: { fontSize: 15, fontFamily: 'Inter_400Regular', lineHeight: 22, marginBottom: 20 },
   infoGrid: { borderWidth: 1, borderRadius: 6, overflow: 'hidden' },

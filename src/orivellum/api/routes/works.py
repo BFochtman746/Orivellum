@@ -41,6 +41,7 @@ class TaskCreate(BaseModel):
 class TaskUpdate(BaseModel):
     status: str | None = None
     text: str | None = None
+    priority: int | None = None
 
 
 @router.get("/works/types")
@@ -233,7 +234,7 @@ def works_create_task(work_id: str, body: TaskCreate):
 @router.patch("/works/{work_id}/tasks/{task_id}")
 def works_update_task(work_id: str, task_id: str, body: TaskUpdate):
     db = get_db()
-    task = db.update_task(task_id, status=body.status, text=body.text)
+    task = db.update_task(task_id, status=body.status, text=body.text, priority=body.priority)
     if not task:
         raise HTTPException(404, f"Task {task_id!r} not found")
     return {"task": task}

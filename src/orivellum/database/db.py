@@ -499,7 +499,7 @@ class OrivellumDB:
         return dict(row) if row else {}
 
     def update_task(self, task_id: str, status: str | None = None,
-                    text: str | None = None) -> dict | None:
+                    text: str | None = None, priority: int | None = None) -> dict | None:
         updates: dict[str, Any] = {}
         if status is not None:
             updates["status"] = status
@@ -507,6 +507,8 @@ class OrivellumDB:
                 updates["completed_at"] = _now()
         if text is not None:
             updates["text"] = text
+        if priority is not None:
+            updates["priority"] = priority
         if not updates:
             with self._lock:
                 row = self._conn.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
