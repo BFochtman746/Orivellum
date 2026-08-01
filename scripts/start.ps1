@@ -179,11 +179,22 @@ $env:PORT              = "$WebPort"
 $env:BASE_PATH         = "/"
 $env:ORIVELLUM_API_URL = "http://127.0.0.1:$ApiPort"
 # Use cmd.exe /c so shims, .cmd wrappers, and .exe files all work
-$webProc = Start-Via-Batch -Exe $pnpmExe `
-  -CmdArgs "--filter @workspace/orivellum-ui run dev" `
-  -WorkDir $root `
-  -OutLog (Join-Path $logsDir "web.log") `
-  -ErrLog (Join-Path $logsDir "web-err.log")
+$uiDir  = Join-Path $root "artifacts\orivellum-ui"
+$webTmp = [System.IO.Path]::GetTempFileName() -replace '\.tmp$', '.cmd'
+$webBatch  = "@echo off`r`n"
+$webBatch += "echo [web-batch] Starting pnpm run dev ...`r`n"
+$webBatch += "cd /d `"$uiDir`"`r`n"
+$webBatch += "echo [web-batch] cwd=%CD%`r`n"
+$webBatch += "`"$pnpmExe`" run dev`r`n"
+$webBatch += "echo [web-batch] pnpm exited with %ERRORLEVEL%`r`n"
+[System.IO.File]::WriteAllText($webTmp, $webBatch, [System.Text.Encoding]::ASCII)
+
+$webProc = Start-Process -FilePath "cmd.exe" `
+  -ArgumentList "/c `"$webTmp`"" `
+  -PassThru -NoNewWindow `
+  -WorkingDirectory $uiDir `
+  -RedirectStandardOutput (Join-Path $logsDir "web.log") `
+  -RedirectStandardError  (Join-Path $logsDir "web-err.log")
 $children.Add($webProc)
 
 # ---- Mobile (optional) ------------------------------------------------------
