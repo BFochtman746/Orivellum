@@ -55,3 +55,4 @@ data/orivellum.db-wal
 data/*.db
 data/*.db-shm
 data/*.db-wal
+\n# Temporary debug files uploaded during development\nattached_assets/

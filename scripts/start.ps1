@@ -81,6 +81,21 @@ if (-not $pnpmExe) {
   exit 1
 }
 
+# ---- Kill any leftover processes on our ports ------------------------------
+function Clear-Port {
+  param([int]$port)
+  try {
+    $pids = (Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue).OwningProcess | Sort-Object -Unique
+    foreach ($pid in $pids) {
+      if ($pid -and $pid -ne 0) {
+        Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue
+      }
+    }
+  } catch {}
+}
+Clear-Port $ApiPort
+Clear-Port $WebPort
+
 # ---- Ensure log dir exists --------------------------------------------------
 $root = if ($PSScriptRoot) { Split-Path $PSScriptRoot -Parent } else { Get-Location }
 $logsDir = Join-Path $root "logs"
