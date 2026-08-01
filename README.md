@@ -6,8 +6,6 @@ A sovereign, local-first knowledge management and AI assistant platform. All dat
 
 ## Quick Start (self-hosted)
 
-Orivellum is two processes: a Python API server and a React/Vite frontend. The frontend sends all `/api/*` requests to the API server via a proxy — you need to wire them together with the env vars below.
-
 ### 0. System prerequisites
 
 Install these once with your OS package manager. They are needed for PDF-to-image conversion and OCR; all other Python dependencies are handled by `uv sync`.
@@ -31,43 +29,51 @@ sudo apt-get install -y tesseract-ocr poppler-utils
 ### 1. Install dependencies
 
 ```bash
-# Python dependencies (creates a local .venv automatically)
-uv sync
-
-# Frontend dependencies
-pnpm install
+uv sync && pnpm install
+# or: make install
 ```
 
-### 2. Start the API server
-
-The API server reads `PORT` for its listening port (default `8080`).
+### 2. Start everything
 
 ```bash
-# Default port 8080
-uv run python -m orivellum.api.main
-
-# Custom port
-PORT=9000 uv run python -m orivellum.api.main
+./start.sh
+# or: make dev
+# or: pnpm dev
 ```
 
-### 3. Start the frontend
+That's it. The script starts the API server, waits until it passes its health check, then launches the Vite frontend. Press **Ctrl+C** to stop both processes cleanly.
 
-The frontend requires two env vars:
+Open **http://localhost:5173** once you see the `Ready ✓` line.
 
-| Variable | Description |
-|----------|-------------|
-| `PORT` | Port for the Vite dev server (e.g. `5173`) |
-| `BASE_PATH` | URL base path (use `/` for root) |
-| `ORIVELLUM_API_URL` | Base URL of the running API server — activates the `/api` proxy |
+#### With Expo mobile
 
+```bash
+./start.sh --mobile
+# or: make dev-mobile
+```
+
+#### Port overrides
+
+```bash
+API_PORT=9000 WEB_PORT=4000 ./start.sh
+```
+
+---
+
+### Manual startup (advanced)
+
+If you prefer to run each process separately:
+
+**API server** (reads `PORT`, default `8080`)
+```bash
+uv run python -m orivellum.api.main
+```
+
+**Frontend** (set `ORIVELLUM_API_URL` to forward `/api/*` to the running server)
 ```bash
 PORT=5173 BASE_PATH=/ ORIVELLUM_API_URL=http://127.0.0.1:8080 \
   pnpm --filter @workspace/orivellum-ui run dev
 ```
-
-Open `http://localhost:5173`.
-
-> **Why `ORIVELLUM_API_URL`?** The frontend makes relative `/api/...` requests. When you run Vite separately from the API server, those requests would hit Vite (and 404). Setting this env var activates a Vite proxy that forwards `/api/*` to the Python process.
 
 ---
 
