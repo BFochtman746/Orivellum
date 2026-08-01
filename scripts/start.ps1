@@ -26,8 +26,8 @@
 
 param(
   [switch]$Mobile,
-  [int]$ApiPort = $env:API_PORT ?? 8080,
-  [int]$WebPort = $env:WEB_PORT ?? 5173
+  [int]$ApiPort = $(if ($env:API_PORT) { [int]$env:API_PORT } else { 8080 }),
+  [int]$WebPort = $(if ($env:WEB_PORT) { [int]$env:WEB_PORT } else { 5173 })
 )
 
 Set-StrictMode -Version Latest
