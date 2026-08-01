@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import platform
+import socket
 import sys
 from datetime import datetime, timezone
+from urllib.parse import urlparse
 
 import psutil
 from fastapi import APIRouter
@@ -14,16 +16,32 @@ from orivellum.api._deps import get_db, get_config
 router = APIRouter()
 
 
+def _probe_ai(base_url: str, timeout: float = 1.0) -> dict:
+    """TCP probe to the AI server — no HTTP call, sub-millisecond if up."""
+    try:
+        parsed = urlparse(base_url)
+        host = parsed.hostname or "127.0.0.1"
+        port = parsed.port or 80
+        with socket.create_connection((host, port), timeout=timeout):
+            return {"status": "ok", "url": base_url}
+    except OSError:
+        return {"status": "unavailable", "url": base_url}
+
+
 @router.get("/api/healthz")
 def health():
     db = get_db()
+    cfg = get_config()
     db_health = db.health()
+    ai_health = _probe_ai(cfg.serving.base_url)
+    overall = "ok" if db_health["status"] == "ok" else "degraded"
     return {
-        "status": db_health["status"],
+        "status": overall,
         "version": __version__,
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "services": {
             "database": db_health,
+            "ai": ai_health,
         },
     }
 
