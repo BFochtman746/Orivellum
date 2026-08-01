@@ -58,6 +58,9 @@ import {
   Check,
   X,
   Trash2,
+  GraduationCap,
+  RefreshCw,
+  ChevronRight,
   MessageSquarePlus,
   Unlink,
   Search,
@@ -316,6 +319,7 @@ export default function WorkDetail() {
               { value: "tasks", icon: CheckSquare, label: "Tasks" },
               { value: "conversations", icon: MessageSquare, label: "Conversations" },
               { value: "search", icon: Search, label: "Search" },
+              { value: "quiz", icon: GraduationCap, label: "Quiz" },
             ].map(({ value, icon: Icon, label }) => (
               <TabsTrigger
                 key={value}
@@ -333,6 +337,7 @@ export default function WorkDetail() {
             <TabsContent value="tasks"><TasksTab workId={workId!} /></TabsContent>
             <TabsContent value="conversations"><ConversationsTab workId={workId!} /></TabsContent>
             <TabsContent value="search"><SearchTab workId={workId!} /></TabsContent>
+            <TabsContent value="quiz"><QuizTab workId={workId!} workTitle={(work as any)?.title ?? "this Work"} /></TabsContent>
           </div>
         </Tabs>
       </div>
@@ -1092,6 +1097,153 @@ function SearchTab({ workId }: { workId: string }) {
           <p className="text-sm">Search across all knowledge items and document text in this Work.</p>
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── Quiz tab ─────────────────────────────────────────────────────────────────
+
+const API_BASE_WORKS = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
+
+interface QuizQuestion {
+  q: string;
+  options: string[];
+  answer: number;
+  explanation: string;
+}
+
+function QuizTab({ workId, workTitle }: { workId: string; workTitle: string }) {
+  const [phase, setPhase]       = useState<"idle" | "loading" | "active" | "done">("idle");
+  const [questions, setQuestions] = useState<QuizQuestion[]>([]);
+  const [answers, setAnswers]   = useState<Record<number, number>>({});
+  const [error, setError]       = useState<string | null>(null);
+
+  const generate = async () => {
+    setPhase("loading");
+    setError(null);
+    setAnswers({});
+    try {
+      const r = await fetch(`${API_BASE_WORKS}/works/${workId}/quiz`, { method: "POST" });
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}));
+        throw new Error((body as any).detail ?? `HTTP ${r.status}`);
+      }
+      const data = await r.json();
+      setQuestions(data.questions ?? []);
+      setPhase("active");
+    } catch (err: any) {
+      setError(err.message ?? "Failed to generate quiz");
+      setPhase("idle");
+    }
+  };
+
+  const submit = () => setPhase("done");
+  const reset  = () => { setPhase("idle"); setQuestions([]); setAnswers({}); setError(null); };
+
+  const score = Object.entries(answers).filter(([qi, ai]) => questions[+qi]?.answer === ai).length;
+
+  if (phase === "idle" || phase === "loading") {
+    return (
+      <div className="flex flex-col items-center justify-center py-24 gap-6">
+        <div className="w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center">
+          <GraduationCap className="w-8 h-8 text-primary" />
+        </div>
+        <div className="text-center space-y-1 max-w-sm">
+          <h3 className="font-serif text-xl font-medium">Adaptive Quiz</h3>
+          <p className="text-sm text-muted-foreground">
+            Test your understanding of <span className="font-medium text-foreground">{workTitle}</span>.
+            Orivellum will generate 5 multiple-choice questions from your knowledge base.
+          </p>
+        </div>
+        {error && (
+          <div className="px-4 py-3 rounded-lg bg-destructive/10 border border-destructive/20 text-sm text-destructive max-w-sm text-center">
+            {error}
+          </div>
+        )}
+        <Button onClick={generate} disabled={phase === "loading"} className="gap-2 px-8">
+          {phase === "loading" ? <><Loader2 className="w-4 h-4 animate-spin" /> Generating…</> : <><Sparkles className="w-4 h-4" /> Generate Quiz</>}
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="max-w-2xl mx-auto space-y-6 py-4">
+      {/* Score banner (done phase) */}
+      {phase === "done" && (
+        <div className={`p-4 rounded-xl border text-center ${score >= 4 ? "bg-emerald-500/10 border-emerald-500/30" : score >= 3 ? "bg-amber-500/10 border-amber-500/30" : "bg-red-500/10 border-red-500/30"}`}>
+          <p className="text-2xl font-serif font-bold">
+            {score}/{questions.length}
+            <span className="text-base font-normal font-sans text-muted-foreground ml-2">
+              {score >= 4 ? "Excellent!" : score >= 3 ? "Good effort" : "Keep studying"}
+            </span>
+          </p>
+        </div>
+      )}
+
+      {/* Questions */}
+      {questions.map((q, qi) => {
+        const chosen  = answers[qi];
+        const correct = q.answer;
+        const isDone  = phase === "done";
+        return (
+          <Card key={qi} className="p-5 space-y-3">
+            <p className="font-medium text-sm leading-relaxed">
+              <span className="font-mono text-muted-foreground mr-2">{qi + 1}.</span>{q.q}
+            </p>
+            <div className="space-y-2">
+              {q.options.map((opt, oi) => {
+                const isChosen  = chosen === oi;
+                const isCorrect = correct === oi;
+                let cls = "flex items-center gap-3 px-3 py-2 rounded-lg border text-sm cursor-pointer transition-colors ";
+                if (isDone) {
+                  if (isCorrect)      cls += "bg-emerald-500/10 border-emerald-500/40 text-emerald-700 dark:text-emerald-400";
+                  else if (isChosen)  cls += "bg-red-500/10 border-red-500/40 text-red-700 dark:text-red-400";
+                  else                cls += "border-border/40 text-muted-foreground";
+                } else {
+                  cls += isChosen
+                    ? "bg-primary/10 border-primary/50 text-primary"
+                    : "border-border/50 hover:bg-muted/40 hover:border-border";
+                }
+                return (
+                  <div key={oi} className={cls} onClick={() => !isDone && setAnswers(a => ({ ...a, [qi]: oi }))}>
+                    <span className="w-5 h-5 rounded-full border border-current flex items-center justify-center text-[10px] font-mono shrink-0">
+                      {String.fromCharCode(65 + oi)}
+                    </span>
+                    <span className="flex-1">{opt}</span>
+                    {isDone && isCorrect && <Check className="w-4 h-4 text-emerald-500 shrink-0" />}
+                    {isDone && isChosen && !isCorrect && <X className="w-4 h-4 text-red-500 shrink-0" />}
+                  </div>
+                );
+              })}
+            </div>
+            {isDone && q.explanation && (
+              <div className="pt-2 pl-3 border-l-2 border-primary/30">
+                <p className="text-xs text-muted-foreground">{q.explanation}</p>
+              </div>
+            )}
+          </Card>
+        );
+      })}
+
+      {/* Actions */}
+      <div className="flex justify-between items-center pt-2">
+        {phase === "active" ? (
+          <>
+            <span className="text-xs text-muted-foreground">{Object.keys(answers).length}/{questions.length} answered</span>
+            <Button onClick={submit} disabled={Object.keys(answers).length < questions.length} className="gap-2">
+              <ChevronRight className="w-4 h-4" /> Submit Answers
+            </Button>
+          </>
+        ) : (
+          <>
+            <span />
+            <Button variant="outline" onClick={reset} className="gap-2">
+              <RefreshCw className="w-4 h-4" /> New Quiz
+            </Button>
+          </>
+        )}
+      </div>
     </div>
   );
 }

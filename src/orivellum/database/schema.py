@@ -645,4 +645,34 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         );
         CREATE INDEX IF NOT EXISTS vp_engine ON voice_profiles(engine);
     """),
+
+    # v40 — User memory + nightshift tracking tables
+    (40, "User memory and nightshift tracking", """
+        CREATE TABLE IF NOT EXISTS user_memory (
+            id              TEXT PRIMARY KEY,
+            key             TEXT NOT NULL,
+            value           TEXT NOT NULL,
+            source_conv_id  TEXT,
+            created_at      TEXT NOT NULL
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS um_key ON user_memory(key);
+        CREATE TABLE IF NOT EXISTS nightshift_runs (
+            id              TEXT PRIMARY KEY,
+            ran_at          TEXT NOT NULL,
+            docs_processed  INTEGER NOT NULL DEFAULT 0,
+            items_added     INTEGER NOT NULL DEFAULT 0,
+            report_path     TEXT
+        );
+    """),
+
+    # v41 — Project Compass per-Work state for cognition system
+    (41, "Project Compass state table", """
+        CREATE TABLE IF NOT EXISTS project_compass (
+            work_id     TEXT PRIMARY KEY REFERENCES works(id) ON DELETE CASCADE,
+            focus       TEXT,
+            last_reasoning TEXT,
+            next_step   TEXT,
+            updated_at  TEXT NOT NULL
+        );
+    """),
 ]

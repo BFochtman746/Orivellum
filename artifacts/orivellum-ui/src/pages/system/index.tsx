@@ -2,11 +2,130 @@ import { useGetSystemHealth, useListCapabilities, getGetSystemHealthQueryKey } f
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
-import { Activity, Database, Cpu, CheckCircle2, XCircle, AlertCircle, Terminal, Sparkles } from "lucide-react";
+import { Activity, Database, Cpu, CheckCircle2, XCircle, AlertCircle, Terminal, Sparkles, Moon, Brain, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 
 const API_BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") || "";
+
+// ─── Nightshift card ──────────────────────────────────────────────────────────
+
+function NightshiftCard() {
+  const { data, isLoading } = useQuery({
+    queryKey: ["system", "jobs"],
+    queryFn: async () => {
+      const r = await fetch(`${API_BASE}/api/system/jobs`);
+      if (!r.ok) throw new Error("jobs fetch failed");
+      return r.json() as Promise<{ nightshift: { ran_at: string; docs_processed: number; items_added: number; report_path: string | null } | null }>;
+    },
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+  });
+
+  const ns = data?.nightshift;
+  return (
+    <Card>
+      <CardContent className="p-6">
+        <div className="flex items-center gap-3 mb-4">
+          <Moon className="w-5 h-5 text-primary" />
+          <h2 className="text-lg font-serif font-medium">Nightshift</h2>
+        </div>
+        {isLoading ? (
+          <Skeleton className="h-8 w-full" />
+        ) : ns ? (
+          <div className="space-y-1 text-sm">
+            <div className="flex items-center justify-between">
+              <span className="text-muted-foreground">Last run</span>
+              <span className="font-mono text-xs">{new Date(ns.ran_at).toLocaleString()}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-muted-foreground">Documents processed</span>
+              <Badge variant="secondary">{ns.docs_processed}</Badge>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-muted-foreground">Knowledge items added</span>
+              <Badge variant="secondary">{ns.items_added}</Badge>
+            </div>
+            {ns.report_path && (
+              <p className="text-[10px] font-mono text-muted-foreground pt-1 truncate">{ns.report_path}</p>
+            )}
+          </div>
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            No nightshift runs yet — the daemon fires daily at 03:00 local time and re-processes documents with sparse knowledge.
+          </p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ─── User memory card ─────────────────────────────────────────────────────────
+
+function UserMemoryCard() {
+  const qc = useQueryClient();
+  const { data, isLoading } = useQuery({
+    queryKey: ["system", "user-memory"],
+    queryFn: async () => {
+      const r = await fetch(`${API_BASE}/api/system/user-memory`);
+      if (!r.ok) throw new Error("memory fetch failed");
+      return r.json() as Promise<{ memories: { id: string; key: string; value: string; created_at: string }[] }>;
+    },
+    staleTime: 30_000,
+  });
+
+  const del = useMutation({
+    mutationFn: async (id: string) => {
+      const r = await fetch(`${API_BASE}/api/system/user-memory/${id}`, { method: "DELETE" });
+      if (!r.ok) throw new Error("delete failed");
+    },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["system", "user-memory"] }); toast.success("Memory deleted"); },
+    onError: () => toast.error("Could not delete"),
+  });
+
+  const memories = data?.memories ?? [];
+  return (
+    <Card>
+      <CardContent className="p-6">
+        <div className="flex items-center gap-3 mb-4">
+          <Brain className="w-5 h-5 text-primary" />
+          <h2 className="text-lg font-serif font-medium">My Memory</h2>
+          <span className="text-xs text-muted-foreground">— facts Orivellum remembers about you</span>
+        </div>
+        {isLoading ? (
+          <Skeleton className="h-12 w-full" />
+        ) : memories.length === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            No memories yet. Say things like "Remember that I prefer concise answers" and Orivellum will retain them across conversations.
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {memories.map(m => (
+              <div key={m.id} className="flex items-start gap-3 p-3 rounded-lg bg-muted/20 border border-border/40 group">
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-mono text-muted-foreground">{m.key}</p>
+                  <p className="text-sm mt-0.5">{m.value}</p>
+                </div>
+                <button
+                  onClick={() => del.mutate(m.id)}
+                  disabled={del.isPending}
+                  className="opacity-0 group-hover:opacity-60 hover:!opacity-100 p-1 text-destructive transition-opacity shrink-0"
+                  title="Delete memory"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ─── AI Extraction toggle ─────────────────────────────────────────────────────
 
 function useAiExtractionSetting() {
   return useQuery({
@@ -245,6 +364,12 @@ export ORIVELLUM_AI_URL=http://127.0.0.1:11434/v1`}
           </CardContent>
         </Card>
       )}
+
+      {/* Nightshift */}
+      <NightshiftCard />
+
+      {/* User Memory */}
+      <UserMemoryCard />
 
       {/* Capabilities */}
       <div className="space-y-4">

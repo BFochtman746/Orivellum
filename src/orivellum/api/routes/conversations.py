@@ -35,6 +35,7 @@ class ConversationUpdate(BaseModel):
 class MessageSend(BaseModel):
     text: str
     stream: bool = False
+    deep: bool = False  # When True, route through cognition council
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -93,9 +94,17 @@ async def send_message(conv_id: str, body: MessageSend):
     # Store user message first so it appears immediately
     db.add_message(conv_id, "user", body.text)
 
+    # Capture durable user memory facts from this turn (background, non-blocking)
+    import asyncio, threading
+    threading.Thread(
+        target=_maybe_capture_memory,
+        args=(db, conv_id, body.text),
+        daemon=True,
+    ).start()
+
     if body.stream:
         return StreamingResponse(
-            _stream_response(db, conv, body.text),
+            _stream_response(db, conv, body.text, deep=body.deep),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
@@ -105,13 +114,17 @@ async def send_message(conv_id: str, body: MessageSend):
 
     # Non-streaming path
     messages = _build_messages(db, conv, body.text)
-    model = _model_for(conv)
-    reply = await _call_ai(messages, model=model)
+    model    = _model_for(conv)
+
+    if body.deep:
+        # Cognition council — run in thread to avoid blocking event loop
+        import asyncio
+        reply = await asyncio.to_thread(_deep_response, messages, model)
+    else:
+        reply = await _call_ai(messages, model=model)
+
     msg = db.add_message(conv_id, "assistant", reply, meta={"model": model})
-
-    # Auto-title the conversation after the first exchange
     _maybe_auto_title(db, conv, body.text)
-
     return {"message": msg}
 
 
@@ -129,13 +142,27 @@ def _model_for(conv: dict) -> str:
 
 
 def _build_system_prompt(db: Any, conv: dict) -> str:
-    """Build a system prompt, optionally enriched with work knowledge."""
+    """Build a system prompt, optionally enriched with work knowledge and user memory."""
     base = (
         "You are Orivellum, a sovereign local-first AI assistant. "
         "You help the user think through their research, synthesise documents, "
         "generate ideas, and manage knowledge. Be concise, precise, and honest. "
         "Never fabricate citations or facts."
     )
+
+    # Prepend durable user memory facts
+    try:
+        with db._lock:
+            mem_rows = db._conn.execute(
+                "SELECT key, value FROM user_memory ORDER BY created_at DESC LIMIT 20"
+            ).fetchall()
+        if mem_rows:
+            mem_block = "MEMORY (durable facts about the user):\n" + "\n".join(
+                f"  {r['key']}: {r['value']}" for r in mem_rows
+            )
+            base = mem_block + "\n\n" + base
+    except Exception:
+        pass  # user_memory table may not exist yet on old schemas
 
     work_id = conv.get("work_id")
     if not work_id:
@@ -219,7 +246,7 @@ async def _call_ai(messages: list[dict], model: str) -> str:
         return _UNAVAILABLE
 
 
-async def _stream_response(db: Any, conv: dict, user_text: str):
+async def _stream_response(db: Any, conv: dict, user_text: str, deep: bool = False):
     """SSE generator — streams tokens, stores final reply, auto-titles.
 
     Handles client disconnect (GeneratorExit) by persisting whatever tokens
@@ -297,6 +324,69 @@ async def _stream_response(db: Any, conv: dict, user_text: str):
 # ──────────────────────────────────────────────────────────────────────────────
 # Helpers
 # ──────────────────────────────────────────────────────────────────────────────
+
+def _deep_response(messages: list[dict], model: str) -> str:
+    """Run the cognition council synchronously (called via asyncio.to_thread)."""
+    try:
+        from orivellum.capabilities.cognition import deliberate
+        cfg = get_config()
+        result = deliberate(messages, base_url=cfg.serving.base_url, model=model)
+        return result or _UNAVAILABLE
+    except Exception as exc:
+        logger.warning("Cognition council failed: %s", exc)
+        return _UNAVAILABLE
+
+
+_MEMORY_PATTERNS = ("remember that", "my name is", "i prefer", "i like", "i dislike",
+                     "i always", "i never", "i'm", "i am", "my email", "my phone")
+
+
+def _maybe_capture_memory(db: Any, conv_id: str, user_text: str) -> None:
+    """Extract durable facts from the user's message and upsert into user_memory."""
+    lower = user_text.lower().strip()
+    if not any(p in lower for p in _MEMORY_PATTERNS):
+        return
+    try:
+        cfg = get_config()
+        from orivellum.capabilities.cognition import _call_sync
+        prompt = (
+            "Extract durable facts from this message that are worth remembering long-term. "
+            "Facts must be personal preferences, names, or persistent instructions. "
+            "Return ONLY valid JSON: "
+            '{"facts": [{"key": "short_key", "value": "fact text"}]} '
+            "or {\"facts\": []} if nothing is worth remembering.\n\n"
+            f"Message: {user_text[:500]}"
+        )
+        raw = _call_sync([{"role": "user", "content": prompt}],
+                         base_url=cfg.serving.base_url, model=cfg.serving.workhorse_model, timeout=15)
+        if not raw:
+            return
+        parsed = json.loads(raw.strip())
+        facts  = parsed.get("facts", [])
+        if not facts:
+            return
+        import uuid
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc).isoformat()
+        with db._lock:
+            for fact in facts[:5]:
+                key   = str(fact.get("key", ""))[:80]
+                value = str(fact.get("value", ""))[:500]
+                if not key or not value:
+                    continue
+                db._conn.execute(
+                    """INSERT INTO user_memory(id, key, value, source_conv_id, created_at)
+                       VALUES(?, ?, ?, ?, ?)
+                       ON CONFLICT(key) DO UPDATE SET value=excluded.value,
+                         source_conv_id=excluded.source_conv_id,
+                         created_at=excluded.created_at""",
+                    (str(uuid.uuid4()), key, value, conv_id, now),
+                )
+            db._conn.commit()
+        logger.info("Automemory: captured %d fact(s) from conversation %s", len(facts), conv_id)
+    except Exception as exc:
+        logger.debug("Automemory extraction skipped: %s", exc)
+
 
 def _maybe_auto_title(db: Any, conv: dict, first_user_text: str) -> None:
     """Set a conversation title from the first user message if still default."""

@@ -52,6 +52,14 @@ async def lifespan(app: FastAPI):
     # Step 5: Wire deps
     _deps.init(db=db, cfg=cfg)
 
+    # Step 6: Start background daemons
+    try:
+        from orivellum.capabilities.nightshift import start_nightshift_daemon
+        start_nightshift_daemon(db=db, cfg=cfg)
+        logger.info("Nightshift daemon started")
+    except Exception as ns_exc:
+        logger.warning("Could not start nightshift daemon: %s", ns_exc)
+
     logger.info("API ready — serving on %s:%d", cfg.server.host, cfg.server.port)
     yield
 

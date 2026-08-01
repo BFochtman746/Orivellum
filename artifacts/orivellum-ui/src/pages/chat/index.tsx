@@ -9,16 +9,17 @@ import {
   useCreateConversation,
   useDeleteConversation,
   useUpdateConversation,
-  useGetSystemHealth,
   useGetWork,
   useGetSystemModels,
   getGetSystemModelsQueryKey,
   getListConversationsQueryKey,
   type ModelOption,
   getGetConversationQueryKey,
-  getGetSystemHealthQueryKey,
   getGetWorkQueryKey,
+  useGetWorkDocuments,
+  getGetWorkDocumentsQueryKey,
 } from "@workspace/api-client-react";
+import { useConnectivity } from "@/lib/useConnectivity";
 import { useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { Card } from "@/components/ui/card";
@@ -37,8 +38,9 @@ import {
 import {
   MessageSquare, Plus, Send, Search, Bot, User, Copy, Check,
   Trash2, Wifi, WifiOff, Loader2, Cpu, Pencil, BookOpen, Archive, ArchiveRestore,
-  AlertTriangle,
+  AlertTriangle, FolderOpen, FileText, ChevronRight, X as XIcon, Zap, Brain,
 } from "lucide-react";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import rehypeHighlight from "rehype-highlight";
 import "highlight.js/styles/atom-one-dark.css";
@@ -178,11 +180,11 @@ function MarkdownContent({ text }: { text: string }) {
 
 // ─── Streaming helper ─────────────────────────────────────────────────────────
 
-async function* streamChat(convId: string, text: string, signal?: AbortSignal): AsyncGenerator<string> {
+async function* streamChat(convId: string, text: string, signal?: AbortSignal, deep = false): AsyncGenerator<string> {
   const resp = await fetch(`${API_BASE}/conversations/${convId}/messages`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text, stream: true }),
+    body: JSON.stringify({ text, stream: true, deep }),
     keepalive: true,
     signal,
   });
@@ -212,6 +214,84 @@ async function* streamChat(convId: string, text: string, signal?: AbortSignal): 
       } catch { /* ignore */ }
     }
   }
+}
+
+// ─── Work Files Drawer ────────────────────────────────────────────────────────
+
+function WorkFilesDrawer({ workId, workTitle }: { workId: string; workTitle: string }) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
+
+  const { data } = useGetWorkDocuments(workId, {
+    query: { queryKey: getGetWorkDocumentsQueryKey(workId), enabled: open, staleTime: 30_000 },
+  });
+  const docs = (data?.documents ?? []).filter(d =>
+    !search || (d.title ?? d.source ?? "").toLowerCase().includes(search.toLowerCase())
+  );
+
+  const label = (d: { title?: string | null; source?: string | null }) =>
+    d.title ?? (d.source ? d.source.split("/").pop() ?? d.source : "Document");
+
+  return (
+    <>
+      <button
+        onClick={() => setOpen(true)}
+        title="Work files"
+        className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted/60 border border-border/50 transition-colors"
+      >
+        <FolderOpen className="w-3.5 h-3.5" />
+        <span className="hidden sm:inline">Files</span>
+      </button>
+      <Sheet open={open} onOpenChange={setOpen}>
+        <SheetContent side="right" className="w-80 p-0 flex flex-col">
+          <SheetHeader className="px-4 py-3 border-b border-border/40">
+            <SheetTitle className="text-sm font-serif flex items-center gap-2">
+              <BookOpen className="w-4 h-4 text-primary" />
+              {workTitle} — Documents
+            </SheetTitle>
+          </SheetHeader>
+          <div className="px-3 py-2 border-b border-border/30">
+            <div className="relative">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3 h-3 text-muted-foreground pointer-events-none" />
+              <input
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                placeholder="Filter documents…"
+                className="w-full pl-7 pr-2 py-1.5 text-xs rounded-md border border-border/50 bg-background outline-none focus:ring-1 focus:ring-primary/40"
+              />
+            </div>
+          </div>
+          <ScrollArea className="flex-1">
+            {docs.length === 0 ? (
+              <p className="text-xs text-muted-foreground text-center py-8">
+                {search ? "No matches" : "No documents in this Work yet"}
+              </p>
+            ) : (
+              <div className="p-2 space-y-1">
+                {docs.map(d => (
+                  <a
+                    key={d.id}
+                    href={`/library/${d.id}`}
+                    onClick={e => { e.preventDefault(); window.location.href = `/library/${d.id}`; }}
+                    className="flex items-center gap-2 px-2 py-2 rounded-md hover:bg-muted/50 transition-colors cursor-pointer group"
+                  >
+                    <FileText className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-medium truncate">{label(d)}</p>
+                      <p className="text-[10px] font-mono text-muted-foreground">
+                        {d.kind ?? "doc"} · {d.readiness ?? "unknown"}
+                      </p>
+                    </div>
+                    <ChevronRight className="w-3 h-3 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+                  </a>
+                ))}
+              </div>
+            )}
+          </ScrollArea>
+        </SheetContent>
+      </Sheet>
+    </>
+  );
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -247,12 +327,12 @@ export default function Chat() {
   const { data: activeConv, isLoading: loadingActive } = useGetConversation(activeId!, {
     query: { enabled: !!activeId, queryKey: getGetConversationQueryKey(activeId!) },
   });
-  const { data: sysHealth } = useGetSystemHealth({ query: { queryKey: getGetSystemHealthQueryKey(), refetchInterval: 15_000, staleTime: 10_000 } });
+  const { aiReachable: aiOnline, recheckNow: recheckHealth } = useConnectivity();
   const { data: modelsData } = useModels();
-  const aiOnline = sysHealth?.services?.ai?.status === "ok";
   const models = modelsData?.models ?? [];
   const defaultModel = modelsData?.default ?? "";
 
+  const [deepMode, setDeepMode] = useState(false);
   const [newConvModel, setNewConvModel] = useState<string>("");
   const createConv = useCreateConversation();
   const deleteConv = useDeleteConversation();
@@ -397,7 +477,7 @@ export default function Chat() {
       scheduleFlush();
 
       try {
-        for await (const token of streamChat(convId, text, controller.signal)) {
+        for await (const token of streamChat(convId, text, controller.signal, deepMode)) {
           accumulatorRef.current += token;
         }
         const finalText = accumulatorRef.current;
@@ -594,16 +674,19 @@ export default function Chat() {
                   )}
                 </div>
               </div>
-              {/* Model picker in header */}
-              {models.length > 0 && activeId && (
-                <ModelPicker
-                  convId={activeId}
-                  currentModel={conv?.model}
-                  models={models}
-                  defaultModel={defaultModel}
-                  onChanged={invalidateActive}
-                />
-              )}
+              {/* Right side: Files drawer + model picker */}
+              <div className="flex items-center gap-2">
+                {convWorkId && <WorkFilesDrawer workId={convWorkId} workTitle={linkedWorkTitle ?? "Work"} />}
+                {models.length > 0 && activeId && (
+                  <ModelPicker
+                    convId={activeId}
+                    currentModel={conv?.model}
+                    models={models}
+                    defaultModel={defaultModel}
+                    onChanged={invalidateActive}
+                  />
+                )}
+              </div>
             </div>
 
             {/* Messages */}
@@ -696,11 +779,22 @@ export default function Chat() {
                   value={draft}
                   onChange={(e) => setDraft(e.target.value)}
                   placeholder={aiOnline ? "Ask anything… (Enter to send, Shift+Enter for newline)" : "AI offline — messages saved locally"}
-                  className="pr-12 resize-none py-3 text-sm"
+                  className="pr-24 resize-none py-3 text-sm"
                   rows={2}
                   disabled={sending}
                   onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(e); } }}
                 />
+                {/* Deep/Fast toggle */}
+                <button
+                  type="button"
+                  onClick={() => setDeepMode(v => !v)}
+                  title={deepMode ? "Deep mode — 3-pass council (click for Fast)" : "Fast mode — single call (click for Deep)"}
+                  className={`absolute right-11 top-2 h-8 px-2 rounded flex items-center gap-1 text-xs font-mono transition-colors
+                    ${deepMode ? "bg-primary/15 text-primary border border-primary/30" : "text-muted-foreground/50 hover:text-muted-foreground"}`}
+                >
+                  {deepMode ? <Brain className="w-3.5 h-3.5" /> : <Zap className="w-3.5 h-3.5" />}
+                  <span className="hidden sm:inline">{deepMode ? "Deep" : "Fast"}</span>
+                </button>
                 <Button type="submit" size="icon" disabled={!draft.trim() || sending} className="absolute right-2 top-2 h-8 w-8">
                   {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
                 </Button>

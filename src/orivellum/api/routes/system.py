@@ -158,6 +158,58 @@ def get_suggestions(work_id: str | None = None, limit: int = 5):
     return {"suggestions": [dict(r) for r in rows]}
 
 
+@router.get("/system/jobs")
+def system_jobs():
+    """Return documents currently in-progress (not ready/error/no_text) and the last nightshift run."""
+    db = get_db()
+    with db._lock:
+        docs = db._conn.execute(
+            """SELECT d.id, d.title, d.source, d.readiness, d.work_id,
+                      w.title AS work_title
+               FROM documents d
+               LEFT JOIN works w ON w.id = d.work_id
+               WHERE d.readiness NOT IN ('ready', 'error', 'no_text')
+               ORDER BY d.created_at DESC
+               LIMIT 50"""
+        ).fetchall()
+        try:
+            nightshift = db._conn.execute(
+                "SELECT * FROM nightshift_runs ORDER BY ran_at DESC LIMIT 1"
+            ).fetchone()
+        except Exception:
+            nightshift = None
+    return {
+        "jobs": [dict(d) for d in docs],
+        "total": len(docs),
+        "nightshift": dict(nightshift) if nightshift else None,
+    }
+
+
+@router.get("/system/user-memory")
+def list_user_memory():
+    db = get_db()
+    try:
+        with db._lock:
+            rows = db._conn.execute(
+                "SELECT id, key, value, source_conv_id, created_at FROM user_memory ORDER BY created_at DESC"
+            ).fetchall()
+        return {"memories": [dict(r) for r in rows]}
+    except Exception:
+        return {"memories": []}
+
+
+@router.delete("/system/user-memory/{memory_id}")
+def delete_user_memory(memory_id: str):
+    db = get_db()
+    try:
+        with db._lock:
+            db._conn.execute("DELETE FROM user_memory WHERE id=?", (memory_id,))
+            db._conn.commit()
+        return {"deleted": memory_id}
+    except Exception as exc:
+        raise HTTPException(500, f"Could not delete memory: {exc}")
+
+
 @router.get("/system/settings/ai-extraction")
 def get_ai_extraction_setting():
     """Return whether LLM-powered knowledge extraction is enabled."""

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from orivellum.api._deps import get_db
@@ -110,6 +110,85 @@ def works_knowledge(work_id: str, kind: str | None = None):
         raise HTTPException(404, f"Work {work_id!r} not found")
     items = db.list_knowledge(work_id=work_id, kind=kind)
     return {"knowledge": items, "count": len(items)}
+
+
+@router.post("/works/{work_id}/quiz")
+async def generate_quiz(work_id: str, count: int = 5):
+    """Generate multiple-choice quiz questions from a Work's knowledge base using the AI."""
+    import asyncio, json, logging
+    db = get_db()
+    if not db.get_work(work_id):
+        raise HTTPException(404, f"Work {work_id!r} not found")
+
+    items = db.list_knowledge(work_id=work_id, limit=20)
+    if not items:
+        raise HTTPException(422, "This Work has no knowledge items yet — import and process some documents first.")
+
+    knowledge_text = "\n".join(
+        f"- {it.get('kind','fact').upper()}: {it.get('text','')}" for it in items[:20]
+    )
+    work = db.get_work(work_id)
+    title = (work.get("title") or "this topic") if work else "this topic"
+
+    prompt = (
+        f'You are an expert quiz generator. Based on the following knowledge items about "{title}", '
+        f'generate exactly {count} multiple-choice questions that test real understanding. '
+        'Each question must have exactly 4 options (A–D), one correct answer index (0-based), '
+        'and a short explanation of why the correct answer is right.\n\n'
+        'Return ONLY valid JSON with no markdown, no commentary, no code fences. '
+        'Format:\n'
+        '{"questions":[{"q":"Question?","options":["A text","B text","C text","D text"],"answer":0,"explanation":"..."}]}\n\n'
+        f'Knowledge items:\n{knowledge_text}'
+    )
+
+    from orivellum.config import get_config
+    cfg = get_config()
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=60) as client:
+            resp = await client.post(
+                f"{cfg.serving.base_url}/chat/completions",
+                json={"model": cfg.serving.model, "messages": [{"role": "user", "content": prompt}], "stream": False},
+            )
+            resp.raise_for_status()
+            content = resp.json()["choices"][0]["message"]["content"]
+            # Strip markdown fences if the model added them
+            content = content.strip()
+            if content.startswith("```"):
+                content = content.split("```")[1]
+                if content.startswith("json"):
+                    content = content[4:]
+            parsed = json.loads(content)
+            return {"questions": parsed["questions"][:count], "work_id": work_id}
+    except json.JSONDecodeError as exc:
+        raise HTTPException(502, f"AI returned invalid JSON: {exc}")
+    except Exception as exc:
+        logging.getLogger("orivellum").warning("Quiz generation failed: %s", exc)
+        raise HTTPException(503, "AI is unavailable. Start Lemonade or Ollama to generate quizzes.")
+
+
+@router.get("/knowledge/ask")
+def knowledge_ask(
+    q: str = Query(..., description="Search query"),
+    work_id: str | None = Query(None, description="Limit to a specific work"),
+    limit: int = Query(12, le=50),
+):
+    """Cross-work knowledge and chunk search. Pass work_id to scope to one Work."""
+    db = get_db()
+    if not q.strip():
+        return {"knowledge": [], "chunks": [], "query": q}
+    try:
+        knowledge = db.search_knowledge(q, work_id=work_id, limit=limit)
+        chunks    = db.search_chunks(q,    work_id=work_id, limit=limit)
+    except Exception as exc:
+        raise HTTPException(500, f"Search failed: {exc}")
+    return {
+        "knowledge": [dict(r) for r in knowledge],
+        "chunks":    [dict(r) for r in chunks],
+        "query":     q,
+        "total":     len(knowledge) + len(chunks),
+        "work_id":   work_id,
+    }
 
 
 @router.get("/works/{work_id}/search")
