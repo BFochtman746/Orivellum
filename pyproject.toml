@@ -32,6 +32,9 @@ dependencies = [
     # Output
     "reportlab>=5.0.0",
     "itsdangerous>=2.1",
+    # High-quality local TTS (Kokoro v0.19 via ONNX — human-quality voices, CPU-only)
+    "kokoro-onnx>=0.4.5",
+    "soundfile>=0.12.1",
 ]
 
 [project.optional-dependencies]

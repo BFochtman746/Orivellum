@@ -245,7 +245,12 @@ def _extract_csv(path: Path) -> ExtractionResult:
         text = path.read_text(encoding="utf-8", errors="replace")
         reader = csv.reader(io.StringIO(text))
         rows = ["\t".join(r) for r in reader]
-        full = "\n".join(rows[:2000])  # cap at 2000 rows
+        # No artificial cap — extract everything; guard only at 500k rows
+        cap = 500_000
+        truncated = len(rows) > cap
+        full = "\n".join(rows[:cap])
+        if truncated:
+            full += f"\n\n[Truncated: showing first {cap:,} of {len(rows):,} rows]"
         return ExtractionResult(
             kind="csv",
             full_text=full,

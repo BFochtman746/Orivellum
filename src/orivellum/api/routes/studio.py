@@ -5,6 +5,7 @@ import logging
 import re
 import subprocess
 import tempfile
+import threading
 import uuid
 from pathlib import Path
 
@@ -32,6 +33,31 @@ def _rotate_outputs(out_dir: Path) -> None:
             old.unlink(missing_ok=True)
     except Exception as exc:
         logger.warning("Output rotation failed: %s", exc)
+
+
+# ── Kokoro ONNX — lazy singleton ─────────────────────────────────────────────
+# Loaded once on first TTS call; models (~500 MB) auto-download to HF cache.
+_kokoro_lock = threading.Lock()
+_kokoro_instance = None  # type: ignore[assignment]
+
+
+def _get_kokoro():
+    """Return a cached Kokoro instance, loading it on first call."""
+    global _kokoro_instance
+    if _kokoro_instance is not None:
+        return _kokoro_instance
+    with _kokoro_lock:
+        if _kokoro_instance is not None:
+            return _kokoro_instance
+        try:
+            from kokoro_onnx import Kokoro  # type: ignore[import]
+            logger.info("Loading Kokoro ONNX model (first-run download may take a moment)…")
+            _kokoro_instance = Kokoro("kokoro-v0_19.onnx", "voices.bin")
+            logger.info("Kokoro ONNX ready.")
+        except Exception as exc:
+            logger.warning("Kokoro ONNX unavailable: %s", exc)
+            _kokoro_instance = None
+    return _kokoro_instance
 
 
 # ── Voices ────────────────────────────────────────────────────────────────────
@@ -123,9 +149,57 @@ async def synthesize_speech(body: TTSRequest):
                 return FileResponse(tmp.name, media_type="audio/mpeg",
                                     filename="speech.mp3")
     except Exception as exc:
-        logger.info("AI server TTS unavailable (%s) — falling back to espeak-ng", exc)
+        logger.info("AI server TTS unavailable (%s) — trying Kokoro ONNX", exc)
 
-    # --- Strategy 2: espeak-ng (always available offline) ---
+    # --- Strategy 2: Kokoro ONNX (local, human-quality, CPU-only) ---
+    try:
+        kokoro = _get_kokoro()
+        if kokoro is not None:
+            import numpy as np
+            import soundfile as sf
+
+            # Kokoro voice IDs match our builtin voice IDs directly
+            kokoro_voice = body.voice if body.voice in {
+                "af_heart", "af_bella", "am_adam", "bf_emma", "bm_george",
+            } else "af_heart"
+
+            samples, sample_rate = kokoro.create(
+                body.text,
+                voice=kokoro_voice,
+                speed=body.speed,
+                lang="en-us",
+            )
+
+            out_dir = Path(cfg.data_dir) / "outputs"
+            out_dir.mkdir(parents=True, exist_ok=True)
+
+            wav_tmp = tempfile.NamedTemporaryFile(
+                delete=False, dir=out_dir, suffix=".wav"
+            )
+            sf.write(wav_tmp.name, samples, sample_rate)
+            wav_tmp.close()
+
+            mp3_tmp = tempfile.NamedTemporaryFile(
+                delete=False, dir=out_dir, suffix=".mp3"
+            )
+            mp3_path = mp3_tmp.name
+            mp3_tmp.close()
+
+            ff = subprocess.run(
+                ["ffmpeg", "-y", "-i", wav_tmp.name,
+                 "-codec:a", "libmp3lame", "-q:a", "2", mp3_path],
+                capture_output=True, timeout=60,
+            )
+            Path(wav_tmp.name).unlink(missing_ok=True)
+
+            if ff.returncode == 0:
+                _rotate_outputs(out_dir)
+                return FileResponse(mp3_path, media_type="audio/mpeg",
+                                    filename="speech.mp3")
+    except Exception as exc:
+        logger.warning("Kokoro ONNX TTS failed (%s) — falling back to espeak-ng", exc)
+
+    # --- Strategy 3: espeak-ng (always available offline, robotic fallback) ---
     try:
         out_dir = Path(cfg.data_dir) / "outputs"
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -277,25 +351,37 @@ def synthesize_document(body: DocumentTTSRequest):
 
     espeak_voice = _ESPEAK_VOICE_MAP.get(body.voice, "en+f4")
     wpm          = max(80, min(400, int(175 * body.speed)))
+    kokoro_voice = body.voice if body.voice in {
+        "af_heart", "af_bella", "am_adam", "bf_emma", "bm_george",
+    } else "af_heart"
 
     wav_paths: list[Path] = []
     tmp_dir   = Path(tempfile.mkdtemp())
 
-    # ── Strategy 1: AI TTS endpoint ───────────────────────────────────────────
+    # ── Determine best available TTS engine once ──────────────────────────────
+    # Priority: 1) AI server  2) Kokoro ONNX  3) espeak-ng (robotic fallback)
     ai_ok = False
     try:
         import httpx
-        # Quick probe — only attempt AI if the endpoint is reachable
         probe = httpx.get(f"{cfg.serving.base_url}/models", timeout=2.0)
         ai_ok = probe.status_code == 200
     except Exception:
         ai_ok = False
+
+    kokoro_engine = None if ai_ok else _get_kokoro()   # skip Kokoro if AI server is up
+
+    try:
+        import soundfile as _sf
+        import numpy as _np
+    except ImportError:
+        _sf = None  # type: ignore[assignment]
 
     try:
         for idx, seg in enumerate(segments):
             wav_path = tmp_dir / f"seg_{idx:04d}.wav"
             synthesised = False
 
+            # Strategy 1: AI server TTS
             if ai_ok:
                 try:
                     import httpx as _hx
@@ -312,6 +398,18 @@ def synthesize_document(body: DocumentTTSRequest):
                 except Exception:
                     pass
 
+            # Strategy 2: Kokoro ONNX (human-quality, local)
+            if not synthesised and kokoro_engine is not None and _sf is not None:
+                try:
+                    samples, sample_rate = kokoro_engine.create(
+                        seg, voice=kokoro_voice, speed=body.speed, lang="en-us",
+                    )
+                    _sf.write(str(wav_path), samples, sample_rate)
+                    synthesised = True
+                except Exception as ke:
+                    logger.warning("Kokoro failed on segment %d: %s", idx, ke)
+
+            # Strategy 3: espeak-ng (always-available robotic fallback)
             if not synthesised:
                 res = subprocess.run(
                     ["espeak-ng", "-v", espeak_voice, "-s", str(wpm),
@@ -323,7 +421,7 @@ def synthesize_document(body: DocumentTTSRequest):
 
             wav_paths.append(wav_path)
 
-        # ── Concatenate all WAVs → single MP3 ─────────────────────────────────
+        # ── Concatenate all WAVs → single high-quality MP3 ────────────────────
         concat_list = tmp_dir / "concat.txt"
         concat_list.write_text(
             "\n".join(f"file '{p}'" for p in wav_paths), encoding="utf-8"
@@ -336,7 +434,8 @@ def synthesize_document(body: DocumentTTSRequest):
         ff = subprocess.run(
             ["ffmpeg", "-y", "-f", "concat", "-safe", "0",
              "-i", str(concat_list),
-             "-codec:a", "libmp3lame", "-q:a", "4", str(mp3_path)],
+             "-codec:a", "libmp3lame", "-q:a", "2",   # q:a 2 = ~190 kbps, near-transparent
+             str(mp3_path)],
             capture_output=True, timeout=300,
         )
         if ff.returncode != 0:
