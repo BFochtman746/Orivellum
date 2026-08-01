@@ -18,3 +18,4 @@
 - [Mobile app improvements](mobile-improvements.md) — Library tab added; markdown via react-native-markdown-display in AI bubbles; model picker (ActionSheetIOS/Modal); briefing greeting; tappable activity rows; conv_count on works.
 - [Library page improvements](library-improvements.md) — Work filter chip added; import dialog uses Select for work picker; duplicate upload navigates to existing doc; backup download; file download hover button.
 - [Orivellum polling patterns](orivellum-polling-patterns.md) — Conditional refetchInterval throughout; docs poll at 4s while "imported"; health polls 10-15s always; dashboard/lists poll 30s always.
+- [Orivellum media capabilities](orivellum-media-capabilities.md) — TTS via espeak-ng+ffmpeg; OCR via tesseract5 (probe needed); PDF 3-tier fallback; DOCX tables extracted; XLSX 5000-row cap.

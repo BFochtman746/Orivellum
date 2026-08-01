@@ -46,38 +46,66 @@ class ExtractionResult:
 # ---------------------------------------------------------------------------
 
 def _extract_pdf(path: Path) -> ExtractionResult:
+    # --- pdfplumber (primary: best for text-layer PDFs) ---
     try:
         import pdfplumber
-    except ImportError:
-        return _extract_fallback(path, "pdf")
-
-    pages: list[PageSegment] = []
-    headings: list[str] = []
-    try:
+        pages: list[PageSegment] = []
+        headings: list[str] = []
         with pdfplumber.open(path) as pdf:
             for i, page in enumerate(pdf.pages, 1):
                 text = (page.extract_text() or "").strip()
                 if not text:
                     continue
                 seg = PageSegment(page=i, text=text)
-                # Very rough heading detection: short lines at start of page
                 first_line = text.splitlines()[0].strip() if text else ""
                 if first_line and len(first_line) < 120:
                     seg.heading = first_line
                     headings.append(first_line)
                 pages.append(seg)
+        if pages:
+            full = "\n\n".join(p.text for p in pages)
+            return ExtractionResult(
+                kind="pdf",
+                full_text=full,
+                word_count=len(full.split()),
+                pages=pages,
+                headings=headings,
+            )
+        logger.info("pdfplumber found no text in %s — trying pypdf", path.name)
     except Exception as exc:
-        logger.warning("pdfplumber failed on %s: %s", path.name, exc)
-        return _extract_fallback(path, "pdf")
+        logger.warning("pdfplumber failed on %s: %s — trying pypdf", path.name, exc)
 
-    full = "\n\n".join(p.text for p in pages)
-    return ExtractionResult(
-        kind="pdf",
-        full_text=full,
-        word_count=len(full.split()),
-        pages=pages,
-        headings=headings,
-    )
+    # --- pypdf (secondary: handles more edge cases / newer PDFs) ---
+    try:
+        import pypdf
+        reader = pypdf.PdfReader(str(path))
+        pages2: list[PageSegment] = []
+        headings2: list[str] = []
+        for i, page in enumerate(reader.pages, 1):
+            text = (page.extract_text() or "").strip()
+            if not text:
+                continue
+            seg = PageSegment(page=i, text=text)
+            first_line = text.splitlines()[0].strip() if text else ""
+            if first_line and len(first_line) < 120:
+                seg.heading = first_line
+                headings2.append(first_line)
+            pages2.append(seg)
+        if pages2:
+            full2 = "\n\n".join(p.text for p in pages2)
+            return ExtractionResult(
+                kind="pdf",
+                full_text=full2,
+                word_count=len(full2.split()),
+                pages=pages2,
+                headings=headings2,
+            )
+        logger.info("pypdf also found no text in %s — falling back to markitdown", path.name)
+    except Exception as exc:
+        logger.warning("pypdf failed on %s: %s — falling back to markitdown", path.name, exc)
+
+    # --- markitdown (final fallback: handles image-heavy / complex PDFs) ---
+    return _extract_fallback(path, "pdf")
 
 
 # ---------------------------------------------------------------------------
@@ -91,27 +119,54 @@ def _extract_docx(path: Path) -> ExtractionResult:
         return _extract_fallback(path, "docx")
 
     headings: list[str] = []
-    paragraphs: list[str] = []
+    blocks: list[str] = []
     try:
         doc = _docx.Document(str(path))
-        for para in doc.paragraphs:
-            text = para.text.strip()
-            if not text:
-                continue
-            paragraphs.append(text)
-            # python-docx style names start with "Heading"
-            if para.style and para.style.name.startswith("Heading"):
-                headings.append(text)
+
+        # Preserve document order by iterating the XML body children
+        from docx.oxml.ns import qn  # type: ignore
+        body = doc.element.body
+        for child in body.iterchildren():
+            tag = child.tag.split("}")[-1] if "}" in child.tag else child.tag
+
+            if tag == "p":
+                # Paragraph
+                para_text = "".join(n.text or "" for n in child.iter(qn("w:t"))).strip()
+                if not para_text:
+                    continue
+                blocks.append(para_text)
+                style_name = ""
+                pPr = child.find(qn("w:pPr"))
+                if pPr is not None:
+                    pStyle = pPr.find(qn("w:pStyle"))
+                    if pStyle is not None:
+                        style_name = pStyle.get(qn("w:val"), "")
+                if style_name.lower().startswith("heading"):
+                    headings.append(para_text)
+
+            elif tag == "tbl":
+                # Table — extract all cell text as a TSV block
+                rows_text: list[str] = []
+                for tr in child.iter(qn("w:tr")):
+                    cells = []
+                    for tc in tr.iter(qn("w:tc")):
+                        cell_text = "".join(n.text or "" for n in tc.iter(qn("w:t"))).strip()
+                        cells.append(cell_text)
+                    if any(cells):
+                        rows_text.append("\t".join(cells))
+                if rows_text:
+                    blocks.append("[Table]\n" + "\n".join(rows_text))
+
     except Exception as exc:
         logger.warning("python-docx failed on %s: %s", path.name, exc)
         return _extract_fallback(path, "docx")
 
-    full = "\n".join(paragraphs)
-    # Group into ~40-paragraph pages for the chunker
+    full = "\n".join(blocks)
+    # Group into ~40-block pages for the chunker
     chunk_size = 40
     pages = [
-        PageSegment(page=i + 1, text="\n".join(paragraphs[i * chunk_size:(i + 1) * chunk_size]))
-        for i in range(max(1, (len(paragraphs) + chunk_size - 1) // chunk_size))
+        PageSegment(page=i + 1, text="\n".join(blocks[i * chunk_size:(i + 1) * chunk_size]))
+        for i in range(max(1, (len(blocks) + chunk_size - 1) // chunk_size))
     ]
     return ExtractionResult(
         kind="docx",
@@ -142,10 +197,18 @@ def _extract_excel(path: Path) -> ExtractionResult:
             for row in sheet.iter_rows(values_only=True):
                 cells = [str(c) if c is not None else "" for c in row]
                 line = "\t".join(cells).strip()
-                if line and line != "\t" * len(cells):
+                if line and line.replace("\t", ""):
                     rows_text.append(line)
             if rows_text:
-                sheet_text = f"[Sheet: {sheet.title}]\n" + "\n".join(rows_text[:500])
+                # Cap at 5000 rows per sheet (was 500); include row count note if truncated
+                cap = 5000
+                truncated = len(rows_text) > cap
+                sheet_text = (
+                    f"[Sheet: {sheet.title}]"
+                    + (f" ({len(rows_text)} rows — showing first {cap})" if truncated else "")
+                    + "\n"
+                    + "\n".join(rows_text[:cap])
+                )
                 parts.append(sheet_text)
                 headings.append(sheet.title)
                 pages.append(PageSegment(page=idx, text=sheet_text, heading=sheet.title))
@@ -219,21 +282,74 @@ def _extract_text(path: Path, kind: str = "text") -> ExtractionResult:
 # Image (OCR)
 # ---------------------------------------------------------------------------
 
+def _probe_tesseract() -> None:
+    """Ensure pytesseract can find the tesseract binary.
+
+    On NixOS/Replit the binary lands in the nix store but may not be
+    on the process PATH.  We probe common locations and set
+    pytesseract.pytesseract.tesseract_cmd explicitly when needed.
+    """
+    import shutil
+    import subprocess as _sp
+    import pytesseract as _pt
+
+    if shutil.which("tesseract"):
+        return  # already on PATH
+
+    # Ask the shell for the path (shell PATH is broader than process PATH on Replit)
+    try:
+        result = _sp.run(
+            ["bash", "-lc", "which tesseract"],
+            capture_output=True, text=True, timeout=5,
+        )
+        candidate = result.stdout.strip()
+        if candidate and Path(candidate).is_file():
+            _pt.pytesseract.tesseract_cmd = candidate
+            return
+    except Exception:
+        pass
+
+    # Known nix store prefix pattern — walk /nix/store at depth-3 only
+    nix_store = Path("/nix/store")
+    if nix_store.exists():
+        for pkg_dir in nix_store.iterdir():
+            if "tesseract" in pkg_dir.name:
+                candidate = pkg_dir / "bin" / "tesseract"
+                if candidate.is_file():
+                    _pt.pytesseract.tesseract_cmd = str(candidate)
+                    return
+
+
 def _extract_image(path: Path) -> ExtractionResult:
+    # --- pytesseract (primary: requires tesseract binary) ---
     try:
         from PIL import Image
         import pytesseract
+        _probe_tesseract()
         img = Image.open(path)
-        text = pytesseract.image_to_string(img)
-        return ExtractionResult(
-            kind="image",
-            full_text=text,
-            word_count=len(text.split()),
-            pages=[PageSegment(page=1, text=text)],
-        )
+        # Pre-process: convert to RGB so tesseract handles all modes
+        if img.mode not in ("RGB", "L"):
+            img = img.convert("RGB")
+        text = pytesseract.image_to_string(img, config="--psm 6")
+        if text.strip():
+            return ExtractionResult(
+                kind="image",
+                full_text=text,
+                word_count=len(text.split()),
+                pages=[PageSegment(page=1, text=text)],
+            )
+        logger.info("pytesseract returned no text for %s", path.name)
+    except pytesseract.TesseractNotFoundError:
+        logger.warning("tesseract not found — skipping OCR for %s", path.name)
     except Exception as exc:
-        logger.warning("OCR failed on %s: %s", path.name, exc)
-        return ExtractionResult(kind="image", full_text="", word_count=0)
+        logger.warning("pytesseract OCR failed on %s: %s", path.name, exc)
+
+    # --- markitdown fallback (handles some image formats) ---
+    result = _extract_fallback(path, "image")
+    if result.ok:
+        return result
+
+    return ExtractionResult(kind="image", full_text="", word_count=0)
 
 
 # ---------------------------------------------------------------------------
