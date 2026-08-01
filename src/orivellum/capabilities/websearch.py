@@ -1,120 +1,104 @@
-"""Web search via SearXNG — real news, research, and general results with LLM synthesis.
+"""Web search via Tavily — AI-optimised results with full page content + LLM synthesis.
 
-SearXNG is an open-source metasearch engine that simultaneously queries Google,
-Bing, DuckDuckGo, Wikipedia, and many other engines.  We query its JSON API,
-collect the top results, synthesise an answer with the local LLM (so the user
-gets a proper cited response), and return the result.
+Tavily is built specifically for AI agents: it returns extracted page content
+(not just snippets), relevance scores, and optionally a pre-generated answer.
+We take the raw results, feed them to the local LLM for a cited synthesis, and
+return a clean markdown response.
 
-Public SearXNG instances are used by default; a custom instance URL can be
-configured via Settings.  Falls back to a direct-search link on total failure.
+Requires the TAVILY_API_KEY environment variable.  Falls back to a DuckDuckGo
+link if the key is absent or the API is unreachable.
 """
 from __future__ import annotations
 
 import json
 import logging
+import os
 import urllib.parse
 import urllib.request
 
 logger = logging.getLogger("orivellum.websearch")
 
-# ── Public SearXNG instances (tried in order until one responds) ───────────────
-_PUBLIC_INSTANCES = [
-    "https://searxng.site",
-    "https://searx.be",
-    "https://paulgo.io",
-    "https://search.mdosch.de",
-    "https://searx.tiekoetter.com",
-]
-
+_TAVILY_URL  = "https://api.tavily.com/search"
 _MAX_RESULTS = 8
-_TIMEOUT     = 15
-_HEADERS     = {
-    "User-Agent": "Orivellum/1.0 (local AI research assistant)",
-    "Accept":     "application/json",
-}
+_TIMEOUT     = 20
 
 
-def _configured_instance() -> str:
-    """Return the user-configured SearXNG base URL, or the first public instance."""
-    try:
-        from orivellum.api._deps import get_db
-        val = get_db().get_setting("searxng_url", "")
-        if val and val.startswith("http"):
-            return val.rstrip("/")
-    except Exception:
-        pass
-    return _PUBLIC_INSTANCES[0]
+def _api_key() -> str:
+    """Return the Tavily API key from the environment."""
+    return os.environ.get("TAVILY_API_KEY", "").strip()
 
 
-def _query_instance(instance: str, query: str, categories: str = "general,news") -> list[dict]:
-    """Query one SearXNG instance's JSON endpoint and return raw result dicts."""
-    params = urllib.parse.urlencode({
-        "q":          query,
-        "format":     "json",
-        "categories": categories,
-        "language":   "en",
-    })
-    req = urllib.request.Request(f"{instance}/search?{params}", headers=_HEADERS)
+def _fetch_results(query: str, search_depth: str = "basic") -> list[dict]:
+    """Call the Tavily Search API and return raw result dicts.
+
+    search_depth: "basic" (fast, free-tier) or "advanced" (deeper, costs 2 credits).
+    """
+    key = _api_key()
+    if not key:
+        raise RuntimeError("TAVILY_API_KEY is not set")
+
+    payload = json.dumps({
+        "query":        query,
+        "search_depth": search_depth,
+        "max_results":  _MAX_RESULTS,
+        "include_answer": False,   # we synthesise our own with the local LLM
+    }).encode("utf-8")
+
+    req = urllib.request.Request(
+        _TAVILY_URL,
+        data=payload,
+        headers={
+            "Authorization": f"Bearer {key}",
+            "Content-Type":  "application/json",
+            "Accept":        "application/json",
+        },
+        method="POST",
+    )
     with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:
         data = json.loads(resp.read().decode("utf-8"))
-    return data.get("results", [])[:_MAX_RESULTS]
 
-
-def _fetch_results(query: str) -> list[dict]:
-    """Try the configured instance, then each public fallback, return first success."""
-    instances = [_configured_instance()] + [
-        i for i in _PUBLIC_INSTANCES if i != _configured_instance()
-    ]
-    for inst in instances:
-        try:
-            raw = _query_instance(inst, query)
-            if raw:
-                logger.info("SearXNG: %d results from %s", len(raw), inst)
-                return raw
-            logger.debug("SearXNG %s returned 0 results", inst)
-        except Exception as exc:
-            logger.warning("SearXNG instance %s failed: %s", inst, exc)
-    return []
+    results = data.get("results", [])
+    logger.info("Tavily: %d results for %r", len(results), query)
+    return results
 
 
 def _format_results_block(query: str, results: list[dict]) -> str:
-    """Format search results as a clean numbered markdown block."""
+    """Format Tavily results as a clean numbered markdown block (fallback display)."""
     lines: list[str] = []
     for i, r in enumerate(results, 1):
-        title   = (r.get("title") or "").strip()[:200]
-        snippet = (r.get("content") or r.get("snippet") or "").strip()[:400]
-        url     = (r.get("url") or "").strip()
-        pub     = (r.get("publishedDate") or "").strip()[:20]
+        title   = (r.get("title")          or "").strip()[:200]
+        content = (r.get("content")        or "").strip()[:400]
+        url     = (r.get("url")            or "").strip()
+        pub     = (r.get("published_date") or "").strip()[:20]
         if not title or not url:
             continue
         lines.append(f"**[{i}] [{title}]({url})**")
         if pub:
             lines.append(f"*{pub}*")
-        if snippet:
-            lines.append(snippet)
+        if content:
+            lines.append(content)
         lines.append("")
     return "\n".join(lines)
 
 
 def web_search(query: str) -> str:
-    """Search with SearXNG and return a formatted markdown string.
+    """Search with Tavily and return a formatted markdown string (no LLM synthesis).
 
-    This is the simple interface used when a full LLM synthesis isn't available.
-    For a synthesised conversational answer use web_search_synthesize().
+    Used as the simple interface when a full synthesis isn't available.
     Never raises.
     """
     try:
         results = _fetch_results(query)
     except Exception as exc:
-        logger.error("web_search unexpected error: %s", exc)
+        logger.error("web_search error: %s", exc)
         results = []
 
     if not results:
         direct = f"https://duckduckgo.com/?q={urllib.parse.quote_plus(query)}"
         return (
             f"🌐 **Web Search: {query}**\n\n"
-            "No results found — all search engines were unreachable or returned nothing.\n\n"
-            f"[Open in browser]({direct})"
+            "No results found — Tavily API key may be missing or the service is unreachable.\n\n"
+            f"[Search on DuckDuckGo]({direct})"
         )
 
     block = _format_results_block(query, results)
@@ -122,11 +106,13 @@ def web_search(query: str) -> str:
 
 
 def web_search_synthesize(query: str, base_url: str, model: str) -> str:
-    """Search with SearXNG, then have the local LLM synthesise a cited answer.
+    """Search with Tavily, then have the local LLM synthesise a cited answer.
 
-    Returns the synthesised answer with inline [1][2] citations followed by a
-    numbered sources list.  Falls back to the plain formatted results if the
-    LLM call fails.  Never raises.
+    Tavily returns the full extracted content of each page — far more than snippets —
+    so the LLM has rich material to work from.  Returns a synthesised answer with
+    inline [1][2] citations followed by a numbered sources list.
+
+    Falls back to plain formatted results if the LLM call fails.  Never raises.
     """
     try:
         results = _fetch_results(query)
@@ -135,32 +121,36 @@ def web_search_synthesize(query: str, base_url: str, model: str) -> str:
         results = []
 
     if not results:
-        return web_search(query)  # fallback
+        return web_search(query)
 
-    # Build the context block the LLM will read
+    # Build the context block the LLM will read.
+    # Tavily's `content` field is full extracted page text — truncate to 600 chars
+    # per result to stay within a reasonable prompt budget.
     context_lines: list[str] = []
     for i, r in enumerate(results, 1):
-        title   = (r.get("title")   or "").strip()[:200]
-        snippet = (r.get("content") or r.get("snippet") or "").strip()[:500]
-        url     = (r.get("url")     or "").strip()
-        pub     = (r.get("publishedDate") or "").strip()[:20]
-        entry   = f"[{i}] {title}"
+        title   = (r.get("title")          or "").strip()[:200]
+        content = (r.get("content")        or "").strip()[:600]
+        url     = (r.get("url")            or "").strip()
+        pub     = (r.get("published_date") or "").strip()[:20]
+        score   = r.get("score", 0)
+
+        entry = f"[{i}] {title}"
         if pub:
             entry += f" ({pub})"
-        if snippet:
-            entry += f"\n{snippet}"
+        if content:
+            entry += f"\n{content}"
         entry += f"\nURL: {url}"
         context_lines.append(entry)
 
     context = "\n\n".join(context_lines)
 
     synthesis_prompt = (
-        f"You are a research assistant synthesising web search results into a clear, "
-        f"accurate answer.  Use inline citation numbers like [1] or [2] when referencing "
-        f"a source.  Be concise but complete.  Do not invent facts not present in the sources.\n\n"
+        "You are a research assistant synthesising web search results into a clear, "
+        "accurate answer. Use inline citation numbers like [1] or [2] when referencing "
+        "a source. Be concise but complete. Do not invent facts not present in the sources.\n\n"
         f"User query: {query}\n\n"
         f"Search results:\n{context}\n\n"
-        f"Write a well-structured answer to the query, citing sources inline."
+        "Write a well-structured answer to the query, citing sources inline."
     )
 
     try:
@@ -170,7 +160,7 @@ def web_search_synthesize(query: str, base_url: str, model: str) -> str:
             json={
                 "model":       model,
                 "messages":    [{"role": "user", "content": synthesis_prompt}],
-                "max_tokens":  800,
+                "max_tokens":  900,
                 "temperature": 0.2,
             },
             timeout=45,
@@ -184,7 +174,6 @@ def web_search_synthesize(query: str, base_url: str, model: str) -> str:
                 .strip()
             )
             if synthesis:
-                # Build numbered sources footer
                 sources: list[str] = []
                 for i, r in enumerate(results, 1):
                     title = (r.get("title") or "").strip()[:120]
@@ -194,7 +183,7 @@ def web_search_synthesize(query: str, base_url: str, model: str) -> str:
                 return (
                     f"🌐 **{query}**\n\n"
                     f"{synthesis}\n\n"
-                    f"---\n**Sources**\n" + "\n".join(sources)
+                    "---\n**Sources**\n" + "\n".join(sources)
                 )
     except Exception as exc:
         logger.warning("LLM synthesis failed (%s) — returning raw results", exc)
