@@ -104,8 +104,12 @@ Write-Host "Checking pnpm ..." -ForegroundColor $Yellow
 if (Test-CommandExists pnpm) {
   Write-Ok "pnpm found: $(Get-Version pnpm)"
 } else {
-  Write-Step "Installing pnpm via npm ..."
-  npm install -g pnpm
+  Write-Step "Installing pnpm via standalone installer ..."
+  $pnpmInstall = "$env:TEMP\pnpm-install.ps1"
+  (New-Object System.Net.WebClient).DownloadFile("https://get.pnpm.io/install.ps1", $pnpmInstall)
+  powershell -ExecutionPolicy Bypass -File $pnpmInstall
+  $pnpmBin = "$env:LOCALAPPDATA\pnpm"
+  Add-ToUserPath $pnpmBin
   Write-Ok "pnpm installed"
 }
 
