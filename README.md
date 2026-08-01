@@ -8,10 +8,30 @@ A sovereign, local-first knowledge management and AI assistant platform. All dat
 
 Orivellum is two processes: a Python API server and a React/Vite frontend. The frontend sends all `/api/*` requests to the API server via a proxy — you need to wire them together with the env vars below.
 
+### 0. System prerequisites
+
+Install these once with your OS package manager. They are needed for PDF-to-image conversion and OCR; all other Python dependencies are handled by `uv sync`.
+
+**macOS (Homebrew)**
+```bash
+brew install tesseract poppler
+```
+
+**Ubuntu / Debian**
+```bash
+sudo apt-get install -y tesseract-ocr poppler-utils
+```
+
+**Windows**
+- Tesseract: download installer from https://github.com/UB-Mannheim/tesseract/wiki
+- Poppler: download from https://github.com/oschwartz10612/poppler-windows/releases and add `bin/` to your `PATH`
+
+> **Runtime requirement:** Python ≥ 3.12, Node.js ≥ 20, pnpm ≥ 9, uv ≥ 0.4
+
 ### 1. Install dependencies
 
 ```bash
-# Python dependencies
+# Python dependencies (creates a local .venv automatically)
 uv sync
 
 # Frontend dependencies
