@@ -292,7 +292,7 @@ function ImageGenPanel() {
 
         <Button
           onClick={handleGenerate}
-          disabled={!prompt.trim() || loading || !aiOnline}
+          disabled={!prompt.trim() || loading}
           className="w-full gap-2"
         >
           {loading ? (

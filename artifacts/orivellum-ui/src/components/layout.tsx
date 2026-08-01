@@ -396,14 +396,14 @@ function ConvRow({
       <span className="flex-1 truncate">{conv.title ?? "Untitled"}</span>
       <button
         onClick={e => { e.stopPropagation(); onStartRename(conv); }}
-        className="opacity-0 group-hover:opacity-60 hover:!opacity-100 p-0.5 transition-opacity"
+        className="opacity-0 group-hover:opacity-60 [@media(hover:none)]:opacity-60 hover:!opacity-100 p-0.5 transition-opacity"
         title="Rename"
       >
         <Pencil className="w-2.5 h-2.5" />
       </button>
       <button
         onClick={e => { e.stopPropagation(); onArchive(conv, !isArchived); }}
-        className="opacity-0 group-hover:opacity-60 hover:!opacity-100 p-0.5 transition-opacity"
+        className="opacity-0 group-hover:opacity-60 [@media(hover:none)]:opacity-60 hover:!opacity-100 p-0.5 transition-opacity"
         title={isArchived ? "Restore" : "Archive"}
       >
         {isArchived ? <RotateCcw className="w-2.5 h-2.5" /> : <Archive className="w-2.5 h-2.5" />}
