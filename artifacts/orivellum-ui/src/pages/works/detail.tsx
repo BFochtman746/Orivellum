@@ -352,11 +352,25 @@ export default function WorkDetail() {
 
 // ─── Documents tab ────────────────────────────────────────────────────────────
 
+const DOC_BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
+
+async function reprocessWorkDoc(docId: string): Promise<void> {
+  const resp = await fetch(`${DOC_BASE}/library/${docId}/reprocess`, { method: "POST" });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}));
+    throw new Error((err as any).detail ?? "Reprocess failed");
+  }
+}
+
+type ReadinessFilter = "all" | "ready" | "imported" | "error";
+
 function DocumentsTab({ workId }: { workId: string }) {
   const queryClient = useQueryClient();
   const [, navigate] = useLocation();
   const [open, setOpen] = useState(false);
   const [docFilter, setDocFilter] = useState("");
+  const [readinessFilter, setReadinessFilter] = useState<ReadinessFilter>("all");
+  const [retrying, setRetrying] = useState<string | null>(null);
 
   const { data: docsResp, isLoading } = useGetWorkDocuments(workId, {
     query: {
@@ -381,8 +395,7 @@ function DocumentsTab({ workId }: { workId: string }) {
   const handleLink = async (docId: string) => {
     setLinking(true);
     try {
-      const base = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
-      const r = await fetch(`${base}/library/${docId}`, {
+      const r = await fetch(`${DOC_BASE}/library/${docId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ work_id: workId }),
@@ -401,14 +414,48 @@ function DocumentsTab({ workId }: { workId: string }) {
     }
   };
 
+  const handleRetry = async (e: React.MouseEvent, docId: string) => {
+    e.stopPropagation();
+    setRetrying(docId);
+    try {
+      await reprocessWorkDoc(docId);
+      toast.success("Reprocessing started");
+      // Start polling — the refetchInterval will kick in automatically
+      queryClient.invalidateQueries({ queryKey: getGetWorkDocumentsQueryKey(workId) });
+    } catch (err: any) {
+      toast.error(err?.message ?? "Could not reprocess document");
+    } finally {
+      setRetrying(null);
+    }
+  };
+
   if (isLoading) return <Skeleton className="h-64 w-full" />;
   const docs = docsResp?.documents ?? [];
+
+  // Compute readiness counts
+  const readyCnt     = docs.filter((d) => d.readiness === "ready").length;
+  const processingCnt = docs.filter((d) => d.readiness === "imported").length;
+  const errorCnt     = docs.filter((d) => d.readiness === "error" || d.readiness === "no_text").length;
+  const hasNonReady  = processingCnt > 0 || errorCnt > 0;
+
+  // Apply readiness filter first, then text filter
+  const byReadiness = readinessFilter === "all" ? docs
+    : readinessFilter === "error" ? docs.filter((d) => d.readiness === "error" || d.readiness === "no_text")
+    : docs.filter((d) => d.readiness === readinessFilter);
+
   const filteredDocs = docFilter.trim()
-    ? docs.filter((d) => {
+    ? byReadiness.filter((d) => {
         const hay = `${d.title ?? ""} ${(d as any).source ?? ""}`.toLowerCase();
         return hay.includes(docFilter.trim().toLowerCase());
       })
-    : docs;
+    : byReadiness;
+
+  const READINESS_FILTERS: { key: ReadinessFilter; label: string; count: number }[] = [
+    { key: "all",      label: "All",        count: docs.length },
+    { key: "ready",    label: "Ready",      count: readyCnt },
+    { key: "imported", label: "Processing", count: processingCnt },
+    { key: "error",    label: "Error",      count: errorCnt },
+  ];
 
   return (
     <div className="space-y-4">
@@ -432,34 +479,110 @@ function DocumentsTab({ workId }: { workId: string }) {
         </div>
       </div>
 
+      {/* Readiness summary + filter pills — shown whenever there are docs */}
+      {docs.length > 0 && (
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          {/* Summary line */}
+          {hasNonReady ? (
+            <div className="flex items-center gap-2 text-[11px] font-mono text-muted-foreground">
+              <span className="text-emerald-700 font-semibold">{readyCnt} ready</span>
+              {processingCnt > 0 && (
+                <>
+                  <span className="text-muted-foreground/40">·</span>
+                  <span className="flex items-center gap-1 text-amber-600">
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse inline-block" />
+                    {processingCnt} processing
+                  </span>
+                </>
+              )}
+              {errorCnt > 0 && (
+                <>
+                  <span className="text-muted-foreground/40">·</span>
+                  <span className="text-red-600">{errorCnt} error{errorCnt !== 1 ? "s" : ""}</span>
+                </>
+              )}
+            </div>
+          ) : (
+            <div className="text-[11px] font-mono text-emerald-700">
+              {readyCnt} document{readyCnt !== 1 ? "s" : ""} ready
+            </div>
+          )}
+
+          {/* Filter pills */}
+          <div className="flex items-center gap-1 p-1 bg-muted/40 rounded-lg">
+            {READINESS_FILTERS.filter(({ count, key }) => key === "all" || count > 0).map(({ key, label, count }) => (
+              <button
+                key={key}
+                onClick={() => setReadinessFilter(key)}
+                className={`px-2.5 py-1 rounded text-xs font-mono transition-colors ${
+                  readinessFilter === key
+                    ? "bg-background text-foreground shadow-sm font-semibold"
+                    : "text-muted-foreground hover:text-foreground"
+                } ${key === "error" && count > 0 ? "data-[active=false]:text-red-600" : ""}`}
+              >
+                {label}
+                {count > 0 && <span className="ml-1 opacity-60">{count}</span>}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {filteredDocs.length > 0 ? (
         <div className="grid gap-3">
-          {filteredDocs.map((doc) => (
+          {filteredDocs.map((doc) => {
+            const isError = doc.readiness === "error" || doc.readiness === "no_text";
+            const isProcessing = doc.readiness === "imported";
+            return (
             <Card
               key={doc.id}
-              className="hover-elevate cursor-pointer group"
+              className={`hover-elevate cursor-pointer group ${isError ? "border-red-200/60" : ""}`}
               onClick={() => navigate(`/library/${doc.id}`)}
             >
               <CardContent className="p-4 flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  <FileText className="w-5 h-5 text-muted-foreground" />
+                  <FileText className={`w-5 h-5 ${isError ? "text-red-400" : "text-muted-foreground"}`} />
                   <div>
                     <h4 className="font-medium">{doc.title || doc.source || "Untitled"}</h4>
-                    <div className="flex gap-2 mt-1">
+                    <div className="flex gap-2 mt-1 flex-wrap">
                       <Badge variant="secondary" className="text-[10px] uppercase font-mono">{doc.kind}</Badge>
-                      <Badge variant="outline" className="text-[10px] uppercase font-mono">{doc.readiness}</Badge>
+                      <Badge
+                        variant="outline"
+                        className={`text-[10px] uppercase font-mono ${
+                          isError
+                            ? "border-red-200 bg-red-50 text-red-700"
+                            : isProcessing
+                            ? "border-amber-200 bg-amber-50 text-amber-700"
+                            : "border-emerald-200 bg-emerald-50 text-emerald-700"
+                        }`}
+                      >
+                        {isProcessing && <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse mr-1 inline-block" />}
+                        {doc.readiness}
+                      </Badge>
                     </div>
                   </div>
                 </div>
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2">
                   <div className="text-xs font-mono text-muted-foreground">
                     {doc.created_at ? format(new Date(doc.created_at), "MMM d, yyyy") : ""}
                   </div>
+                  {/* Retry button — visible on hover for error/no_text docs */}
+                  {isError && (
+                    <button
+                      onClick={(e) => handleRetry(e, doc.id!)}
+                      disabled={retrying === doc.id}
+                      title="Retry extraction"
+                      className="opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded text-amber-600 hover:text-amber-700 hover:bg-amber-50 disabled:opacity-40"
+                    >
+                      {retrying === doc.id
+                        ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        : <RefreshCw className="w-3.5 h-3.5" />}
+                    </button>
+                  )}
                   <button
                     onClick={async (e) => {
                       e.stopPropagation();
-                      const base = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
-                      const r = await fetch(`${base}/library/${doc.id}`, {
+                      const r = await fetch(`${DOC_BASE}/library/${doc.id}`, {
                         method: "PATCH",
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({ work_id: null }),
@@ -482,12 +605,22 @@ function DocumentsTab({ workId }: { workId: string }) {
                 </div>
               </CardContent>
             </Card>
-          ))}
+            );
+          })}
         </div>
-      ) : docFilter.trim() ? (
+      ) : docFilter.trim() || readinessFilter !== "all" ? (
         <div className="text-center py-12 bg-muted/10 border border-dashed rounded-lg">
-          <p className="text-muted-foreground text-sm">No documents match "{docFilter}".</p>
-          <button onClick={() => setDocFilter("")} className="text-xs text-primary underline mt-2">Clear filter</button>
+          <p className="text-muted-foreground text-sm">
+            {docFilter.trim()
+              ? `No documents match "${docFilter}".`
+              : `No ${readinessFilter === "imported" ? "processing" : readinessFilter} documents.`}
+          </p>
+          <button
+            onClick={() => { setDocFilter(""); setReadinessFilter("all"); }}
+            className="text-xs text-primary underline mt-2"
+          >
+            Clear filter
+          </button>
         </div>
       ) : (
         <div className="text-center py-12 bg-muted/10 border border-dashed rounded-lg">
