@@ -2,8 +2,9 @@ import { useListVoices, useListStudioOutputs } from "@workspace/api-client-react
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Mic, Play, Settings2, Video, Image as ImageIcon } from "lucide-react";
+import { Mic, Play, Settings2, Video, Image as ImageIcon, FileAudio } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Link } from "wouter";
 
 export default function Studio() {
   const { data: voicesResp, isLoading: loadingVoices } = useListVoices();
@@ -16,8 +17,8 @@ export default function Studio() {
           <h1 className="text-3xl font-serif font-semibold tracking-tight">Studio</h1>
           <p className="text-muted-foreground mt-1 font-serif">Media generation, voice synthesis, and outputs.</p>
         </div>
-        <Button variant="outline" className="gap-2">
-          <Settings2 className="w-4 h-4" /> Engine Settings
+        <Button asChild variant="outline" className="gap-2">
+          <Link href="/system"><Settings2 className="w-4 h-4" /> Engine Settings</Link>
         </Button>
       </div>
 
@@ -63,12 +64,15 @@ export default function Studio() {
               outputsResp.outputs.map((out: any, i) => (
                 <Card key={i} className="overflow-hidden group cursor-pointer hover:border-primary/50 transition-colors">
                   <div className="aspect-video bg-muted flex items-center justify-center border-b border-border/50 relative">
-                    {out.type === 'video' ? <Video className="w-8 h-8 opacity-20" /> : <ImageIcon className="w-8 h-8 opacity-20" />}
+                    {out.kind === 'audio' ? <FileAudio className="w-8 h-8 opacity-20" /> : out.type === 'video' ? <Video className="w-8 h-8 opacity-20" /> : <ImageIcon className="w-8 h-8 opacity-20" />}
                     <div className="absolute inset-0 bg-black/5 group-hover:bg-transparent transition-colors" />
                   </div>
                   <CardContent className="p-3">
                     <h3 className="font-medium text-sm truncate">{out.name || 'Untitled Generation'}</h3>
-                    <div className="text-xs text-muted-foreground mt-1 font-mono">{out.created_at || 'Recently'}</div>
+                    <div className="flex items-center justify-between mt-1">
+                      <Badge variant="outline" className="text-[9px] font-mono uppercase">{out.kind || 'file'}</Badge>
+                      {out.size_bytes && <span className="text-xs font-mono text-muted-foreground">{out.size_bytes >= 1_048_576 ? `${(out.size_bytes / 1_048_576).toFixed(1)} MB` : `${Math.round(out.size_bytes / 1024)} KB`}</span>}
+                    </div>
                   </CardContent>
                 </Card>
               ))

@@ -377,6 +377,15 @@ class OrivellumDB:
             self._conn.commit()
         return self.get_document(oid)  # type: ignore[return-value]
 
+    def update_document_work(self, doc_id: str, work_id: str | None) -> bool:
+        """Re-assign (or unlink) a document from a work."""
+        with self._lock:
+            cur = self._conn.execute(
+                "UPDATE documents SET work_id=? WHERE id=?", (work_id, doc_id)
+            )
+            self._conn.commit()
+        return cur.rowcount > 0
+
     def delete_document(self, doc_id: str) -> bool:
         with self._lock:
             cur = self._conn.execute("DELETE FROM documents WHERE id=?", (doc_id,))
@@ -626,6 +635,19 @@ class OrivellumDB:
             self._conn.commit()
         return kid
 
+    def update_knowledge_review_status(self, item_id: str, status: str) -> bool:
+        """Set review_status on a knowledge item. Returns True if found."""
+        valid = {"auto", "ai_auto", "approved", "rejected"}
+        if status not in valid:
+            raise ValueError(f"review_status must be one of {valid}")
+        with self._lock:
+            cur = self._conn.execute(
+                "UPDATE knowledge SET review_status=? WHERE id=?",
+                (status, item_id),
+            )
+            self._conn.commit()
+        return cur.rowcount > 0
+
     # -------------------------------------------------------------------------
     # Dashboard / aggregations
     # -------------------------------------------------------------------------
@@ -663,12 +685,16 @@ class OrivellumDB:
     def recent_activity(self, limit: int = 20) -> list[dict]:
         with self._lock:
             rows = self._conn.execute(
-                """SELECT 'document' as kind, id, title as label, created_at FROM documents
+                """SELECT 'document' as kind, id,
+                          COALESCE(title, source) as label,
+                          created_at FROM documents
                    UNION ALL
                    SELECT 'work', w.id, w.title, o.created_at
                      FROM works w JOIN objects o ON o.id=w.id
                    UNION ALL
-                   SELECT 'knowledge', id, text, created_at FROM knowledge
+                   SELECT 'knowledge', k.id,
+                          '[' || UPPER(k.kind) || '] ' || SUBSTR(k.text, 1, 80) as label,
+                          k.created_at FROM knowledge k
                    ORDER BY created_at DESC LIMIT ?""",
                 (limit,),
             ).fetchall()

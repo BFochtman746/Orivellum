@@ -6,8 +6,8 @@
  */
 import { useState } from "react";
 import { useParams, useLocation } from "wouter";
-import { useGetDocument, useDeleteDocument } from "@workspace/api-client-react";
-import { useQuery } from "@tanstack/react-query";
+import { useGetDocument, useDeleteDocument, useGetWork, useDeleteKnowledgeItem, useUpdateDocument, useListWorks, getGetDocumentQueryKey } from "@workspace/api-client-react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -17,8 +17,9 @@ import { Separator } from "@/components/ui/separator";
 import {
   ArrowLeft, FileText, AlertCircle, CheckCircle2, Clock,
   FileQuestion, RefreshCw, Trash2, Hash, Calendar, Database,
-  BookOpen, Cpu, Sparkles,
+  BookOpen, Cpu, Sparkles, ThumbsUp, ThumbsDown, Link2,
 } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
 
 const BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
@@ -91,6 +92,164 @@ function ReviewBadge({ status }: { status: string | null | undefined }) {
   );
 }
 
+// ── Knowledge tab content ─────────────────────────────────────────────────────
+
+type KnFilter = "all" | "pending" | "approved" | "rejected";
+
+function KnowledgeTabContent({
+  knLoading,
+  items,
+  docWorkId,
+  knFilter,
+  setKnFilter,
+  reviewing,
+  onReview,
+  onDelete,
+}: {
+  knLoading: boolean;
+  items: KnowledgeItem[];
+  docWorkId?: string | null;
+  knFilter: KnFilter;
+  setKnFilter: (f: KnFilter) => void;
+  reviewing: string | null;
+  onReview: (id: string, status: "approved" | "rejected") => void;
+  onDelete: (id: string) => void;
+}) {
+  if (knLoading) {
+    return (
+      <div className="space-y-3">
+        {[1, 2, 3].map((i) => <Skeleton key={i} className="h-20 w-full" />)}
+      </div>
+    );
+  }
+
+  if (items.length === 0) {
+    return (
+      <div className="text-center py-16 bg-muted/10 border border-dashed rounded-lg">
+        <Cpu className="w-8 h-8 text-muted-foreground mx-auto mb-3 opacity-50" />
+        <p className="text-muted-foreground">No knowledge items extracted from this document yet.</p>
+        {docWorkId && (
+          <p className="text-xs text-muted-foreground mt-1">
+            Knowledge extraction runs automatically after import.
+          </p>
+        )}
+      </div>
+    );
+  }
+
+  const pendingCount = items.filter((k) => k.review_status === "ai_auto").length;
+  const visible = items.filter((k) => {
+    if (knFilter === "pending")  return k.review_status === "ai_auto";
+    if (knFilter === "approved") return k.review_status === "approved";
+    if (knFilter === "rejected") return k.review_status === "rejected";
+    return true;
+  });
+  const KN_FILTERS: { key: KnFilter; label: string }[] = [
+    { key: "all",      label: `All (${items.length})` },
+    { key: "pending",  label: `AI Review${pendingCount > 0 ? ` (${pendingCount})` : ""}` },
+    { key: "approved", label: "Approved" },
+    { key: "rejected", label: "Dismissed" },
+  ];
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <p className="text-xs font-mono text-muted-foreground">
+          {items.length} item{items.length !== 1 ? "s" : ""} extracted
+        </p>
+        <div className="flex items-center gap-1 p-1 bg-muted/40 rounded-lg">
+          {KN_FILTERS.map(({ key, label }) => (
+            <button
+              key={key}
+              onClick={() => setKnFilter(key)}
+              className={`px-2.5 py-1 rounded text-xs font-mono transition-colors ${
+                knFilter === key
+                  ? "bg-background text-foreground shadow-sm font-semibold"
+                  : "text-muted-foreground hover:text-foreground"
+              } ${key === "pending" && pendingCount > 0 ? "text-violet-700" : ""}`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+      {visible.map((item) => {
+        const isAI = item.review_status === "ai_auto";
+        const isApproved = item.review_status === "approved";
+        const isRejected = item.review_status === "rejected";
+        const isReviewing = reviewing === item.id;
+        return (
+          <Card key={item.id} className={`hover-elevate transition-opacity ${isRejected ? "opacity-50" : ""}`}>
+            <CardContent className="p-4">
+              <div className="flex items-start gap-4">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 mb-2 flex-wrap">
+                    <Badge variant="outline" className="text-[10px] uppercase font-mono border-primary/30 text-primary">
+                      {item.kind}
+                    </Badge>
+                    <ReviewBadge status={item.review_status} />
+                  </div>
+                  {item.subject && item.predicate && item.object ? (
+                    <div className="font-mono text-sm bg-muted/30 p-2 rounded border border-border/50">
+                      <span className="font-semibold text-primary">{item.subject}</span>{" "}
+                      <span className="text-muted-foreground">{item.predicate}</span>{" "}
+                      <span className="font-semibold">{item.object}</span>
+                    </div>
+                  ) : (
+                    <p className="text-sm font-serif leading-relaxed">{item.text}</p>
+                  )}
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  {item.confidence != null && (
+                    <div className="text-xs font-mono px-2 py-1 bg-muted rounded">
+                      {(item.confidence * 100).toFixed(0)}%
+                    </div>
+                  )}
+                  {(isAI || isApproved || isRejected) && (
+                    <>
+                      <button
+                        disabled={isReviewing || isApproved}
+                        onClick={() => onReview(item.id, "approved")}
+                        title="Approve"
+                        className={`p-1.5 rounded transition-colors ${
+                          isApproved
+                            ? "text-emerald-600 bg-emerald-50"
+                            : "text-muted-foreground hover:text-emerald-600 hover:bg-emerald-50"
+                        } disabled:opacity-40`}
+                      >
+                        <ThumbsUp className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        disabled={isReviewing || isRejected}
+                        onClick={() => onReview(item.id, "rejected")}
+                        title="Dismiss"
+                        className={`p-1.5 rounded transition-colors ${
+                          isRejected
+                            ? "text-red-600 bg-red-50"
+                            : "text-muted-foreground hover:text-red-600 hover:bg-red-50"
+                        } disabled:opacity-40`}
+                      >
+                        <ThumbsDown className="w-3.5 h-3.5" />
+                      </button>
+                    </>
+                  )}
+                  <button
+                    onClick={() => onDelete(item.id)}
+                    title="Delete item"
+                    className="p-1.5 rounded text-muted-foreground/40 hover:text-destructive hover:bg-destructive/5 transition-colors"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        );
+      })}
+    </div>
+  );
+}
+
 // ── Reprocess helper ──────────────────────────────────────────────────────────
 
 async function reprocessDoc(docId: string): Promise<void> {
@@ -103,16 +262,34 @@ async function reprocessDoc(docId: string): Promise<void> {
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 
+async function setKnowledgeReview(itemId: string, status: string): Promise<void> {
+  const resp = await fetch(`${BASE}/knowledge/${itemId}/review`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ review_status: status }),
+  });
+  if (!resp.ok) throw new Error("Review update failed");
+}
+
 export default function DocumentDetail() {
   const { docId } = useParams<{ docId: string }>();
   const [, navigate] = useLocation();
   const [activeTab, setActiveTab] = useState<Tab>("overview");
   const [reprocessing, setReprocessing] = useState(false);
+  const [reviewing, setReviewing] = useState<string | null>(null);
+  const [knFilter, setKnFilter] = useState<"all" | "pending" | "approved" | "rejected">("all");
+  const queryClient = useQueryClient();
 
   const { data, isLoading, error, refetch } = useGetDocument(docId ?? "");
   const deleteDoc = useDeleteDocument();
 
   const doc = data?.document as any;
+  const workId = doc?.work_id as string | undefined;
+
+  // Resolve work title when this document is linked to a work
+  const { data: workData } = useGetWork(workId ?? "", {
+    query: { enabled: !!workId },
+  });
 
   // Knowledge items for this document
   const { data: knData, isLoading: knLoading } = useQuery<{ knowledge: KnowledgeItem[]; count: number }>({
@@ -122,13 +299,74 @@ export default function DocumentDetail() {
     staleTime: 30_000,
   });
 
+  const handleReview = async (itemId: string, status: "approved" | "rejected") => {
+    setReviewing(itemId);
+    try {
+      await setKnowledgeReview(itemId, status);
+      toast.success(status === "approved" ? "Approved" : "Dismissed");
+      queryClient.invalidateQueries({ queryKey: ["doc-knowledge", docId] });
+    } catch {
+      toast.error("Could not update review status");
+    } finally {
+      setReviewing(null);
+    }
+  };
+
+  // Work assignment
+  const updateDoc = useUpdateDocument();
+  const { data: worksResp } = useListWorks();
+  const allWorks = worksResp?.works ?? [];
+  const handleAssignWork = (newWorkId: string) => {
+    const val = newWorkId === "__none__" ? null : newWorkId;
+    updateDoc.mutate(
+      { docId: docId!, data: { work_id: val } },
+      {
+        onSuccess: () => {
+          toast.success(val ? "Document linked to work" : "Work link removed");
+          queryClient.invalidateQueries({ queryKey: getGetDocumentQueryKey(docId!) });
+        },
+        onError: () => toast.error("Could not update document"),
+      }
+    );
+  };
+
+  const deleteKnowledge = useDeleteKnowledgeItem();
+  const handleDeleteKnowledge = (itemId: string) => {
+    if (!window.confirm("Delete this knowledge item?")) return;
+    deleteKnowledge.mutate(
+      { itemId },
+      {
+        onSuccess: () => {
+          toast.success("Knowledge item deleted");
+          queryClient.invalidateQueries({ queryKey: ["doc-knowledge", docId] });
+        },
+        onError: () => toast.error("Could not delete item"),
+      }
+    );
+  };
+
   const handleReprocess = async () => {
     if (!docId) return;
     setReprocessing(true);
     try {
       await reprocessDoc(docId);
-      toast.success("Re-extraction queued — refresh in a moment.");
-      setTimeout(() => refetch(), 3000);
+      toast.success("Re-extraction queued — polling for result…");
+      // Poll every 2 s until readiness leaves "imported" state (max 30 s)
+      let attempts = 0;
+      const poll = setInterval(async () => {
+        attempts++;
+        const result = await refetch();
+        const newReadiness = (result.data?.document as any)?.readiness;
+        if (newReadiness && newReadiness !== "imported") {
+          clearInterval(poll);
+          if (newReadiness === "ready") {
+            toast.success("Extraction complete.");
+          } else if (newReadiness === "error" || newReadiness === "no_text") {
+            toast.error("Extraction finished with issues — check the error message below.");
+          }
+        }
+        if (attempts >= 15) clearInterval(poll);
+      }, 2000);
     } catch (e: any) {
       toast.error(e.message ?? "Reprocess failed");
     } finally {
@@ -256,10 +494,13 @@ export default function DocumentDetail() {
             </span>
           )}
           {doc.work_id && (
-            <span className="flex items-center gap-1.5">
+            <button
+              onClick={() => navigate(`/works/${doc.work_id}`)}
+              className="flex items-center gap-1.5 hover:text-primary transition-colors"
+            >
               <Database className="w-3 h-3" />
-              Linked to Work
-            </span>
+              {(workData?.work as any)?.title ?? "Linked Work"}
+            </button>
           )}
         </div>
       </div>
@@ -288,11 +529,10 @@ export default function DocumentDetail() {
       {activeTab === "overview" && (
         <div className="grid gap-3">
           {[
-            { label: "Source",    value: doc.source ?? "—" },
+            { label: "Source",    value: doc.source ? doc.source.split("/").pop()! : "—" },
             { label: "Kind",      value: doc.kind ?? "—" },
             { label: "Readiness", value: readiness },
             { label: "Words",     value: doc.word_count ? doc.word_count.toLocaleString() : "—" },
-            { label: "Work",      value: doc.work_id ?? "Unlinked" },
             { label: "Imported",  value: doc.created_at ? format(new Date(doc.created_at), "PPP") : "—" },
             { label: "SHA-256",   value: doc.sha256 ?? "—" },
           ].map(({ label, value }) => (
@@ -306,6 +546,31 @@ export default function DocumentDetail() {
               <span className="text-sm font-mono text-right break-all ml-4">{String(value)}</span>
             </div>
           ))}
+          {/* Work assignment row */}
+          <div className="flex items-center justify-between py-2.5 px-4 rounded-lg bg-muted/20 border border-border/40">
+            <span className="text-xs font-mono text-muted-foreground uppercase tracking-wide w-24 shrink-0 flex items-center gap-1.5">
+              <Link2 className="w-3 h-3" /> Work
+            </span>
+            <Select
+              value={doc.work_id ?? "__none__"}
+              onValueChange={handleAssignWork}
+              disabled={updateDoc.isPending}
+            >
+              <SelectTrigger className="h-7 text-xs font-mono w-auto max-w-[260px] border-border/40 bg-background/50">
+                <SelectValue placeholder="Unlinked" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__none__" className="text-xs font-mono text-muted-foreground">
+                  — Unlinked —
+                </SelectItem>
+                {allWorks.map((w) => (
+                  <SelectItem key={w.id!} value={w.id!} className="text-xs font-mono">
+                    {w.title ?? w.id}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
         </div>
       )}
 
@@ -333,57 +598,16 @@ export default function DocumentDetail() {
       )}
 
       {activeTab === "knowledge" && (
-        <div className="space-y-3">
-          {knLoading ? (
-            [1, 2, 3].map((i) => <Skeleton key={i} className="h-20 w-full" />)
-          ) : (knData?.knowledge ?? []).length === 0 ? (
-            <div className="text-center py-16 bg-muted/10 border border-dashed rounded-lg">
-              <Cpu className="w-8 h-8 text-muted-foreground mx-auto mb-3 opacity-50" />
-              <p className="text-muted-foreground">No knowledge items extracted from this document yet.</p>
-              {doc.work_id && (
-                <p className="text-xs text-muted-foreground mt-1">
-                  Knowledge extraction runs automatically after import.
-                </p>
-              )}
-            </div>
-          ) : (
-            <>
-              <p className="text-xs font-mono text-muted-foreground">
-                {knData!.count} item{knData!.count !== 1 ? "s" : ""} extracted
-              </p>
-              {knData!.knowledge.map((item) => (
-                <Card key={item.id} className="hover-elevate">
-                  <CardContent className="p-4">
-                    <div className="flex items-start justify-between gap-4">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-2 flex-wrap">
-                          <Badge variant="outline" className="text-[10px] uppercase font-mono border-primary/30 text-primary">
-                            {item.kind}
-                          </Badge>
-                          <ReviewBadge status={item.review_status} />
-                        </div>
-                        {item.subject && item.predicate && item.object ? (
-                          <div className="font-mono text-sm bg-muted/30 p-2 rounded border border-border/50">
-                            <span className="font-semibold text-primary">{item.subject}</span>{" "}
-                            <span className="text-muted-foreground">{item.predicate}</span>{" "}
-                            <span className="font-semibold">{item.object}</span>
-                          </div>
-                        ) : (
-                          <p className="text-sm font-serif leading-relaxed">{item.text}</p>
-                        )}
-                      </div>
-                      {item.confidence != null && (
-                        <div className="text-xs font-mono px-2 py-1 bg-muted rounded shrink-0">
-                          {(item.confidence * 100).toFixed(0)}%
-                        </div>
-                      )}
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
-            </>
-          )}
-        </div>
+        <KnowledgeTabContent
+          knLoading={knLoading}
+          items={knData?.knowledge ?? []}
+          docWorkId={doc?.work_id}
+          knFilter={knFilter}
+          setKnFilter={setKnFilter}
+          reviewing={reviewing}
+          onReview={handleReview}
+          onDelete={handleDeleteKnowledge}
+        />
       )}
     </div>
   );

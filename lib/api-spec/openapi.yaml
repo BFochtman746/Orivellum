@@ -508,6 +508,72 @@ paths:
                   results: { type: array, items: { type: object } }
                   count: { type: integer }
 
+  /library/{docId}:
+    get:
+      operationId: getDocument
+      summary: Get a single document
+      tags: [library]
+      parameters:
+        - name: docId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Document
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  document: { $ref: "#/components/schemas/Document" }
+
+    patch:
+      operationId: updateDocument
+      summary: Update a document (e.g. assign/unlink work)
+      tags: [library]
+      parameters:
+        - name: docId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                work_id: { type: string, nullable: true }
+      responses:
+        "200":
+          description: Updated document
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  document: { $ref: "#/components/schemas/Document" }
+
+    delete:
+      operationId: deleteDocument
+      summary: Delete a document
+      tags: [library]
+      parameters:
+        - name: docId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+
   /library/import:
     post:
       operationId: importDocument
@@ -542,41 +608,6 @@ paths:
       responses:
         "200":
           description: Reprocess queued
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/OkResponse" }
-
-  /library/{docId}:
-    get:
-      operationId: getDocument
-      summary: Get a library document
-      tags: [library]
-      parameters:
-        - name: docId
-          in: path
-          required: true
-          schema: { type: string }
-      responses:
-        "200":
-          description: Document
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  document: { $ref: "#/components/schemas/Document" }
-    delete:
-      operationId: deleteDocument
-      summary: Delete a library document
-      tags: [library]
-      parameters:
-        - name: docId
-          in: path
-          required: true
-          schema: { type: string }
-      responses:
-        "200":
-          description: Deleted
           content:
             application/json:
               schema: { $ref: "#/components/schemas/OkResponse" }
@@ -635,6 +666,58 @@ paths:
                   query: { type: string }
                   knowledge: { type: array, items: { $ref: "#/components/schemas/KnowledgeItem" } }
                   count: { type: integer }
+
+  /knowledge/{itemId}:
+    delete:
+      operationId: deleteKnowledgeItem
+      summary: Permanently delete a knowledge item
+      tags: [knowledge]
+      parameters:
+        - name: itemId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  id: { type: string }
+
+  /knowledge/{itemId}/review:
+    patch:
+      operationId: reviewKnowledgeItem
+      summary: Approve or dismiss a knowledge item
+      tags: [knowledge]
+      parameters:
+        - name: itemId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [review_status]
+              properties:
+                review_status: { type: string, enum: [auto, ai_auto, approved, rejected] }
+      responses:
+        "200":
+          description: Review updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  id: { type: string }
+                  review_status: { type: string }
 
   # ─── Projects ─────────────────────────────────────────────────────────────
   /projects:

@@ -2,6 +2,10 @@ import { useState } from "react";
 import { useParams, Link, useLocation } from "wouter";
 import {
   useGetWork,
+  useGetWorkStats,
+  useUpdateWork,
+  useDeleteWork,
+  useDeleteKnowledgeItem,
   useGetWorkDocuments,
   useGetWorkKnowledge,
   useGetWorkTasks,
@@ -11,6 +15,8 @@ import {
   useCreateConversation,
   useListLibrary,
   getGetWorkQueryKey,
+  getGetWorkStatsQueryKey,
+  getListWorksQueryKey,
   getGetWorkTasksQueryKey,
   getGetWorkDocumentsQueryKey,
   getGetWorkKnowledgeQueryKey,
@@ -26,6 +32,9 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select";
 import {
   Dialog,
   DialogContent,
@@ -43,29 +52,105 @@ import {
   Clock,
   Loader2,
   Sparkles,
+  ThumbsUp,
+  ThumbsDown,
+  Pencil,
+  Check,
+  X,
+  Trash2,
+  MessageSquarePlus,
+  Unlink,
 } from "lucide-react";
+import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { toast } from "sonner";
 
 // ─── Work detail shell ────────────────────────────────────────────────────────
 
 export default function WorkDetail() {
   const { workId } = useParams();
+  const [, navigate] = useLocation();
+  const queryClient = useQueryClient();
   const { data: workResp, isLoading: loadingWork } = useGetWork(workId!, {
     query: { enabled: !!workId, queryKey: getGetWorkQueryKey(workId!) },
   });
   const work = workResp?.work;
+  const { data: statsResp } = useGetWorkStats(workId!, {
+    query: { enabled: !!workId },
+  });
+  const stats = statsResp as any;
+  const updateWork = useUpdateWork();
+  const deleteWork = useDeleteWork();
+
+  const handleDelete = () => {
+    if (!workId) return;
+    if (!window.confirm("Delete this work? This cannot be undone.")) return;
+    deleteWork.mutate(
+      { workId },
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: getListWorksQueryKey() });
+          navigate("/works");
+        },
+        onError: () => toast.error("Could not delete work"),
+      }
+    );
+  };
+
+  // Inline editing state
+  const [editing, setEditing] = useState(false);
+  const [editTitle, setEditTitle] = useState("");
+  const [editDesc, setEditDesc] = useState("");
+
+  const startEdit = () => {
+    setEditTitle((work as any)?.title ?? "");
+    setEditDesc((work as any)?.description ?? "");
+    setEditing(true);
+  };
+
+  const cancelEdit = () => setEditing(false);
+
+  const saveEdit = () => {
+    if (!workId || !editTitle.trim()) return;
+    updateWork.mutate(
+      { workId, data: { title: editTitle.trim(), description: editDesc.trim() || null } },
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: getGetWorkQueryKey(workId) });
+          toast.success("Work updated");
+          setEditing(false);
+        },
+        onError: () => toast.error("Could not save changes"),
+      }
+    );
+  };
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500 pb-20">
       {/* Breadcrumb */}
-      <div className="flex items-center gap-4 text-sm font-mono uppercase tracking-widest text-muted-foreground mb-8">
-        <Link href="/works" className="hover:text-foreground transition-colors flex items-center gap-1">
-          <ArrowLeft className="w-3 h-3" /> Works
-        </Link>
-        <span>/</span>
-        <span className="text-foreground">
-          {loadingWork ? <Skeleton className="w-20 h-4 inline-block align-middle" /> : work?.title}
-        </span>
+      <div className="flex items-center justify-between mb-8">
+        <div className="flex items-center gap-4 text-sm font-mono uppercase tracking-widest text-muted-foreground">
+          <Link href="/works" className="hover:text-foreground transition-colors flex items-center gap-1">
+            <ArrowLeft className="w-3 h-3" /> Works
+          </Link>
+          <span>/</span>
+          <span className="text-foreground">
+            {loadingWork ? <Skeleton className="w-20 h-4 inline-block align-middle" /> : work?.title}
+          </span>
+        </div>
+        {work && (
+          <div className="flex items-center gap-2">
+            <QuickChatButton workId={workId!} />
+            <button
+              onClick={handleDelete}
+              disabled={deleteWork.isPending}
+              className="flex items-center gap-1.5 text-xs font-mono text-muted-foreground/50 hover:text-destructive transition-colors px-2 py-1 rounded hover:bg-destructive/5"
+            >
+              {deleteWork.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+              Delete
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Header */}
@@ -76,24 +161,116 @@ export default function WorkDetail() {
         </div>
       ) : work ? (
         <div className="space-y-4">
-          <div>
-            <h1 className="text-4xl font-serif font-semibold tracking-tight">{work.title}</h1>
-            {work.description && (
-              <p className="text-lg text-muted-foreground font-serif italic mt-2 max-w-3xl leading-relaxed">
-                {work.description}
-              </p>
-            )}
-          </div>
-          <div className="flex items-center gap-3">
-            <Badge variant="outline" className="font-mono text-xs uppercase bg-primary/5 text-primary border-primary/20">
-              {work.status}
-            </Badge>
+          {editing ? (
+            <div className="space-y-3">
+              <Input
+                value={editTitle}
+                onChange={(e) => setEditTitle(e.target.value)}
+                className="text-2xl font-serif font-semibold h-auto py-2 px-3 border-primary/40"
+                placeholder="Work title"
+                autoFocus
+              />
+              <Textarea
+                value={editDesc}
+                onChange={(e) => setEditDesc(e.target.value)}
+                className="font-serif text-base resize-none"
+                placeholder="Description (optional)"
+                rows={2}
+              />
+              <div className="flex items-center gap-2">
+                <Button size="sm" onClick={saveEdit} disabled={updateWork.isPending || !editTitle.trim()} className="gap-1.5">
+                  {updateWork.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                  Save
+                </Button>
+                <Button size="sm" variant="ghost" onClick={cancelEdit} disabled={updateWork.isPending} className="gap-1.5">
+                  <X className="w-3.5 h-3.5" /> Cancel
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div>
+              <div className="flex items-start gap-3">
+                <h1 className="text-4xl font-serif font-semibold tracking-tight">{work.title}</h1>
+                <button
+                  onClick={startEdit}
+                  className="mt-2 p-1.5 rounded text-muted-foreground/50 hover:text-muted-foreground hover:bg-muted/50 transition-colors"
+                  title="Edit title and description"
+                >
+                  <Pencil className="w-3.5 h-3.5" />
+                </button>
+              </div>
+              {work.description ? (
+                <p className="text-lg text-muted-foreground font-serif italic mt-2 max-w-3xl leading-relaxed">
+                  {work.description}
+                </p>
+              ) : (
+                <button
+                  onClick={startEdit}
+                  className="text-sm text-muted-foreground/40 italic mt-2 hover:text-muted-foreground transition-colors"
+                >
+                  Add a description…
+                </button>
+              )}
+            </div>
+          )}
+          <div className="flex items-center gap-3 flex-wrap">
+            <Select
+              value={(work as any).status ?? "active"}
+              onValueChange={(val) =>
+                updateWork.mutate(
+                  { workId: workId!, data: { status: val } },
+                  {
+                    onSuccess: () => {
+                      queryClient.invalidateQueries({ queryKey: getGetWorkQueryKey(workId!) });
+                      toast.success(val === "archived" ? "Work archived" : "Work set to active");
+                    },
+                    onError: () => toast.error("Could not update status"),
+                  }
+                )
+              }
+              disabled={updateWork.isPending}
+            >
+              <SelectTrigger className="h-6 text-[11px] font-mono uppercase px-2 py-0 w-auto border-primary/20 bg-primary/5 text-primary rounded-full focus:ring-0">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="active" className="text-xs font-mono uppercase">Active</SelectItem>
+                <SelectItem value="archived" className="text-xs font-mono uppercase">Archived</SelectItem>
+              </SelectContent>
+            </Select>
             <Badge variant="secondary" className="font-mono text-xs uppercase">{work.work_type}</Badge>
             <span className="text-sm font-mono text-muted-foreground flex items-center gap-1">
               <Clock className="w-3 h-3" />
-              Created {work.created_at ? format(new Date(work.created_at), "MMM d, yyyy") : "Unknown"}
+              Created {(work.obj_created || work.created_at) ? format(new Date(work.obj_created || work.created_at), "MMM d, yyyy") : "Unknown"}
             </span>
           </div>
+          {stats && (
+            <div className="flex items-center gap-4 pt-1">
+              {[
+                {
+                  label: "Documents",
+                  value: Object.values(stats.documents_by_kind as Record<string, number> ?? {}).reduce((a, b) => a + b, 0),
+                },
+                {
+                  label: "Knowledge",
+                  value: Object.values(stats.knowledge_by_kind as Record<string, number> ?? {}).reduce((a, b) => a + b, 0),
+                },
+                {
+                  label: "Pending tasks",
+                  value: (stats.tasks_by_status as Record<string, number> ?? {}).pending ?? 0,
+                },
+                {
+                  label: "Conversations",
+                  value: stats.conversation_count ?? 0,
+                },
+              ].map(({ label, value }) => (
+                <div key={label} className="text-center">
+                  <div className="text-lg font-semibold font-mono leading-none">{value}</div>
+                  <div className="text-[10px] font-mono uppercase text-muted-foreground mt-0.5">{label}</div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       ) : null}
 
@@ -133,6 +310,7 @@ export default function WorkDetail() {
 
 function DocumentsTab({ workId }: { workId: string }) {
   const queryClient = useQueryClient();
+  const [, navigate] = useLocation();
   const [open, setOpen] = useState(false);
 
   const { data: docsResp, isLoading } = useGetWorkDocuments(workId, {
@@ -151,13 +329,20 @@ function DocumentsTab({ workId }: { workId: string }) {
     setLinking(true);
     try {
       const base = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
-      await fetch(`${base}/library/${docId}`, {
+      const r = await fetch(`${base}/library/${docId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ work_id: workId }),
       });
-      await queryClient.invalidateQueries({ queryKey: getGetWorkDocumentsQueryKey(workId) });
+      if (!r.ok) throw new Error("Link failed");
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: getGetWorkDocumentsQueryKey(workId) }),
+        queryClient.invalidateQueries({ queryKey: getGetWorkStatsQueryKey(workId) }),
+      ]);
+      toast.success("Document linked");
       setOpen(false);
+    } catch {
+      toast.error("Could not link document");
     } finally {
       setLinking(false);
     }
@@ -178,7 +363,11 @@ function DocumentsTab({ workId }: { workId: string }) {
       {docs.length > 0 ? (
         <div className="grid gap-3">
           {docs.map((doc) => (
-            <Card key={doc.id} className="hover-elevate">
+            <Card
+              key={doc.id}
+              className="hover-elevate cursor-pointer group"
+              onClick={() => navigate(`/library/${doc.id}`)}
+            >
               <CardContent className="p-4 flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   <FileText className="w-5 h-5 text-muted-foreground" />
@@ -190,8 +379,34 @@ function DocumentsTab({ workId }: { workId: string }) {
                     </div>
                   </div>
                 </div>
-                <div className="text-xs font-mono text-muted-foreground">
-                  {doc.created_at ? format(new Date(doc.created_at), "MMM d, yyyy") : ""}
+                <div className="flex items-center gap-3">
+                  <div className="text-xs font-mono text-muted-foreground">
+                    {doc.created_at ? format(new Date(doc.created_at), "MMM d, yyyy") : ""}
+                  </div>
+                  <button
+                    onClick={async (e) => {
+                      e.stopPropagation();
+                      const base = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
+                      const r = await fetch(`${base}/library/${doc.id}`, {
+                        method: "PATCH",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ work_id: null }),
+                      });
+                      if (r.ok) {
+                        await Promise.all([
+                          queryClient.invalidateQueries({ queryKey: getGetWorkDocumentsQueryKey(workId) }),
+                          queryClient.invalidateQueries({ queryKey: getGetWorkStatsQueryKey(workId) }),
+                        ]);
+                        toast.success("Document unlinked");
+                      } else {
+                        toast.error("Could not unlink document");
+                      }
+                    }}
+                    title="Unlink from this work"
+                    className="opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded text-muted-foreground/50 hover:text-destructive hover:bg-destructive/5"
+                  >
+                    <Unlink className="w-3.5 h-3.5" />
+                  </button>
                 </div>
               </CardContent>
             </Card>
@@ -252,24 +467,120 @@ function DocumentsTab({ workId }: { workId: string }) {
 
 // ─── Knowledge tab ────────────────────────────────────────────────────────────
 
+const BASE_KN = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
+
+async function setKnowledgeReview(itemId: string, status: string): Promise<void> {
+  const resp = await fetch(`${BASE_KN}/knowledge/${itemId}/review`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ review_status: status }),
+  });
+  if (!resp.ok) throw new Error("Review update failed");
+}
+
+type KnowledgeFilter = "all" | "pending" | "approved" | "rejected";
+
 function KnowledgeTab({ workId }: { workId: string }) {
+  const queryClient = useQueryClient();
+  const [, navigate] = useLocation();
+  const [reviewing, setReviewing] = useState<string | null>(null);
+  const [filter, setFilter] = useState<KnowledgeFilter>("all");
+  const deleteKnowledge = useDeleteKnowledgeItem();
   const { data: knowResp, isLoading } = useGetWorkKnowledge(workId, {}, {
     query: { enabled: !!workId, queryKey: getGetWorkKnowledgeQueryKey(workId, {}) },
   });
+  const { data: docsResp } = useGetWorkDocuments(workId, {
+    query: { enabled: !!workId, queryKey: getGetWorkDocumentsQueryKey(workId) },
+  });
+  // Build doc id → display name lookup
+  const docNames: Record<string, string> = {};
+  for (const d of docsResp?.documents ?? []) {
+    if (d.id) {
+      const src = (d as any).source ?? "";
+      docNames[d.id] = d.title || src.split("/").pop() || d.id.slice(0, 8);
+    }
+  }
+
+  const handleReview = async (itemId: string, status: "approved" | "rejected") => {
+    setReviewing(itemId);
+    try {
+      await setKnowledgeReview(itemId, status);
+      toast.success(status === "approved" ? "Approved" : "Dismissed");
+      queryClient.invalidateQueries({ queryKey: getGetWorkKnowledgeQueryKey(workId, {}) });
+    } catch {
+      toast.error("Could not update review status");
+    } finally {
+      setReviewing(null);
+    }
+  };
+
+  const handleDeleteKnowledge = (itemId: string) => {
+    if (!window.confirm("Delete this knowledge item?")) return;
+    deleteKnowledge.mutate(
+      { itemId },
+      {
+        onSuccess: () => {
+          toast.success("Knowledge item deleted");
+          queryClient.invalidateQueries({ queryKey: getGetWorkKnowledgeQueryKey(workId, {}) });
+          queryClient.invalidateQueries({ queryKey: getGetWorkStatsQueryKey(workId) });
+        },
+        onError: () => toast.error("Could not delete item"),
+      }
+    );
+  };
 
   if (isLoading) return <Skeleton className="h-64 w-full" />;
-  const knowledge = knowResp?.knowledge ?? [];
+  const allKnowledge = knowResp?.knowledge ?? [];
+  const pendingCount = allKnowledge.filter((k) => k.review_status === "ai_auto").length;
+
+  const knowledge = allKnowledge.filter((k) => {
+    if (filter === "pending")  return k.review_status === "ai_auto";
+    if (filter === "approved") return k.review_status === "approved";
+    if (filter === "rejected") return k.review_status === "rejected";
+    return true;
+  });
+
+  const FILTERS: { key: KnowledgeFilter; label: string }[] = [
+    { key: "all",      label: `All (${allKnowledge.length})` },
+    { key: "pending",  label: `AI Review${pendingCount > 0 ? ` (${pendingCount})` : ""}` },
+    { key: "approved", label: "Approved" },
+    { key: "rejected", label: "Dismissed" },
+  ];
 
   return (
     <div className="space-y-4">
-      <h3 className="text-xl font-serif font-medium">Structured Knowledge</h3>
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <h3 className="text-xl font-serif font-medium">Structured Knowledge</h3>
+        {allKnowledge.length > 0 && (
+          <div className="flex items-center gap-1 p-1 bg-muted/40 rounded-lg">
+            {FILTERS.map(({ key, label }) => (
+              <button
+                key={key}
+                onClick={() => setFilter(key)}
+                className={`px-2.5 py-1 rounded text-xs font-mono transition-colors ${
+                  filter === key
+                    ? "bg-background text-foreground shadow-sm font-semibold"
+                    : "text-muted-foreground hover:text-foreground"
+                } ${key === "pending" && pendingCount > 0 ? "text-violet-700" : ""}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
 
       {knowledge.length > 0 ? (
         <div className="grid gap-3">
-          {knowledge.map((item) => (
-            <Card key={item.id}>
+          {knowledge.map((item) => {
+            const isAI = item.review_status === "ai_auto";
+            const isApproved = item.review_status === "approved";
+            const isRejected = item.review_status === "rejected";
+            const isReviewing = reviewing === item.id;
+            return (
+            <Card key={item.id} className={`transition-opacity ${isRejected ? "opacity-50" : ""}`}>
               <CardContent className="p-4">
-                <div className="flex items-start justify-between gap-4">
+                <div className="flex items-start gap-4">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-2 flex-wrap">
                       <Badge variant="outline" className="text-[10px] uppercase font-mono border-primary/30 text-primary">
@@ -278,6 +589,14 @@ function KnowledgeTab({ workId }: { workId: string }) {
                       {item.review_status === "ai_auto" ? (
                         <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold border border-violet-200 bg-violet-50 text-violet-700">
                           <Sparkles className="w-2.5 h-2.5" /> AI
+                        </span>
+                      ) : item.review_status === "approved" ? (
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold border border-emerald-200 bg-emerald-50 text-emerald-700">
+                          ✓ approved
+                        </span>
+                      ) : item.review_status === "rejected" ? (
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold border border-red-200 bg-red-50 text-red-700">
+                          ✕ rejected
                         </span>
                       ) : (
                         <Badge variant="secondary" className="text-[10px] uppercase font-mono">
@@ -294,16 +613,63 @@ function KnowledgeTab({ workId }: { workId: string }) {
                     ) : (
                       <p className="text-sm font-serif leading-relaxed">{item.text}</p>
                     )}
+                    {(item as any).source_doc_id && (
+                      <a
+                        href={`/library/${(item as any).source_doc_id}`}
+                        onClick={(e) => { e.stopPropagation(); navigate(`/library/${(item as any).source_doc_id}`); e.preventDefault(); }}
+                        className="text-[10px] font-mono text-muted-foreground/70 hover:text-primary mt-1.5 inline-block transition-colors"
+                      >
+                        ↗ {docNames[(item as any).source_doc_id] ?? "source doc"}
+                      </a>
+                    )}
                   </div>
-                  {item.confidence !== undefined && item.confidence !== null && (
-                    <div className="text-xs font-mono px-2 py-1 bg-muted rounded shrink-0">
-                      {(item.confidence * 100).toFixed(0)}%
-                    </div>
-                  )}
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {item.confidence !== undefined && item.confidence !== null && (
+                      <div className="text-xs font-mono px-2 py-1 bg-muted rounded">
+                        {(item.confidence * 100).toFixed(0)}%
+                      </div>
+                    )}
+                    {(isAI || isApproved || isRejected) && (
+                      <>
+                        <button
+                          disabled={isReviewing || isApproved}
+                          onClick={() => handleReview(item.id, "approved")}
+                          title="Approve"
+                          className={`p-1.5 rounded transition-colors ${
+                            isApproved
+                              ? "text-emerald-600 bg-emerald-50"
+                              : "text-muted-foreground hover:text-emerald-600 hover:bg-emerald-50"
+                          } disabled:opacity-40`}
+                        >
+                          <ThumbsUp className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          disabled={isReviewing || isRejected}
+                          onClick={() => handleReview(item.id, "rejected")}
+                          title="Dismiss"
+                          className={`p-1.5 rounded transition-colors ${
+                            isRejected
+                              ? "text-red-600 bg-red-50"
+                              : "text-muted-foreground hover:text-red-600 hover:bg-red-50"
+                          } disabled:opacity-40`}
+                        >
+                          <ThumbsDown className="w-3.5 h-3.5" />
+                        </button>
+                      </>
+                    )}
+                    <button
+                      onClick={() => handleDeleteKnowledge(item.id)}
+                      title="Delete item"
+                      className="p-1.5 rounded text-muted-foreground/40 hover:text-destructive hover:bg-destructive/5 transition-colors"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                 </div>
               </CardContent>
             </Card>
-          ))}
+            );
+          })}
         </div>
       ) : (
         <div className="text-center py-12 bg-muted/10 border border-dashed rounded-lg">
@@ -337,7 +703,10 @@ function TasksTab({ workId }: { workId: string }) {
         onSuccess: () => {
           setNewTaskText("");
           queryClient.invalidateQueries({ queryKey: getGetWorkTasksQueryKey(workId) });
+          queryClient.invalidateQueries({ queryKey: getGetWorkStatsQueryKey(workId) });
+          toast.success("Task added");
         },
+        onError: () => toast.error("Could not add task"),
       }
     );
   };
@@ -346,7 +715,13 @@ function TasksTab({ workId }: { workId: string }) {
     const next = current === "completed" ? "pending" : "completed";
     updateTask.mutate(
       { workId, taskId, data: { status: next } },
-      { onSuccess: () => queryClient.invalidateQueries({ queryKey: getGetWorkTasksQueryKey(workId) }) }
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: getGetWorkTasksQueryKey(workId) });
+          queryClient.invalidateQueries({ queryKey: getGetWorkStatsQueryKey(workId) });
+        },
+        onError: () => toast.error("Could not update task"),
+      }
     );
   };
 
@@ -407,6 +782,41 @@ function TasksTab({ workId }: { workId: string }) {
   );
 }
 
+// ─── Quick chat button (header shortcut) ──────────────────────────────────────
+
+function QuickChatButton({ workId }: { workId: string }) {
+  const [, setLocation] = useLocation();
+  const queryClient = useQueryClient();
+  const createConv = useCreateConversation();
+
+  const handleClick = () => {
+    createConv.mutate(
+      { data: { title: "New Discussion", work_id: workId } },
+      {
+        onSuccess: (res) => {
+          queryClient.invalidateQueries({ queryKey: getGetWorkConversationsQueryKey(workId) });
+          queryClient.invalidateQueries({ queryKey: getListConversationsQueryKey() });
+          queryClient.invalidateQueries({ queryKey: getGetWorkStatsQueryKey(workId) });
+          if (res?.conversation?.id) setLocation(`/chat?id=${res.conversation.id}`);
+        },
+        onError: () => toast.error("Could not start conversation"),
+      }
+    );
+  };
+
+  return (
+    <button
+      onClick={handleClick}
+      disabled={createConv.isPending}
+      title="Start a new discussion about this work"
+      className="flex items-center gap-1.5 text-xs font-mono text-muted-foreground/50 hover:text-primary transition-colors px-2 py-1 rounded hover:bg-primary/5"
+    >
+      {createConv.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <MessageSquarePlus className="w-3.5 h-3.5" />}
+      Chat
+    </button>
+  );
+}
+
 // ─── Conversations tab ────────────────────────────────────────────────────────
 
 function ConversationsTab({ workId }: { workId: string }) {
@@ -426,6 +836,7 @@ function ConversationsTab({ workId }: { workId: string }) {
           queryClient.invalidateQueries({ queryKey: getListConversationsQueryKey() });
           if (res?.conversation?.id) setLocation(`/chat?id=${res.conversation.id}`);
         },
+        onError: () => toast.error("Could not start conversation"),
       }
     );
   };

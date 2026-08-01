@@ -59,11 +59,19 @@ function ConversationItem({ item }: { item: Conversation }) {
         ) : (
           <Text style={[styles.itemPreview, { color: colors.muted }]}>No messages yet</Text>
         )}
-        {(item.message_count ?? 0) > 0 && (
-          <Text style={[styles.itemCount, { color: colors.mutedForeground }]}>
-            {item.message_count} message{item.message_count === 1 ? '' : 's'}
-          </Text>
-        )}
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 3 }}>
+          {(item.message_count ?? 0) > 0 && (
+            <Text style={[styles.itemCount, { color: colors.mutedForeground }]}>
+              {item.message_count} msg{item.message_count === 1 ? '' : 's'}
+            </Text>
+          )}
+          {(item as any).work_id && (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+              <Feather name="book-open" size={10} color={colors.primary} />
+              <Text style={{ fontSize: 10, fontFamily: 'Inter_400Regular', color: colors.primary }}>work</Text>
+            </View>
+          )}
+        </View>
       </View>
       <Feather name="chevron-right" size={16} color={colors.mutedForeground} />
     </Pressable>

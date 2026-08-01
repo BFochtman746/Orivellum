@@ -587,6 +587,76 @@ export const SearchLibraryResponse = zod.object({
 
 
 /**
+ * @summary Get a single document
+ */
+export const GetDocumentParams = zod.object({
+  "docId": zod.coerce.string()
+})
+
+export const GetDocumentResponse = zod.object({
+  "document": zod.object({
+  "id": zod.string().optional(),
+  "work_id": zod.string().nullish(),
+  "title": zod.string().nullish(),
+  "source": zod.string().nullish(),
+  "sha256": zod.string().nullish(),
+  "kind": zod.string().nullish(),
+  "classification": zod.string().nullish(),
+  "readiness": zod.string().optional(),
+  "word_count": zod.int().nullish(),
+  "error_message": zod.string().nullish(),
+  "meta": zod.looseObject({
+
+}).optional(),
+  "created_at": zod.string().optional()
+}).optional()
+})
+
+
+/**
+ * @summary Update a document (e.g. assign/unlink work)
+ */
+export const UpdateDocumentParams = zod.object({
+  "docId": zod.coerce.string()
+})
+
+export const UpdateDocumentBody = zod.object({
+  "work_id": zod.string().nullish()
+})
+
+export const UpdateDocumentResponse = zod.object({
+  "document": zod.object({
+  "id": zod.string().optional(),
+  "work_id": zod.string().nullish(),
+  "title": zod.string().nullish(),
+  "source": zod.string().nullish(),
+  "sha256": zod.string().nullish(),
+  "kind": zod.string().nullish(),
+  "classification": zod.string().nullish(),
+  "readiness": zod.string().optional(),
+  "word_count": zod.int().nullish(),
+  "error_message": zod.string().nullish(),
+  "meta": zod.looseObject({
+
+}).optional(),
+  "created_at": zod.string().optional()
+}).optional()
+})
+
+
+/**
+ * @summary Delete a document
+ */
+export const DeleteDocumentParams = zod.object({
+  "docId": zod.coerce.string()
+})
+
+export const DeleteDocumentResponse = zod.object({
+  "ok": zod.boolean().optional()
+})
+
+
+/**
  * @summary Import a document into the library
  */
 export const ImportDocumentBody = zod.object({
@@ -627,45 +697,6 @@ export const ReprocessDocumentParams = zod.object({
 })
 
 export const ReprocessDocumentResponse = zod.object({
-  "ok": zod.boolean().optional()
-})
-
-
-/**
- * @summary Get a library document
- */
-export const GetDocumentParams = zod.object({
-  "docId": zod.coerce.string()
-})
-
-export const GetDocumentResponse = zod.object({
-  "document": zod.object({
-  "id": zod.string().optional(),
-  "work_id": zod.string().nullish(),
-  "title": zod.string().nullish(),
-  "source": zod.string().nullish(),
-  "sha256": zod.string().nullish(),
-  "kind": zod.string().nullish(),
-  "classification": zod.string().nullish(),
-  "readiness": zod.string().optional(),
-  "word_count": zod.int().nullish(),
-  "error_message": zod.string().nullish(),
-  "meta": zod.looseObject({
-
-}).optional(),
-  "created_at": zod.string().optional()
-}).optional()
-})
-
-
-/**
- * @summary Delete a library document
- */
-export const DeleteDocumentParams = zod.object({
-  "docId": zod.coerce.string()
-})
-
-export const DeleteDocumentResponse = zod.object({
   "ok": zod.boolean().optional()
 })
 
@@ -724,6 +755,37 @@ export const SearchKnowledgeResponse = zod.object({
   "created_at": zod.string().optional()
 })).optional(),
   "count": zod.int().optional()
+})
+
+
+/**
+ * @summary Permanently delete a knowledge item
+ */
+export const DeleteKnowledgeItemParams = zod.object({
+  "itemId": zod.coerce.string()
+})
+
+export const DeleteKnowledgeItemResponse = zod.object({
+  "ok": zod.boolean().optional(),
+  "id": zod.string().optional()
+})
+
+
+/**
+ * @summary Approve or dismiss a knowledge item
+ */
+export const ReviewKnowledgeItemParams = zod.object({
+  "itemId": zod.coerce.string()
+})
+
+export const ReviewKnowledgeItemBody = zod.object({
+  "review_status": zod.enum(['auto', 'ai_auto', 'approved', 'rejected'])
+})
+
+export const ReviewKnowledgeItemResponse = zod.object({
+  "ok": zod.boolean().optional(),
+  "id": zod.string().optional(),
+  "review_status": zod.string().optional()
 })
 
 

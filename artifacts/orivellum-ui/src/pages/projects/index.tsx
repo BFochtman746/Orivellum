@@ -1,7 +1,9 @@
 import { useState } from "react";
 import { useListProjects, useCreateProject, getListProjectsQueryKey } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
+import { useLocation } from "wouter";
 import { format } from "date-fns";
+import { toast } from "sonner";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -13,6 +15,7 @@ import { Target, Plus, TrendingUp } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 
 export default function Projects() {
+  const [, navigate] = useLocation();
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const queryClient = useQueryClient();
   
@@ -27,8 +30,10 @@ export default function Projects() {
       onSuccess: () => {
         queryClient.invalidateQueries({ queryKey: getListProjectsQueryKey() });
         setIsCreateOpen(false);
+        toast.success(`"${newProj.name}" created`);
         setNewProj({ name: "", description: "" });
-      }
+      },
+      onError: () => toast.error("Could not create project"),
     });
   };
 
@@ -85,7 +90,7 @@ export default function Projects() {
           [1, 2, 3].map(i => <Skeleton key={i} className="h-40 w-full" />)
         ) : projResp?.projects && projResp.projects.length > 0 ? (
           projResp.projects.map((proj) => (
-            <Card key={proj.id} className="hover-elevate cursor-pointer">
+            <Card key={proj.id} className="hover-elevate cursor-pointer" onClick={() => navigate(`/projects/${proj.id}`)}>
               <CardContent className="p-6 space-y-4">
                 <div className="flex justify-between items-start gap-4">
                   <div>

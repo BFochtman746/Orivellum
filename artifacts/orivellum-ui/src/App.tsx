@@ -12,6 +12,7 @@ import Library from '@/pages/library/index';
 import DocumentDetail from '@/pages/library/detail';
 import Files from '@/pages/files/index';
 import Projects from '@/pages/projects/index';
+import ProjectDetail from '@/pages/projects/detail';
 import Studio from '@/pages/studio/index';
 import Backups from '@/pages/backups/index';
 import System from '@/pages/system/index';
@@ -38,6 +39,7 @@ function Router() {
         <Route path="/library/:docId" component={DocumentDetail} />
         <Route path="/files" component={Files} />
         <Route path="/projects" component={Projects} />
+        <Route path="/projects/:projectId" component={ProjectDetail} />
         <Route path="/studio" component={Studio} />
         <Route path="/backups" component={Backups} />
         <Route path="/system" component={System} />

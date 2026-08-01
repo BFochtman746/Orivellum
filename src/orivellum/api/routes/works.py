@@ -167,9 +167,14 @@ def works_stats(work_id: str):
             "SELECT status, COUNT(*) as n FROM tasks WHERE work_id=? GROUP BY status",
             (work_id,)
         ).fetchall()
+        conv_count = db._conn.execute(
+            "SELECT COUNT(*) as n FROM conversations WHERE work_id=?",
+            (work_id,)
+        ).fetchone()["n"]
     return {
         "work_id": work_id,
         "documents_by_kind": {r["kind"] or "unknown": r["n"] for r in doc_by_kind},
         "knowledge_by_kind": {r["kind"]: r["n"] for r in knowledge_by_kind},
         "tasks_by_status": {r["status"]: r["n"] for r in task_by_status},
+        "conversation_count": conv_count,
     }

@@ -93,6 +93,19 @@ def library_get(doc_id: str):
     return {"document": doc}
 
 
+class DocumentUpdate(BaseModel):
+    work_id: str | None = None
+
+
+@router.patch("/library/{doc_id}")
+def library_update(doc_id: str, body: DocumentUpdate):
+    db = get_db()
+    if not db.get_document(doc_id):
+        raise HTTPException(404, f"Document {doc_id!r} not found")
+    db.update_document_work(doc_id, body.work_id)
+    return {"document": db.get_document(doc_id)}
+
+
 @router.delete("/library/{doc_id}")
 def library_delete(doc_id: str):
     db = get_db()

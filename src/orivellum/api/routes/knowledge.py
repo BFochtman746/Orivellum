@@ -2,10 +2,15 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
 from orivellum.api._deps import get_db
 
 router = APIRouter(prefix="/api")
+
+
+class KnowledgeReview(BaseModel):
+    review_status: str  # "approved" | "rejected" | "auto" | "ai_auto"
 
 
 @router.get("/knowledge")
@@ -35,3 +40,29 @@ def get_knowledge(item_id: str):
     d = dict(row)
     d["meta"] = json.loads(d.get("meta") or "{}")
     return {"item": d}
+
+
+@router.delete("/knowledge/{item_id}")
+def delete_knowledge(item_id: str):
+    """Permanently delete a knowledge item."""
+    db = get_db()
+    with db._lock:
+        row = db._conn.execute("SELECT id FROM knowledge WHERE id=?", (item_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, f"Knowledge item {item_id!r} not found")
+        db._conn.execute("DELETE FROM knowledge WHERE id=?", (item_id,))
+        db._conn.commit()
+    return {"ok": True, "id": item_id}
+
+
+@router.patch("/knowledge/{item_id}/review")
+def review_knowledge(item_id: str, body: KnowledgeReview):
+    """Approve or dismiss a knowledge item."""
+    db = get_db()
+    try:
+        found = db.update_knowledge_review_status(item_id, body.review_status)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    if not found:
+        raise HTTPException(404, f"Knowledge item {item_id!r} not found")
+    return {"ok": True, "id": item_id, "review_status": body.review_status}

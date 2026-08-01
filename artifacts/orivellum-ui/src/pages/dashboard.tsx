@@ -1,7 +1,7 @@
-import { useGetDashboardSummary, useGetDashboardActivity, useGetBriefing } from "@workspace/api-client-react";
+import { useGetDashboardSummary, useGetDashboardActivity, useGetBriefing, useListConversations } from "@workspace/api-client-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { format } from "date-fns";
+import { format, formatDistanceToNow } from "date-fns";
 import { BookOpen, Library, MessageSquare, Target, Activity } from "lucide-react";
 import { Link } from "wouter";
 import { Button } from "@/components/ui/button";
@@ -11,6 +11,7 @@ export default function Dashboard() {
   const { data: summary, isLoading: loadingSummary } = useGetDashboardSummary();
   const { data: activityResp, isLoading: loadingActivity } = useGetDashboardActivity({ limit: 10 });
   const { data: briefing, isLoading: loadingBriefing } = useGetBriefing();
+  const { data: convsResp, isLoading: loadingConvs } = useListConversations({ limit: 5 });
 
   return (
     <div className="space-y-8 max-w-5xl animate-in fade-in slide-in-from-bottom-4 duration-500">
@@ -95,12 +96,54 @@ export default function Dashboard() {
           )}
         </div>
 
-        {/* Activity Feed */}
-        <div className="space-y-4">
-          <div className="flex items-center gap-2">
-            <Activity className="w-5 h-5 text-muted-foreground" />
-            <h2 className="text-xl font-serif font-semibold">Activity</h2>
+        {/* Recent Conversations + Activity Feed */}
+        <div className="space-y-6">
+          {/* Recent Conversations */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <MessageSquare className="w-4 h-4 text-muted-foreground" />
+                <h2 className="text-lg font-serif font-semibold">Conversations</h2>
+              </div>
+              <Button asChild variant="ghost" size="sm" className="h-6 text-xs font-mono text-muted-foreground">
+                <Link href="/chat">View all</Link>
+              </Button>
+            </div>
+            {loadingConvs ? (
+              <div className="space-y-2">
+                {[1, 2].map(i => <Skeleton key={i} className="h-12 w-full" />)}
+              </div>
+            ) : convsResp?.conversations?.length ? (
+              <div className="space-y-1">
+                {convsResp.conversations.slice(0, 4).map((c) => (
+                  <Link key={c.id} href={`/chat?id=${c.id}`}>
+                    <div className="flex items-center justify-between p-2.5 rounded-lg hover:bg-muted/30 transition-colors cursor-pointer group">
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium truncate group-hover:text-primary transition-colors">{c.title || "Untitled"}</p>
+                        {c.last_message && (
+                          <p className="text-xs text-muted-foreground truncate">{c.last_message.slice(0, 55)}</p>
+                        )}
+                      </div>
+                      {c.updated_at && (
+                        <span className="text-[10px] font-mono text-muted-foreground/50 ml-2 shrink-0">
+                          {formatDistanceToNow(new Date(c.updated_at), { addSuffix: false })}
+                        </span>
+                      )}
+                    </div>
+                  </Link>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground italic px-1">No conversations yet.</p>
+            )}
           </div>
+
+          {/* Activity Feed */}
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <Activity className="w-4 h-4 text-muted-foreground" />
+              <h2 className="text-lg font-serif font-semibold">Activity</h2>
+            </div>
           
           <Card className="bg-muted/10">
             <CardContent className="p-0">
@@ -118,20 +161,28 @@ export default function Dashboard() {
                 </div>
               ) : activityResp?.activity && activityResp.activity.length > 0 ? (
                 <div className="divide-y divide-border/50">
-                  {activityResp.activity.map((item, i) => (
-                    <div key={`${item.id}-${i}`} className="p-4 flex gap-3 hover:bg-muted/30 transition-colors">
-                      <div className="w-2 h-2 mt-1.5 rounded-full bg-primary/40 shrink-0" />
-                      <div>
-                        <p className="text-sm font-medium">{item.label}</p>
-                        <div className="flex items-center gap-2 mt-1">
-                          <Badge variant="outline" className="text-[9px] uppercase font-mono px-1 py-0 h-4">{item.kind}</Badge>
-                          <span className="text-xs text-muted-foreground font-mono">
-                            {item.created_at ? format(new Date(item.created_at), 'MMM d, HH:mm') : ''}
-                          </span>
+                  {activityResp.activity.map((item, i) => {
+                    const href = item.kind === "work" ? `/works/${item.id}` : item.kind === "document" ? `/library/${item.id}` : null;
+                    const Inner = (
+                      <div className={`p-4 flex gap-3 transition-colors ${href ? "hover:bg-muted/30 cursor-pointer" : ""}`}>
+                        <div className="w-2 h-2 mt-1.5 rounded-full bg-primary/40 shrink-0" />
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-medium truncate">{item.label}</p>
+                          <div className="flex items-center gap-2 mt-1">
+                            <Badge variant="outline" className="text-[9px] uppercase font-mono px-1 py-0 h-4">{item.kind}</Badge>
+                            <span className="text-xs text-muted-foreground font-mono">
+                              {item.created_at ? formatDistanceToNow(new Date(item.created_at), { addSuffix: true }) : ''}
+                            </span>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                    return href ? (
+                      <Link key={`${item.id}-${i}`} href={href}>{Inner}</Link>
+                    ) : (
+                      <div key={`${item.id}-${i}`}>{Inner}</div>
+                    );
+                  })}
                 </div>
               ) : (
                 <div className="p-8 text-center text-sm text-muted-foreground">
@@ -140,7 +191,8 @@ export default function Dashboard() {
               )}
             </CardContent>
           </Card>
-        </div>
+          </div>{/* end Activity */}
+        </div>{/* end right column */}
       </div>
     </div>
   );

@@ -5,6 +5,7 @@ import {
   useSearchLibrary,
   useImportDocument,
   useDeleteDocument,
+  useListWorks,
   getListLibraryQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -92,12 +93,16 @@ function ImportDialog({ onSuccess }: ImportDialogProps) {
     importDoc.mutate(
       { data: { filename: file.name, content_b64: b64, work_id: workId || undefined } },
       {
-        onSuccess: () => {
+        onSuccess: (res) => {
           onSuccess();
           setOpen(false);
           setFile(null);
           setWorkId("");
-          toast.success(`${file.name} imported — extraction running`);
+          if ((res as any).duplicate) {
+            toast.info(`${file.name} already exists — navigating to existing document`);
+          } else {
+            toast.success(`${file.name} imported — extraction running`);
+          }
         },
         onError: () => toast.error("Import failed"),
       }
@@ -220,11 +225,34 @@ export default function Library() {
     { query: { enabled: !!search, queryKey: ["librarySearch", search] } }
   );
   const deleteDoc = useDeleteDocument();
+  const [readinessFilter, setReadinessFilter] = useState<"all" | "ready" | "processing" | "error">("all");
+  const [kindFilter, setKindFilter] = useState<string>("all");
+  const [showFilters, setShowFilters] = useState(false);
+  const { data: worksResp } = useListWorks();
+  const workTitles: Record<string, string> = {};
+  for (const w of worksResp?.works ?? []) {
+    if (w.id) workTitles[w.id] = w.title ?? w.id.slice(0, 8);
+  }
 
   const isLoading = search ? loadingSearch : loadingList;
-  const docs: any[] = search
+  const rawDocs: any[] = search
     ? (searchResp?.results ?? [])
     : (listResp?.documents ?? []);
+
+  // Derive available kinds from the list for dynamic filter chips
+  const availableKinds = Array.from(new Set(rawDocs.map((d) => d.kind ?? "file").filter(Boolean))).sort();
+
+  const docs = rawDocs.filter((d) => {
+    const matchesReadiness = (() => {
+      if (readinessFilter === "all") return true;
+      if (readinessFilter === "ready") return d.readiness === "ready";
+      if (readinessFilter === "processing") return d.readiness === "imported";
+      if (readinessFilter === "error") return d.readiness === "error" || d.readiness === "no_text";
+      return true;
+    })();
+    const matchesKind = kindFilter === "all" || (d.kind ?? "file") === kindFilter;
+    return matchesReadiness && matchesKind;
+  });
 
   const invalidate = () =>
     queryClient.invalidateQueries({ queryKey: getListLibraryQueryKey({}) });
@@ -261,26 +289,76 @@ export default function Library() {
           <div>
             <h1 className="text-3xl font-serif font-semibold tracking-tight">Library</h1>
             <p className="text-muted-foreground mt-1 font-serif">
-              All imported documents, articles, and references.
+              {isLoading ? "Loading…" : `${docs.length} document${docs.length !== 1 ? "s" : ""}${search || readinessFilter !== "all" || kindFilter !== "all" ? " matching filters" : ""}`}
             </p>
           </div>
           <ImportDialog onSuccess={invalidate} />
         </div>
 
         {/* Search */}
-        <div className="flex items-center gap-4">
-          <div className="relative flex-1 max-w-md">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-            <Input
-              placeholder="Search all documents (full-text)…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="pl-9 bg-background/50"
-            />
+        <div className="space-y-3">
+          <div className="flex items-center gap-4">
+            <div className="relative flex-1 max-w-md">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <Input
+                placeholder="Search all documents (full-text)…"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="pl-9 bg-background/50"
+              />
+            </div>
+            <Button
+              variant={showFilters ? "secondary" : "outline"}
+              size="icon"
+              className="shrink-0"
+              onClick={() => setShowFilters((v) => !v)}
+              title="Toggle filters"
+            >
+              <Filter className="w-4 h-4" />
+            </Button>
           </div>
-          <Button variant="outline" size="icon" className="shrink-0">
-            <Filter className="w-4 h-4" />
-          </Button>
+          {showFilters && (
+            <div className="flex flex-wrap items-center gap-4">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-mono text-muted-foreground uppercase">Status:</span>
+                <div className="flex items-center gap-1 p-0.5 bg-muted/30 rounded-lg">
+                  {(["all", "ready", "processing", "error"] as const).map((f) => (
+                    <button
+                      key={f}
+                      onClick={() => setReadinessFilter(f)}
+                      className={`px-2.5 py-1 rounded text-xs font-mono transition-colors ${
+                        readinessFilter === f
+                          ? "bg-background shadow-sm text-foreground"
+                          : "text-muted-foreground hover:text-foreground"
+                      }`}
+                    >
+                      {f === "all" ? "All" : f === "processing" ? "Processing" : f.charAt(0).toUpperCase() + f.slice(1)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {availableKinds.length > 1 && (
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-mono text-muted-foreground uppercase">Type:</span>
+                  <div className="flex items-center gap-1 p-0.5 bg-muted/30 rounded-lg">
+                    {["all", ...availableKinds].map((k) => (
+                      <button
+                        key={k}
+                        onClick={() => setKindFilter(k)}
+                        className={`px-2.5 py-1 rounded text-xs font-mono uppercase transition-colors ${
+                          kindFilter === k
+                            ? "bg-background shadow-sm text-foreground"
+                            : "text-muted-foreground hover:text-foreground"
+                        }`}
+                      >
+                        {k === "all" ? "All" : k}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Document list */}
@@ -327,7 +405,8 @@ export default function Library() {
                           )}
                           {doc.work_id && (
                             <span className="text-[10px] text-muted-foreground flex items-center gap-1 font-mono">
-                              <Database className="w-2.5 h-2.5" /> Linked to Work
+                              <Database className="w-2.5 h-2.5" />
+                              {workTitles[doc.work_id] ?? "Linked Work"}
                             </span>
                           )}
                         </div>

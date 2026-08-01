@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link } from "wouter";
 import { useListWorks, useCreateWork, useGetWorkTypes, getListWorksQueryKey } from "@workspace/api-client-react";
+import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -16,6 +17,7 @@ import { Textarea } from "@/components/ui/textarea";
 
 export default function WorksList() {
   const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"all" | "active" | "archived">("all");
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const queryClient = useQueryClient();
   
@@ -32,14 +34,17 @@ export default function WorksList() {
         queryClient.invalidateQueries({ queryKey: getListWorksQueryKey() });
         setIsCreateOpen(false);
         setNewWork({ title: "", description: "", work_type: "research" });
-      }
+        toast.success(`"${newWork.title}" created`);
+      },
+      onError: () => toast.error("Could not create work"),
     });
   };
 
-  const filteredWorks = worksResp?.works?.filter(w => 
-    w.title?.toLowerCase().includes(search.toLowerCase()) || 
-    w.description?.toLowerCase().includes(search.toLowerCase())
-  );
+  const filteredWorks = worksResp?.works?.filter(w => {
+    const matchesSearch = !search || w.title?.toLowerCase().includes(search.toLowerCase()) || w.description?.toLowerCase().includes(search.toLowerCase());
+    const matchesStatus = statusFilter === "all" || (w as any).status === statusFilter;
+    return matchesSearch && matchesStatus;
+  });
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
@@ -122,9 +127,17 @@ export default function WorksList() {
             className="pl-9 bg-background/50"
           />
         </div>
-        <Button variant="outline" size="icon" className="shrink-0">
-          <Filter className="w-4 h-4" />
-        </Button>
+        <div className="flex items-center gap-1 border border-border/50 rounded-lg p-0.5 bg-muted/20">
+          {(["all", "active", "archived"] as const).map((s) => (
+            <button
+              key={s}
+              onClick={() => setStatusFilter(s)}
+              className={`px-3 py-1.5 rounded-md text-xs font-mono uppercase tracking-wider transition-colors ${statusFilter === s ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"}`}
+            >
+              {s}
+            </button>
+          ))}
+        </div>
       </div>
 
       {isLoading ? (
@@ -166,6 +179,14 @@ export default function WorksList() {
                         <div className="font-mono text-xs uppercase">Tasks</div>
                         <div className="font-medium text-foreground text-base">{work.pending_tasks || 0}</div>
                       </div>
+                      {(work as any).obj_created && (
+                        <div className="space-y-1">
+                          <div className="font-mono text-xs uppercase">Created</div>
+                          <div className="font-medium text-foreground text-base text-xs">
+                            {format(new Date((work as any).obj_created), "MMM d")}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </CardContent>

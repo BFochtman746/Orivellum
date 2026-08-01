@@ -180,10 +180,27 @@ def set_ai_extraction_setting(body: AiExtractionUpdate):
 
 @router.get("/briefing")
 def get_briefing():
+    import datetime
     db = get_db()
     summary = db.dashboard_summary()
+    now = datetime.datetime.now(datetime.timezone.utc)
+    hour = now.hour
+    if hour < 12:
+        time_of_day = "morning"
+    elif hour < 17:
+        time_of_day = "afternoon"
+    else:
+        time_of_day = "evening"
+    work_count = summary.get("work_count", 0)
+    pending = summary.get("pending_task_count", 0)
+    if work_count == 0:
+        greeting = f"Good {time_of_day}. Your workspace is ready."
+    elif pending > 0:
+        greeting = f"Good {time_of_day}. You have {pending} task{'s' if pending != 1 else ''} pending across {work_count} work{'s' if work_count != 1 else ''}."
+    else:
+        greeting = f"Good {time_of_day}. Here's what's happening across your works."
     return {
-        "date": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).date().isoformat(),
+        "date": now.date().isoformat(),
         "summary": summary,
-        "greeting": "Good day. Here's what's happening across your works.",
+        "greeting": greeting,
     }

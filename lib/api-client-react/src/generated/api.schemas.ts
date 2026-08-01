@@ -433,13 +433,26 @@ export type SearchLibrary200 = {
   count?: number;
 };
 
+export type GetDocument200 = {
+  document?: Document;
+};
+
+export type UpdateDocumentBody = {
+  /** @nullable */
+  work_id?: string | null;
+};
+
+export type UpdateDocument200 = {
+  document?: Document;
+};
+
+export type DeleteDocument200 = {
+  ok?: boolean;
+};
+
 export type ImportDocument200 = {
   document?: Document;
   duplicate?: boolean;
-};
-
-export type GetDocument200 = {
-  document?: Document;
 };
 
 export type ListKnowledgeParams = {
@@ -463,6 +476,31 @@ export type SearchKnowledge200 = {
   query?: string;
   knowledge?: KnowledgeItem[];
   count?: number;
+};
+
+export type DeleteKnowledgeItem200 = {
+  ok?: boolean;
+  id?: string;
+};
+
+export type ReviewKnowledgeItemBodyReviewStatus = typeof ReviewKnowledgeItemBodyReviewStatus[keyof typeof ReviewKnowledgeItemBodyReviewStatus];
+
+
+export const ReviewKnowledgeItemBodyReviewStatus = {
+  auto: 'auto',
+  ai_auto: 'ai_auto',
+  approved: 'approved',
+  rejected: 'rejected',
+} as const;
+
+export type ReviewKnowledgeItemBody = {
+  review_status: ReviewKnowledgeItemBodyReviewStatus;
+};
+
+export type ReviewKnowledgeItem200 = {
+  ok?: boolean;
+  id?: string;
+  review_status?: string;
 };
 
 export type ListProjects200 = {

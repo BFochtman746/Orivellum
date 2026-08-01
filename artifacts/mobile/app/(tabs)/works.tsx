@@ -15,6 +15,7 @@ import { useListWorks } from '@workspace/api-client-react';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { Work } from '@workspace/api-client-react';
+import { OfflineBanner, ErrorScreen } from '@/components/OfflineBanner';
 
 const TYPE_ICONS: Record<string, string> = {
   research: 'book-open',
@@ -102,8 +103,9 @@ export default function WorksScreen() {
   const insets = useSafeAreaInsets();
   const isWeb = Platform.OS === 'web';
 
-  const { data, isLoading, refetch } = useListWorks();
+  const { data, isLoading, isError, refetch } = useListWorks();
   const works = data?.works ?? [];
+  const hasData = works.length > 0;
 
   const topPad = isWeb ? 67 : insets.top;
 
@@ -126,11 +128,25 @@ export default function WorksScreen() {
         </Text>
       </View>
 
+      {/* Offline banner — shown only when we have cached data */}
+      {isError && hasData && (
+        <OfflineBanner
+          message="Showing cached works — server unreachable"
+          onRetry={refetch}
+        />
+      )}
+
       {/* List */}
-      {isLoading ? (
+      {isLoading && !hasData ? (
         <View style={styles.centered}>
           <ActivityIndicator color={colors.primary} />
         </View>
+      ) : isError && !hasData ? (
+        <ErrorScreen
+          message="Can't reach the server"
+          detail="Make sure Orivellum is running on your local machine and your device is on the same network."
+          onRetry={refetch}
+        />
       ) : works.length === 0 ? (
         <View style={styles.centered}>
           <Feather name="book-open" size={44} color={colors.mutedForeground} />

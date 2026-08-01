@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
+import { toast } from "sonner";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
@@ -10,6 +11,7 @@ import {
   useDeleteConversation,
   useUpdateConversation,
   useGetSystemHealth,
+  useGetWork,
   getListConversationsQueryKey,
   getGetConversationQueryKey,
 } from "@workspace/api-client-react";
@@ -29,8 +31,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
-  MessageSquare, Plus, Send, Search, Bot, User,
-  Trash2, Wifi, WifiOff, Loader2, Cpu,
+  MessageSquare, Plus, Send, Search, Bot, User, Copy, Check,
+  Trash2, Wifi, WifiOff, Loader2, Cpu, Pencil, BookOpen, Archive, ArchiveRestore,
 } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
@@ -91,7 +93,7 @@ function ModelPicker({ convId, currentModel, models, defaultModel, onChanged }: 
   const handleChange = (value: string) => {
     updateConv.mutate(
       { convId, data: { model: value } },
-      { onSuccess: onChanged }
+      { onSuccess: onChanged, onError: () => toast.error("Could not switch model") }
     );
   };
 
@@ -128,18 +130,29 @@ function MarkdownContent({ text }: { text: string }) {
       components={{
         p: ({ children }) => <p className="mb-2 last:mb-0 leading-relaxed">{children}</p>,
         code: ({ className, children, ...props }) => {
-          const isBlock = className?.startsWith("language-");
+          const lang = className?.replace("language-", "") ?? "";
+          const isBlock = !!className?.startsWith("language-");
           return isBlock ? (
-            <code className="block bg-black/10 rounded px-3 py-2 text-xs font-mono whitespace-pre-wrap my-2" {...props}>
-              {children}
-            </code>
+            <span className="block my-3 rounded-lg overflow-hidden border border-white/10 shadow-md">
+              {lang && (
+                <span className="flex items-center justify-between px-3 py-1.5 bg-zinc-800 border-b border-white/10">
+                  <span className="text-[10px] font-mono uppercase tracking-wide text-zinc-400">{lang}</span>
+                </span>
+              )}
+              <code
+                className="block bg-zinc-900 text-zinc-100 px-4 py-3 text-xs font-mono whitespace-pre-wrap leading-relaxed overflow-x-auto"
+                {...props}
+              >
+                {children}
+              </code>
+            </span>
           ) : (
-            <code className="bg-black/10 rounded px-1 py-0.5 text-xs font-mono" {...props}>
+            <code className="bg-zinc-800 text-zinc-200 rounded px-1.5 py-0.5 text-[0.8em] font-mono" {...props}>
               {children}
             </code>
           );
         },
-        pre: ({ children }) => <>{children}</>,
+        pre: ({ children }) => <div className="my-0">{children}</div>,
         ul: ({ children }) => <ul className="list-disc list-inside mb-2 space-y-0.5">{children}</ul>,
         ol: ({ children }) => <ol className="list-decimal list-inside mb-2 space-y-0.5">{children}</ol>,
         li: ({ children }) => <li className="text-sm">{children}</li>,
@@ -210,6 +223,7 @@ export default function Chat() {
 
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
+  const [showArchived, setShowArchived] = useState(false);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [localMessages, setLocalMessages] = useState<LocalMessage[]>([]);
@@ -221,7 +235,10 @@ export default function Chat() {
   const rafRef = useRef<number | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  const { data: convsResp, isLoading: loadingList } = useListConversations();
+  const { data: convsResp, isLoading: loadingList } = useListConversations(
+    { archived: showArchived || undefined },
+    { query: { queryKey: getListConversationsQueryKey({ archived: showArchived || undefined }) } }
+  );
   const { data: activeConv, isLoading: loadingActive } = useGetConversation(activeId!, {
     query: { enabled: !!activeId, queryKey: getGetConversationQueryKey(activeId!) },
   });
@@ -233,6 +250,38 @@ export default function Chat() {
 
   const createConv = useCreateConversation();
   const deleteConv = useDeleteConversation();
+  const updateConvMeta = useUpdateConversation();
+
+  // Rename state for sidebar
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+
+  const startRename = (e: React.MouseEvent, id: string, currentTitle: string) => {
+    e.stopPropagation();
+    setRenamingId(id);
+    setRenameValue(currentTitle || "");
+  };
+
+  const commitRename = (id: string) => {
+    const trimmed = renameValue.trim();
+    if (trimmed) {
+      updateConvMeta.mutate(
+        { convId: id, data: { title: trimmed } },
+        {
+          onSuccess: () => queryClient.invalidateQueries({ queryKey: getListConversationsQueryKey() }),
+          onError: () => toast.error("Could not rename conversation"),
+        }
+      );
+    }
+    setRenamingId(null);
+  };
+
+  // Resolve linked work title for the chat header (use activeConv to avoid ordering issues)
+  const convWorkId = (activeConv?.conversation as any)?.work_id as string | undefined;
+  const { data: linkedWorkResp } = useGetWork(convWorkId ?? "", {
+    query: { enabled: !!convWorkId },
+  });
+  const linkedWorkTitle = (linkedWorkResp?.work as any)?.title as string | undefined;
 
   useEffect(() => { setLocalMessages([]); setDraft(""); }, [activeId]);
   useEffect(() => { if (activeConv?.messages && !sending) setLocalMessages([]); }, [activeConv?.messages, sending]);
@@ -262,6 +311,7 @@ export default function Chat() {
           queryClient.invalidateQueries({ queryKey: getListConversationsQueryKey() });
           if (res?.conversation?.id) setLocation(`/chat?id=${res.conversation.id}`);
         },
+        onError: () => toast.error("Could not create conversation"),
       }
     );
   };
@@ -272,7 +322,9 @@ export default function Chat() {
       onSuccess: () => {
         queryClient.invalidateQueries({ queryKey: getListConversationsQueryKey() });
         if (activeId === convId) setLocation("/chat");
+        toast.success("Conversation deleted");
       },
+      onError: () => toast.error("Could not delete conversation"),
     });
   };
 
@@ -316,6 +368,15 @@ export default function Chat() {
         }
         const finalText = accumulatorRef.current;
         setLocalMessages((prev) => prev.map((m) => m.id === assistantId ? { ...m, text: finalText, streaming: false } : m));
+      } catch (err: any) {
+        const msg = err?.message ?? String(err);
+        if (msg.includes("503") || msg.includes("Service Unavailable") || msg.includes("AI")) {
+          toast.error("AI service unavailable — check Engine Settings");
+        } else {
+          toast.error("Message failed to send");
+        }
+        // Remove the placeholder assistant message on failure
+        setLocalMessages((prev) => prev.filter((m) => m.id !== assistantId));
       } finally {
         if (rafRef.current !== null) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
         accumulatorRef.current = "";
@@ -335,9 +396,9 @@ export default function Chat() {
         text: m.text ?? "", created_at: m.created_at ?? "",
       }));
 
-  const filteredConvs = convsResp?.conversations?.filter(
-    (c) => c.title?.toLowerCase().includes(search.toLowerCase()) || c.last_message?.toLowerCase().includes(search.toLowerCase())
-  );
+  const filteredConvs = convsResp?.conversations?.filter((c) => {
+    return !search || c.title?.toLowerCase().includes(search.toLowerCase()) || c.last_message?.toLowerCase().includes(search.toLowerCase());
+  });
 
   const conv = activeConv?.conversation;
 
@@ -348,9 +409,18 @@ export default function Chat() {
         <div className="p-4 border-b border-border/50 bg-muted/10 space-y-3">
           <div className="flex items-center justify-between">
             <h2 className="font-serif text-lg font-medium">Conversations</h2>
-            <Button size="icon" variant="ghost" onClick={handleCreate} disabled={createConv.isPending}>
-              <Plus className="w-4 h-4" />
-            </Button>
+            <div className="flex items-center gap-0.5">
+              <button
+                onClick={() => setShowArchived((v) => !v)}
+                title={showArchived ? "Show active" : "Show archived"}
+                className={`p-1.5 rounded transition-colors ${showArchived ? "text-primary bg-primary/10" : "text-muted-foreground hover:text-foreground"}`}
+              >
+                <Archive className="w-3.5 h-3.5" />
+              </button>
+              <Button size="icon" variant="ghost" onClick={handleCreate} disabled={createConv.isPending || showArchived}>
+                <Plus className="w-4 h-4" />
+              </Button>
+            </div>
           </div>
           <div className="flex items-center gap-1.5 text-xs">
             {aiOnline ? (
@@ -372,18 +442,78 @@ export default function Chat() {
               : filteredConvs?.map((c) => (
                   <div
                     key={c.id}
-                    onClick={() => setLocation(`/chat?id=${c.id}`)}
+                    onClick={() => renamingId !== c.id && setLocation(`/chat?id=${c.id}`)}
                     className={`group p-3 rounded-md cursor-pointer transition-colors flex items-start justify-between gap-2 ${activeId === c.id ? "bg-primary/10 text-primary" : "hover:bg-muted/50"}`}
                   >
                     <div className="min-w-0 flex-1">
-                      <div className="font-medium text-sm truncate">{c.title || "Untitled"}</div>
-                      <div className="text-xs text-muted-foreground truncate mt-0.5">
-                        {c.last_message ? c.last_message.slice(0, 50) : "No messages"}
+                      {renamingId === c.id ? (
+                        <input
+                          autoFocus
+                          value={renameValue}
+                          onChange={(e) => setRenameValue(e.target.value)}
+                          onBlur={() => commitRename(c.id!)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") commitRename(c.id!);
+                            if (e.key === "Escape") setRenamingId(null);
+                          }}
+                          onClick={(e) => e.stopPropagation()}
+                          className="w-full text-sm font-medium bg-background border border-primary/40 rounded px-1.5 py-0.5 outline-none"
+                        />
+                      ) : (
+                        <div className="font-medium text-sm truncate">{c.title || "Untitled"}</div>
+                      )}
+                      <div className="flex items-center justify-between gap-1 mt-0.5">
+                        <div className="text-xs text-muted-foreground truncate flex-1 flex items-center gap-1">
+                          {(c as any).work_id && <BookOpen className="w-2.5 h-2.5 shrink-0 text-primary/50" />}
+                          {c.last_message ? c.last_message.slice(0, 45) : "No messages"}
+                        </div>
+                        {c.updated_at && (
+                          <span className="text-[10px] font-mono text-muted-foreground/60 shrink-0">
+                            {(() => {
+                              const d = new Date(c.updated_at);
+                              const now = new Date();
+                              const diffMin = Math.floor((now.getTime() - d.getTime()) / 60000);
+                              if (diffMin < 1) return "now";
+                              if (diffMin < 60) return `${diffMin}m`;
+                              const diffH = Math.floor(diffMin / 60);
+                              if (diffH < 24) return `${diffH}h`;
+                              return format(d, "MMM d");
+                            })()}
+                          </span>
+                        )}
                       </div>
                     </div>
-                    <button onClick={(e) => handleDelete(c.id!, e)} className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 rounded hover:text-destructive shrink-0 mt-0.5">
-                      <Trash2 className="w-3 h-3" />
-                    </button>
+                    <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 mt-0.5">
+                      {!(c as any).archived && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); updateConvMeta.mutate({ convId: c.id!, data: { archived: true } }, { onSuccess: () => { queryClient.invalidateQueries({ queryKey: getListConversationsQueryKey() }); toast.success("Archived"); }, onError: () => toast.error("Could not archive") }); }}
+                          title="Archive"
+                          className="p-0.5 rounded hover:text-amber-600 text-muted-foreground"
+                        >
+                          <Archive className="w-3 h-3" />
+                        </button>
+                      )}
+                      {(c as any).archived && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); updateConvMeta.mutate({ convId: c.id!, data: { archived: false } }, { onSuccess: () => { queryClient.invalidateQueries({ queryKey: getListConversationsQueryKey() }); toast.success("Restored"); }, onError: () => toast.error("Could not restore") }); }}
+                          title="Restore"
+                          className="p-0.5 rounded hover:text-emerald-600 text-muted-foreground"
+                        >
+                          <ArchiveRestore className="w-3 h-3" />
+                        </button>
+                      )}
+                      {!(c as any).archived && (
+                        <button
+                          onClick={(e) => startRename(e, c.id!, c.title ?? "")}
+                          className="p-0.5 rounded hover:text-foreground text-muted-foreground"
+                        >
+                          <Pencil className="w-3 h-3" />
+                        </button>
+                      )}
+                      <button onClick={(e) => handleDelete(c.id!, e)} className="p-0.5 rounded hover:text-destructive">
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                    </div>
                   </div>
                 ))}
             {!loadingList && !filteredConvs?.length && (
@@ -403,7 +533,13 @@ export default function Chat() {
                 <h2 className="font-serif text-lg font-medium leading-tight">{conv?.title || "Conversation"}</h2>
                 <div className="flex items-center gap-2 mt-0.5">
                   <span className="text-xs font-mono text-muted-foreground">{conv?.message_count ?? 0} messages</span>
-                  {conv?.work_id && <Badge variant="secondary" className="text-[10px] h-4 px-1.5">Work linked</Badge>}
+                  {convWorkId && (
+                    <a href={`/works/${convWorkId}`} onClick={(e) => { e.stopPropagation(); setLocation(`/works/${convWorkId}`); e.preventDefault(); }}>
+                      <Badge variant="secondary" className="text-[10px] h-4 px-1.5 hover:bg-secondary/80 cursor-pointer transition-colors">
+                        {linkedWorkTitle ?? "Work linked"}
+                      </Badge>
+                    </a>
+                  )}
                 </div>
               </div>
               {/* Model picker in header */}
@@ -459,6 +595,25 @@ export default function Chat() {
                             </span>
                           )}
                         </div>
+                        {msg.role === "assistant" && !msg.streaming && (
+                          <div className="flex items-center gap-2 px-0.5">
+                            {conv?.model && (
+                              <span className="text-[10px] font-mono text-muted-foreground/50">
+                                {modelLabel(conv.model, models, defaultModel)}
+                              </span>
+                            )}
+                            <button
+                              onClick={() => {
+                                navigator.clipboard.writeText(msg.text ?? "");
+                                toast.success("Copied");
+                              }}
+                              className="text-muted-foreground/30 hover:text-muted-foreground/70 transition-colors"
+                              title="Copy response"
+                            >
+                              <Copy className="w-3 h-3" />
+                            </button>
+                          </div>
+                        )}
                       </div>
                     </div>
                   ))

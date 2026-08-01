@@ -146,7 +146,12 @@ def _build_system_prompt(db: Any, conv: dict) -> str:
         return base
 
     work_title = work.get("title", "")
-    knowledge = db.list_knowledge(work_id=work_id, limit=_CONTEXT_KNOWLEDGE)
+    all_knowledge = db.list_knowledge(work_id=work_id, limit=_CONTEXT_KNOWLEDGE * 4)
+    # Exclude dismissed items — only inject auto (rule-based) and approved items
+    knowledge = [
+        k for k in all_knowledge
+        if k.get("review_status") not in ("rejected",)
+    ][:_CONTEXT_KNOWLEDGE]
 
     context_parts = [f"You are assisting with a research work titled \"{work_title}\"."]
     if knowledge:
