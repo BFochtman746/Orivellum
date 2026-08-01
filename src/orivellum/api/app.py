@@ -64,16 +64,17 @@ async def lifespan(app: FastAPI):
         if not db.get_setting("api_key"):
             api_key = secrets.token_hex(32)
             db.set_setting("api_key", api_key)
-            # Write to a local file so the Vite dev server can read it without
-            # an API call.  This file must NOT be committed or exposed publicly.
-            key_file = Path(cfg.data_dir) / "api_key.txt"
-            try:
-                key_file.write_text(api_key, encoding="utf-8")
-                logger.info("API key generated — stored in %s", key_file)
-            except OSError as e:
-                logger.warning("Could not write api_key.txt: %s", e)
+            logger.info("API key generated and stored in database")
         else:
+            api_key = db.get_setting("api_key")
             logger.info("API key loaded from database")
+        # Always (re)write api_key.txt so the user can find it on disk.
+        key_file = Path(cfg.data_dir) / "api_key.txt"
+        try:
+            key_file.write_text(api_key, encoding="utf-8")
+            logger.info("API key written to %s", key_file)
+        except OSError as e:
+            logger.warning("Could not write api_key.txt: %s", e)
 
     # Step 5: Wire deps
     _deps.init(db=db, cfg=cfg)
