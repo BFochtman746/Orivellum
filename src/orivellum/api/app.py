@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import logging
 import os
-import re
 import secrets
 import sys
 import time
@@ -104,39 +103,27 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-    # CORS — restricted to configured origins + only this repl's Replit domain.
-    # With allow_credentials=True (needed for session cookies), the regex must
-    # be exact rather than a wildcard — otherwise any *.replit.dev origin can
-    # make credentialed requests using the user's session cookie.
+    # CORS — restricted to explicitly configured origins only.
+    # With allow_credentials=True (needed for session cookies), the origin list
+    # must be exact — a regex covering broad IP ranges would let any service on
+    # a matching LAN address make credentialed requests with the user's session
+    # cookie.  Users who need LAN access should add their origin to
+    # ORIVELLUM_ALLOWED_ORIGINS instead.
     allowed_origins = os.environ.get(
         "ORIVELLUM_ALLOWED_ORIGINS",
         "http://localhost:5173,http://localhost:3000,http://localhost:80",
     ).split(",")
 
-    # Build a regex that covers:
-    #   • This repl's Replit dev domain (REPLIT_DEV_DOMAIN, https only)
-    #   • Private LAN ranges: 192.168.x.x, 10.x.x.x on any port
-    #   • Tailscale CGNAT range: 100.64–127.x.x on any port
-    # These are all trusted local networks; a public attacker cannot
-    # spoof a private-range origin in a credentialed browser request.
+    # Also allow this repl's exact Replit dev domain (https only).
     _replit_domain = os.environ.get("REPLIT_DEV_DOMAIN", "").strip()
-    _local_net_regex = (
-        r"http://(localhost|127\.0\.0\.1"
-        r"|192\.168\.\d{1,3}\.\d{1,3}"
-        r"|10\.\d{1,3}\.\d{1,3}\.\d{1,3}"
-        r"|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d{1,3}\.\d{1,3}"  # Tailscale
-        r")(:\d+)?"
-    )
-    _replit_regex = (r"https://" + re.escape(_replit_domain)) if _replit_domain else None
-    _origin_regex = (
-        f"({_local_net_regex}|{_replit_regex})" if _replit_regex
-        else _local_net_regex
-    )
+    if _replit_domain:
+        replit_origin = f"https://{_replit_domain}"
+        if replit_origin not in allowed_origins:
+            allowed_origins.append(replit_origin)
 
     app.add_middleware(
         CORSMiddleware,
         allow_origins=allowed_origins,
-        allow_origin_regex=_origin_regex,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
