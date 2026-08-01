@@ -54,11 +54,15 @@ _PATTERNS: list[tuple[re.Pattern[str], str]] = [
         r"|make (an? )?image|show me (an? )?image|paint (an? )?|illustrate)\b",
         re.IGNORECASE,
     ), "image_gen"),
-    # web search
+    # web search — broad pattern covering "research online", "look up", news queries, etc.
     (re.compile(
         r"\b(search (for|the web|online)|find (information|papers|articles|news) (about|on)"
-        r"|look up|recent (papers|news|articles|research) (on|about)"
-        r"|what (are|is) (the latest|recent)|google|bing|search online)\b",
+        r"|look up( online)?|recent (papers|news|articles|research) (on|about)"
+        r"|what (are|is) (the latest|recent)|google|bing|search online"
+        r"|research online|find online|latest (news|updates|info) (about|on|for)"
+        r"|news (about|on|for)|top news|current (news|events|updates)"
+        r"|what.?s happening|what.?s new (with|at|in)"
+        r"|can you (research|find|look up|search))\b",
         re.IGNORECASE,
     ), "web_search"),
 ]

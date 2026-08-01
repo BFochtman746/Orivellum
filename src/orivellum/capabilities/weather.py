@@ -43,14 +43,79 @@ def _fetch_json(url: str, params: dict[str, Any]) -> dict[str, Any]:
         return json.loads(resp.read().decode("utf-8"))
 
 
+_US_STATES_FULL = (
+    "Alabama","Alaska","Arizona","Arkansas","California","Colorado","Connecticut",
+    "Delaware","Florida","Georgia","Hawaii","Idaho","Illinois","Indiana","Iowa",
+    "Kansas","Kentucky","Louisiana","Maine","Maryland","Massachusetts","Michigan",
+    "Minnesota","Mississippi","Missouri","Montana","Nebraska","Nevada",
+    "New Hampshire","New Jersey","New Mexico","New York","North Carolina",
+    "North Dakota","Ohio","Oklahoma","Oregon","Pennsylvania","Rhode Island",
+    "South Carolina","South Dakota","Tennessee","Texas","Utah","Vermont",
+    "Virginia","Washington","West Virginia","Wisconsin","Wyoming",
+)
+
 def _geocode(location: str) -> dict[str, Any] | None:
-    try:
-        data = _fetch_json(_GEO_API, {"name": location, "count": 1, "language": "en", "format": "json"})
-        results = data.get("results", [])
-        return results[0] if results else None
-    except Exception as exc:
-        logger.warning("Geocoding failed for %r: %s", location, exc)
-        return None
+    """Try several progressively simpler variants of *location* to handle
+    compound strings like 'Mystic CT', 'Mystic Connecticut', 'Paris, France'."""
+    import re as _re
+
+    def _try(name: str) -> dict[str, Any] | None:
+        name = name.strip().rstrip(",.").strip()
+        if not name:
+            return None
+        try:
+            data = _fetch_json(_GEO_API, {"name": name, "count": 1,
+                                          "language": "en", "format": "json"})
+            results = data.get("results", [])
+            return results[0] if results else None
+        except Exception as exc:
+            logger.warning("Geocoding failed for %r: %s", name, exc)
+            return None
+
+    # 1. As-is
+    result = _try(location)
+    if result:
+        return result
+
+    # 2. Strip trailing US state abbreviation ("Mystic CT" → "Mystic")
+    abbr_stripped = _re.sub(
+        r",?\s+\b(?:AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|"
+        r"ME|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|"
+        r"SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY|USA|US)\b\.?$",
+        "", location, flags=_re.IGNORECASE,
+    ).strip()
+    if abbr_stripped and abbr_stripped.lower() != location.lower():
+        result = _try(abbr_stripped)
+        if result:
+            return result
+
+    # 3. Strip trailing full US state name ("Mystic Connecticut" → "Mystic")
+    for state in _US_STATES_FULL:
+        pat = _re.compile(r",?\s+" + _re.escape(state) + r"\s*$", _re.IGNORECASE)
+        stripped2 = pat.sub("", location).strip()
+        if stripped2 and stripped2.lower() != location.lower():
+            result = _try(stripped2)
+            if result:
+                return result
+            break   # only attempt one state removal
+
+    # 4. Everything before the first comma ("London, Ontario" → "London")
+    comma_part = location.split(",")[0].strip()
+    if comma_part and comma_part.lower() != location.lower():
+        result = _try(comma_part)
+        if result:
+            return result
+
+    # 5. First word only ("Mystic Connecticut" → "Mystic")
+    first_word = location.split()[0].rstrip(",.")
+    if len(first_word) > 2 and first_word.lower() not in (
+        location.lower(), comma_part.lower()
+    ):
+        result = _try(first_word)
+        if result:
+            return result
+
+    return None
 
 
 def _wind_direction(deg: float) -> str:
