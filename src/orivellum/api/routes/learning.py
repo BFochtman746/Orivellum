@@ -84,6 +84,34 @@ async def learning_question(work_id: str, concept_id: str | None = None):
     return result
 
 
+@router.post("/works/{work_id}/learning/reset")
+def learning_reset_all(work_id: str):
+    """Reset ALL mastery streaks for this Work so the user can re-study from scratch."""
+    db = get_db()
+    if not db.get_work(work_id):
+        raise HTTPException(404, f"Work {work_id!r} not found")
+    from orivellum.capabilities.learning import reset_mastery
+    deleted = reset_mastery(db, work_id)
+    return {"reset": deleted, "scope": "all"}
+
+
+@router.post("/works/{work_id}/learning/concepts/{concept_id}/reset")
+def learning_reset_concept(work_id: str, concept_id: str):
+    """Reset mastery streak for a single concept so it can be re-studied."""
+    db = get_db()
+    if not db.get_work(work_id):
+        raise HTTPException(404, f"Work {work_id!r} not found")
+    with db._lock:
+        row = db._conn.execute(
+            "SELECT work_id FROM work_concepts WHERE id=?", (concept_id,)
+        ).fetchone()
+    if not row or row["work_id"] != work_id:
+        raise HTTPException(404, f"Concept {concept_id!r} not found in work {work_id!r}")
+    from orivellum.capabilities.learning import reset_mastery
+    deleted = reset_mastery(db, work_id, concept_id)
+    return {"reset": deleted, "concept_id": concept_id, "scope": "concept"}
+
+
 @router.post("/works/{work_id}/learning/assess")
 async def learning_assess(work_id: str, body: AssessBody):
     """Score the student's answer, update streak, and return routing decision."""

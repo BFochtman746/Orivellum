@@ -537,11 +537,19 @@ async def _maybe_dispatch_intent(
         return text, {"intent": "weather", "location": location or query}
 
     if intent == "remember":
-        text = await asyncio.to_thread(_handle_remember, db, user_text, base_url, model)
+        try:
+            text = await asyncio.to_thread(_handle_remember, db, user_text, base_url, model)
+        except Exception as exc:
+            logger.warning("Remember handler failed: %s", exc)
+            text = "I couldn't save that right now — try again in a moment."
         return text, {"intent": "remember"}
 
     if intent == "image_gen":
-        text = await asyncio.to_thread(_handle_image_gen, query, base_url, model)
+        try:
+            text = await asyncio.to_thread(_handle_image_gen, query, base_url, model)
+        except Exception as exc:
+            logger.warning("Image gen handler failed: %s", exc)
+            text = f"Image generation encountered an error: {exc}"
         return text, {"intent": "image_gen", "query": query}
 
     return None

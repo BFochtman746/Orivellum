@@ -54,7 +54,15 @@ function ConversationItem({ item }: { item: Conversation }) {
         </View>
         {item.last_message ? (
           <Text style={[styles.itemPreview, { color: colors.mutedForeground }]} numberOfLines={2}>
-            {item.last_message}
+            {item.last_message
+              .replace(/\*\*(.+?)\*\*/g, '$1')   // bold
+              .replace(/\*(.+?)\*/g, '$1')         // italic
+              .replace(/`{1,3}[^`]*`{1,3}/g, '')  // code
+              .replace(/^#{1,6}\s+/gm, '')         // headings
+              .replace(/^\s*[-*+]\s+/gm, '')       // list bullets
+              .replace(/!\[.*?\]\(.*?\)/g, '')      // images
+              .replace(/\[(.+?)\]\(.*?\)/g, '$1')  // links → label only
+              .trim()}
           </Text>
         ) : (
           <Text style={[styles.itemPreview, { color: colors.muted }]}>No messages yet</Text>
@@ -86,7 +94,7 @@ export default function ConversationsScreen() {
 
   const { data, isLoading, isError, refetch } = useListConversations(
     { archived: false, limit: 100 },
-    { query: { refetchInterval: 15_000, staleTime: 10_000 } }
+    { query: { refetchInterval: 15_000, staleTime: 10_000 } } as any
   );
   const conversations = data?.conversations ?? [];
   const hasData = conversations.length > 0;

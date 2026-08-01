@@ -419,6 +419,12 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
 
   // ── All done ────────────────────────────────────────────────────────────
   if (phase === 'all_done') {
+    const handleReset = async () => {
+      try {
+        await fetch(`${apiBase}/works/${workId}/learning/reset`, { method: 'POST' });
+        init();
+      } catch { init(); }
+    };
     return (
       <View style={[styles.centered, { flex: 1, padding: 32 }]}>
         <Feather name="award" size={48} color={colors.primary} />
@@ -426,13 +432,23 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
           All concepts mastered!
         </Text>
         <Text style={[styles.description, { color: colors.mutedForeground, textAlign: 'center', marginTop: 8 }]}>
-          Add more documents to unlock new material.
+          Add more documents to unlock new material, or reset your streaks to study again.
         </Text>
         {summary && (
           <Text style={[styles.itemMeta, { color: colors.mutedForeground, marginTop: 12 }]}>
             {summary.graduated}/{summary.total} concepts · {summary.mastery_pct}%
           </Text>
         )}
+        <Pressable
+          onPress={handleReset}
+          style={({ pressed }) => [
+            styles.discussBtn,
+            { backgroundColor: colors.muted, marginTop: 24, paddingHorizontal: 24, opacity: pressed ? 0.7 : 1 },
+          ]}
+        >
+          <Feather name="refresh-cw" size={14} color={colors.foreground} />
+          <Text style={[styles.discussBtnText, { color: colors.foreground }]}>Reset &amp; study again</Text>
+        </Pressable>
       </View>
     );
   }

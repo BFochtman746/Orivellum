@@ -1329,6 +1329,12 @@ function LearnTab({ workId }: { workId: string }) {
 
   // ── All done ───────────────────────────────────────────────────────────────
   if (phase === "all_done") {
+    const handleReset = async () => {
+      try {
+        await fetch(`${apiBase}/works/${workId}/learning/reset`, { method: "POST" });
+        await init();
+      } catch {/* init handles errors */}
+    };
     return (
       <div className="flex flex-col items-center justify-center py-24 gap-6">
         <div className="w-16 h-16 rounded-2xl bg-emerald-500/10 flex items-center justify-center">
@@ -1337,10 +1343,14 @@ function LearnTab({ workId }: { workId: string }) {
         <div className="text-center space-y-2">
           <h3 className="font-serif text-2xl font-medium">All concepts mastered!</h3>
           <p className="text-sm text-muted-foreground max-w-xs">
-            You've graduated every concept in this Work. Add more documents to unlock new material.
+            You've graduated every concept in this Work. Add more documents to unlock new material,
+            or reset your streaks to study it all again.
           </p>
         </div>
         {summary && <MasteryBar />}
+        <Button variant="outline" size="sm" className="gap-2 mt-2" onClick={handleReset}>
+          <RefreshCw className="w-3.5 h-3.5" /> Reset streaks &amp; study again
+        </Button>
       </div>
     );
   }

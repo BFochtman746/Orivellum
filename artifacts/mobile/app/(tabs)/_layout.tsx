@@ -39,10 +39,28 @@ function ServerDot() {
 }
 
 function NativeTabLayout() {
+  const { data, isError } = useGetSystemHealth({
+    query: {
+      queryKey: getGetSystemHealthQueryKey(),
+      refetchInterval: 15_000,
+      staleTime: 10_000,
+      retry: false,
+    },
+  });
+  const dotColor = isError ? '#ef4444' : data?.status !== 'ok' ? '#f59e0b' : '#22c55e';
+
   return (
     <NativeTabs>
       <NativeTabs.Trigger name="index">
-        <Icon sf={{ default: 'house', selected: 'house.fill' }} />
+        {/* Health dot sits over the Dashboard icon */}
+        <View style={{ position: 'relative' }}>
+          <Icon sf={{ default: 'house', selected: 'house.fill' }} />
+          <View style={{
+            width: 6, height: 6, borderRadius: 3,
+            backgroundColor: dotColor,
+            position: 'absolute', top: -1, right: -4,
+          }} />
+        </View>
         <Label>Dashboard</Label>
       </NativeTabs.Trigger>
       <NativeTabs.Trigger name="conversations">

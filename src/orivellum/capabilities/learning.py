@@ -67,6 +67,30 @@ def _strip_fences(text: str) -> str:
     return text
 
 
+def reset_mastery(db: Any, work_id: str, concept_id: str | None = None) -> int:
+    """Delete mastery records so concepts can be re-studied.
+
+    If *concept_id* is given, resets only that concept.
+    If omitted, resets ALL concepts for the work.
+    Returns the number of rows deleted.
+    """
+    with db._lock:
+        if concept_id:
+            cur = db._conn.execute(
+                "DELETE FROM work_mastery WHERE concept_id=? AND concept_id IN "
+                "(SELECT id FROM work_concepts WHERE work_id=?)",
+                (concept_id, work_id),
+            )
+        else:
+            cur = db._conn.execute(
+                "DELETE FROM work_mastery WHERE concept_id IN "
+                "(SELECT id FROM work_concepts WHERE work_id=?)",
+                (work_id,),
+            )
+        db._conn.commit()
+    return cur.rowcount
+
+
 def _get_concept(db: Any, concept_id: str) -> dict | None:
     with db._lock:
         row = db._conn.execute(

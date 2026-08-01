@@ -1081,14 +1081,12 @@ export default function Chat() {
                               </span>
                             )}
                             {/* Per-message model attribution: prefer msg.meta.model, fall back to conv.model */}
-                            {(msg.meta?.model || conv?.model) && (
-                              <span className="text-[10px] font-mono text-muted-foreground/50">
-                                {modelLabel((msg.meta?.model ?? conv?.model) as string | undefined, models, defaultModel)}
-                                {msg.created_at && !msg.streaming && (
-                                  <> · {format(new Date(msg.created_at), "HH:mm")}</>
-                                )}
-                              </span>
-                            )}
+                            <span className="text-[10px] font-mono text-muted-foreground/50">
+                              {modelLabel((msg.meta?.model ?? conv?.model) as string | undefined, models, defaultModel)}
+                              {msg.created_at && !msg.streaming && (
+                                <> · {format(new Date(msg.created_at), "HH:mm")}</>
+                              )}
+                            </span>
                             {!!msg.meta?.council && (
                               <span className="text-[10px] font-mono text-primary/50 flex items-center gap-0.5">
                                 <Brain className="w-2.5 h-2.5" /> council

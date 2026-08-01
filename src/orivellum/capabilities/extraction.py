@@ -357,7 +357,8 @@ def _extract_image(path: Path) -> ExtractionResult:
     if result.ok:
         return result
 
-    return ExtractionResult(kind="image", full_text="", word_count=0)
+    # No text recovered — mark explicitly so callers can surface it to the user
+    return ExtractionResult(kind="no_text", full_text="", word_count=0)
 
 
 # ---------------------------------------------------------------------------

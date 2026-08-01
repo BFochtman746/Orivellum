@@ -62,3 +62,14 @@ description: Architecture decisions for the major features added in the Monarch 
 - v41: `project_compass` (keyed by work_id, ON CONFLICT UPDATE)
 
 **Why:** Keeping schema version numbers documented prevents accidentally re-using them in parallel task agents.
+
+## Learning reset (added)
+- `POST /api/works/{work_id}/learning/reset` — resets ALL mastery for a work; `reset_mastery(db, work_id)` in capabilities/learning.py.
+- `POST /api/works/{work_id}/learning/concepts/{concept_id}/reset` — resets one concept; same function with concept_id arg.
+- "Reset & study again" button added to `all_done` phase in both `works/detail.tsx` (LearnTab) and `mobile/app/work/[id].tsx` (MobileLearnTab).
+
+## Progress panel → Library link
+- Job rows in `layout.tsx` ProgressPanel now include a `<Link href="/library/{j.id}">` with ExternalLink icon; `j.id` IS the document id (from the SQL `SELECT d.id ...`).
+
+## no_text kind
+- `extraction.py` `_extract_image()` now returns `kind="no_text"` (was `kind="image"`) when OCR yields no text; also excluded from system/jobs query via `NOT IN ('ready','error','no_text')`.

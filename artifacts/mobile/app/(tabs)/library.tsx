@@ -101,7 +101,7 @@ export default function LibraryScreen() {
   const {
     data: searchData,
     isLoading: searchLoading,
-  } = useSearchLibrary({ q: search }, { query: { enabled: search.length > 1 } });
+  } = useSearchLibrary({ q: search }, { query: { enabled: search.length > 1 } } as any);
 
   const isSearching = search.length > 1;
   const isLoading = isSearching ? searchLoading : listLoading;

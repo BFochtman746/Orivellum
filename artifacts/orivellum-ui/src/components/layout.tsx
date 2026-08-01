@@ -19,7 +19,7 @@ import {
   Settings, HardDrive, Activity, Mic, Wifi, WifiOff,
   ChevronRight, Plus, Search, Archive, RotateCcw,
   Pencil, Check, X, Menu, DownloadCloud, Feather,
-  ALargeSmall, Loader2, CheckCircle2,
+  ALargeSmall, Loader2, CheckCircle2, ExternalLink,
 } from "lucide-react";
 import { useConnectivity } from "@/lib/useConnectivity";
 import { useQuery } from "@tanstack/react-query";
@@ -604,6 +604,14 @@ function ProgressPanel({ open, onClose }: { open: boolean; onClose: () => void }
                           <Loader2 className="w-3 h-3 text-primary animate-spin shrink-0" />
                           <span className="text-xs font-medium truncate flex-1">{name}</span>
                           <span className="text-[10px] font-mono text-muted-foreground shrink-0">{j.readiness}</span>
+                          <Link
+                            href={`/library/${j.id}`}
+                            onClick={onClose}
+                            className="shrink-0 text-muted-foreground/50 hover:text-primary transition-colors"
+                            title="Open in Library"
+                          >
+                            <ExternalLink className="w-3 h-3" />
+                          </Link>
                         </div>
                         <div className="h-1.5 bg-muted rounded-full overflow-hidden">
                           <div
