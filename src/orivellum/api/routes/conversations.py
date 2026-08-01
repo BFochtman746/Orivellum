@@ -219,7 +219,12 @@ async def _call_ai(messages: list[dict], model: str) -> str:
 
 
 async def _stream_response(db: Any, conv: dict, user_text: str):
-    """SSE generator — streams tokens, stores final reply, auto-titles."""
+    """SSE generator — streams tokens, stores final reply, auto-titles.
+
+    Handles client disconnect (GeneratorExit) by persisting whatever tokens
+    arrived before the connection dropped, so the conversation is never left
+    with a missing assistant turn.
+    """
     cfg = get_config()
     conv_id = conv["id"]
     messages = _build_messages(db, conv, user_text)
@@ -254,12 +259,24 @@ async def _stream_response(db: Any, conv: dict, user_text: str):
                     except Exception:
                         pass
 
+    except GeneratorExit:
+        # Client disconnected mid-stream — save whatever tokens arrived so the
+        # conversation isn't left with only the user turn and no reply.
+        if full_reply:
+            try:
+                truncated = full_reply + "\n\n*(Response was cut short — re-send to continue.)*"
+                db.add_message(conv_id, "assistant", truncated)
+                _maybe_auto_title(db, conv, user_text)
+            except Exception as save_exc:
+                logger.warning("Could not persist partial reply: %s", save_exc)
+        raise  # Re-raise so the async generator closes properly
+
     except Exception as exc:
         logger.warning("AI stream failed: %s", exc)
         full_reply = _UNAVAILABLE
         yield f"data: {json.dumps({'token': full_reply})}\n\n"
 
-    # Persist assistant reply and finalize
+    # Normal completion path (also reached after AI failure fallback)
     if full_reply:
         db.add_message(conv_id, "assistant", full_reply)
     _maybe_auto_title(db, conv, user_text)

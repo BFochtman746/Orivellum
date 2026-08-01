@@ -33,6 +33,7 @@ import {
 import {
   MessageSquare, Plus, Send, Search, Bot, User, Copy, Check,
   Trash2, Wifi, WifiOff, Loader2, Cpu, Pencil, BookOpen, Archive, ArchiveRestore,
+  AlertTriangle,
 } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import rehypeHighlight from "rehype-highlight";
@@ -48,6 +49,8 @@ interface LocalMessage {
   text: string;
   created_at: string;
   streaming?: boolean;
+  /** Set when the stream was aborted before completion */
+  incomplete?: boolean;
 }
 
 interface ModelOption {
@@ -182,12 +185,13 @@ function MarkdownContent({ text }: { text: string }) {
 
 // ─── Streaming helper ─────────────────────────────────────────────────────────
 
-async function* streamChat(convId: string, text: string): AsyncGenerator<string> {
+async function* streamChat(convId: string, text: string, signal?: AbortSignal): AsyncGenerator<string> {
   const resp = await fetch(`${API_BASE}/conversations/${convId}/messages`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ text, stream: true }),
     keepalive: true,
+    signal,
   });
 
   if (!resp.ok || !resp.body) {
@@ -237,6 +241,9 @@ export default function Chat() {
   const assistantIdRef = useRef("");
   const rafRef = useRef<number | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  // Synchronous sending flag (avoids stale closure in RAF loop) + abort controller
+  const sendingRef = useRef(false);
+  const abortRef = useRef<AbortController | null>(null);
 
   const { data: convsResp, isLoading: loadingList } = useListConversations(
     { archived: showArchived || undefined },
@@ -290,6 +297,15 @@ export default function Chat() {
   useEffect(() => { if (activeConv?.messages && !sending) setLocalMessages([]); }, [activeConv?.messages, sending]);
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [localMessages, activeConv?.messages]);
 
+  // Abort any in-progress stream when conversation changes or component unmounts
+  useEffect(() => {
+    return () => {
+      if (sendingRef.current && abortRef.current) {
+        abortRef.current.abort();
+      }
+    };
+  }, [activeId]);
+
   // Tab-focus flush
   const flushAccumulator = useCallback(() => {
     const text = accumulatorRef.current;
@@ -301,10 +317,10 @@ export default function Chat() {
   }, []);
 
   useEffect(() => {
-    const onVisible = () => { if (document.visibilityState === "visible" && sending) flushAccumulator(); };
+    const onVisible = () => { if (document.visibilityState === "visible" && sendingRef.current) flushAccumulator(); };
     document.addEventListener("visibilitychange", onVisible);
     return () => document.removeEventListener("visibilitychange", onVisible);
-  }, [sending, flushAccumulator]);
+  }, [flushAccumulator]);
 
   const handleCreate = () => {
     createConv.mutate(
@@ -331,20 +347,20 @@ export default function Chat() {
     });
   };
 
-  const invalidateActive = useCallback(() => {
-    if (!activeId) return;
-    queryClient.invalidateQueries({ queryKey: getGetConversationQueryKey(activeId) });
-    queryClient.invalidateQueries({ queryKey: getListConversationsQueryKey() });
-  }, [activeId, queryClient]);
-
   const handleSend = useCallback(
     async (e: React.FormEvent) => {
       e.preventDefault();
       if (!draft.trim() || !activeId || sending) return;
 
       const text = draft.trim();
+      // Capture convId now — activeId may change before the stream finishes
+      const convId = activeId;
       setDraft("");
       setSending(true);
+      sendingRef.current = true;
+
+      const controller = new AbortController();
+      abortRef.current = controller;
 
       const serverMsgs: LocalMessage[] = (activeConv?.messages ?? []).map((m) => ({
         id: m.id ?? crypto.randomUUID(),
@@ -360,36 +376,58 @@ export default function Chat() {
 
       setLocalMessages([...serverMsgs, userMsg, { id: assistantId, role: "assistant", text: "", created_at: new Date().toISOString(), streaming: true }]);
 
+      // Use sendingRef (not stale-closure `sending`) so the RAF loop continues in background tabs
       const scheduleFlush = () => {
-        rafRef.current = requestAnimationFrame(() => { flushAccumulator(); if (sending || accumulatorRef.current) scheduleFlush(); });
+        rafRef.current = requestAnimationFrame(() => {
+          flushAccumulator();
+          if (sendingRef.current || accumulatorRef.current) scheduleFlush();
+        });
       };
       scheduleFlush();
 
       try {
-        for await (const token of streamChat(activeId, text)) {
+        for await (const token of streamChat(convId, text, controller.signal)) {
           accumulatorRef.current += token;
         }
         const finalText = accumulatorRef.current;
         setLocalMessages((prev) => prev.map((m) => m.id === assistantId ? { ...m, text: finalText, streaming: false } : m));
       } catch (err: any) {
-        const msg = err?.message ?? String(err);
-        if (msg.includes("503") || msg.includes("Service Unavailable") || msg.includes("AI")) {
-          toast.error("AI service unavailable — check Engine Settings");
+        if (err?.name === "AbortError") {
+          // Intentional cancellation (conversation switch or unmount)
+          // Mark with partial text if we received anything; backend saves the rest
+          const partialText = accumulatorRef.current;
+          if (partialText) {
+            setLocalMessages((prev) => prev.map((m) =>
+              m.id === assistantId ? { ...m, text: partialText, streaming: false, incomplete: true } : m
+            ));
+          } else {
+            setLocalMessages((prev) => prev.filter((m) => m.id !== assistantId));
+          }
         } else {
-          toast.error("Message failed to send");
+          const msg = err?.message ?? String(err);
+          if (msg.includes("503") || msg.includes("Service Unavailable") || msg.includes("AI")) {
+            toast.error("AI service unavailable — check Engine Settings");
+          } else {
+            toast.error("Message failed to send");
+          }
+          setLocalMessages((prev) => prev.filter((m) => m.id !== assistantId));
         }
-        // Remove the placeholder assistant message on failure
-        setLocalMessages((prev) => prev.filter((m) => m.id !== assistantId));
       } finally {
         if (rafRef.current !== null) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
         accumulatorRef.current = "";
         assistantIdRef.current = "";
+        sendingRef.current = false;
+        abortRef.current = null;
         setSending(false);
-        await invalidateActive();
-        setLocalMessages([]);
+        // Invalidate using the captured convId, not the potentially-changed activeId
+        queryClient.invalidateQueries({ queryKey: getGetConversationQueryKey(convId) });
+        queryClient.invalidateQueries({ queryKey: getListConversationsQueryKey() });
+        // Clear local messages only if still viewing the same conversation
+        // (otherwise the activeId-change effect already cleared them)
+        setLocalMessages((prev) => prev.filter((m) => m.incomplete));
       }
     },
-    [draft, activeId, sending, activeConv?.messages, flushAccumulator, invalidateActive]
+    [draft, activeId, sending, activeConv?.messages, flushAccumulator, queryClient]
   );
 
   const displayMessages: LocalMessage[] = localOverride
@@ -589,6 +627,12 @@ export default function Chat() {
                               <>
                                 <MarkdownContent text={msg.text} />
                                 {msg.streaming && <span className="inline-block w-0.5 h-3.5 bg-current ml-0.5 animate-pulse align-text-bottom" />}
+                                {msg.incomplete && (
+                                  <div className="mt-2 flex items-center gap-1.5 text-xs text-amber-600 border-t border-amber-200/40 pt-2">
+                                    <AlertTriangle className="w-3 h-3 shrink-0" />
+                                    <span>Response was cut short — re-send your message to continue.</span>
+                                  </div>
+                                )}
                               </>
                             ) : msg.text
                           ) : (
