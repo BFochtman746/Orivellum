@@ -675,4 +675,40 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             updated_at  TEXT NOT NULL
         );
     """),
+
+    # v42 — Adaptive learning: concept graph + mastery tracking
+    # NOTE: v42 used CREATE TABLE IF NOT EXISTS which silently preserved a stale
+    # Monarch schema (columns: name, mastery, etc.). v43 below drops and recreates.
+    (42, "Adaptive learning tables (legacy — superseded by v43)", """
+        SELECT 1
+    """),
+
+    # v43 — (historically ran DROP+CREATE on learning_concepts/mastery — now a no-op at DB level;
+    #          v44 restores the Projects schema and adds the correct work_concepts tables)
+    (43, "Adaptive learning tables — superseded by v44", "SELECT 1"),
+
+    # v44 — Add Work-scoped adaptive learning tables.
+    # Projects owns learning_concepts/learning_mastery — those are NEVER touched here.
+    # This migration is purely additive: CREATE TABLE IF NOT EXISTS only.
+    (44, "Add work_concepts and work_mastery for Work-scoped adaptive learning", """
+        CREATE TABLE IF NOT EXISTS work_concepts (
+            id          TEXT PRIMARY KEY,
+            work_id     TEXT NOT NULL REFERENCES works(id) ON DELETE CASCADE,
+            subject     TEXT NOT NULL,
+            description TEXT,
+            prereq_id   TEXT REFERENCES work_concepts(id),
+            created_at  TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS work_concepts_work ON work_concepts(work_id);
+        CREATE TABLE IF NOT EXISTS work_mastery (
+            id                  TEXT PRIMARY KEY,
+            concept_id          TEXT NOT NULL REFERENCES work_concepts(id) ON DELETE CASCADE,
+            score               REAL    NOT NULL DEFAULT 0,
+            consecutive_passes  INTEGER NOT NULL DEFAULT 0,
+            brief_feedback      TEXT,
+            routed_to           TEXT,
+            created_at          TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS work_mastery_concept ON work_mastery(concept_id)
+    """),
 ]

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useParams, Link, useLocation } from "wouter";
 import {
   useGetWork,
@@ -64,6 +64,9 @@ import {
   MessageSquarePlus,
   Unlink,
   Search,
+  BookOpen,
+  ChevronDown,
+  Trophy,
 } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -319,7 +322,8 @@ export default function WorkDetail() {
               { value: "tasks", icon: CheckSquare, label: "Tasks" },
               { value: "conversations", icon: MessageSquare, label: "Conversations" },
               { value: "search", icon: Search, label: "Search" },
-              { value: "quiz", icon: GraduationCap, label: "Quiz" },
+              { value: "quiz",  icon: GraduationCap, label: "Quiz" },
+              { value: "learn", icon: BookOpen,      label: "Learn" },
             ].map(({ value, icon: Icon, label }) => (
               <TabsTrigger
                 key={value}
@@ -338,6 +342,7 @@ export default function WorkDetail() {
             <TabsContent value="conversations"><ConversationsTab workId={workId!} /></TabsContent>
             <TabsContent value="search"><SearchTab workId={workId!} /></TabsContent>
             <TabsContent value="quiz"><QuizTab workId={workId!} workTitle={(work as any)?.title ?? "this Work"} /></TabsContent>
+            <TabsContent value="learn"><LearnTab workId={workId!} /></TabsContent>
           </div>
         </Tabs>
       </div>
@@ -1101,9 +1106,342 @@ function SearchTab({ workId }: { workId: string }) {
   );
 }
 
-// ─── Quiz tab ─────────────────────────────────────────────────────────────────
+// ─── Learn tab (adaptive Socratic study) ─────────────────────────────────────
 
 const API_BASE_WORKS = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
+
+type LearnPhase = "loading" | "seeding" | "question" | "assessing" | "feedback" | "all_done";
+type RouteAction = "STEP_FORWARD" | "STEP_BACKWARD" | "STAY_HERE";
+
+interface LearningSession {
+  concept_id: string;
+  subject: string;
+  description: string;
+  question: string;
+  context_snippet: string;
+}
+
+interface AssessResult {
+  score: number;
+  feedback: string;
+  route: RouteAction;
+  graduated: boolean;
+  next_concept_id: string | null;
+  summary: { total: number; graduated: number; mastery_pct: number };
+}
+
+function LearnTab({ workId }: { workId: string }) {
+  const [phase, setPhase]       = useState<LearnPhase>("loading");
+  const [session, setSession]   = useState<LearningSession | null>(null);
+  const [answer, setAnswer]     = useState("");
+  const [result, setResult]     = useState<AssessResult | null>(null);
+  const [summary, setSummary]   = useState<{ total: number; graduated: number; mastery_pct: number } | null>(null);
+  const [error, setError]       = useState<string | null>(null);
+  const [showConcepts, setShowConcepts] = useState(false);
+  const [concepts, setConcepts] = useState<any[]>([]);
+
+  const apiBase = API_BASE_WORKS;
+
+  const loadSummary = async () => {
+    const r = await fetch(`${apiBase}/works/${workId}/learning/summary`);
+    if (!r.ok) throw new Error("Could not load learning summary");
+    return r.json();
+  };
+
+  const startOrContinue = async (conceptId?: string | null) => {
+    setError(null);
+    setAnswer("");
+    setResult(null);
+    setPhase("question");
+    try {
+      const url = conceptId
+        ? `${apiBase}/works/${workId}/learning/question?concept_id=${conceptId}`
+        : `${apiBase}/works/${workId}/learning/question`;
+      const r = await fetch(url);
+      if (r.status === 422) {
+        setPhase("all_done");
+        return;
+      }
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const data = await r.json();
+      setSession({
+        concept_id:      data.concept_id,
+        subject:         data.subject ?? "Concept",
+        description:     data.description ?? "",
+        question:        data.question,
+        context_snippet: data.context_snippet ?? "",
+      });
+    } catch (e: any) {
+      setError(e.message ?? "Could not load question");
+      setPhase("feedback");
+    }
+  };
+
+  const init = async () => {
+    setPhase("loading");
+    setError(null);
+    try {
+      const data = await loadSummary();
+      setSummary(data);
+      setConcepts(data.concepts ?? []);
+      if (data.total === 0) {
+        // Auto-seed
+        setPhase("seeding");
+        const sr = await fetch(`${apiBase}/works/${workId}/learning/seed`, { method: "POST" });
+        if (!sr.ok) throw new Error("Could not seed concepts");
+        const sd = await sr.json();
+        if ((sd.concepts ?? []).length === 0) {
+          setError("No knowledge items found. Import and process documents first.");
+          setPhase("feedback");
+          return;
+        }
+        const sumData = await loadSummary();
+        setSummary(sumData);
+        setConcepts(sumData.concepts ?? []);
+      }
+      if (data.mastery_pct === 100 && data.total > 0) {
+        setPhase("all_done");
+        return;
+      }
+      await startOrContinue(null);
+    } catch (e: any) {
+      setError(e.message ?? "Could not initialise learning");
+      setPhase("feedback");
+    }
+  };
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { let active = true; void init().then(() => {}).catch(() => {}); return () => { active = false; }; }, [workId]);
+
+  const submitAnswer = async () => {
+    if (!session || !answer.trim()) return;
+    setPhase("assessing");
+    setError(null);
+    try {
+      const r = await fetch(`${apiBase}/works/${workId}/learning/assess`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          concept_id: session.concept_id,
+          question:   session.question,
+          answer:     answer.trim(),
+        }),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const data: AssessResult = await r.json();
+      setResult(data);
+      setSummary(data.summary);
+      setPhase("feedback");
+    } catch (e: any) {
+      setError(e.message ?? "Could not assess answer");
+      setPhase("feedback");
+    }
+  };
+
+  const next = async () => {
+    if (!result) { await startOrContinue(null); return; }
+    if (result.summary.mastery_pct === 100) { setPhase("all_done"); return; }
+    await startOrContinue(result.next_concept_id);
+  };
+
+  const routeLabel: Record<RouteAction, string> = {
+    STEP_FORWARD:  "Great — moving to the next concept",
+    STEP_BACKWARD: "Let's revisit a foundational concept first",
+    STAY_HERE:     "Keep practising this concept",
+  };
+
+  // ── Mastery bar ────────────────────────────────────────────────────────────
+  const MasteryBar = () => {
+    if (!summary) return null;
+    const pct = summary.mastery_pct;
+    return (
+      <div className="space-y-1.5 mb-6">
+        <div className="flex items-center justify-between text-xs font-mono text-muted-foreground">
+          <span>{summary.graduated}/{summary.total} concepts graduated</span>
+          <span className="font-semibold text-foreground">{pct}%</span>
+        </div>
+        <div className="h-2 w-full rounded-full bg-muted overflow-hidden">
+          <div
+            className="h-full rounded-full bg-primary transition-all duration-700"
+            style={{ width: `${pct}%` }}
+          />
+        </div>
+      </div>
+    );
+  };
+
+  // ── All done ───────────────────────────────────────────────────────────────
+  if (phase === "all_done") {
+    return (
+      <div className="flex flex-col items-center justify-center py-24 gap-6">
+        <div className="w-16 h-16 rounded-2xl bg-emerald-500/10 flex items-center justify-center">
+          <Trophy className="w-8 h-8 text-emerald-500" />
+        </div>
+        <div className="text-center space-y-2">
+          <h3 className="font-serif text-2xl font-medium">All concepts mastered!</h3>
+          <p className="text-sm text-muted-foreground max-w-xs">
+            You've graduated every concept in this Work. Add more documents to unlock new material.
+          </p>
+        </div>
+        {summary && <MasteryBar />}
+      </div>
+    );
+  }
+
+  // ── Loading / seeding ──────────────────────────────────────────────────────
+  if (phase === "loading" || phase === "seeding") {
+    return (
+      <div className="flex flex-col items-center justify-center py-24 gap-4">
+        <Loader2 className="w-8 h-8 animate-spin text-primary" />
+        <p className="text-sm text-muted-foreground font-mono">
+          {phase === "seeding" ? "Seeding concepts from your knowledge base…" : "Loading your learning session…"}
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="max-w-2xl mx-auto py-4 space-y-6">
+      <MasteryBar />
+
+      {/* Error banner */}
+      {error && (
+        <div className="px-4 py-3 rounded-lg bg-destructive/10 border border-destructive/20 text-sm text-destructive">
+          {error}
+          <Button size="sm" variant="ghost" className="ml-3" onClick={init}>Retry</Button>
+        </div>
+      )}
+
+      {/* Active concept header */}
+      {session && (
+        <div className="border border-border/60 rounded-xl p-4 bg-muted/20 space-y-1">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <BookOpen className="w-4 h-4 text-primary" />
+              <span className="font-mono text-xs uppercase tracking-wider text-muted-foreground">Studying</span>
+            </div>
+          </div>
+          <h3 className="font-serif text-lg font-semibold">{session.subject}</h3>
+          {session.description && (
+            <p className="text-sm text-muted-foreground leading-relaxed">{session.description}</p>
+          )}
+        </div>
+      )}
+
+      {/* Question */}
+      {(phase === "question" || phase === "assessing" || phase === "feedback") && session && (
+        <Card className="p-6 space-y-4">
+          {session.context_snippet && (
+            <div className="text-xs font-mono text-muted-foreground/70 pl-3 border-l-2 border-border/50 italic leading-relaxed">
+              {session.context_snippet}
+            </div>
+          )}
+          <p className="font-medium leading-relaxed text-base">{session.question}</p>
+
+          {phase !== "feedback" ? (
+            <>
+              <textarea
+                className="w-full rounded-lg border border-border/60 bg-background p-3 text-sm font-serif leading-relaxed resize-none focus:outline-none focus:ring-1 focus:ring-primary/50 min-h-[100px]"
+                placeholder="Write your answer here…"
+                value={answer}
+                onChange={(e) => setAnswer(e.target.value)}
+                disabled={phase === "assessing"}
+              />
+              <div className="flex justify-end">
+                <Button
+                  onClick={submitAnswer}
+                  disabled={!answer.trim() || phase === "assessing"}
+                  className="gap-2"
+                >
+                  {phase === "assessing"
+                    ? <><Loader2 className="w-4 h-4 animate-spin" /> Assessing…</>
+                    : <><ChevronRight className="w-4 h-4" /> Submit Answer</>}
+                </Button>
+              </div>
+            </>
+          ) : result ? (
+            /* Feedback */
+            <div className="space-y-4">
+              <div className="px-3 py-2 rounded bg-muted/40 text-sm font-serif text-muted-foreground italic">
+                {answer}
+              </div>
+
+              {/* Score */}
+              <div className={`flex items-center gap-3 p-3 rounded-lg border ${
+                result.score >= 0.75
+                  ? "bg-emerald-500/10 border-emerald-500/30"
+                  : result.score >= 0.5
+                  ? "bg-amber-500/10 border-amber-500/30"
+                  : "bg-red-500/10 border-red-500/30"
+              }`}>
+                <div className="text-2xl font-bold font-mono">
+                  {Math.round(result.score * 100)}%
+                </div>
+                <div className="flex-1">
+                  <p className="text-sm leading-relaxed">{result.feedback}</p>
+                </div>
+                {result.graduated && (
+                  <div className="shrink-0 flex items-center gap-1 px-2 py-1 rounded-full bg-emerald-500/20 border border-emerald-500/40 text-emerald-700 text-xs font-mono font-semibold">
+                    <Trophy className="w-3 h-3" /> Graduated!
+                  </div>
+                )}
+              </div>
+
+              {/* Routing hint */}
+              <p className="text-xs font-mono text-muted-foreground">
+                → {routeLabel[result.route]}
+              </p>
+
+              <div className="flex justify-end">
+                <Button onClick={next} className="gap-2">
+                  {result.summary.mastery_pct === 100
+                    ? <><Trophy className="w-4 h-4" /> Done!</>
+                    : result.route === "STEP_FORWARD"
+                    ? <><ChevronRight className="w-4 h-4" /> Next Concept</>
+                    : <><RefreshCw className="w-4 h-4" /> Try Again</>}
+                </Button>
+              </div>
+            </div>
+          ) : null}
+        </Card>
+      )}
+
+      {/* Concept map (collapsible) */}
+      {concepts.length > 0 && (
+        <div className="border border-border/50 rounded-xl overflow-hidden">
+          <button
+            onClick={() => setShowConcepts(!showConcepts)}
+            className="w-full flex items-center justify-between px-4 py-3 text-xs font-mono uppercase tracking-wider text-muted-foreground hover:bg-muted/30 transition-colors"
+          >
+            <span>Concept map ({concepts.length})</span>
+            <ChevronDown className={`w-4 h-4 transition-transform ${showConcepts ? "rotate-180" : ""}`} />
+          </button>
+          {showConcepts && (
+            <div className="divide-y divide-border/30">
+              {concepts.map((c: any) => (
+                <div key={c.id} className="flex items-center justify-between px-4 py-2.5 text-sm">
+                  <div className="flex items-center gap-2">
+                    {c.graduated
+                      ? <Check className="w-3.5 h-3.5 text-emerald-500" />
+                      : c.consecutive_passes > 0
+                      ? <div className="w-3.5 h-3.5 rounded-full border-2 border-amber-400" />
+                      : <div className="w-3.5 h-3.5 rounded-full border border-muted-foreground/40" />}
+                    <span className={c.graduated ? "text-emerald-700 dark:text-emerald-400 font-medium" : ""}>{c.subject}</span>
+                  </div>
+                  <span className="text-xs font-mono text-muted-foreground">
+                    {c.graduated ? "✓ done" : c.consecutive_passes > 0 ? `${c.consecutive_passes}/3` : "—"}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Quiz tab ─────────────────────────────────────────────────────────────────
 
 interface QuizQuestion {
   q: string;

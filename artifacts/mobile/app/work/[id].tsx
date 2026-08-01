@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -9,6 +9,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import { useColors } from '@/hooks/useColors';
@@ -24,12 +25,11 @@ import {
 } from '@workspace/api-client-react';
 import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useEffect } from 'react';
 import * as Haptics from 'expo-haptics';
 import type { Document, KnowledgeItem, Task } from '@workspace/api-client-react';
 import { OfflineBanner, ErrorScreen } from '@/components/OfflineBanner';
 
-type Tab = 'overview' | 'docs' | 'knowledge' | 'tasks' | 'conversations';
+type Tab = 'overview' | 'docs' | 'knowledge' | 'tasks' | 'conversations' | 'learn';
 
 function TabBar({ active, onSelect, colors }: { active: Tab; onSelect: (t: Tab) => void; colors: any }) {
   const tabs: { key: Tab; label: string }[] = [
@@ -38,6 +38,7 @@ function TabBar({ active, onSelect, colors }: { active: Tab; onSelect: (t: Tab) 
     { key: 'knowledge', label: 'Knowledge' },
     { key: 'tasks', label: 'Tasks' },
     { key: 'conversations', label: 'Chats' },
+    { key: 'learn', label: 'Learn' },
   ];
   return (
     <View style={[styles.tabBar, { borderBottomColor: colors.border, backgroundColor: colors.background }]}>
@@ -285,6 +286,358 @@ function OverviewTab({ workId, onStartDiscussion, starting }: {
   );
 }
 
+// ─── Mobile Learn tab ─────────────────────────────────────────────────────────
+
+type MobileLearnPhase = 'loading' | 'seeding' | 'question' | 'assessing' | 'feedback' | 'all_done' | 'error';
+
+interface MobileSession {
+  concept_id: string;
+  subject: string;
+  description: string;
+  question: string;
+  context_snippet: string;
+}
+
+interface MobileAssessResult {
+  score: number;
+  feedback: string;
+  route: 'STEP_FORWARD' | 'STEP_BACKWARD' | 'STAY_HERE';
+  graduated: boolean;
+  next_concept_id: string | null;
+  summary: { total: number; graduated: number; mastery_pct: number };
+}
+
+function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
+  const [phase, setPhase]       = useState<MobileLearnPhase>('loading');
+  const [session, setSession]   = useState<MobileSession | null>(null);
+  const [answer, setAnswer]     = useState('');
+  const [result, setResult]     = useState<MobileAssessResult | null>(null);
+  const [summary, setSummary]   = useState<{ total: number; graduated: number; mastery_pct: number } | null>(null);
+  const [errorMsg, setErrorMsg] = useState('');
+
+  const domain = process.env.EXPO_PUBLIC_DOMAIN;
+  const apiBase = `https://${domain}/api`;
+
+  const fetchSummary = async () => {
+    const r = await fetch(`${apiBase}/works/${workId}/learning/summary`);
+    if (!r.ok) throw new Error('Could not load summary');
+    return r.json();
+  };
+
+  const loadQuestion = async (conceptId?: string | null) => {
+    setAnswer('');
+    setResult(null);
+    setPhase('question');
+    const url = conceptId
+      ? `${apiBase}/works/${workId}/learning/question?concept_id=${conceptId}`
+      : `${apiBase}/works/${workId}/learning/question`;
+    const r = await fetch(url);
+    if (r.status === 422) { setPhase('all_done'); return; }
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const d = await r.json();
+    setSession({
+      concept_id:      d.concept_id,
+      subject:         d.subject ?? 'Concept',
+      description:     d.description ?? '',
+      question:        d.question,
+      context_snippet: d.context_snippet ?? '',
+    });
+  };
+
+  const init = async () => {
+    setPhase('loading');
+    setErrorMsg('');
+    try {
+      const data = await fetchSummary();
+      setSummary(data);
+      if (data.total === 0) {
+        setPhase('seeding');
+        const sr = await fetch(`${apiBase}/works/${workId}/learning/seed`, { method: 'POST' });
+        if (!sr.ok) throw new Error('Could not seed concepts');
+        const sd = await sr.json();
+        if (!(sd.concepts ?? []).length) throw new Error('No knowledge found — import documents first.');
+        const s2 = await fetchSummary();
+        setSummary(s2);
+      }
+      if (data.mastery_pct === 100 && data.total > 0) { setPhase('all_done'); return; }
+      await loadQuestion(null);
+    } catch (e: any) {
+      setErrorMsg(e.message ?? 'Could not start session');
+      setPhase('error');
+    }
+  };
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { init(); }, [workId]);
+
+  const submitAnswer = async () => {
+    if (!session || !answer.trim()) return;
+    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setPhase('assessing');
+    try {
+      const r = await fetch(`${apiBase}/works/${workId}/learning/assess`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          concept_id: session.concept_id,
+          question:   session.question,
+          answer:     answer.trim(),
+        }),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const d: MobileAssessResult = await r.json();
+      setResult(d);
+      setSummary(d.summary);
+      setPhase('feedback');
+    } catch (e: any) {
+      setErrorMsg(e.message ?? 'Could not assess answer');
+      setPhase('error');
+    }
+  };
+
+  const next = async () => {
+    if (!result) { await loadQuestion(null); return; }
+    if (result.summary.mastery_pct === 100) { setPhase('all_done'); return; }
+    try { await loadQuestion(result.next_concept_id); }
+    catch (e: any) { setErrorMsg(e.message ?? 'Error loading next question'); setPhase('error'); }
+  };
+
+  const scoreBg    = (s: number) => s >= 0.75 ? '#dcfce7' : s >= 0.5 ? '#fef3c7' : '#fee2e2';
+  const scoreColor = (s: number) => s >= 0.75 ? '#16a34a' : s >= 0.5 ? '#d97706' : '#dc2626';
+
+  // ── Loading / seeding ────────────────────────────────────────────────────
+  if (phase === 'loading' || phase === 'seeding') {
+    return (
+      <View style={[styles.centered, { flex: 1 }]}>
+        <ActivityIndicator color={colors.primary} />
+        <Text style={[styles.emptyText, { color: colors.mutedForeground, marginTop: 10 }]}>
+          {phase === 'seeding' ? 'Seeding concepts from your knowledge…' : 'Loading session…'}
+        </Text>
+      </View>
+    );
+  }
+
+  // ── All done ────────────────────────────────────────────────────────────
+  if (phase === 'all_done') {
+    return (
+      <View style={[styles.centered, { flex: 1, padding: 32 }]}>
+        <Feather name="award" size={48} color={colors.primary} />
+        <Text style={[styles.workTitle, { color: colors.foreground, textAlign: 'center', marginTop: 16, fontSize: 20 }]}>
+          All concepts mastered!
+        </Text>
+        <Text style={[styles.description, { color: colors.mutedForeground, textAlign: 'center', marginTop: 8 }]}>
+          Add more documents to unlock new material.
+        </Text>
+        {summary && (
+          <Text style={[styles.itemMeta, { color: colors.mutedForeground, marginTop: 12 }]}>
+            {summary.graduated}/{summary.total} concepts · {summary.mastery_pct}%
+          </Text>
+        )}
+      </View>
+    );
+  }
+
+  // ── Error ───────────────────────────────────────────────────────────────
+  if (phase === 'error') {
+    return (
+      <View style={[styles.centered, { flex: 1, padding: 32 }]}>
+        <Feather name="alert-circle" size={40} color="#dc2626" />
+        <Text style={[styles.itemTitle, { color: '#dc2626', textAlign: 'center', marginTop: 12 }]}>{errorMsg}</Text>
+        <Pressable
+          onPress={init}
+          style={({ pressed }) => [
+            styles.discussBtn,
+            { backgroundColor: colors.primary, marginTop: 20, paddingHorizontal: 28, opacity: pressed ? 0.7 : 1 },
+          ]}
+        >
+          <Feather name="refresh-cw" size={14} color={colors.primaryForeground} />
+          <Text style={[styles.discussBtnText, { color: colors.primaryForeground }]}>Retry</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
+  // ── Active session ──────────────────────────────────────────────────────
+  return (
+    <ScrollView
+      contentContainerStyle={[styles.listPad, { paddingTop: 16, paddingBottom: 80 }]}
+      keyboardShouldPersistTaps="handled"
+      showsVerticalScrollIndicator={false}
+    >
+      {/* Mastery bar */}
+      {summary && (
+        <View style={{ marginBottom: 20 }}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 5 }}>
+            <Text style={[styles.itemMeta, { color: colors.mutedForeground }]}>
+              {summary.graduated}/{summary.total} graduated
+            </Text>
+            <Text style={[styles.itemMeta, { color: colors.foreground, fontFamily: 'Inter_600SemiBold' }]}>
+              {summary.mastery_pct}%
+            </Text>
+          </View>
+          <View style={{ height: 6, backgroundColor: colors.muted, borderRadius: 3, overflow: 'hidden' }}>
+            <View
+              style={{
+                height: '100%',
+                width: `${summary.mastery_pct}%` as any,
+                backgroundColor: colors.primary,
+                borderRadius: 3,
+              }}
+            />
+          </View>
+        </View>
+      )}
+
+      {/* Concept chip */}
+      {session && (
+        <View style={{
+          borderWidth: 1, borderColor: colors.border, borderRadius: 10,
+          padding: 14, marginBottom: 16, backgroundColor: colors.background,
+        }}>
+          <Text style={[styles.itemMeta, {
+            color: colors.mutedForeground, textTransform: 'uppercase',
+            letterSpacing: 0.8, marginBottom: 4,
+          }]}>
+            Studying
+          </Text>
+          <Text style={[styles.itemTitle, { color: colors.foreground, fontSize: 16 }]}>
+            {session.subject}
+          </Text>
+          {session.description ? (
+            <Text style={[styles.itemMeta, { color: colors.mutedForeground, marginTop: 4 }]}>
+              {session.description}
+            </Text>
+          ) : null}
+        </View>
+      )}
+
+      {/* Question card */}
+      {session && (
+        <View style={{
+          borderWidth: 1, borderColor: colors.border, borderRadius: 12,
+          padding: 16, marginBottom: 16, backgroundColor: colors.background,
+        }}>
+          {session.context_snippet ? (
+            <Text style={[styles.itemMeta, {
+              color: colors.mutedForeground, fontStyle: 'italic',
+              marginBottom: 12, borderLeftWidth: 2, borderLeftColor: colors.border, paddingLeft: 10,
+            }]}>
+              {session.context_snippet}
+            </Text>
+          ) : null}
+
+          <Text style={[styles.itemTitle, { color: colors.foreground, fontSize: 15, lineHeight: 23, marginBottom: 16 }]}>
+            {session.question}
+          </Text>
+
+          {phase !== 'feedback' ? (
+            <>
+              <TextInput
+                value={answer}
+                onChangeText={setAnswer}
+                multiline
+                numberOfLines={5}
+                placeholder="Write your answer here…"
+                placeholderTextColor={colors.mutedForeground}
+                editable={phase === 'question'}
+                style={{
+                  borderWidth: 1, borderColor: colors.border, borderRadius: 8,
+                  padding: 12, color: colors.foreground, fontSize: 14,
+                  fontFamily: 'Inter_400Regular', minHeight: 110,
+                  textAlignVertical: 'top', backgroundColor: colors.background,
+                  marginBottom: 12, opacity: phase === 'assessing' ? 0.6 : 1,
+                }}
+              />
+              <Pressable
+                onPress={submitAnswer}
+                disabled={!answer.trim() || phase === 'assessing'}
+                style={({ pressed }) => ({
+                  flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+                  gap: 8, paddingVertical: 12, borderRadius: 10,
+                  backgroundColor: colors.primary,
+                  opacity: (!answer.trim() || phase === 'assessing' || pressed) ? 0.6 : 1,
+                })}
+              >
+                {phase === 'assessing'
+                  ? <ActivityIndicator size="small" color={colors.primaryForeground} />
+                  : <Feather name="send" size={14} color={colors.primaryForeground} />}
+                <Text style={{ color: colors.primaryForeground, fontFamily: 'Inter_600SemiBold', fontSize: 14 }}>
+                  {phase === 'assessing' ? 'Assessing…' : 'Submit Answer'}
+                </Text>
+              </Pressable>
+            </>
+          ) : result ? (
+            /* Feedback */
+            <View style={{ gap: 12 }}>
+              {/* User's answer (dimmed) */}
+              <Text style={[styles.itemMeta, {
+                color: colors.mutedForeground, fontStyle: 'italic',
+                padding: 10, borderRadius: 6, backgroundColor: colors.muted,
+              }]}>
+                {answer}
+              </Text>
+
+              {/* Score */}
+              <View style={{
+                flexDirection: 'row', alignItems: 'center', gap: 12,
+                padding: 12, borderRadius: 10, backgroundColor: scoreBg(result.score),
+              }}>
+                <Text style={{ fontSize: 22, fontFamily: 'Inter_700Bold', color: scoreColor(result.score) }}>
+                  {Math.round(result.score * 100)}%
+                </Text>
+                <Text style={{ flex: 1, fontSize: 13, color: scoreColor(result.score), lineHeight: 19 }}>
+                  {result.feedback}
+                </Text>
+                {result.graduated && (
+                  <View style={{
+                    flexDirection: 'row', alignItems: 'center', gap: 4,
+                    paddingHorizontal: 8, paddingVertical: 4, borderRadius: 20,
+                    backgroundColor: '#dcfce7',
+                  }}>
+                    <Feather name="award" size={12} color="#16a34a" />
+                    <Text style={{ fontSize: 11, color: '#16a34a', fontFamily: 'Inter_600SemiBold' }}>Graduated!</Text>
+                  </View>
+                )}
+              </View>
+
+              {/* Routing hint */}
+              <Text style={[styles.itemMeta, { color: colors.mutedForeground }]}>
+                → {result.route === 'STEP_FORWARD'
+                  ? 'Moving to the next concept'
+                  : result.route === 'STEP_BACKWARD'
+                  ? 'Revisiting a foundational concept'
+                  : 'Keep practising this concept'}
+              </Text>
+
+              <Pressable
+                onPress={next}
+                style={({ pressed }) => ({
+                  flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+                  gap: 8, paddingVertical: 12, borderRadius: 10,
+                  backgroundColor: colors.primary, opacity: pressed ? 0.7 : 1,
+                })}
+              >
+                <Feather
+                  name={result.summary.mastery_pct === 100 ? 'award' : result.route === 'STEP_FORWARD' ? 'chevron-right' : 'refresh-cw'}
+                  size={14}
+                  color={colors.primaryForeground}
+                />
+                <Text style={{ color: colors.primaryForeground, fontFamily: 'Inter_600SemiBold', fontSize: 14 }}>
+                  {result.summary.mastery_pct === 100
+                    ? 'Done!'
+                    : result.route === 'STEP_FORWARD'
+                    ? 'Next Concept'
+                    : 'Try Again'}
+                </Text>
+              </Pressable>
+            </View>
+          ) : null}
+        </View>
+      )}
+    </ScrollView>
+  );
+}
+
 // ─── Main screen ──────────────────────────────────────────────────────────────
 
 export default function WorkDetailScreen() {
@@ -447,6 +800,8 @@ export default function WorkDetailScreen() {
             />
           </>
         );
+      case 'learn':
+        return <MobileLearnTab workId={id} colors={colors} />;
       case 'conversations': {
         const convs = convsData?.conversations ?? [];
         if (convsError && convs.length === 0) {
