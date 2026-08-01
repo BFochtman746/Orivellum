@@ -1,0 +1,1 @@
+Artificial intelligence is a branch of computer science. Machine learning enables computers to learn from data. Neural networks are computational models. Deep learning uses multiple layers of neural networks.

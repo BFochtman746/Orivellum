@@ -3,15 +3,17 @@ from __future__ import annotations
 
 import base64
 import hashlib
-import threading
+import logging
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel
 
 from orivellum.api._deps import get_db, get_config
 from orivellum.capabilities.pipeline import process_document
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api")
 
@@ -100,7 +102,7 @@ def library_chunks(doc_id: str):
 
 
 @router.post("/library/import")
-def library_import(body: LibraryImport):
+def library_import(body: LibraryImport, background_tasks: BackgroundTasks):
     db = get_db()
     # Validate and decode
     try:
@@ -144,21 +146,20 @@ def library_import(body: LibraryImport):
         meta=body.meta,
     )
 
-    # Fire extraction + chunking + knowledge harvest in the background
-    t = threading.Thread(
-        target=process_document,
-        kwargs=dict(
+    # Fire extraction + chunking + knowledge harvest in the background.
+    # BackgroundTasks runs after the response is sent — safe with SQLite WAL mode.
+    _EXTRACTABLE = {"pdf", "docx", "excel", "csv", "pptx", "text", "markdown", "code"}
+    if kind in _EXTRACTABLE:
+        logger.info("Queuing extraction for doc=%s kind=%s", doc["id"], kind)
+        background_tasks.add_task(
+            process_document,
             doc_id=doc["id"],
             file_path=str(file_path),
             kind=kind,
             work_id=body.work_id,
             title=name,
             db=db,
-        ),
-        daemon=True,
-        name=f"extract-{doc['id'][:8]}",
-    )
-    t.start()
+        )
 
     return {"document": doc, "duplicate": False}
 
