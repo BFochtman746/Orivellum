@@ -957,10 +957,31 @@ components:
       properties:
         work_count: { type: integer }
         document_count: { type: integer }
+        documents_ready: { type: integer }
         knowledge_count: { type: integer }
         conversation_count: { type: integer }
         pending_task_count: { type: integer }
         recent_works: { type: array, items: { $ref: "#/components/schemas/Work" } }
+        recent_documents:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              title: { type: string }
+              kind: { type: string }
+              readiness: { type: string }
+              created_at: { type: string }
+        recent_conversations:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              title: { type: string, nullable: true }
+              model: { type: string, nullable: true }
+              updated_at: { type: string }
+              last_message: { type: string, nullable: true }
 
     ActivityItem:
       type: object

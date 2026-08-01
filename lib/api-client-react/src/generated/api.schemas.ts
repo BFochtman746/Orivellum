@@ -11,6 +11,25 @@ export interface HealthStatus {
   timestamp?: string;
 }
 
+export type DashboardSummaryRecentDocumentsItem = {
+  id?: string;
+  title?: string;
+  kind?: string;
+  readiness?: string;
+  created_at?: string;
+};
+
+export type DashboardSummaryRecentConversationsItem = {
+  id?: string;
+  /** @nullable */
+  title?: string | null;
+  /** @nullable */
+  model?: string | null;
+  updated_at?: string;
+  /** @nullable */
+  last_message?: string | null;
+};
+
 export type WorkMeta = { [key: string]: unknown };
 
 export interface Work {
@@ -31,10 +50,13 @@ export interface Work {
 export interface DashboardSummary {
   work_count?: number;
   document_count?: number;
+  documents_ready?: number;
   knowledge_count?: number;
   conversation_count?: number;
   pending_task_count?: number;
   recent_works?: Work[];
+  recent_documents?: DashboardSummaryRecentDocumentsItem[];
+  recent_conversations?: DashboardSummaryRecentConversationsItem[];
 }
 
 export interface ActivityItem {

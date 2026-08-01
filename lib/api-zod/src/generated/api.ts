@@ -23,6 +23,7 @@ export const GetHealthResponse = zod.object({
 export const GetDashboardSummaryResponse = zod.object({
   "work_count": zod.int().optional(),
   "document_count": zod.int().optional(),
+  "documents_ready": zod.int().optional(),
   "knowledge_count": zod.int().optional(),
   "conversation_count": zod.int().optional(),
   "pending_task_count": zod.int().optional(),
@@ -40,6 +41,20 @@ export const GetDashboardSummaryResponse = zod.object({
   "pending_tasks": zod.int().optional(),
   "created_at": zod.string().optional(),
   "updated_at": zod.string().optional()
+})).optional(),
+  "recent_documents": zod.array(zod.object({
+  "id": zod.string().optional(),
+  "title": zod.string().optional(),
+  "kind": zod.string().optional(),
+  "readiness": zod.string().optional(),
+  "created_at": zod.string().optional()
+})).optional(),
+  "recent_conversations": zod.array(zod.object({
+  "id": zod.string().optional(),
+  "title": zod.string().nullish(),
+  "model": zod.string().nullish(),
+  "updated_at": zod.string().optional(),
+  "last_message": zod.string().nullish()
 })).optional()
 })
 
@@ -999,6 +1014,7 @@ export const GetBriefingResponse = zod.object({
   "summary": zod.object({
   "work_count": zod.int().optional(),
   "document_count": zod.int().optional(),
+  "documents_ready": zod.int().optional(),
   "knowledge_count": zod.int().optional(),
   "conversation_count": zod.int().optional(),
   "pending_task_count": zod.int().optional(),
@@ -1016,6 +1032,20 @@ export const GetBriefingResponse = zod.object({
   "pending_tasks": zod.int().optional(),
   "created_at": zod.string().optional(),
   "updated_at": zod.string().optional()
+})).optional(),
+  "recent_documents": zod.array(zod.object({
+  "id": zod.string().optional(),
+  "title": zod.string().optional(),
+  "kind": zod.string().optional(),
+  "readiness": zod.string().optional(),
+  "created_at": zod.string().optional()
+})).optional(),
+  "recent_conversations": zod.array(zod.object({
+  "id": zod.string().optional(),
+  "title": zod.string().nullish(),
+  "model": zod.string().nullish(),
+  "updated_at": zod.string().optional(),
+  "last_message": zod.string().nullish()
 })).optional()
 }).optional(),
   "greeting": zod.string().optional()

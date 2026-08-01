@@ -659,7 +659,10 @@ class OrivellumDB:
                 "SELECT COUNT(*) FROM works w JOIN objects o ON o.id=w.id WHERE o.lifecycle='active'"
             ).fetchone()[0]
             doc_count = self._conn.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
-            knowledge_count = self._conn.execute("SELECT COUNT(*) FROM knowledge").fetchone()[0]
+            doc_ready = self._conn.execute(
+                "SELECT COUNT(*) FROM documents WHERE readiness='ready'"
+            ).fetchone()[0]
+            knowledge_count = self._conn.execute("SELECT COUNT(*) FROM knowledge WHERE review_status != 'rejected'").fetchone()[0]
             conv_count = self._conn.execute(
                 "SELECT COUNT(*) FROM conversations WHERE archived=0"
             ).fetchone()[0]
@@ -674,13 +677,27 @@ class OrivellumDB:
                    FROM works w JOIN objects o ON o.id=w.id
                    WHERE o.lifecycle='active' ORDER BY o.updated_at DESC LIMIT 5"""
             ).fetchall()
+            recent_docs = self._conn.execute(
+                """SELECT id, COALESCE(title, source) as title, kind, readiness, created_at
+                   FROM documents ORDER BY created_at DESC LIMIT 5"""
+            ).fetchall()
+            recent_convs = self._conn.execute(
+                """SELECT id, title, model, updated_at,
+                          (SELECT text FROM messages WHERE conversation_id=conversations.id
+                           ORDER BY created_at DESC LIMIT 1) as last_message
+                   FROM conversations WHERE archived=0
+                   ORDER BY updated_at DESC LIMIT 5"""
+            ).fetchall()
         return {
             "work_count": work_count,
             "document_count": doc_count,
+            "documents_ready": doc_ready,
             "knowledge_count": knowledge_count,
             "conversation_count": conv_count,
             "pending_task_count": task_count,
             "recent_works": [dict(r) for r in recent_works],
+            "recent_documents": [dict(r) for r in recent_docs],
+            "recent_conversations": [dict(r) for r in recent_convs],
         }
 
     def recent_activity(self, limit: int = 20) -> list[dict]:
