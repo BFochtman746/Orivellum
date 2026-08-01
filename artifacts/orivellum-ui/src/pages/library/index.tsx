@@ -202,7 +202,18 @@ export default function Library() {
 
   const { data: listResp, isLoading: loadingList } = useListLibrary(
     {},
-    { query: { enabled: !search, queryKey: getListLibraryQueryKey({}) } }
+    {
+      query: {
+        enabled: !search,
+        queryKey: getListLibraryQueryKey({}),
+        // Poll every 3 s while any document is still processing so extraction
+        // failures surface automatically without a manual refresh.
+        refetchInterval: (query) => {
+          const docs: any[] = query.state.data?.documents ?? [];
+          return docs.some((d) => d.readiness === "imported") ? 3000 : false;
+        },
+      },
+    }
   );
   const { data: searchResp, isLoading: loadingSearch } = useSearchLibrary(
     { q: search },
@@ -326,6 +337,26 @@ export default function Library() {
                           <p className="mt-2 text-xs text-red-600 font-mono bg-red-50 border border-red-100 rounded px-2 py-1 break-all">
                             {doc.error_message}
                           </p>
+                        )}
+
+                        {/* Extraction warnings */}
+                        {hasError && doc.warnings && doc.warnings.length > 0 && (
+                          <div className="mt-2 space-y-1">
+                            {doc.warnings.map((w: any) => (
+                              <div
+                                key={w.id}
+                                className="flex items-start gap-1.5 text-xs font-mono text-red-700 bg-red-50/70 border border-red-100 rounded px-2 py-1"
+                              >
+                                <AlertCircle className="w-3 h-3 mt-0.5 shrink-0 text-red-400" />
+                                <span className="break-all">
+                                  <span className="font-semibold uppercase text-[10px] text-red-500 mr-1">
+                                    {w.kind}
+                                  </span>
+                                  {w.detail}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
                         )}
                       </div>
                     </div>

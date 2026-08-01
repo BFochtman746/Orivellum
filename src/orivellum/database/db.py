@@ -539,6 +539,38 @@ class OrivellumDB:
             self._conn.execute("DELETE FROM chunks WHERE doc_id=?", (doc_id,))
             self._conn.commit()
 
+    def get_extraction_warnings(self, doc_id: str) -> list[dict]:
+        """Return all extraction warnings for a document, ordered oldest-first."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id, doc_id, kind, detail, created_at"
+                " FROM extraction_warnings WHERE doc_id=? ORDER BY created_at ASC",
+                (doc_id,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def delete_extraction_warnings(self, doc_id: str) -> None:
+        """Remove all prior warnings for a document (call before re-queuing extraction)."""
+        with self._lock:
+            self._conn.execute(
+                "DELETE FROM extraction_warnings WHERE doc_id=?", (doc_id,)
+            )
+            self._conn.commit()
+
+    def add_extraction_warning(self, doc_id: str, kind: str,
+                               detail: str | None = None) -> str:
+        """Persist a single extraction warning. Returns the warning id."""
+        wid = _uuid()
+        now = _now()
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO extraction_warnings(id, doc_id, kind, detail, created_at)"
+                " VALUES(?,?,?,?,?)",
+                (wid, doc_id, kind, detail, now),
+            )
+            self._conn.commit()
+        return wid
+
     def update_document_extracted(self, doc_id: str, extracted_text: str,
                                   word_count: int, readiness: str = "ready",
                                   error_message: str | None = None) -> None:

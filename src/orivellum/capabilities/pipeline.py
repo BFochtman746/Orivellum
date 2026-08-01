@@ -69,6 +69,7 @@ def process_document(doc_id: str, file_path: str, kind: str,
         if path is None:
             msg = f"File not found: {file_path}"
             logger.warning("Doc %s — %s", doc_id, msg)
+            db.add_extraction_warning(doc_id, kind="file_not_found", detail=msg)
             db.update_document_extracted(doc_id, "", 0,
                                          readiness="error",
                                          error_message=msg)
@@ -79,6 +80,7 @@ def process_document(doc_id: str, file_path: str, kind: str,
         if not result.ok:
             msg = f"Extraction produced no readable text (kind={kind})"
             logger.warning("Doc %s — %s", doc_id, msg)
+            db.add_extraction_warning(doc_id, kind="no_readable_text", detail=msg)
             db.update_document_extracted(doc_id, "", 0,
                                          readiness="no_text",
                                          error_message=msg)
@@ -117,6 +119,10 @@ def process_document(doc_id: str, file_path: str, kind: str,
     except Exception as exc:
         msg = f"{type(exc).__name__}: {exc}"
         logger.error("Pipeline failed for doc %s: %s", doc_id, msg, exc_info=True)
+        try:
+            db.add_extraction_warning(doc_id, kind="pipeline_exception", detail=msg)
+        except Exception:
+            pass
         try:
             db.update_document_extracted(doc_id, "", 0,
                                          readiness="error",

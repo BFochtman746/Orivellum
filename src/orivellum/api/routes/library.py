@@ -57,6 +57,14 @@ def library_list(work_id: str | None = None, kind: str | None = None,
     db = get_db()
     docs = db.list_documents(work_id=work_id, kind=kind, readiness=readiness,
                              limit=min(limit, 1000))
+    # Attach extraction warnings to failed documents so the list UI can surface
+    # them without a separate per-document request.
+    _FAILED = {"error", "no_text"}
+    for doc in docs:
+        if doc.get("readiness") in _FAILED:
+            doc["warnings"] = db.get_extraction_warnings(doc["id"])
+        else:
+            doc["warnings"] = []
     return {"documents": docs, "count": len(docs)}
 
 
@@ -75,6 +83,13 @@ def library_get(doc_id: str):
     doc = db.get_document(doc_id)
     if not doc:
         raise HTTPException(404, f"Document {doc_id!r} not found")
+    # Always include warnings array; populated for any failure state.
+    _FAILED = {"error", "no_text"}
+    doc["warnings"] = (
+        db.get_extraction_warnings(doc_id)
+        if doc.get("readiness") in _FAILED
+        else []
+    )
     return {"document": doc}
 
 
@@ -183,6 +198,12 @@ def library_import(body: LibraryImport, background_tasks: BackgroundTasks):
     return {"document": doc, "duplicate": False}
 
 
+@router.post("/library/{doc_id}/extract")
+def library_extract(doc_id: str, background_tasks: BackgroundTasks):
+    """Alias for /reprocess — re-queues extraction for a document in error state."""
+    return library_reprocess(doc_id, background_tasks)
+
+
 @router.post("/library/{doc_id}/reprocess")
 def library_reprocess(doc_id: str, background_tasks: BackgroundTasks):
     """Re-run extraction on a document that previously failed or produced no text.
@@ -212,6 +233,8 @@ def library_reprocess(doc_id: str, background_tasks: BackgroundTasks):
             f"File not found at {file_path}. The file may have been moved or deleted.",
         )
 
+    # Clear prior warnings so a fresh run isn't presented alongside stale history
+    db.delete_extraction_warnings(doc_id)
     # Reset status so the UI shows processing
     db.update_document_extracted(doc_id, "", 0, readiness="imported", error_message=None)
 

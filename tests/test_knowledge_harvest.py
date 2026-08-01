@@ -356,5 +356,142 @@ class TestSettingsApi(unittest.TestCase):
             db.close()
 
 
+# ---------------------------------------------------------------------------
+# Extraction warnings: persisted at each pipeline failure point
+# ---------------------------------------------------------------------------
+
+class TestExtractionWarnings(unittest.TestCase):
+    """Verify that add_extraction_warning is called and persisted for every
+    failure path in process_document."""
+
+    def _make_doc(self, db, tmp: str, filename: str = "doc.txt",
+                  write_content: bool = True) -> tuple:
+        p = Path(tmp) / filename
+        if write_content:
+            p.write_text("Some content for testing.", encoding="utf-8")
+        doc = db.create_document(
+            title=filename,
+            source=str(p),
+            kind="text",
+            work_id=None,
+            content_path=str(p),
+        )
+        return doc["id"], p
+
+    def test_file_not_found_stores_warning(self):
+        """A missing file produces a file_not_found warning and readiness=error."""
+        from orivellum.capabilities import pipeline as pipe_module
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db = _make_db(tmp)
+            doc_id, p = self._make_doc(db, tmp, write_content=False)
+
+            pipe_module.process_document(
+                doc_id=doc_id,
+                file_path=str(p),  # file was never written
+                kind="text",
+                work_id=None,
+                title="Missing",
+                db=db,
+            )
+
+            doc = db.get_document(doc_id)
+            self.assertEqual(doc["readiness"], "error")
+
+            warnings = db.get_extraction_warnings(doc_id)
+            self.assertEqual(len(warnings), 1, "Exactly one warning expected")
+            self.assertEqual(warnings[0]["kind"], "file_not_found")
+            self.assertIn(str(p), warnings[0]["detail"])
+            db.close()
+
+    def test_no_readable_text_stores_warning(self):
+        """When extraction returns ok=False, a no_readable_text warning is stored."""
+        from orivellum.capabilities import pipeline as pipe_module
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db = _make_db(tmp)
+            doc_id, p = self._make_doc(db, tmp)
+
+            failed_result = MagicMock()
+            failed_result.ok = False
+
+            with patch.object(pipe_module, "extract", return_value=failed_result):
+                pipe_module.process_document(
+                    doc_id=doc_id,
+                    file_path=str(p),
+                    kind="text",
+                    work_id=None,
+                    title="Empty",
+                    db=db,
+                )
+
+            doc = db.get_document(doc_id)
+            self.assertEqual(doc["readiness"], "no_text")
+
+            warnings = db.get_extraction_warnings(doc_id)
+            self.assertEqual(len(warnings), 1, "Exactly one warning expected")
+            self.assertEqual(warnings[0]["kind"], "no_readable_text")
+            db.close()
+
+    def test_pipeline_exception_stores_warning(self):
+        """An unexpected exception in the pipeline stores a pipeline_exception warning."""
+        from orivellum.capabilities import pipeline as pipe_module
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db = _make_db(tmp)
+            doc_id, p = self._make_doc(db, tmp)
+
+            def bad_extract(*args, **kwargs):
+                raise RuntimeError("Corrupt file header")
+
+            with patch.object(pipe_module, "extract", side_effect=bad_extract):
+                pipe_module.process_document(
+                    doc_id=doc_id,
+                    file_path=str(p),
+                    kind="text",
+                    work_id=None,
+                    title="Corrupt",
+                    db=db,
+                )
+
+            doc = db.get_document(doc_id)
+            self.assertEqual(doc["readiness"], "error")
+
+            warnings = db.get_extraction_warnings(doc_id)
+            self.assertEqual(len(warnings), 1, "Exactly one warning expected")
+            self.assertEqual(warnings[0]["kind"], "pipeline_exception")
+            self.assertIn("RuntimeError", warnings[0]["detail"])
+            db.close()
+
+    def test_warnings_present_in_api_list_for_error_and_no_text(self):
+        """get_extraction_warnings returns rows for both error and no_text docs."""
+        with tempfile.TemporaryDirectory() as tmp:
+            db = _make_db(tmp)
+
+            # Create two docs and manually add warnings for each failure state
+            doc_err = db.create_document(title="err.txt", kind="text", work_id=None)
+            db.update_document_extracted(doc_err["id"], "", 0,
+                                         readiness="error",
+                                         error_message="forced error")
+            db.add_extraction_warning(doc_err["id"], kind="file_not_found",
+                                      detail="forced error")
+
+            doc_nt = db.create_document(title="nt.txt", kind="text", work_id=None)
+            db.update_document_extracted(doc_nt["id"], "", 0,
+                                         readiness="no_text",
+                                         error_message="no text")
+            db.add_extraction_warning(doc_nt["id"], kind="no_readable_text",
+                                      detail="no text")
+
+            for doc_id in (doc_err["id"], doc_nt["id"]):
+                warnings = db.get_extraction_warnings(doc_id)
+                self.assertEqual(len(warnings), 1,
+                                 f"Expected 1 warning for {doc_id[:8]}")
+                self.assertIsNotNone(warnings[0]["kind"])
+                self.assertIsNotNone(warnings[0]["detail"])
+
+            db.close()
+
+
 if __name__ == "__main__":
     unittest.main()
