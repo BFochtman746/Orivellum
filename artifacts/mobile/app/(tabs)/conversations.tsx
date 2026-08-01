@@ -248,7 +248,7 @@ export default function ConversationsScreen() {
         <FlatList
           data={conversations}
           keyExtractor={(item) => item.id ?? ''}
-          renderItem={({ item }) => <ConversationItem item={item} />}
+          renderItem={({ item }) => <ConversationItem item={item} onArchive={handleArchive} />}
           refreshControl={
             <RefreshControl refreshing={isLoading} onRefresh={refetch} tintColor={colors.primary} />
           }
