@@ -6,8 +6,8 @@
  */
 import { useState } from "react";
 import { useParams, useLocation } from "wouter";
-import { useGetDocument, useDeleteDocument, useGetWork, useDeleteKnowledgeItem, useUpdateDocument, useListWorks, getGetDocumentQueryKey, getGetWorkQueryKey } from "@workspace/api-client-react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useGetDocument, useDeleteDocument, useGetWork, useListWorks, getGetDocumentQueryKey, getGetWorkQueryKey } from "@workspace/api-client-react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -28,6 +28,15 @@ const BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/
 
 type Tab = "overview" | "text" | "knowledge";
 
+const AI_KINDS = ["entity", "claim", "relationship"] as const;
+type AiKind = (typeof AI_KINDS)[number];
+
+const AI_KIND_LABELS: Record<AiKind, string> = {
+  entity:       "Entities",
+  claim:        "Claims",
+  relationship: "Relationships",
+};
+
 interface KnowledgeItem {
   id: string;
   kind: string;
@@ -37,6 +46,7 @@ interface KnowledgeItem {
   object?: string | null;
   confidence?: number | null;
   review_status?: string | null;
+  meta?: { source?: string } | null;
 }
 
 // ── Readiness badge ───────────────────────────────────────────────────────────
@@ -92,6 +102,108 @@ function ReviewBadge({ status }: { status: string | null | undefined }) {
   );
 }
 
+// ── Confidence bar ────────────────────────────────────────────────────────────
+
+function ConfidenceBar({ value }: { value: number }) {
+  const pct = Math.round(value * 100);
+  const color =
+    pct >= 80 ? "bg-emerald-500" :
+    pct >= 60 ? "bg-amber-400" :
+                "bg-orange-400";
+  return (
+    <div className="flex items-center gap-1.5 shrink-0" title={`Confidence: ${pct}%`}>
+      <div className="w-14 h-1.5 bg-muted rounded-full overflow-hidden">
+        <div className={`h-full rounded-full ${color}`} style={{ width: `${pct}%` }} />
+      </div>
+      <span className="text-[10px] font-mono text-muted-foreground w-7 text-right">{pct}%</span>
+    </div>
+  );
+}
+
+// ── AI-extracted knowledge section ────────────────────────────────────────────
+
+function AiKindSection({
+  kind,
+  items,
+  reviewing,
+  onReview,
+  onDelete,
+}: {
+  kind: AiKind;
+  items: KnowledgeItem[];
+  reviewing: string | null;
+  onReview: (id: string, status: "approved" | "rejected") => void;
+  onDelete: (id: string) => void;
+}) {
+  if (items.length === 0) return null;
+  return (
+    <div>
+      <h4 className="text-[11px] font-mono font-semibold uppercase tracking-widest text-muted-foreground mb-2 flex items-center gap-2">
+        {AI_KIND_LABELS[kind]}
+        <span className="px-1.5 py-0.5 rounded bg-muted text-[10px] normal-case tracking-normal font-normal">
+          {items.length}
+        </span>
+      </h4>
+      <div className="space-y-2">
+        {items.map((item) => {
+          const isApproved = item.review_status === "approved";
+          const isRejected = item.review_status === "rejected";
+          const isReviewing = reviewing === item.id;
+          return (
+            <div
+              key={item.id}
+              className={`group flex items-start gap-3 p-3 rounded-lg border bg-violet-50/40 border-violet-100 transition-opacity ${isRejected ? "opacity-50" : ""}`}
+            >
+              <div className="flex-1 min-w-0">
+                {kind === "relationship" && item.subject && item.predicate && item.object ? (
+                  <p className="text-sm font-mono">
+                    <span className="font-semibold text-primary">{item.subject}</span>
+                    {" "}<span className="text-muted-foreground">{item.predicate}</span>{" "}
+                    <span className="font-semibold">{item.object}</span>
+                  </p>
+                ) : (
+                  <p className="text-sm leading-snug">{item.text}</p>
+                )}
+              </div>
+              <div className="flex items-center gap-1 shrink-0">
+                {item.confidence != null && <ConfidenceBar value={item.confidence} />}
+                <ReviewBadge status={item.review_status} />
+                {(item.review_status === "ai_auto" || isApproved || isRejected) && (
+                  <>
+                    <button
+                      disabled={isReviewing || isApproved}
+                      onClick={() => onReview(item.id, "approved")}
+                      title="Approve"
+                      className={`p-1 rounded transition-colors ${isApproved ? "text-emerald-600 bg-emerald-50" : "text-muted-foreground hover:text-emerald-600 hover:bg-emerald-50"} disabled:opacity-40`}
+                    >
+                      <ThumbsUp className="w-3 h-3" />
+                    </button>
+                    <button
+                      disabled={isReviewing || isRejected}
+                      onClick={() => onReview(item.id, "rejected")}
+                      title="Dismiss"
+                      className={`p-1 rounded transition-colors ${isRejected ? "text-red-600 bg-red-50" : "text-muted-foreground hover:text-red-600 hover:bg-red-50"} disabled:opacity-40`}
+                    >
+                      <ThumbsDown className="w-3 h-3" />
+                    </button>
+                  </>
+                )}
+                <button
+                  onClick={() => onDelete(item.id)}
+                  title="Delete"
+                  className="p-1 rounded text-muted-foreground/30 hover:text-destructive hover:bg-destructive/5 transition-colors opacity-0 group-hover:opacity-100"
+                >
+                  <Trash2 className="w-3 h-3" />
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ── Knowledge tab content ─────────────────────────────────────────────────────
 
 type KnFilter = "all" | "pending" | "approved" | "rejected";
@@ -100,6 +212,8 @@ function KnowledgeTabContent({
   knLoading,
   items,
   docWorkId,
+  docReadiness,
+  aiEnabled,
   knFilter,
   setKnFilter,
   reviewing,
@@ -109,6 +223,8 @@ function KnowledgeTabContent({
   knLoading: boolean;
   items: KnowledgeItem[];
   docWorkId?: string | null;
+  docReadiness?: string;
+  aiEnabled: boolean;
   knFilter: KnFilter;
   setKnFilter: (f: KnFilter) => void;
   reviewing: string | null;
@@ -123,7 +239,18 @@ function KnowledgeTabContent({
     );
   }
 
-  if (items.length === 0) {
+  // Split items: AI-extracted vs rule-based.
+  // Primary provenance: meta.source === "llm" (durable, survives review status changes).
+  // Fallback for items created before meta provenance: review_status === "ai_auto".
+  // Always split regardless of aiEnabled — stored AI items must always be visible.
+  const isAiProvenance = (k: KnowledgeItem) =>
+    k.meta?.source === "llm" || k.review_status === "ai_auto";
+  const aiItems = items.filter((k) => (AI_KINDS as readonly string[]).includes(k.kind) && isAiProvenance(k));
+  const ruleItems = items.filter((k) => !aiItems.includes(k));
+
+  // Only use the generic empty state when both sections would be empty AND AI is
+  // disabled (so there's no AI section to show at all).
+  if (items.length === 0 && !aiEnabled) {
     return (
       <div className="text-center py-16 bg-muted/10 border border-dashed rounded-lg">
         <Cpu className="w-8 h-8 text-muted-foreground mx-auto mb-3 opacity-50" />
@@ -137,115 +264,173 @@ function KnowledgeTabContent({
     );
   }
 
-  const pendingCount = items.filter((k) => k.review_status === "ai_auto").length;
-  const visible = items.filter((k) => {
+  const pendingCount = ruleItems.filter((k) => k.review_status === "ai_auto").length;
+  const visibleRule = ruleItems.filter((k) => {
     if (knFilter === "pending")  return k.review_status === "ai_auto";
     if (knFilter === "approved") return k.review_status === "approved";
     if (knFilter === "rejected") return k.review_status === "rejected";
     return true;
   });
   const KN_FILTERS: { key: KnFilter; label: string }[] = [
-    { key: "all",      label: `All (${items.length})` },
+    { key: "all",      label: `All (${ruleItems.length})` },
     { key: "pending",  label: `AI Review${pendingCount > 0 ? ` (${pendingCount})` : ""}` },
     { key: "approved", label: "Approved" },
     { key: "rejected", label: "Dismissed" },
   ];
 
   return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between flex-wrap gap-2">
-        <p className="text-xs font-mono text-muted-foreground">
-          {items.length} item{items.length !== 1 ? "s" : ""} extracted
-        </p>
-        <div className="flex items-center gap-1 p-1 bg-muted/40 rounded-lg">
-          {KN_FILTERS.map(({ key, label }) => (
-            <button
-              key={key}
-              onClick={() => setKnFilter(key)}
-              className={`px-2.5 py-1 rounded text-xs font-mono transition-colors ${
-                knFilter === key
-                  ? "bg-background text-foreground shadow-sm font-semibold"
-                  : "text-muted-foreground hover:text-foreground"
-              } ${key === "pending" && pendingCount > 0 ? "text-violet-700" : ""}`}
-            >
-              {label}
-            </button>
-          ))}
+    <div className="space-y-8">
+      {/* ── AI-Extracted Knowledge ─────────────────────────────────────── */}
+      {/* Show whenever items exist (always display stored AI knowledge) OR
+          when AI is enabled (show status/empty-state prompt to the user). */}
+      {(aiItems.length > 0 || aiEnabled) && (
+        <div>
+          <div className="flex items-center gap-2 mb-4">
+            <Sparkles className="w-4 h-4 text-violet-500" />
+            <h3 className="text-sm font-semibold text-violet-700">AI-Extracted Knowledge</h3>
+            {aiItems.length > 0 && (
+              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-violet-100 text-violet-700">
+                {aiItems.length} item{aiItems.length !== 1 ? "s" : ""}
+              </span>
+            )}
+          </div>
+
+          {aiItems.length === 0 ? (
+            <div className="py-8 border border-dashed border-violet-200 rounded-lg bg-violet-50/30 text-center">
+              <Sparkles className="w-6 h-6 text-violet-300 mx-auto mb-2" />
+              <p className="text-sm text-muted-foreground">
+                {!aiEnabled
+                  ? "Enable AI extraction in System settings to extract entities, claims, and relationships."
+                  : docReadiness === "ready"
+                  ? "No AI-extracted items found for this document."
+                  : "AI extraction will run once the document is fully processed."}
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-5 pl-1">
+              {AI_KINDS.map((k) => (
+                <AiKindSection
+                  key={k}
+                  kind={k}
+                  items={aiItems.filter((item) => item.kind === k)}
+                  reviewing={reviewing}
+                  onReview={onReview}
+                  onDelete={onDelete}
+                />
+              ))}
+            </div>
+          )}
         </div>
-      </div>
-      {visible.map((item) => {
-        const isAI = item.review_status === "ai_auto";
-        const isApproved = item.review_status === "approved";
-        const isRejected = item.review_status === "rejected";
-        const isReviewing = reviewing === item.id;
-        return (
-          <Card key={item.id} className={`hover-elevate transition-opacity ${isRejected ? "opacity-50" : ""}`}>
-            <CardContent className="p-4">
-              <div className="flex items-start gap-4">
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-2 flex-wrap">
-                    <Badge variant="outline" className="text-[10px] uppercase font-mono border-primary/30 text-primary">
-                      {item.kind}
-                    </Badge>
-                    <ReviewBadge status={item.review_status} />
-                  </div>
-                  {item.subject && item.predicate && item.object ? (
-                    <div className="font-mono text-sm bg-muted/30 p-2 rounded border border-border/50">
-                      <span className="font-semibold text-primary">{item.subject}</span>{" "}
-                      <span className="text-muted-foreground">{item.predicate}</span>{" "}
-                      <span className="font-semibold">{item.object}</span>
-                    </div>
-                  ) : (
-                    <p className="text-sm font-serif leading-relaxed">{item.text}</p>
-                  )}
-                </div>
-                <div className="flex items-center gap-1.5 shrink-0">
-                  {item.confidence != null && (
-                    <div className="text-xs font-mono px-2 py-1 bg-muted rounded">
-                      {(item.confidence * 100).toFixed(0)}%
-                    </div>
-                  )}
-                  {(isAI || isApproved || isRejected) && (
-                    <>
-                      <button
-                        disabled={isReviewing || isApproved}
-                        onClick={() => onReview(item.id, "approved")}
-                        title="Approve"
-                        className={`p-1.5 rounded transition-colors ${
-                          isApproved
-                            ? "text-emerald-600 bg-emerald-50"
-                            : "text-muted-foreground hover:text-emerald-600 hover:bg-emerald-50"
-                        } disabled:opacity-40`}
-                      >
-                        <ThumbsUp className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        disabled={isReviewing || isRejected}
-                        onClick={() => onReview(item.id, "rejected")}
-                        title="Dismiss"
-                        className={`p-1.5 rounded transition-colors ${
-                          isRejected
-                            ? "text-red-600 bg-red-50"
-                            : "text-muted-foreground hover:text-red-600 hover:bg-red-50"
-                        } disabled:opacity-40`}
-                      >
-                        <ThumbsDown className="w-3.5 h-3.5" />
-                      </button>
-                    </>
-                  )}
+      )}
+
+      {/* ── Rule-based Knowledge ───────────────────────────────────────── */}
+      <div>
+        {aiEnabled && ruleItems.length > 0 && (
+          <div className="flex items-center gap-2 mb-4">
+            <Cpu className="w-4 h-4 text-muted-foreground" />
+            <h3 className="text-sm font-semibold text-muted-foreground">Rule-Based Extraction</h3>
+            <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
+              {ruleItems.length}
+            </span>
+          </div>
+        )}
+
+        {ruleItems.length === 0 ? null : (
+          <>
+            <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
+              <p className="text-xs font-mono text-muted-foreground">
+                {ruleItems.length} item{ruleItems.length !== 1 ? "s" : ""}
+              </p>
+              <div className="flex items-center gap-1 p-1 bg-muted/40 rounded-lg">
+                {KN_FILTERS.map(({ key, label }) => (
                   <button
-                    onClick={() => onDelete(item.id)}
-                    title="Delete item"
-                    className="p-1.5 rounded text-muted-foreground/40 hover:text-destructive hover:bg-destructive/5 transition-colors"
+                    key={key}
+                    onClick={() => setKnFilter(key)}
+                    className={`px-2.5 py-1 rounded text-xs font-mono transition-colors ${
+                      knFilter === key
+                        ? "bg-background text-foreground shadow-sm font-semibold"
+                        : "text-muted-foreground hover:text-foreground"
+                    } ${key === "pending" && pendingCount > 0 ? "text-violet-700" : ""}`}
                   >
-                    <Trash2 className="w-3.5 h-3.5" />
+                    {label}
                   </button>
-                </div>
+                ))}
               </div>
-            </CardContent>
-          </Card>
-        );
-      })}
+            </div>
+            <div className="space-y-3">
+              {visibleRule.map((item) => {
+                const isAI = item.review_status === "ai_auto";
+                const isApproved = item.review_status === "approved";
+                const isRejected = item.review_status === "rejected";
+                const isReviewing = reviewing === item.id;
+                return (
+                  <Card key={item.id} className={`hover-elevate transition-opacity ${isRejected ? "opacity-50" : ""}`}>
+                    <CardContent className="p-4">
+                      <div className="flex items-start gap-4">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-2 flex-wrap">
+                            <Badge variant="outline" className="text-[10px] uppercase font-mono border-primary/30 text-primary">
+                              {item.kind}
+                            </Badge>
+                            <ReviewBadge status={item.review_status} />
+                          </div>
+                          {item.subject && item.predicate && item.object ? (
+                            <div className="font-mono text-sm bg-muted/30 p-2 rounded border border-border/50">
+                              <span className="font-semibold text-primary">{item.subject}</span>{" "}
+                              <span className="text-muted-foreground">{item.predicate}</span>{" "}
+                              <span className="font-semibold">{item.object}</span>
+                            </div>
+                          ) : (
+                            <p className="text-sm font-serif leading-relaxed">{item.text}</p>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          {item.confidence != null && <ConfidenceBar value={item.confidence} />}
+                          {(isAI || isApproved || isRejected) && (
+                            <>
+                              <button
+                                disabled={isReviewing || isApproved}
+                                onClick={() => onReview(item.id, "approved")}
+                                title="Approve"
+                                className={`p-1.5 rounded transition-colors ${
+                                  isApproved
+                                    ? "text-emerald-600 bg-emerald-50"
+                                    : "text-muted-foreground hover:text-emerald-600 hover:bg-emerald-50"
+                                } disabled:opacity-40`}
+                              >
+                                <ThumbsUp className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                disabled={isReviewing || isRejected}
+                                onClick={() => onReview(item.id, "rejected")}
+                                title="Dismiss"
+                                className={`p-1.5 rounded transition-colors ${
+                                  isRejected
+                                    ? "text-red-600 bg-red-50"
+                                    : "text-muted-foreground hover:text-red-600 hover:bg-red-50"
+                                } disabled:opacity-40`}
+                              >
+                                <ThumbsDown className="w-3.5 h-3.5" />
+                              </button>
+                            </>
+                          )}
+                          <button
+                            onClick={() => onDelete(item.id)}
+                            title="Delete item"
+                            className="p-1.5 rounded text-muted-foreground/40 hover:text-destructive hover:bg-destructive/5 transition-colors"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 }
@@ -308,6 +493,13 @@ export default function DocumentDetail() {
     staleTime: 30_000,
   });
 
+  // AI extraction setting — used to gate the AI section in the knowledge tab
+  const { data: aiExtData } = useQuery<{ enabled: boolean }>({
+    queryKey: ["system", "ai-extraction"],
+    queryFn: () => fetch(`${BASE}/system/settings/ai-extraction`).then((r) => r.json()),
+    staleTime: 60_000,
+  });
+
   const handleReview = async (itemId: string, status: "approved" | "rejected") => {
     setReviewing(itemId);
     try {
@@ -321,37 +513,47 @@ export default function DocumentDetail() {
     }
   };
 
-  // Work assignment
-  const updateDoc = useUpdateDocument();
+  // Work assignment — PATCH /api/library/:docId
+  const updateDoc = useMutation<void, Error, { work_id: string | null }>({
+    mutationFn: (body) =>
+      fetch(`${BASE}/library/${docId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }).then((r) => { if (!r.ok) throw new Error("Update failed"); }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: getGetDocumentQueryKey(docId!) });
+    },
+  });
   const { data: worksResp } = useListWorks();
   const allWorks = worksResp?.works ?? [];
   const handleAssignWork = (newWorkId: string) => {
     const val = newWorkId === "__none__" ? null : newWorkId;
     updateDoc.mutate(
-      { docId: docId!, data: { work_id: val } },
+      { work_id: val },
       {
-        onSuccess: () => {
-          toast.success(val ? "Document linked to work" : "Work link removed");
-          queryClient.invalidateQueries({ queryKey: getGetDocumentQueryKey(docId!) });
-        },
+        onSuccess: () => toast.success(val ? "Document linked to work" : "Work link removed"),
         onError: () => toast.error("Could not update document"),
       }
     );
   };
 
-  const deleteKnowledge = useDeleteKnowledgeItem();
+  // Delete a knowledge item — DELETE /api/knowledge/:itemId
+  const deleteKnowledge = useMutation<void, Error, string>({
+    mutationFn: (itemId) =>
+      fetch(`${BASE}/knowledge/${itemId}`, { method: "DELETE" }).then((r) => {
+        if (!r.ok) throw new Error("Delete failed");
+      }),
+  });
   const handleDeleteKnowledge = (itemId: string) => {
     if (!window.confirm("Delete this knowledge item?")) return;
-    deleteKnowledge.mutate(
-      { itemId },
-      {
-        onSuccess: () => {
-          toast.success("Knowledge item deleted");
-          queryClient.invalidateQueries({ queryKey: ["doc-knowledge", docId] });
-        },
-        onError: () => toast.error("Could not delete item"),
-      }
-    );
+    deleteKnowledge.mutate(itemId, {
+      onSuccess: () => {
+        toast.success("Knowledge item deleted");
+        queryClient.invalidateQueries({ queryKey: ["doc-knowledge", docId] });
+      },
+      onError: () => toast.error("Could not delete item"),
+    });
   };
 
   const handleReprocess = async () => {
@@ -625,6 +827,8 @@ export default function DocumentDetail() {
           knLoading={knLoading}
           items={knData?.knowledge ?? []}
           docWorkId={doc?.work_id}
+          docReadiness={readiness}
+          aiEnabled={aiExtData?.enabled ?? false}
           knFilter={knFilter}
           setKnFilter={setKnFilter}
           reviewing={reviewing}

@@ -294,6 +294,8 @@ def llm_harvest(result: "ExtractionResult", doc_id: str,
             logger.debug("llm_harvest: empty/unparseable response for doc %s", doc_id)
             continue
 
+        _llm_meta = {"source": "llm"}
+
         # --- Entities ---
         for ent in (extraction.get("entities") or [])[:5]:
             if not isinstance(ent, dict):
@@ -312,6 +314,8 @@ def llm_harvest(result: "ExtractionResult", doc_id: str,
                 obj=desc or None,
                 confidence=0.85,
                 source_doc_id=doc_id,
+                review_status="ai_auto",
+                meta=_llm_meta,
             )
             created += 1
 
@@ -331,6 +335,8 @@ def llm_harvest(result: "ExtractionResult", doc_id: str,
                 obj=None,
                 confidence=0.80,
                 source_doc_id=doc_id,
+                review_status="ai_auto",
+                meta=_llm_meta,
             )
             created += 1
 
@@ -353,6 +359,8 @@ def llm_harvest(result: "ExtractionResult", doc_id: str,
                 obj=obj,
                 confidence=0.75,
                 source_doc_id=doc_id,
+                review_status="ai_auto",
+                meta=_llm_meta,
             )
             created += 1
 

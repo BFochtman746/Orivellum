@@ -601,7 +601,8 @@ class OrivellumDB:
                               obj: str | None = None, confidence: float = 0.7,
                               source_doc_id: str | None = None,
                               source_chunk_id: str | None = None,
-                              review_status: str = "auto") -> str:
+                              review_status: str = "auto",
+                              meta: dict | None = None) -> str:
         """Insert a knowledge item and update FTS. Returns item id.
 
         review_status:
@@ -609,11 +610,16 @@ class OrivellumDB:
           'ai_auto'  — LLM-extracted, unreviewed
           'approved' — human confirmed
           'rejected' — human dismissed
+
+        meta: optional dict for provenance and other attributes, e.g.
+          {"source": "llm"} to durably mark LLM-extracted items so grouping
+          survives after review_status changes to 'approved'/'rejected'.
         """
         kid = self.create_object("knowledge")
         now = _now()
         # Dedup by text_hash within same work
         text_hash = hashlib.sha256(f"{work_id}:{text}".encode()).hexdigest()
+        meta_json = _jdump(meta or {})
         with self._lock:
             existing = self._conn.execute(
                 "SELECT id FROM knowledge WHERE text_hash=? AND work_id IS ?",
@@ -625,9 +631,9 @@ class OrivellumDB:
                 """INSERT INTO knowledge(id,work_id,kind,text,subject,predicate,object,
                    confidence,source_doc_id,source_chunk_id,review_status,meta,
                    created_at,text_hash)
-                   VALUES(?,?,?,?,?,?,?,?,?,?,?,'{}',?,?)""",
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (kid, work_id, kind, text, subject, predicate, obj, confidence,
-                 source_doc_id, source_chunk_id, review_status, now, text_hash),
+                 source_doc_id, source_chunk_id, review_status, meta_json, now, text_hash),
             )
             self._conn.execute(
                 "INSERT INTO knowledge_fts(knowledge_id,work_id,text,subject,object) VALUES(?,?,?,?,?)",
