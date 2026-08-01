@@ -92,13 +92,20 @@ export default function ConversationsScreen() {
   const insets = useSafeAreaInsets();
   const isWeb = Platform.OS === 'web';
   const router = useRouter();
+  const [search, setSearch] = useState('');
 
   const { data, isLoading, isError, refetch } = useListConversations(
-    { archived: false, limit: 100 },
+    { archived: false, limit: 200 },
     { query: { refetchInterval: 15_000, staleTime: 10_000 } } as any
   );
-  const conversations = data?.conversations ?? [];
-  const hasData = conversations.length > 0;
+  const allConversations = data?.conversations ?? [];
+  const conversations = search
+    ? allConversations.filter((c) =>
+        (c.title ?? '').toLowerCase().includes(search.toLowerCase()) ||
+        (c.last_message ?? '').toLowerCase().includes(search.toLowerCase())
+      )
+    : allConversations;
+  const hasData = allConversations.length > 0;
 
   const { mutateAsync: createConversation, isPending: creating } = useCreateConversation();
 
@@ -135,21 +142,40 @@ export default function ConversationsScreen() {
           },
         ]}
       >
-        <Text style={[styles.title, { color: colors.foreground }]}>Conversations</Text>
-        <Pressable
-          onPress={handleNew}
-          style={({ pressed }) => [
-            styles.newBtn,
-            { backgroundColor: colors.primary, opacity: pressed || creating ? 0.7 : 1 },
-          ]}
-          disabled={creating}
-        >
-          {creating ? (
-            <ActivityIndicator size="small" color={colors.primaryForeground} />
-          ) : (
-            <Feather name="plus" size={20} color={colors.primaryForeground} />
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+          <Text style={[styles.title, { color: colors.foreground }]}>Conversations</Text>
+          <Pressable
+            onPress={handleNew}
+            style={({ pressed }) => [
+              styles.newBtn,
+              { backgroundColor: colors.primary, opacity: pressed || creating ? 0.7 : 1 },
+            ]}
+            disabled={creating}
+          >
+            {creating ? (
+              <ActivityIndicator size="small" color={colors.primaryForeground} />
+            ) : (
+              <Feather name="plus" size={20} color={colors.primaryForeground} />
+            )}
+          </Pressable>
+        </View>
+        {/* Search bar */}
+        <View style={[styles.searchRow, { backgroundColor: colors.card, borderColor: colors.border }]}>
+          <Feather name="search" size={14} color={colors.mutedForeground} />
+          <TextInput
+            style={[styles.searchInput, { color: colors.foreground }]}
+            placeholder="Search conversations…"
+            placeholderTextColor={colors.mutedForeground}
+            value={search}
+            onChangeText={setSearch}
+            autoCorrect={false}
+          />
+          {search.length > 0 && (
+            <Pressable onPress={() => setSearch('')} hitSlop={8}>
+              <Feather name="x" size={14} color={colors.mutedForeground} />
+            </Pressable>
           )}
-        </Pressable>
+        </View>
       </View>
 
       {/* Offline banner — shown only when we have cached data to display */}
@@ -175,9 +201,11 @@ export default function ConversationsScreen() {
       ) : conversations.length === 0 ? (
         <View style={styles.centered}>
           <Feather name="message-square" size={44} color={colors.mutedForeground} />
-          <Text style={[styles.emptyTitle, { color: colors.foreground }]}>No conversations yet</Text>
+          <Text style={[styles.emptyTitle, { color: colors.foreground }]}>
+            {search ? 'No results' : 'No conversations yet'}
+          </Text>
           <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
-            Tap + to start a new one
+            {search ? `Nothing matched "${search}"` : 'Tap + to start a new one'}
           </Text>
         </View>
       ) : (
@@ -204,12 +232,17 @@ export default function ConversationsScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+    flexDirection: 'column',
     paddingHorizontal: 16,
-    paddingBottom: 14,
+    paddingBottom: 12,
     borderBottomWidth: 1,
+  },
+  searchRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    borderWidth: 1, borderRadius: 9, paddingHorizontal: 10, height: 36,
+  },
+  searchInput: {
+    flex: 1, fontSize: 14, fontFamily: 'Inter_400Regular',
   },
   title: { fontSize: 26, fontFamily: 'Inter_700Bold' },
   newBtn: {
