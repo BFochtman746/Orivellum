@@ -45,6 +45,7 @@ class LibraryImport(BaseModel):
     content_b64: str
     work_id: str | None = None
     meta: dict[str, Any] = {}
+    force: bool = False  # Bypass dedup and re-queue extraction (e.g. after an error)
 
 
 class LibraryActiveWork(BaseModel):
@@ -173,7 +174,55 @@ def library_import(body: LibraryImport, background_tasks: BackgroundTasks):
         ).fetchone()
     if existing:
         doc = db.get_document(existing["id"])
-        return {"document": doc, "duplicate": True}
+        readiness = doc.get("readiness", "")
+        _FAILED = {"error", "no_text"}
+
+        # If force=True, re-queue regardless of current readiness (including ready).
+        # If NOT forced, only re-queue when the doc is in a failed state.
+        should_requeue = body.force or (readiness in _FAILED)
+        if should_requeue:
+            content_path = doc.get("content_path")
+            lib_root = _library_root()
+            file_path_existing = (lib_root / content_path) if content_path else None
+
+            if file_path_existing and file_path_existing.exists():
+                db.delete_extraction_warnings(doc["id"])
+                db.update_document_extracted(
+                    doc["id"], "", 0, readiness="imported", error_message=None
+                )
+                kind = doc.get("kind") or _kind_for(name)
+                _EXTRACTABLE = {"pdf", "docx", "excel", "csv", "pptx", "text", "markdown", "code"}
+                if kind in _EXTRACTABLE:
+                    logger.info(
+                        "Re-queuing extraction for duplicate doc=%s kind=%s (force=%s readiness_was=%s)",
+                        doc["id"], kind, body.force, readiness,
+                    )
+                    background_tasks.add_task(
+                        process_document,
+                        doc_id=doc["id"],
+                        file_path=str(file_path_existing),
+                        kind=kind,
+                        work_id=doc.get("work_id") or body.work_id,
+                        title=doc.get("title", name),
+                        db=db,
+                    )
+                doc = db.get_document(doc["id"])
+
+        # Always surface readiness and warnings at the top level so callers know
+        # the state without a second request.
+        current_readiness = doc.get("readiness")
+        warnings = (
+            db.get_extraction_warnings(doc["id"])
+            if current_readiness in {"error", "no_text"}
+            else []
+        )
+        doc["warnings"] = warnings
+        return {
+            "document": doc,
+            "duplicate": True,
+            "readiness": current_readiness,
+            "warnings": warnings,
+        }
 
     # Store file
     kind = _kind_for(name)
