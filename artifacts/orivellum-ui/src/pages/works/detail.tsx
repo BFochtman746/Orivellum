@@ -356,6 +356,7 @@ function DocumentsTab({ workId }: { workId: string }) {
   const queryClient = useQueryClient();
   const [, navigate] = useLocation();
   const [open, setOpen] = useState(false);
+  const [docFilter, setDocFilter] = useState("");
 
   const { data: docsResp, isLoading } = useGetWorkDocuments(workId, {
     query: {
@@ -402,19 +403,38 @@ function DocumentsTab({ workId }: { workId: string }) {
 
   if (isLoading) return <Skeleton className="h-64 w-full" />;
   const docs = docsResp?.documents ?? [];
+  const filteredDocs = docFilter.trim()
+    ? docs.filter((d) => {
+        const hay = `${d.title ?? ""} ${(d as any).source ?? ""}`.toLowerCase();
+        return hay.includes(docFilter.trim().toLowerCase());
+      })
+    : docs;
 
   return (
     <div className="space-y-4">
-      <div className="flex justify-between items-center">
+      <div className="flex justify-between items-center flex-wrap gap-3">
         <h3 className="text-xl font-serif font-medium">Source Material</h3>
-        <Button size="sm" variant="outline" className="gap-2" onClick={() => setOpen(true)}>
-          <Plus className="w-4 h-4" /> Add Document
-        </Button>
+        <div className="flex items-center gap-2">
+          {docs.length > 5 && (
+            <div className="relative">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+              <Input
+                className="pl-8 h-8 text-xs w-48 font-mono"
+                placeholder="Filter documents…"
+                value={docFilter}
+                onChange={(e) => setDocFilter(e.target.value)}
+              />
+            </div>
+          )}
+          <Button size="sm" variant="outline" className="gap-2" onClick={() => setOpen(true)}>
+            <Plus className="w-4 h-4" /> Add Document
+          </Button>
+        </div>
       </div>
 
-      {docs.length > 0 ? (
+      {filteredDocs.length > 0 ? (
         <div className="grid gap-3">
-          {docs.map((doc) => (
+          {filteredDocs.map((doc) => (
             <Card
               key={doc.id}
               className="hover-elevate cursor-pointer group"
@@ -463,6 +483,11 @@ function DocumentsTab({ workId }: { workId: string }) {
               </CardContent>
             </Card>
           ))}
+        </div>
+      ) : docFilter.trim() ? (
+        <div className="text-center py-12 bg-muted/10 border border-dashed rounded-lg">
+          <p className="text-muted-foreground text-sm">No documents match "{docFilter}".</p>
+          <button onClick={() => setDocFilter("")} className="text-xs text-primary underline mt-2">Clear filter</button>
         </div>
       ) : (
         <div className="text-center py-12 bg-muted/10 border border-dashed rounded-lg">
@@ -537,6 +562,7 @@ function KnowledgeTab({ workId }: { workId: string }) {
   const [, navigate] = useLocation();
   const [reviewing, setReviewing] = useState<string | null>(null);
   const [filter, setFilter] = useState<KnowledgeFilter>("all");
+  const [searchText, setSearchText] = useState("");
   const deleteKnowledge = useDeleteKnowledgeItem();
   const { data: knowResp, isLoading } = useGetWorkKnowledge(workId, {}, {
     query: { enabled: !!workId, queryKey: getGetWorkKnowledgeQueryKey(workId, {}) },
@@ -585,12 +611,24 @@ function KnowledgeTab({ workId }: { workId: string }) {
   const allKnowledge = knowResp?.knowledge ?? [];
   const pendingCount = allKnowledge.filter((k) => k.review_status === "ai_auto").length;
 
-  const knowledge = allKnowledge.filter((k) => {
+  const reviewFiltered = allKnowledge.filter((k) => {
     if (filter === "pending")  return k.review_status === "ai_auto";
     if (filter === "approved") return k.review_status === "approved";
     if (filter === "rejected") return k.review_status === "rejected";
     return true;
   });
+
+  const knowledge = searchText.trim()
+    ? reviewFiltered.filter((k) => {
+        const q = searchText.trim().toLowerCase();
+        return (
+          (k.text ?? "").toLowerCase().includes(q) ||
+          ((k as any).subject ?? "").toLowerCase().includes(q) ||
+          ((k as any).object ?? "").toLowerCase().includes(q) ||
+          (k.kind ?? "").toLowerCase().includes(q)
+        );
+      })
+    : reviewFiltered;
 
   const FILTERS: { key: KnowledgeFilter; label: string }[] = [
     { key: "all",      label: `All (${allKnowledge.length})` },
@@ -601,25 +639,38 @@ function KnowledgeTab({ workId }: { workId: string }) {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between flex-wrap gap-3">
+      <div className="flex items-start justify-between flex-wrap gap-3">
         <h3 className="text-xl font-serif font-medium">Structured Knowledge</h3>
-        {allKnowledge.length > 0 && (
-          <div className="flex items-center gap-1 p-1 bg-muted/40 rounded-lg">
-            {FILTERS.map(({ key, label }) => (
-              <button
-                key={key}
-                onClick={() => setFilter(key)}
-                className={`px-2.5 py-1 rounded text-xs font-mono transition-colors ${
-                  filter === key
-                    ? "bg-background text-foreground shadow-sm font-semibold"
-                    : "text-muted-foreground hover:text-foreground"
-                } ${key === "pending" && pendingCount > 0 ? "text-violet-700" : ""}`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-        )}
+        <div className="flex items-center gap-2 flex-wrap justify-end">
+          {allKnowledge.length > 10 && (
+            <div className="relative">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+              <Input
+                className="pl-8 h-8 text-xs w-52 font-mono"
+                placeholder="Filter knowledge…"
+                value={searchText}
+                onChange={(e) => setSearchText(e.target.value)}
+              />
+            </div>
+          )}
+          {allKnowledge.length > 0 && (
+            <div className="flex items-center gap-1 p-1 bg-muted/40 rounded-lg">
+              {FILTERS.map(({ key, label }) => (
+                <button
+                  key={key}
+                  onClick={() => setFilter(key)}
+                  className={`px-2.5 py-1 rounded text-xs font-mono transition-colors ${
+                    filter === key
+                      ? "bg-background text-foreground shadow-sm font-semibold"
+                      : "text-muted-foreground hover:text-foreground"
+                  } ${key === "pending" && pendingCount > 0 ? "text-violet-700" : ""}`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
       {knowledge.length > 0 ? (
@@ -737,6 +788,11 @@ function KnowledgeTab({ workId }: { workId: string }) {
             </Card>
             );
           })}
+        </div>
+      ) : searchText.trim() ? (
+        <div className="text-center py-12 bg-muted/10 border border-dashed rounded-lg">
+          <p className="text-muted-foreground text-sm">No knowledge items match "{searchText}".</p>
+          <button onClick={() => setSearchText("")} className="text-xs text-primary underline mt-2">Clear filter</button>
         </div>
       ) : (
         <div className="text-center py-12 bg-muted/10 border border-dashed rounded-lg">
@@ -983,7 +1039,8 @@ function SearchTab({ workId }: { workId: string }) {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/works/${workId}/search?q=${encodeURIComponent(q)}&limit=20`);
+      const base = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
+      const res = await fetch(`${base}/works/${workId}/search?q=${encodeURIComponent(q)}&limit=20`);
       if (!res.ok) throw new Error(`Search failed: ${res.status}`);
       const data = await res.json();
       setResults(data);
