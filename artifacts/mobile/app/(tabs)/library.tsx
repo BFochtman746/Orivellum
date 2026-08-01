@@ -162,9 +162,7 @@ export default function LibraryScreen() {
   } = useSearchLibrary({ q: search }, { query: { enabled: search.length > 1, staleTime: 60_000 } } as any);
 
   // Update cache whenever we get fresh results
-  if (searchData?.results && search === (searchData as any)._q ?? search) {
-    lastSearchCache.current = { query: search, results: searchData.results };
-  } else if (searchData?.results) {
+  if (searchData?.results) {
     lastSearchCache.current = { query: search, results: searchData.results };
   }
 
