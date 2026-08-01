@@ -184,8 +184,9 @@ $env:ORIVELLUM_API_URL = "http://127.0.0.1:$ApiPort"
 # pnpm silently skips launching Vite when stdout is redirected (non-TTY).
 # Open a dedicated window so pnpm gets a real console — same as running manually.
 $uiDir = Join-Path $root "artifacts\orivellum-ui"
-$webProc = Start-Process -FilePath "cmd.exe" `
-  -ArgumentList "/k title Orivellum Web && cd /d `"$uiDir`" && `"$pnpmExe`" run dev" `
+# pnpm on this machine is a .ps1 wrapper — must use powershell.exe, not cmd.exe
+$webProc = Start-Process -FilePath "powershell.exe" `
+  -ArgumentList "-NoProfile", "-Command", "& '$pnpmExe' run dev" `
   -WorkingDirectory $uiDir `
   -PassThru
 $children.Add($webProc)
