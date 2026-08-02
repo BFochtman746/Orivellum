@@ -661,6 +661,18 @@ export default function DocumentDetail() {
     },
   });
   const { data: worksResp } = useListWorks();
+
+  // Versions for this document (must stay above the early returns — hooks
+  // may never run conditionally)
+  const { data: versData, isLoading: versLoading, refetch: versRefetch } = useQuery<{
+    versions: Array<{ id: string; version_num: number; sha256: string | null; word_count: number; notes: string | null; is_canonical: boolean; created_at: string }>;
+    count: number;
+  }>({
+    queryKey: ["doc-versions", docId],
+    queryFn: () => apiFetch(`${BASE}/library/${docId}/versions`).then((r) => r.json()),
+    enabled: !!docId && activeTab === "versions",
+    staleTime: 60_000,
+  });
   const allWorks = worksResp?.works ?? [];
   const handleAssignWork = (newWorkId: string) => {
     const val = newWorkId === "__none__" ? null : newWorkId;
@@ -863,17 +875,6 @@ export default function DocumentDetail() {
     { key: "text",      label: "Text",      icon: BookOpen },
     { key: "knowledge", label: "Knowledge", icon: Cpu },
   ];
-
-  // Versions for this document
-  const { data: versData, isLoading: versLoading, refetch: versRefetch } = useQuery<{
-    versions: Array<{ id: string; version_num: number; sha256: string | null; word_count: number; notes: string | null; is_canonical: boolean; created_at: string }>;
-    count: number;
-  }>({
-    queryKey: ["doc-versions", docId],
-    queryFn: () => apiFetch(`${BASE}/library/${docId}/versions`).then((r) => r.json()),
-    enabled: !!docId && activeTab === "versions",
-    staleTime: 60_000,
-  });
 
   const snapshotVersion = async () => {
     try {

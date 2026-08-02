@@ -244,7 +244,7 @@ export default function LibraryDocDetail() {
             <ActivityIndicator color={colors.primary} style={{ marginVertical: 12 }} />
           ) : knError ? (
             <Pressable
-              onPress={refetchKn}
+              onPress={() => refetchKn()}
               style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 10 }}
             >
               <Feather name="alert-circle" size={14} color={colors.destructive ?? '#ef4444'} />
