@@ -437,6 +437,48 @@ function DocumentsTab({ workId }: { workId: string }) {
   );
 
   const [linking, setLinking] = useState(false);
+  const [dismissedDupes, setDismissedDupes] = useState<Set<string>>(new Set());
+  const [resolvingDupe, setResolvingDupe] = useState<string | null>(null);
+
+  // Fetch near-duplicate / version-relationship suggestions for this Work
+  const { data: dupesResp, refetch: refetchDupes } = useQuery({
+    queryKey: ["work-duplicates", workId],
+    queryFn: async () => {
+      const r = await apiFetch(`${DOC_BASE}/works/${workId}/duplicates`);
+      if (!r.ok) return { pairs: [], count: 0 };
+      return r.json() as Promise<{ pairs: any[]; count: number }>;
+    },
+    enabled: !!workId,
+    staleTime: 60_000,
+  });
+  const dupePairs = (dupesResp?.pairs ?? []).filter(
+    (p: any) => !dismissedDupes.has(p.id)
+  );
+
+  const handleDeclareCanonicaL = async (dupeId: string, canonicalDocId: string) => {
+    setResolvingDupe(dupeId);
+    try {
+      const r = await apiFetch(
+        `${DOC_BASE}/library/duplicates/${dupeId}/resolve`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "mark_superseded", canonical_doc_id: canonicalDocId }),
+        }
+      );
+      if (!r.ok) throw new Error("Resolve failed");
+      setDismissedDupes((prev) => new Set([...prev, dupeId]));
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["work-duplicates", workId] }),
+        queryClient.invalidateQueries({ queryKey: getGetWorkDocumentsQueryKey(workId) }),
+      ]);
+      toast.success("Canonical document declared");
+    } catch {
+      toast.error("Could not resolve duplicate pair");
+    } finally {
+      setResolvingDupe(null);
+    }
+  };
 
   const handleLink = async (docId: string) => {
     setLinking(true);
@@ -571,6 +613,60 @@ function DocumentsTab({ workId }: { workId: string }) {
               </button>
             ))}
           </div>
+        </div>
+      )}
+
+      {/* ── Version-relationship suggestions ──────────────────────────── */}
+      {dupePairs.length > 0 && (
+        <div className="space-y-2">
+          <div className="flex items-center gap-2 text-sm font-medium text-amber-700">
+            <GitBranch className="w-4 h-4" />
+            <span>Version relationships detected</span>
+            <span className="text-[10px] font-mono text-amber-600/70 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5">
+              {dupePairs.length} pair{dupePairs.length !== 1 ? "s" : ""}
+            </span>
+          </div>
+          {dupePairs.map((pair: any) => (
+            <div
+              key={pair.id}
+              className="bg-amber-50/60 border border-amber-200/80 rounded-lg p-3 space-y-2"
+            >
+              <p className="text-xs text-amber-800 leading-relaxed">
+                <span className="font-semibold">{pair.doc_a_title || "Untitled"}</span>
+                <span className="mx-1.5 text-amber-500">&amp;</span>
+                <span className="font-semibold">{pair.doc_b_title || "Untitled"}</span>
+                <span className="ml-1.5 text-amber-600/80">
+                  ({pair.kind === "near_duplicate" ? "near duplicates" : "likely revisions"} · {Math.round(pair.similarity * 100)}% similar)
+                </span>
+              </p>
+              <p className="text-[11px] text-amber-700/80">
+                Declare one as canonical — the other will be marked as superseded.
+              </p>
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  disabled={resolvingDupe === pair.id}
+                  onClick={() => handleDeclareCanonicaL(pair.id, pair.doc_a_id)}
+                  className="text-[11px] px-2.5 py-1 rounded border border-amber-300 bg-white text-amber-800 hover:bg-amber-100 transition-colors disabled:opacity-50 font-mono"
+                >
+                  {pair.doc_a_title || "Doc A"} is canonical
+                </button>
+                <button
+                  disabled={resolvingDupe === pair.id}
+                  onClick={() => handleDeclareCanonicaL(pair.id, pair.doc_b_id)}
+                  className="text-[11px] px-2.5 py-1 rounded border border-amber-300 bg-white text-amber-800 hover:bg-amber-100 transition-colors disabled:opacity-50 font-mono"
+                >
+                  {pair.doc_b_title || "Doc B"} is canonical
+                </button>
+                <button
+                  onClick={() => setDismissedDupes((prev) => new Set([...prev, pair.id]))}
+                  className="text-[11px] px-2 py-1 rounded text-amber-600/70 hover:text-amber-800 transition-colors font-mono"
+                >
+                  Dismiss
+                </button>
+                {resolvingDupe === pair.id && <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-600" />}
+              </div>
+            </div>
+          ))}
         </div>
       )}
 
@@ -1509,15 +1605,61 @@ const GAP_DOT: Record<string, string> = {
 };
 
 function GapsTab({ workId }: { workId: string }) {
+  const [, navigate] = useLocation();
+  const [actionPending, setActionPending] = useState<string | null>(null);
+
+  const [forceRefresh, setForceRefresh] = useState(false);
   const { data, isLoading, error, refetch, isFetching } = useQuery<GapReport>({
-    queryKey: ["work-gaps", workId],
+    queryKey: ["work-gaps", workId, forceRefresh],
     queryFn: () =>
-      apiFetch(`${WORK_API_BASE}/works/${workId}/gaps`).then((r) => {
+      apiFetch(
+        `${WORK_API_BASE}/works/${workId}/gaps${forceRefresh ? "?refresh=true" : ""}`
+      ).then((r) => {
         if (!r.ok) throw new Error("gaps fetch failed");
         return r.json();
       }),
-    staleTime: 120_000,
+    staleTime: forceRefresh ? 0 : 120_000,
   });
+
+  /** Create a work-linked conversation pre-set to research a chapter topic. */
+  const createResearchChat = async (chapterTitle: string) => {
+    setActionPending(chapterTitle);
+    try {
+      const r = await apiFetch(`${WORK_API_BASE}/conversations`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: `Research: ${chapterTitle}`, work_id: workId }),
+      });
+      if (r.ok) {
+        const d = await r.json();
+        if (d.conversation?.id) navigate(`/chat?id=${d.conversation.id}`);
+      } else {
+        toast.error("Could not create research conversation");
+      }
+    } catch { toast.error("Network error"); }
+    finally { setActionPending(null); }
+  };
+
+  /** Force re-extraction of a document that has no structural headings.
+   *  Uses force=true so ready documents are re-queued (not skipped). */
+  const reextractDoc = async (docId: string) => {
+    if (!docId) return;
+    setActionPending(docId);
+    try {
+      const r = await apiFetch(`${WORK_API_BASE}/library/${docId}/reprocess?force=true`, { method: "POST" });
+      if (r.ok) {
+        const d = await r.json();
+        if (d.message?.includes("already ready") && !d.ok) {
+          // Should not happen with force=true, but guard anyway
+          toast.error("Re-extraction could not be queued");
+        } else {
+          toast.success("Re-extraction queued — the gap will clear once complete");
+          setTimeout(() => refetch(), 4000);
+        }
+      } else { toast.error("Could not queue re-extraction"); }
+    } catch { toast.error("Network error"); }
+    finally { setActionPending(null); }
+  };
 
   if (isLoading) return (
     <div className="space-y-3">{[1,2,3].map(i => <Skeleton key={i} className="h-20 w-full" />)}</div>
@@ -1545,8 +1687,11 @@ function GapsTab({ workId }: { workId: string }) {
           </div>
           <div className="flex items-center gap-2">
             <span className="text-lg font-mono font-bold">{data.coverage_pct}%</span>
-            <button onClick={() => refetch()} disabled={isFetching}
-              className="text-[10px] font-mono text-muted-foreground hover:text-foreground">
+            <button
+              onClick={() => { setForceRefresh(true); refetch(); }}
+              disabled={isFetching}
+              className="text-[10px] font-mono text-muted-foreground hover:text-foreground"
+            >
               {isFetching ? "…" : "refresh"}
             </button>
           </div>
@@ -1581,12 +1726,47 @@ function GapsTab({ workId }: { workId: string }) {
                   <span className={`w-2 h-2 rounded-full ${GAP_DOT[sev]}`} />
                   {sev} priority ({items.length})
                 </h4>
-                {items.map((g, i) => (
-                  <div key={i} className={`p-3.5 rounded-lg border ${GAP_SEVERITY_STYLE[sev]}`}>
-                    <p className="font-medium text-sm mb-1">{g.title}</p>
-                    <p className="text-[12px] leading-relaxed opacity-80">{g.description}</p>
-                  </div>
-                ))}
+                {items.map((g, i) => {
+                  const chapTitle = (g.metadata.chapter_title as string | undefined) ?? g.title;
+                  const docId     = g.metadata.doc_id as string | undefined;
+                  const isResearchPending = actionPending === chapTitle;
+                  const isExtractPending  = actionPending === docId;
+                  return (
+                    <div key={i} className={`p-3.5 rounded-lg border ${GAP_SEVERITY_STYLE[sev]}`}>
+                      <p className="font-medium text-sm mb-1">{g.title}</p>
+                      <p className="text-[12px] leading-relaxed opacity-80">{g.description}</p>
+                      {/* One-click action */}
+                      {(g.kind === "uncovered_chapter" || g.kind === "weak_coverage") && (
+                        <div className="flex justify-end mt-2 pt-2 border-t border-current/10">
+                          <button
+                            disabled={!!actionPending}
+                            onClick={() => createResearchChat(chapTitle)}
+                            className="flex items-center gap-1.5 text-[11px] font-mono opacity-70 hover:opacity-100 disabled:opacity-30 transition-opacity"
+                          >
+                            {isResearchPending
+                              ? <svg className="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+                              : <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>}
+                            Research this chapter →
+                          </button>
+                        </div>
+                      )}
+                      {g.kind === "undocumented_doc" && docId && (
+                        <div className="flex justify-end mt-2 pt-2 border-t border-current/10">
+                          <button
+                            disabled={!!actionPending}
+                            onClick={() => reextractDoc(docId)}
+                            className="flex items-center gap-1.5 text-[11px] font-mono opacity-70 hover:opacity-100 disabled:opacity-30 transition-opacity"
+                          >
+                            {isExtractPending
+                              ? <svg className="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+                              : <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>}
+                            Re-extract document →
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             );
           })}

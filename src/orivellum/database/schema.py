@@ -767,4 +767,19 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         ALTER TABLE doc_dupes ADD COLUMN resolution TEXT;
         CREATE INDEX IF NOT EXISTS dd_resolved ON doc_dupes(resolved)
     """),
+
+    # v50 — Gap detection cache (MONARCH #172)
+    # Stores the most-recent gap detection result per Work so the dashboard
+    # /gaps/top endpoint can return instantly without re-running detection on
+    # every request.  Each row is updated in-place on every detection run;
+    # rows older than 1 h are considered stale and trigger re-detection.
+    (50, "Add work_gap_cache table for dashboard performance", """
+        CREATE TABLE IF NOT EXISTS work_gap_cache (
+            work_id      TEXT PRIMARY KEY REFERENCES works(id) ON DELETE CASCADE,
+            gaps_json    TEXT NOT NULL DEFAULT '[]',
+            coverage_pct REAL,
+            evaluated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS wgc_evaluated ON work_gap_cache(evaluated_at)
+    """),
 ]

@@ -426,6 +426,38 @@ export interface CompletenessReport {
   dimensions?: CompletenessDimension[];
 }
 
+export type GapItemMetadata = { [key: string]: unknown };
+
+export interface GapItem {
+  /** undocumented_doc | uncovered_chapter | weak_coverage | missing_sources | orphaned_research | stale_source | duplicate_research | no_structure */
+  kind?: string;
+  title?: string;
+  description?: string;
+  /** high | medium | low */
+  severity?: string;
+  metadata?: GapItemMetadata;
+}
+
+export interface GapReport {
+  work_id?: string;
+  /** 0-100 — chapters with sufficient coverage */
+  coverage_pct?: number;
+  total_chapters?: number;
+  suggested_queries?: string[];
+  evaluated_at?: string;
+  gaps?: GapItem[];
+}
+
+export type TopGapItem = GapItem & {
+  work_id?: string;
+  work_title?: string;
+};
+
+export interface TopGapsResponse {
+  gaps?: TopGapItem[];
+  total_works_analyzed?: number;
+}
+
 export interface OkResponse {
   ok?: boolean;
 }

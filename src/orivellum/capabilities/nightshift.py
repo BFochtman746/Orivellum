@@ -46,6 +46,29 @@ def _get_docs_needing_work(db: "OrivellumDB") -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def _get_stuck_docs(db: "OrivellumDB", max_docs: int = 10) -> list[dict]:
+    """Return documents stuck in 'imported' or 'error' / 'no_text' that have a
+    resolvable source file — these were never fully extracted and should be
+    retried during the nightshift recovery pass.
+
+    Skips documents created within the last 10 minutes (may still be in-flight)
+    and ZIP archives (those are handled by the dedicated explode-zips logic).
+    """
+    with db._lock:
+        rows = db._conn.execute(
+            """SELECT d.id, d.work_id, d.title, d.source, d.content_path,
+                      d.kind, d.readiness
+               FROM documents d
+               WHERE d.readiness IN ('imported', 'error', 'no_text')
+                 AND d.kind != 'zip'
+                 AND datetime(d.created_at) < datetime('now', '-10 minutes')
+               ORDER BY d.created_at ASC
+               LIMIT ?""",
+            (max_docs,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def _record_run(db: "OrivellumDB", docs_processed: int, items_added: int, report_path: str | None) -> None:
     run_id = str(uuid.uuid4())
     now    = datetime.now(timezone.utc).isoformat()
@@ -82,69 +105,145 @@ def run_nightshift(db: "OrivellumDB", cfg: "OrivellumConfig") -> None:
     logger.info("Nightshift starting for %s", date_str)
 
     docs = _get_docs_needing_work(db)
-    if not docs:
-        logger.info("Nightshift: no documents need re-processing — sleeping")
-        _record_run(db, 0, 0, None)
-        return
-
-    from orivellum.capabilities.knowledge_harvest import harvest
     items_added   = 0
     report_lines: list[str] = []
-    ai_enabled    = db.get_setting("ai_extraction_enabled", "false").lower() == "true"
 
-    from orivellum.capabilities.extraction import ExtractionResult, PageSegment
+    if not docs:
+        logger.info("Nightshift: no documents need re-processing")
+    else:
+        from orivellum.capabilities.knowledge_harvest import harvest
+        from orivellum.capabilities.extraction import ExtractionResult, PageSegment
+        ai_enabled = db.get_setting("ai_extraction_enabled", "false").lower() == "true"
 
-    for doc in docs:
-        doc_id  = doc["id"]
-        work_id = doc.get("work_id")
-        title   = doc.get("title") or doc.get("source") or doc_id
-        try:
-            with db._lock:
-                chunks_row = db._conn.execute(
-                    "SELECT text FROM chunks WHERE doc_id=? ORDER BY position LIMIT 30", (doc_id,)
-                ).fetchall()
-            full_text = "\n".join(r["text"] for r in chunks_row)
-            if not full_text.strip():
-                logger.debug(
-                    "Nightshift: skipping %s — no extractable text in chunks (sparse or image-only doc)",
-                    doc_id,
+        for doc in docs:
+            doc_id  = doc["id"]
+            work_id = doc.get("work_id")
+            title   = doc.get("title") or doc.get("source") or doc_id
+            try:
+                with db._lock:
+                    chunks_row = db._conn.execute(
+                        "SELECT text FROM chunks WHERE doc_id=? ORDER BY page LIMIT 30",
+                        (doc_id,),
+                    ).fetchall()
+                full_text = "\n".join(r["text"] for r in chunks_row)
+                if not full_text.strip():
+                    logger.debug(
+                        "Nightshift: skipping %s — no extractable text in chunks",
+                        doc_id,
+                    )
+                    report_lines.append(f"{title}: skipped — no text in chunks")
+                    continue
+
+                doc_info = db.get_document(doc_id)
+                doc_kind = (doc_info or {}).get("kind") or "text"
+                pages = [
+                    PageSegment(page=i + 1, text=r["text"])
+                    for i, r in enumerate(chunks_row)
+                ]
+                result = ExtractionResult(
+                    kind=doc_kind,
+                    full_text=full_text,
+                    word_count=len(full_text.split()),
+                    pages=pages,
                 )
-                report_lines.append(f"{title}: skipped — no text in chunks")
+
+                before = len(db.list_knowledge(work_id=work_id, limit=500))
+                harvest(result, doc_id=doc_id, work_id=work_id, doc_title=title, db=db)
+
+                if ai_enabled:
+                    try:
+                        from orivellum.capabilities.knowledge_harvest import llm_harvest
+                        llm_harvest(result, doc_id=doc_id, work_id=work_id,
+                                    doc_title=title, db=db)
+                    except Exception as ai_exc:
+                        logger.warning("Nightshift LLM harvest failed for %s: %s", doc_id, ai_exc)
+
+                after  = len(db.list_knowledge(work_id=work_id, limit=500))
+                added  = max(0, after - before)
+                items_added += added
+                report_lines.append(f"{title}: +{added} knowledge items")
+            except Exception as exc:
+                logger.warning("Nightshift failed for doc %s: %s", doc_id, exc)
+                report_lines.append(f"{title}: ERROR — {exc}")
+
+    # ── Recovery pass — retry documents stuck in imported / error / no_text ─────
+    try:
+        from orivellum.capabilities.pipeline import process_document as _process_doc
+        from pathlib import Path as _Path
+        cfg_data_dir = _Path(cfg.data_dir)
+        lib_root = cfg_data_dir / "library"
+        stuck = _get_stuck_docs(db, max_docs=5)
+        recovered = 0
+        for sdoc in stuck:
+            sdoc_id      = sdoc["id"]
+            content_path = sdoc.get("content_path")
+            kind         = sdoc.get("kind") or "text"
+            title        = sdoc.get("title") or sdoc.get("source") or sdoc_id
+            file_path: _Path | None = None
+            if content_path:
+                file_path = lib_root / content_path
+            elif sdoc.get("source"):
+                file_path = _Path(sdoc["source"])
+            if not file_path or not file_path.exists():
+                logger.debug("Nightshift recovery: file missing for doc %s — skip", sdoc_id)
                 continue
+            try:
+                db.update_document_extracted(sdoc_id, "", 0,
+                                             readiness="imported", error_message=None)
+                t = threading.Thread(
+                    target=_process_doc,
+                    kwargs=dict(doc_id=sdoc_id, file_path=str(file_path),
+                                kind=kind, work_id=sdoc.get("work_id"),
+                                title=title, db=db),
+                    daemon=True,
+                )
+                t.start()
+                recovered += 1
+                logger.info("Nightshift recovery: queued doc=%s kind=%s", sdoc_id, kind)
+            except Exception as rec_exc:
+                logger.warning("Nightshift recovery failed for %s: %s", sdoc_id, rec_exc)
+        if recovered:
+            report_lines.append(f"Recovery: re-queued {recovered} stuck document(s) for extraction")
+    except Exception as exc:
+        logger.warning("Nightshift recovery pass failed: %s", exc)
 
-            # Reconstruct a minimal ExtractionResult so harvest() and llm_harvest()
-            # receive the correct type (they expect ExtractionResult, not raw text).
-            doc_info = db.get_document(doc_id)
-            doc_kind = (doc_info or {}).get("kind") or "text"
-            pages = [
-                PageSegment(page=i + 1, text=r["text"])
-                for i, r in enumerate(chunks_row)
-            ]
-            result = ExtractionResult(
-                kind=doc_kind,
-                full_text=full_text,
-                word_count=len(full_text.split()),
-                pages=pages,
-            )
-
-            before = len(db.list_knowledge(work_id=work_id, limit=500))
-            harvest(result, doc_id=doc_id, work_id=work_id, doc_title=title, db=db)
-
-            if ai_enabled:
+    # ── Gap analysis — runs every night regardless of doc processing ──────────
+    try:
+        from orivellum.capabilities.gaps import detect_gaps
+        active_works = db.list_works(status="active")
+        gap_lines: list[str] = []
+        for work in active_works[:20]:
+            try:
+                gr = detect_gaps(work["id"], db)
+                # Cache the result so /gaps/top can serve it instantly
                 try:
-                    from orivellum.capabilities.knowledge_harvest import llm_harvest
-                    llm_harvest(result, doc_id=doc_id, work_id=work_id,
-                                doc_title=title, db=db)
-                except Exception as ai_exc:
-                    logger.warning("Nightshift LLM harvest failed for %s: %s", doc_id, ai_exc)
-
-            after  = len(db.list_knowledge(work_id=work_id, limit=500))
-            added  = max(0, after - before)
-            items_added += added
-            report_lines.append(f"{title}: +{added} knowledge items")
-        except Exception as exc:
-            logger.warning("Nightshift failed for doc %s: %s", doc_id, exc)
-            report_lines.append(f"{title}: ERROR — {exc}")
+                    gap_dicts = [
+                        {"kind": g.kind, "title": g.title, "description": g.description,
+                         "severity": g.severity, "metadata": g.metadata}
+                        for g in gr.gaps
+                    ]
+                    db.cache_work_gaps(work["id"], gap_dicts, gr.coverage_pct)
+                except Exception:
+                    pass
+                high_gaps = [g for g in gr.gaps if g.severity == "high"][:3]
+                if high_gaps:
+                    wtitle = work.get("title", work["id"][:12])
+                    for gap in high_gaps:
+                        gap_lines.append(f"{wtitle}: {gap.title}")
+            except Exception:
+                pass
+        if gap_lines:
+            report_lines.append(
+                f"Research gaps — {len(gap_lines)} critical item(s) across "
+                f"{len(active_works)} work(s):"
+            )
+            report_lines.extend(f"  ⚠ {line}" for line in gap_lines[:10])
+        elif active_works:
+            report_lines.append(
+                f"Research coverage: no critical gaps across {len(active_works)} work(s)."
+            )
+    except Exception as exc:
+        logger.warning("Nightshift gap analysis failed: %s", exc)
 
     report_path = _write_report(Path(cfg.data_dir), date_str, report_lines)
     _record_run(db, len(docs), items_added, report_path)

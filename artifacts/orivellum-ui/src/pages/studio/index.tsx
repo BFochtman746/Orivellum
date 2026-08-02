@@ -118,10 +118,17 @@ function TTSPanel() {
             <label className="text-xs font-mono uppercase text-muted-foreground">Voice</label>
             {loadingVoices ? (
               <Skeleton className="h-9 w-full" />
+            ) : voicesError ? (
+              <button
+                onClick={() => refetchVoices()}
+                className="h-9 w-full text-xs font-mono text-red-600 bg-red-50 border border-red-200 rounded-md px-3 flex items-center gap-2 hover:bg-red-100 transition-colors"
+              >
+                <span>⚠</span> Could not load voices — click to retry
+              </button>
             ) : (
               <Select value={voiceId} onValueChange={setVoiceId}>
                 <SelectTrigger className="text-sm">
-                  <SelectValue placeholder="Select voice" />
+                  <SelectValue placeholder={voices.length === 0 ? "No voices configured" : "Select voice"} />
                 </SelectTrigger>
                 <SelectContent>
                   {voices.map((v) => (
@@ -155,7 +162,7 @@ function TTSPanel() {
         {/* Synthesize button */}
         <Button
           onClick={handleSynthesize}
-          disabled={!text.trim() || loading || overLimit}
+          disabled={!text.trim() || loading || overLimit || voicesError || voices.length === 0}
           className="w-full gap-2"
         >
           {loading ? (
@@ -202,7 +209,7 @@ function TTSPanel() {
 // ── Audiobook panel ───────────────────────────────────────────────────────────
 
 function AudiobookPanel() {
-  const { data: voicesResp, isLoading: loadingVoices } = useListVoices();
+  const { data: voicesResp, isLoading: loadingVoices, isError: voicesError, refetch: refetchVoices } = useListVoices();
   const voices = voicesResp?.voices ?? [];
 
   const { data: libResp, isLoading: loadingDocs } = useListLibrary(
@@ -303,7 +310,14 @@ function AudiobookPanel() {
         <div className="grid grid-cols-2 gap-4">
           <div className="space-y-1">
             <label className="text-xs font-mono uppercase text-muted-foreground">Voice</label>
-            {loadingVoices ? <Skeleton className="h-9 w-full" /> : (
+            {loadingVoices ? <Skeleton className="h-9 w-full" /> : voicesError ? (
+              <button
+                onClick={() => refetchVoices()}
+                className="h-9 w-full text-xs font-mono text-red-600 bg-red-50 border border-red-200 rounded-md px-3 flex items-center gap-2 hover:bg-red-100 transition-colors"
+              >
+                <span>⚠</span> Could not load voices — click to retry
+              </button>
+            ) : (
               <Select value={voiceId} onValueChange={setVoiceId}>
                 <SelectTrigger className="text-sm"><SelectValue /></SelectTrigger>
                 <SelectContent>
@@ -328,7 +342,7 @@ function AudiobookPanel() {
           </div>
         </div>
 
-        <Button onClick={handleGenerate} disabled={!docId || loading} className="w-full gap-2">
+        <Button onClick={handleGenerate} disabled={!docId || loading || voicesError || voices.length === 0} className="w-full gap-2">
           {loading
             ? <><Loader2 className="w-4 h-4 animate-spin" />Converting to audio… (may take a few minutes)</>
             : <><BookHeadphones className="w-4 h-4" />Generate Audiobook</>}

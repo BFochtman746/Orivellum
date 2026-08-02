@@ -694,6 +694,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
   const [progressOpen,  setProgressOpen]  = useState(false);
   const { data: jobsData } = useJobs(false);
   const activeJobCount = jobsData?.total ?? 0;
+  const { ok: serverOk, isFetching: healthFetching } = useConnectivity();
 
   // Auto-dismiss the progress panel 2 s after all jobs finish
   const prevJobCount = useRef(0);
@@ -742,7 +743,16 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
             {/* Mobile top bar */}
             <div className="lg:hidden flex items-center gap-2 px-4 py-3 border-b border-border/30 bg-background/80 backdrop-blur sticky top-0 z-10">
               <MobileMenuButton />
-              <div className="font-serif font-bold text-base tracking-tight flex-1">Orivellum</div>
+              <div className="font-serif font-bold text-base tracking-tight flex-1 flex items-center gap-2">
+                Orivellum
+                <span
+                  title={serverOk ? "Server online" : "Server unreachable"}
+                  className={`w-2 h-2 rounded-full shrink-0 transition-colors ${
+                    healthFetching ? "bg-amber-400 animate-pulse" :
+                    serverOk ? "bg-emerald-500" : "bg-red-500"
+                  }`}
+                />
+              </div>
               {/* Progress button — pinned in mobile top bar so it never floats over content */}
               <button
                 onClick={() => setProgressOpen(true)}

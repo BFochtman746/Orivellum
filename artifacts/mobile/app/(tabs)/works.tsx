@@ -36,6 +36,8 @@ function WorkCard({ work, onStartChat }: { work: Work; onStartChat: () => void }
       ? colors.primary
       : work.status === 'complete'
       ? '#4A8C65'
+      : work.status === 'archived'
+      ? '#6b7280'
       : colors.mutedForeground;
 
   const swipeRef = useRef<Swipeable>(null);
@@ -134,6 +136,36 @@ function WorkCard({ work, onStartChat }: { work: Work; onStartChat: () => void }
             {work.status ?? 'active'}
           </Text>
         </View>
+        {(work as any).doc_count > 0 && (() => {
+          const errs  = (work as any).error_doc_count   ?? 0;
+          const proc  = (work as any).processing_doc_count ?? 0;
+          const ready = (work as any).ready_doc_count   ?? 0;
+          const total = (work as any).doc_count         ?? 0;
+          if (errs > 0) {
+            return (
+              <View style={[styles.statusBadge, { backgroundColor: '#fee2e222' }]}>
+                <Text style={[styles.statusText, { color: '#b91c1c' }]}>
+                  {errs} error{errs !== 1 ? 's' : ''}
+                </Text>
+              </View>
+            );
+          }
+          if (proc > 0) {
+            return (
+              <View style={[styles.statusBadge, { backgroundColor: '#fef3c722' }]}>
+                <Text style={[styles.statusText, { color: '#92400e' }]}>Processing</Text>
+              </View>
+            );
+          }
+          if (ready === total) {
+            return (
+              <View style={[styles.statusBadge, { backgroundColor: '#d1fae522' }]}>
+                <Text style={[styles.statusText, { color: '#065f46' }]}>Ready</Text>
+              </View>
+            );
+          }
+          return null;
+        })()}
         <Pressable
           onPress={(e) => { e.stopPropagation(); onStartChat(); }}
           style={[styles.chatBtn, { backgroundColor: colors.primary + '18', borderColor: colors.primary + '44' }]}

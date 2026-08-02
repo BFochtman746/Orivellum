@@ -7,6 +7,7 @@ import {
   Platform,
   Pressable,
   RefreshControl,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -15,7 +16,7 @@ import {
 import * as DocumentPicker from 'expo-document-picker';
 import { useColors } from '@/hooks/useColors';
 import { Feather } from '@expo/vector-icons';
-import { useListLibrary, useSearchLibrary } from '@workspace/api-client-react';
+import { useListLibrary, useSearchLibrary, useListWorks } from '@workspace/api-client-react';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { OfflineBanner, ErrorScreen } from '@/components/OfflineBanner';
@@ -74,6 +75,18 @@ function DocItem({ doc, colors, onPress }: { doc: any; colors: any; onPress: () 
           </Text>
           <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
           <Text style={[styles.statusLabel, { color: statusColor }]}>{statusLabel}</Text>
+          {doc.lifecycle && doc.lifecycle !== 'draft' ? (
+            <Text style={[styles.lifecycleBadge, {
+              color: doc.lifecycle === 'canonical' ? '#16a34a'
+                   : doc.lifecycle === 'superseded' ? '#6b7280'
+                   : colors.mutedForeground,
+              borderColor: doc.lifecycle === 'canonical' ? '#16a34a44'
+                         : doc.lifecycle === 'superseded' ? '#6b728044'
+                         : colors.border,
+            }]}>
+              {doc.lifecycle}
+            </Text>
+          ) : null}
           {doc.word_count ? (
             <Text style={[styles.wordCount, { color: colors.mutedForeground }]}>
               {doc.word_count.toLocaleString()} words
@@ -94,6 +107,11 @@ export default function LibraryScreen() {
 
   const [search, setSearch] = useState('');
   const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0); // 0–100
+  const [workFilter, setWorkFilter] = useState<string | undefined>(undefined); // work_id or undefined = all
+
+  const { data: worksData } = useListWorks({} as any, { query: { staleTime: 60_000 } } as any);
+  const works: any[] = (worksData as any)?.works ?? [];
 
   const handleUpload = async () => {
     try {
@@ -104,18 +122,29 @@ export default function LibraryScreen() {
       if (result.canceled || !result.assets?.length) return;
       const asset = result.assets[0];
       setUploading(true);
-      // Read file as base64 using fetch
+      setUploadProgress(5);
+      // Read file as base64 using fetch + FileReader
       const fileResp = await fetch(asset.uri);
       const blob = await fileResp.blob();
+      setUploadProgress(15);
       const reader = new FileReader();
       const b64: string = await new Promise((resolve, reject) => {
+        reader.onprogress = (evt) => {
+          if (evt.lengthComputable) {
+            // Scale reading progress to 15–80%
+            const pct = 15 + Math.round((evt.loaded / evt.total) * 65);
+            setUploadProgress(pct);
+          }
+        };
         reader.onload = () => {
+          setUploadProgress(82);
           const dataUrl = reader.result as string;
           resolve(dataUrl.split(',')[1] ?? '');
         };
         reader.onerror = reject;
         reader.readAsDataURL(blob);
       });
+      setUploadProgress(90);
       const domain = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
       const resp = await mobileFetch(`https://${domain}/api/library/import`, {
         method: 'POST',
@@ -131,6 +160,7 @@ export default function LibraryScreen() {
         Alert.alert('Upload failed', err.detail ?? 'Could not import document');
         return;
       }
+      setUploadProgress(100);
       const data = await resp.json();
       Alert.alert('Uploaded', `"${asset.name}" added to your library`);
       refetchList();
@@ -141,6 +171,7 @@ export default function LibraryScreen() {
       }
     } finally {
       setUploading(false);
+      setUploadProgress(0);
     }
   };
 
@@ -149,7 +180,10 @@ export default function LibraryScreen() {
     isLoading: listLoading,
     isError: listError,
     refetch: refetchList,
-  } = useListLibrary({}, { query: { refetchInterval: 30_000, staleTime: 20_000 } } as any);
+  } = useListLibrary(
+    workFilter ? { work_id: workFilter } as any : {},
+    { query: { refetchInterval: 30_000, staleTime: 20_000 } } as any,
+  );
 
   // Offline search cache — keep last successful results so they remain visible
   // even when the network drops mid-search.
@@ -215,6 +249,19 @@ export default function LibraryScreen() {
             </Text>
           </Pressable>
         </View>
+        {/* Upload progress bar — shown while uploading a file */}
+        {uploading && (
+          <View style={{ marginTop: 8, height: 4, backgroundColor: colors.muted, borderRadius: 2, overflow: 'hidden' }}>
+            <View
+              style={{
+                height: '100%',
+                width: `${uploadProgress}%`,
+                backgroundColor: colors.primary,
+                borderRadius: 2,
+              }}
+            />
+          </View>
+        )}
       </View>
 
       {/* Search */}
@@ -234,6 +281,68 @@ export default function LibraryScreen() {
           </Pressable>
         )}
       </View>
+
+      {/* Work filter chips — only shown when works exist */}
+      {works.length > 0 && (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={{
+            flexDirection: 'row',
+            paddingHorizontal: 12,
+            paddingVertical: 6,
+            gap: 6,
+          }}
+          style={{
+            borderBottomWidth: StyleSheet.hairlineWidth,
+            borderBottomColor: colors.border,
+          }}
+        >
+          <Pressable
+            onPress={() => setWorkFilter(undefined)}
+            style={{
+              paddingHorizontal: 10,
+              paddingVertical: 4,
+              borderRadius: 12,
+              borderWidth: 1,
+              borderColor: !workFilter ? colors.primary : colors.border,
+              backgroundColor: !workFilter ? colors.primary + '18' : 'transparent',
+            }}
+          >
+            <Text style={{
+              fontSize: 11,
+              fontFamily: 'Inter_500Medium',
+              color: !workFilter ? colors.primary : colors.mutedForeground,
+            }}>All</Text>
+          </Pressable>
+          {works.slice(0, 6).map((w: any) => (
+            <Pressable
+              key={w.id}
+              onPress={() => setWorkFilter(workFilter === w.id ? undefined : w.id)}
+              style={{
+                paddingHorizontal: 10,
+                paddingVertical: 4,
+                borderRadius: 12,
+                borderWidth: 1,
+                borderColor: workFilter === w.id ? colors.primary : colors.border,
+                backgroundColor: workFilter === w.id ? colors.primary + '18' : 'transparent',
+              }}
+            >
+              <Text
+                style={{
+                  fontSize: 11,
+                  fontFamily: 'Inter_500Medium',
+                  color: workFilter === w.id ? colors.primary : colors.mutedForeground,
+                  maxWidth: 100,
+                }}
+                numberOfLines={1}
+              >
+                {w.title ?? 'Untitled'}
+              </Text>
+            </Pressable>
+          ))}
+        </ScrollView>
+      )}
 
       {/* Offline banners */}
       {listError && hasData && !isSearching && (
@@ -261,7 +370,7 @@ export default function LibraryScreen() {
             {isSearching ? 'No results' : 'No documents yet'}
           </Text>
           <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
-            {isSearching ? 'Try a different search term' : 'Import documents from the web app to get started'}
+            {isSearching ? 'Try a different search term' : 'Tap Import above to add a document'}
           </Text>
         </View>
       ) : (
@@ -336,4 +445,12 @@ const styles = StyleSheet.create({
   statusDot: { width: 6, height: 6, borderRadius: 3 },
   statusLabel: { fontSize: 10, fontFamily: 'Inter_500Medium' },
   wordCount: { fontSize: 10, fontFamily: 'Inter_400Regular' },
+  lifecycleBadge: {
+    fontSize: 10,
+    fontFamily: 'Inter_500Medium',
+    borderWidth: 1,
+    borderRadius: 4,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+  },
 });

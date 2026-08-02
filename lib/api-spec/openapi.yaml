@@ -1504,6 +1504,43 @@ components:
           type: array
           items: { $ref: "#/components/schemas/CompletenessDimension" }
 
+    GapItem:
+      type: object
+      properties:
+        kind:        { type: string, description: "undocumented_doc | uncovered_chapter | weak_coverage | missing_sources | orphaned_research | stale_source | duplicate_research | no_structure" }
+        title:       { type: string }
+        description: { type: string }
+        severity:    { type: string, description: "high | medium | low" }
+        metadata:    { type: object, additionalProperties: true }
+
+    GapReport:
+      type: object
+      properties:
+        work_id:           { type: string }
+        coverage_pct:      { type: integer, description: "0-100 — chapters with sufficient coverage" }
+        total_chapters:    { type: integer }
+        suggested_queries: { type: array, items: { type: string } }
+        evaluated_at:      { type: string }
+        gaps:
+          type: array
+          items: { $ref: "#/components/schemas/GapItem" }
+
+    TopGapItem:
+      allOf:
+        - $ref: "#/components/schemas/GapItem"
+        - type: object
+          properties:
+            work_id:    { type: string }
+            work_title: { type: string }
+
+    TopGapsResponse:
+      type: object
+      properties:
+        gaps:
+          type: array
+          items: { $ref: "#/components/schemas/TopGapItem" }
+        total_works_analyzed: { type: integer }
+
     OkResponse:
       type: object
       properties:

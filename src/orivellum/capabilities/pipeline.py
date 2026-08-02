@@ -300,7 +300,7 @@ def process_document(doc_id: str, file_path: str, kind: str,
             if _text_for_dedup:
                 _sig = compute_and_store(doc_id, _text_for_dedup, db)
                 if _sig is not None:
-                    _hits = find_and_record_near_duplicates(doc_id, _sig, db)
+                    _hits = find_and_record_near_duplicates(doc_id, _sig, db, work_id=work_id)
                     if _hits:
                         logger.info("Doc %s: %d near-duplicate(s) found", doc_id, len(_hits))
         except Exception as _dd_exc:

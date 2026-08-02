@@ -33,7 +33,7 @@ import * as Haptics from 'expo-haptics';
 import type { Document, KnowledgeItem, Task } from '@workspace/api-client-react';
 import { OfflineBanner, ErrorScreen } from '@/components/OfflineBanner';
 
-type Tab = 'overview' | 'docs' | 'knowledge' | 'tasks' | 'conversations' | 'learn';
+type Tab = 'overview' | 'docs' | 'knowledge' | 'tasks' | 'conversations' | 'learn' | 'gaps';
 
 function TabBar({ active, onSelect, colors }: { active: Tab; onSelect: (t: Tab) => void; colors: any }) {
   const tabs: { key: Tab; label: string }[] = [
@@ -42,6 +42,7 @@ function TabBar({ active, onSelect, colors }: { active: Tab; onSelect: (t: Tab) 
     { key: 'knowledge', label: 'Knowledge' },
     { key: 'tasks', label: 'Tasks' },
     { key: 'conversations', label: 'Chats' },
+    { key: 'gaps', label: 'Gaps' },
     { key: 'learn', label: 'Learn' },
   ];
   return (
@@ -207,6 +208,113 @@ function TaskRow({ task }: { task: Task }) {
   );
 }
 
+// ─── Gaps tab — research gap summary from the intelligence pipeline ───────────
+
+const GAP_COLORS: Record<string, { bg: string; text: string }> = {
+  critical: { bg: '#fee2e2', text: '#b91c1c' },
+  high:     { bg: '#fef3c7', text: '#92400e' },
+  medium:   { bg: '#e0f2fe', text: '#0369a1' },
+  low:      { bg: '#f0fdf4', text: '#166534' },
+};
+
+function GapsTab({ workId, colors }: { workId: string; colors: any }) {
+  const domain = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
+  const [data, setData] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+
+  const fetchGaps = useCallback(async () => {
+    setLoading(true);
+    setError(false);
+    try {
+      const res = await mobileFetch(`https://${domain}/api/works/${workId}/gaps`);
+      if (!res.ok) throw new Error('gaps error');
+      setData(await res.json());
+    } catch {
+      setError(true);
+    } finally {
+      setLoading(false);
+    }
+  }, [workId, domain]);
+
+  useEffect(() => { fetchGaps(); }, [fetchGaps]);
+
+  if (loading) {
+    return (
+      <View style={styles.centered}>
+        <ActivityIndicator color={colors.primary} />
+      </View>
+    );
+  }
+  if (error) {
+    return (
+      <View style={styles.centered}>
+        <Feather name="alert-circle" size={32} color={colors.mutedForeground} />
+        <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>Could not load gaps</Text>
+        <Pressable onPress={fetchGaps} style={[styles.retryBtn, { borderColor: colors.border }]}>
+          <Text style={{ color: colors.primary, fontSize: 13, fontFamily: 'Inter_500Medium' }}>Retry</Text>
+        </Pressable>
+      </View>
+    );
+  }
+  const gaps: any[] = data?.gaps ?? [];
+  return (
+    <ScrollView
+      contentContainerStyle={[styles.listPad, { paddingBottom: 32 }]}
+      showsVerticalScrollIndicator={false}
+    >
+      {/* Summary strip */}
+      <View style={[styles.infoGrid, { borderColor: colors.border, marginBottom: 12 }]}>
+        <View style={[styles.infoRow, { borderBottomColor: colors.border }]}>
+          <Text style={[styles.infoLabel, { color: colors.mutedForeground }]}>Coverage</Text>
+          <Text style={[styles.infoValue, { color: colors.foreground }]}>
+            {data?.coverage_pct != null ? `${data.coverage_pct}%` : '—'}
+          </Text>
+        </View>
+        <View style={[styles.infoRow, { borderBottomColor: colors.border }]}>
+          <Text style={[styles.infoLabel, { color: colors.mutedForeground }]}>Gaps found</Text>
+          <Text style={[styles.infoValue, { color: colors.foreground }]}>{gaps.length}</Text>
+        </View>
+      </View>
+
+      {gaps.length === 0 ? (
+        <View style={styles.centered}>
+          <Feather name="check-circle" size={32} color={colors.primary} />
+          <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>No gaps detected</Text>
+        </View>
+      ) : (
+        gaps.map((g: any, i: number) => {
+          const sev = g.severity ?? 'medium';
+          const gCol = GAP_COLORS[sev] ?? GAP_COLORS.medium;
+          return (
+            <View
+              key={i}
+              style={[
+                styles.listItem,
+                { borderColor: colors.border, flexDirection: 'column', gap: 4, alignItems: 'flex-start' },
+              ]}
+            >
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <View style={[styles.statusBadge, { backgroundColor: gCol.bg, paddingHorizontal: 8, paddingVertical: 2 }]}>
+                  <Text style={[styles.statusText, { color: gCol.text }]}>{sev}</Text>
+                </View>
+                <Text style={[styles.itemTitle, { color: colors.foreground, flex: 1 }]} numberOfLines={2}>
+                  {g.title ?? g.kind}
+                </Text>
+              </View>
+              {g.description ? (
+                <Text style={[styles.itemMeta, { color: colors.mutedForeground, lineHeight: 16 }]} numberOfLines={4}>
+                  {g.description}
+                </Text>
+              ) : null}
+            </View>
+          );
+        })
+      )}
+    </ScrollView>
+  );
+}
+
 // ─── Overview tab with "Start Discussion" CTA ────────────────────────────────
 
 function OverviewTab({ workId, onStartDiscussion, starting }: {
@@ -253,6 +361,18 @@ function OverviewTab({ workId, onStartDiscussion, starting }: {
           { label: 'Type', value: work?.work_type ?? '—' },
           { label: 'Status', value: work?.status ?? '—' },
           { label: 'Documents', value: String((work as any)?.doc_count ?? 0) },
+          ...((): { label: string; value: string }[] => {
+            const ready = (work as any)?.ready_doc_count ?? 0;
+            const errs  = (work as any)?.error_doc_count ?? 0;
+            const proc  = (work as any)?.processing_doc_count ?? 0;
+            const total = (work as any)?.doc_count ?? 0;
+            if (total === 0) return [];
+            const parts: string[] = [];
+            if (ready > 0) parts.push(`${ready} ready`);
+            if (proc > 0)  parts.push(`${proc} processing`);
+            if (errs > 0)  parts.push(`${errs} error${errs !== 1 ? 's' : ''}`);
+            return parts.length ? [{ label: 'Readiness', value: parts.join(' · ') }] : [];
+          })(),
           { label: 'Knowledge', value: String((work as any)?.knowledge_count ?? 0) },
           { label: 'Pending Tasks', value: String((work as any)?.pending_tasks ?? 0) },
           { label: 'Conversations', value: String((work as any)?.conv_count ?? 0) },
@@ -688,9 +808,20 @@ export default function WorkDetailScreen() {
 
   useEffect(() => {
     if (work?.title) {
-      navigation.setOptions({ title: work.title });
+      navigation.setOptions({
+        title: work.title,
+        headerRight: () => (
+          <Pressable
+            onPress={() => router.push(`/work/${id}/intelligence` as any)}
+            hitSlop={8}
+            style={{ paddingHorizontal: 10, paddingVertical: 6 }}
+          >
+            <Feather name="cpu" size={18} color={colors.primary} />
+          </Pressable>
+        ),
+      });
     }
-  }, [work?.title, navigation]);
+  }, [work?.title, navigation, id, router, colors.primary]);
 
   // Task #13 — start a conversation linked to this work
   const handleStartDiscussion = async () => {
@@ -863,6 +994,8 @@ export default function WorkDetailScreen() {
             />
           </>
         );
+      case 'gaps':
+        return <GapsTab workId={id} colors={colors} />;
       case 'learn':
         return <MobileLearnTab workId={id} colors={colors} />;
       case 'conversations': {
@@ -1049,4 +1182,21 @@ const styles = StyleSheet.create({
     borderRadius: 12,
   },
   discussBtnText: { fontSize: 15, fontFamily: 'Inter_600SemiBold' },
+  retryBtn: {
+    marginTop: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  statusBadge: {
+    borderRadius: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  statusText: {
+    fontSize: 10,
+    fontFamily: 'Inter_600SemiBold',
+    textTransform: 'capitalize',
+  },
 });

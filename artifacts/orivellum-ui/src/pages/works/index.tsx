@@ -363,6 +363,7 @@ export default function WorksList() {
                         <Badge variant="secondary" className="font-mono text-[10px] uppercase tracking-wider shrink-0">
                           {work.work_type}
                         </Badge>
+                        <WorkReadinessBadge work={work as any} />
                       </div>
                       <p className="text-muted-foreground text-sm leading-relaxed">
                         {work.description || <span className="italic opacity-50">No description provided.</span>}
@@ -424,5 +425,43 @@ export default function WorksList() {
         </div>
       )}
     </div>
+  );
+}
+
+// ── WorkReadinessBadge ────────────────────────────────────────────────────────
+
+interface WorkWithReadiness {
+  doc_count: number;
+  ready_doc_count: number;
+  error_doc_count: number;
+  processing_doc_count: number;
+}
+
+function WorkReadinessBadge({ work }: { work: WorkWithReadiness }) {
+  const { doc_count, ready_doc_count, error_doc_count, processing_doc_count } = work;
+
+  if (!doc_count) return null; // no docs → no badge
+
+  let label: string;
+  let cls: string;
+
+  if (error_doc_count > 0) {
+    label = `${error_doc_count} error${error_doc_count !== 1 ? "s" : ""}`;
+    cls   = "border-red-200 text-red-700 bg-red-50";
+  } else if (processing_doc_count > 0) {
+    label = "Processing";
+    cls   = "border-amber-200 text-amber-700 bg-amber-50";
+  } else if (ready_doc_count === doc_count) {
+    label = "Ready";
+    cls   = "border-emerald-200 text-emerald-700 bg-emerald-50";
+  } else {
+    label = `${ready_doc_count}/${doc_count} ready`;
+    cls   = "border-blue-200 text-blue-700 bg-blue-50";
+  }
+
+  return (
+    <span className={`inline-flex items-center px-2 py-0.5 rounded border text-[10px] font-mono font-medium shrink-0 ${cls}`}>
+      {label}
+    </span>
   );
 }

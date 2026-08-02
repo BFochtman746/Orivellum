@@ -457,6 +457,51 @@ def governance_stats():
     }
 
 
+class BatchReviewBody(BaseModel):
+    item_ids: list[str]
+    status: str  # "approved" | "rejected"
+
+
+@router.post("/governance/batch-review")
+def governance_batch_review(body: BatchReviewBody):
+    """Approve or reject multiple AI-auto knowledge items in one atomic operation.
+
+    Only items currently in ``review_status = 'ai_auto'`` are affected —
+    already-reviewed items are silently skipped.  Returns the count actually
+    updated so the client can surface an accurate success message.
+    """
+    if body.status not in ("approved", "rejected"):
+        raise HTTPException(400, f"Invalid status {body.status!r}. Must be 'approved' or 'rejected'.")
+    if not body.item_ids:
+        return {"updated": 0, "status": body.status, "total_requested": 0}
+
+    db = get_db()
+    updated = 0
+
+    with db._lock:
+        for item_id in body.item_ids[:500]:   # safety cap
+            result = db._conn.execute(
+                "UPDATE knowledge SET review_status=? WHERE id=? AND review_status='ai_auto'",
+                (body.status, item_id),
+            )
+            updated += result.rowcount
+        db._conn.commit()
+
+    # Audit the batch operation so it appears in the audit log
+    try:
+        db.audit(
+            f"knowledge.batch_{body.status}",
+            object_id="batch",
+            object_type="knowledge",
+            actor="user",
+            detail=f"batch_{body.status}: {updated}/{len(body.item_ids)} items",
+        )
+    except Exception:
+        pass
+
+    return {"updated": updated, "status": body.status, "total_requested": len(body.item_ids)}
+
+
 @router.get("/search")
 def global_search(q: str, limit: int = 20, work_id: str | None = None):
     """Hybrid global search across knowledge items, document chunks, and chapters.

@@ -163,10 +163,33 @@ def library_list(work_id: str | None = None, kind: str | None = None,
 
 @router.get("/library/search")
 def library_search(q: str, work_id: str | None = None, limit: int = 10):
+    """BM25-ranked document search.
+
+    Queries chunks FTS, then aggregates to document-level results so each
+    document appears at most once.  Each result has the same shape as a
+    ``GET /api/library`` document entry, with two extra fields:
+    - ``snippet``     – the best-matching excerpt from that doc (may contain
+                        ``[[`` / ``]]`` markers around matched terms)
+    - ``bm25_score``  – raw BM25 relevance score (lower = more relevant)
+    """
     if not q:
         raise HTTPException(400, "q parameter required")
     db = get_db()
-    results = db.search_chunks(q.strip(), work_id=work_id, limit=min(limit, 50))
+    # Over-fetch chunks so dedup still returns enough unique docs
+    chunk_results = db.search_chunks(q.strip(), work_id=work_id, limit=min(limit * 4, 100))
+    seen: dict[str, dict] = {}
+    for chunk in chunk_results:
+        doc_id = chunk.get("doc_id")
+        if not doc_id or doc_id in seen:
+            continue
+        doc = db.get_document(doc_id)
+        if not doc:
+            continue
+        raw_snip = chunk.get("snippet") or (chunk.get("text") or "")[:300]
+        doc["snippet"] = raw_snip
+        doc["bm25_score"] = chunk.get("bm25_score")
+        seen[doc_id] = doc
+    results = list(seen.values())[:limit]
     return {"query": q, "results": results, "count": len(results)}
 
 
@@ -184,7 +207,8 @@ _VALID_RESOLVE_ACTIONS = {"keep_both", "mark_versions", "mark_superseded"}
 
 
 class DupeResolveBody(BaseModel):
-    action: str  # keep_both | mark_versions | mark_superseded
+    action: str                         # keep_both | mark_versions | mark_superseded
+    canonical_doc_id: str | None = None  # when mark_superseded: the doc that should SURVIVE
 
 
 @router.post("/library/duplicates/{dupe_id}/resolve")
@@ -193,7 +217,9 @@ def library_resolve_duplicate(dupe_id: str, body: DupeResolveBody):
 
     action: keep_both — dismiss the alert, no structural change
             mark_versions — create a DERIVED_FROM relationship between the pair
-            mark_superseded — set the older/draft doc (doc_b) lifecycle to superseded
+            mark_superseded — set the non-canonical doc lifecycle to superseded;
+                              pass canonical_doc_id to specify which survives
+                              (defaults to doc_a if not supplied)
     """
     if body.action not in _VALID_RESOLVE_ACTIONS:
         raise HTTPException(
@@ -201,7 +227,8 @@ def library_resolve_duplicate(dupe_id: str, body: DupeResolveBody):
             f"action must be one of: {', '.join(sorted(_VALID_RESOLVE_ACTIONS))}",
         )
     db = get_db()
-    result = db.resolve_near_duplicate(dupe_id, body.action)
+    result = db.resolve_near_duplicate(dupe_id, body.action,
+                                       canonical_doc_id=body.canonical_doc_id)
     if result is None:
         raise HTTPException(404, f"Duplicate pair {dupe_id!r} not found")
     return {"ok": True, "dupe_id": dupe_id, "action": body.action}
@@ -473,8 +500,15 @@ def library_extract(doc_id: str, background_tasks: BackgroundTasks):
 
 
 @router.post("/library/{doc_id}/reprocess")
-def library_reprocess(doc_id: str, background_tasks: BackgroundTasks):
+def library_reprocess(
+    doc_id: str,
+    background_tasks: BackgroundTasks,
+    force: bool = False,
+):
     """Re-run extraction on a document that previously failed or produced no text.
+
+    Pass ``force=true`` to re-queue extraction even when the document is already
+    ``ready`` (e.g. to recover from missing chapter structure).
 
     Resolves the file from the stored content_path so this works after a
     server restart even if the original absolute path has changed.
@@ -485,7 +519,7 @@ def library_reprocess(doc_id: str, background_tasks: BackgroundTasks):
         raise HTTPException(404, f"Document {doc_id!r} not found")
 
     current = doc.get("readiness", "")
-    if current == "ready":
+    if current == "ready" and not force:
         return {"ok": True, "message": "Document is already ready — skipping reprocess"}
 
     # Resolve the file path
@@ -585,6 +619,129 @@ def library_explode_zips(background_tasks: BackgroundTasks):
             f"Queued {queued} ZIP archive(s) for extraction. "
             "Each file inside will become its own library document."
         ),
+    }
+
+
+@router.post("/library/reprocess-all")
+def library_reprocess_all(
+    background_tasks: BackgroundTasks,
+    force: bool = False,
+):
+    """Bulk re-extract every document that hasn't finished processing.
+
+    Pass ``force=true`` to also re-run documents that are already ``ready``
+    (useful after an extraction engine upgrade).
+
+    Strategy per document kind:
+    - ``zip`` — always re-exploded into individual child documents.
+    - Any other kind stuck in ``imported`` / ``error`` / ``no_text`` — queued
+      for normal extraction using the stored ``content_path`` and ``kind``.
+
+    Already-exploded ZIPs are safe to re-run: SHA-256 dedup prevents duplicates.
+    Documents whose source file is no longer on disk are skipped with a warning.
+
+    Returns a summary: total queued, breakdown by category, and any skipped.
+    """
+    db      = get_db()
+    lib_root = _library_root()
+
+    # ── Collect candidates ─────────────────────────────────────────────────────
+    readiness_filter: tuple[str, ...]
+    if force:
+        readiness_filter = ("imported", "error", "no_text", "ready")
+    else:
+        readiness_filter = ("imported", "error", "no_text")
+
+    placeholders = ",".join("?" * len(readiness_filter))
+    with db._lock:
+        rows = db._conn.execute(
+            f"""SELECT id, source, content_path, work_id, title, kind, readiness
+                FROM documents
+                WHERE readiness IN ({placeholders})
+                ORDER BY created_at DESC""",
+            readiness_filter,
+        ).fetchall()
+
+    # Also always include ZIPs (even 'ready' ones — exploding is idempotent)
+    with db._lock:
+        zip_rows = db._conn.execute(
+            "SELECT id, source, content_path, work_id, title, kind, readiness "
+            "FROM documents WHERE kind='zip'",
+        ).fetchall()
+
+    # Merge; use doc id as dedup key so ZIPs only appear once
+    seen: set[str] = set()
+    candidates: list[Any] = []
+    for row in list(rows) + list(zip_rows):
+        if row["id"] not in seen:
+            seen.add(row["id"])
+            candidates.append(row)
+
+    # ── Queue each candidate ───────────────────────────────────────────────────
+    queued_zips    = 0
+    queued_stuck   = 0
+    skipped        = 0
+
+    for row in candidates:
+        doc_id       = row["id"]
+        content_path = row["content_path"]
+        kind         = row["kind"] or "text"
+
+        # Resolve file on disk
+        if content_path:
+            file_path = lib_root / content_path
+        elif row["source"]:
+            file_path = Path(row["source"])
+        else:
+            file_path = None
+
+        if not file_path or not file_path.exists():
+            logger.warning(
+                "reprocess-all: file missing for doc %s (kind=%s) — skipping",
+                doc_id, kind,
+            )
+            skipped += 1
+            continue
+
+        db.delete_extraction_warnings(doc_id)
+        db.update_document_extracted(doc_id, "", 0,
+                                     readiness="imported", error_message=None)
+
+        background_tasks.add_task(
+            process_document,
+            doc_id=doc_id,
+            file_path=str(file_path),
+            kind=kind,
+            work_id=row["work_id"],
+            title=row["title"] or file_path.name,
+            db=db,
+        )
+
+        if kind == "zip":
+            queued_zips += 1
+        else:
+            queued_stuck += 1
+
+        logger.info(
+            "reprocess-all: queued doc=%s kind=%s previous_readiness=%s",
+            doc_id, kind, row["readiness"],
+        )
+
+    total = queued_zips + queued_stuck
+    parts: list[str] = []
+    if queued_zips:
+        parts.append(f"{queued_zips} ZIP archive(s) will be exploded into child documents")
+    if queued_stuck:
+        parts.append(f"{queued_stuck} document(s) re-queued for extraction")
+    if skipped:
+        parts.append(f"{skipped} skipped (source file not found on disk)")
+
+    return {
+        "queued":       total,
+        "queued_zips":  queued_zips,
+        "queued_stuck": queued_stuck,
+        "skipped":      skipped,
+        "message":      ". ".join(parts) if parts else "Nothing to reprocess.",
     }
 
 

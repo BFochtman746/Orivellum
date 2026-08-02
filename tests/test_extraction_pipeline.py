@@ -140,7 +140,7 @@ class TestTextImportPipeline(_PipelineBase):
         resp = self.client.get("/api/library/search", params={"q": "Orivellum pipeline"})
         self.assertEqual(resp.status_code, 200)
         results = resp.json()["results"]
-        doc_ids = [r["doc_id"] for r in results]
+        doc_ids = [r["id"] for r in results]
         self.assertIn(self.doc_id, doc_ids,
                       "FTS search must return the imported text document")
 
@@ -171,7 +171,7 @@ class TestCsvImportPipeline(_PipelineBase):
     def test_fts_search_returns_result(self):
         resp = self.client.get("/api/library/search", params={"q": "Orivellum"})
         self.assertEqual(resp.status_code, 200)
-        doc_ids = [r["doc_id"] for r in resp.json()["results"]]
+        doc_ids = [r["id"] for r in resp.json()["results"]]
         self.assertIn(self.doc_id, doc_ids)
 
 
@@ -201,7 +201,7 @@ class TestDocxImportPipeline(_PipelineBase):
     def test_fts_search_returns_result(self):
         resp = self.client.get("/api/library/search", params={"q": "DOCX integration"})
         self.assertEqual(resp.status_code, 200)
-        doc_ids = [r["doc_id"] for r in resp.json()["results"]]
+        doc_ids = [r["id"] for r in resp.json()["results"]]
         self.assertIn(self.doc_id, doc_ids)
 
 
@@ -231,7 +231,7 @@ class TestPdfImportPipeline(_PipelineBase):
     def test_fts_search_returns_result(self):
         resp = self.client.get("/api/library/search", params={"q": "PDF integration"})
         self.assertEqual(resp.status_code, 200)
-        doc_ids = [r["doc_id"] for r in resp.json()["results"]]
+        doc_ids = [r["id"] for r in resp.json()["results"]]
         self.assertIn(self.doc_id, doc_ids)
 
 
@@ -740,10 +740,161 @@ class TestXlsxMultiSheetPipeline(_PipelineBase):
     def test_fts_search_returns_result(self):
         resp = self.client.get("/api/library/search", params={"q": "Revenue"})
         self.assertEqual(resp.status_code, 200)
-        doc_ids = [r["doc_id"] for r in resp.json()["results"]]
+        doc_ids = [r["id"] for r in resp.json()["results"]]
         self.assertIn(self.doc_id, doc_ids,
                       "FTS search must return the imported XLSX document")
 
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ---------------------------------------------------------------------------
+# Task #79 — Images without readable text land in 'no_text'
+# ---------------------------------------------------------------------------
+
+class TestImageNoTextReadiness(_PipelineBase):
+    """Confirm that an image file with no recoverable text ends up readiness='no_text'.
+
+    We call process_document() directly (bypassing the HTTP/background-task
+    layer) so the mock is always synchronous with the extraction call.
+    """
+
+    def _make_tiny_png(self) -> bytes:
+        """Return a minimal valid 1×1 black PNG."""
+        import zlib, struct
+        def chunk(name: bytes, data: bytes) -> bytes:
+            c = name + data
+            return struct.pack(">I", len(data)) + c + struct.pack(">I", zlib.crc32(c) & 0xFFFFFFFF)
+        ihdr = struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0)
+        idat = zlib.compress(b"\x00\x00\x00\x00")
+        return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) + chunk(b"IDAT", idat) + chunk(b"IEND", b"")
+
+    def _setup_image_doc(self, filename: str) -> tuple:
+        """Write a tiny PNG to disk, create a DB record, return (doc_id, path)."""
+        from pathlib import Path
+        png_path = Path(self._tmpdir.name) / filename
+        png_path.write_bytes(self._make_tiny_png())
+        doc = self.db.create_document(
+            title=filename, source=str(png_path), kind="image",
+            work_id=None, content_path=str(png_path),
+        )
+        return doc["id"], str(png_path)
+
+    def test_image_with_no_text_becomes_no_text(self):
+        """An image that yields no text must land in readiness='no_text'."""
+        from unittest.mock import patch
+        from orivellum.capabilities.extraction import ExtractionResult
+        from orivellum.capabilities.pipeline import process_document
+
+        doc_id, fpath = self._setup_image_doc("blank.png")
+        no_text = ExtractionResult(kind="no_text", full_text="", word_count=0)
+
+        with patch("orivellum.capabilities.pipeline.extract", return_value=no_text):
+            process_document(doc_id, fpath, "image", None, "blank.png", self.db)
+
+        doc = self.db.get_document(doc_id)
+        self.assertEqual(
+            doc["readiness"], "no_text",
+            f"Expected readiness='no_text'; got {doc['readiness']!r}. "
+            f"error_message={doc.get('error_message')!r}"
+        )
+
+    def test_image_no_text_sets_error_message(self):
+        """A no_text image must also store a human-readable error_message."""
+        from unittest.mock import patch
+        from orivellum.capabilities.extraction import ExtractionResult
+        from orivellum.capabilities.pipeline import process_document
+
+        doc_id, fpath = self._setup_image_doc("blank2.png")
+        no_text = ExtractionResult(kind="no_text", full_text="", word_count=0)
+
+        with patch("orivellum.capabilities.pipeline.extract", return_value=no_text):
+            process_document(doc_id, fpath, "image", None, "blank2.png", self.db)
+
+        doc = self.db.get_document(doc_id)
+        self.assertIsNotNone(
+            doc.get("error_message"),
+            "no_text documents must store a non-null error_message"
+        )
+        self.assertGreater(len(doc["error_message"]), 0)
+
+
+# ---------------------------------------------------------------------------
+# Task #125 — Confidence scores stored correctly + tier thresholds
+# ---------------------------------------------------------------------------
+
+def _make_work_db(db, title: str = "Conf Work") -> str:
+    """Insert a work directly into the DB and return its id."""
+    resp_work = db.create_work(title=title, work_type="research", description="")
+    return resp_work["id"]
+
+
+def _make_knowledge_item(db, work_id: str, confidence: float) -> dict:
+    """Create a knowledge item with the given confidence and return the full row."""
+    kid = db.create_knowledge_item(
+        work_id=work_id,
+        kind="fact",
+        text="Confidence round-trip test.",
+        subject=f"Conf subject {confidence}",
+        confidence=confidence,
+    )
+    with db._lock:
+        row = db._conn.execute(
+            "SELECT id, confidence FROM knowledge WHERE id=?", (kid,)
+        ).fetchone()
+    return dict(row) if row else {}
+
+
+class TestConfidenceScoreStorage(_PipelineBase):
+    """Confirm knowledge items store confidence correctly and that the
+    tier thresholds (≥0.80 High, ≥0.50 Medium, <0.50 Low) round-trip."""
+
+    def test_high_confidence_stored_and_retrieved(self):
+        """A confidence of 0.90 must come back ≥ 0.80 (High tier)."""
+        wid = _make_work_db(self.db)
+        item = _make_knowledge_item(self.db, wid, 0.90)
+        self.assertIn("confidence", item)
+        self.assertGreaterEqual(item["confidence"], 0.80,
+                                f"Expected High-tier; got {item['confidence']}")
+
+    def test_medium_confidence_stored_and_retrieved(self):
+        """A confidence of 0.65 must come back in [0.50, 0.80) (Medium tier)."""
+        wid = _make_work_db(self.db)
+        item = _make_knowledge_item(self.db, wid, 0.65)
+        self.assertGreaterEqual(item["confidence"], 0.50)
+        self.assertLess(item["confidence"], 0.80)
+
+    def test_low_confidence_stored_and_retrieved(self):
+        """A confidence of 0.30 must come back < 0.50 (Low tier)."""
+        wid = _make_work_db(self.db)
+        item = _make_knowledge_item(self.db, wid, 0.30)
+        self.assertLess(item["confidence"], 0.50,
+                        f"Expected Low-tier; got {item['confidence']}")
+
+    def test_confidence_boundary_0_80_stored_precisely(self):
+        """Exactly 0.80 must be stored without floating-point loss."""
+        wid = _make_work_db(self.db)
+        item = _make_knowledge_item(self.db, wid, 0.80)
+        self.assertAlmostEqual(item["confidence"], 0.80, places=4)
+
+    def test_confidence_boundary_0_50_stored_precisely(self):
+        """Exactly 0.50 must be stored without floating-point loss."""
+        wid = _make_work_db(self.db)
+        item = _make_knowledge_item(self.db, wid, 0.50)
+        self.assertAlmostEqual(item["confidence"], 0.50, places=4)
+
+    def test_default_confidence_is_non_zero(self):
+        """Items created without explicit confidence must get a sensible non-zero default."""
+        wid = _make_work_db(self.db)
+        kid = self.db.create_knowledge_item(
+            work_id=wid, kind="fact",
+            text="default conf test", subject="default conf",
+        )
+        with self.db._lock:
+            row = self.db._conn.execute(
+                "SELECT confidence FROM knowledge WHERE id=?", (kid,)
+            ).fetchone()
+        self.assertIsNotNone(row)
+        self.assertGreater(row["confidence"], 0.0,
+                           "Default confidence must be > 0")

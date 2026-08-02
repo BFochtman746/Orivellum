@@ -442,6 +442,7 @@ export default function Library() {
   const [groupByWork, setGroupByWork] = useState(false);
   const [explodingZips, setExplodingZips] = useState(false);
   const [organizingDocs, setOrganizingDocs] = useState(false);
+  const [reprocessingAll, setReprocessingAll] = useState(false);
   const { data: worksResp } = useListWorks();
   const workTitles: Record<string, string> = {};
   for (const w of worksResp?.works ?? []) {
@@ -459,6 +460,13 @@ export default function Library() {
 
   // Derive available kinds from the list for dynamic filter chips
   const availableKinds = Array.from(new Set(rawDocs.map((d) => d.kind ?? "file").filter(Boolean))).sort();
+
+  // Counts per lifecycle for the filter chips
+  const lifecycleCounts: Record<string, number> = { all: rawDocs.length };
+  for (const d of rawDocs) {
+    const lc = d.lifecycle ?? "draft";
+    lifecycleCounts[lc] = (lifecycleCounts[lc] ?? 0) + 1;
+  }
 
   const docs = rawDocs
     .filter((d) => {
@@ -505,6 +513,30 @@ export default function Library() {
       toast.error(err.message ?? "ZIP extraction failed");
     } finally {
       setExplodingZips(false);
+    }
+  };
+
+  const handleReprocessAll = async () => {
+    setReprocessingAll(true);
+    try {
+      const resp = await apiFetch(`${BASE}/library/reprocess-all`, { method: "POST" });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error((data as any).detail ?? "Failed");
+      const { queued, queued_zips, queued_stuck, skipped, message } = data as any;
+      if (queued === 0) {
+        toast.success("All documents are already fully processed.");
+      } else {
+        toast.success(message ?? `Queued ${queued} document(s) for re-extraction`);
+        if (queued_zips > 0)
+          toast.info(`${queued_zips} ZIP archive${queued_zips !== 1 ? "s" : ""} will be exploded into individual documents.`);
+        if (skipped > 0)
+          toast.warning(`${skipped} document${skipped !== 1 ? "s" : ""} skipped — source file missing from disk.`);
+      }
+      setTimeout(invalidate, 2000);
+    } catch (err: any) {
+      toast.error(err.message ?? "Reprocess failed");
+    } finally {
+      setReprocessingAll(false);
     }
   };
 
@@ -560,6 +592,20 @@ export default function Library() {
             </p>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
+            {/* Reprocess All — always visible, handles ZIPs + stuck docs in one shot */}
+            {rawDocs.some((d: any) => d.readiness === "imported" || d.readiness === "error" || d.readiness === "no_text" || d.kind === "zip") && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1.5 text-xs border-primary/40 text-primary hover:bg-primary/5"
+                onClick={handleReprocessAll}
+                disabled={reprocessingAll}
+                title="Re-extract all stuck, errored, or ZIP documents"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${reprocessingAll ? "animate-spin" : ""}`} />
+                {reprocessingAll ? "Processing…" : "Reprocess All"}
+              </Button>
+            )}
             {zipCount > 0 && (
               <Button
                 variant="outline"
@@ -697,19 +743,28 @@ export default function Library() {
               <div className="flex items-center gap-2">
                 <span className="text-xs font-mono text-muted-foreground uppercase">Lifecycle:</span>
                 <div className="flex items-center gap-1 p-0.5 bg-muted/30 rounded-lg">
-                  {(["all", "canonical", "draft", "reference", "superseded"] as const).map((lc) => (
-                    <button
-                      key={lc}
-                      onClick={() => setLifecycleFilter(lc)}
-                      className={`px-2.5 py-1 rounded text-xs font-mono transition-colors ${
-                        lifecycleFilter === lc
-                          ? "bg-background shadow-sm text-foreground"
-                          : "text-muted-foreground hover:text-foreground"
-                      }`}
-                    >
-                      {lc === "all" ? "All" : lc}
-                    </button>
-                  ))}
+                  {(["all", "canonical", "draft", "reference", "superseded"] as const).map((lc) => {
+                    const count = lifecycleCounts[lc] ?? 0;
+                    if (lc !== "all" && count === 0) return null;
+                    return (
+                      <button
+                        key={lc}
+                        onClick={() => setLifecycleFilter(lc)}
+                        className={`px-2.5 py-1 rounded text-xs font-mono transition-colors flex items-center gap-1 ${
+                          lifecycleFilter === lc
+                            ? "bg-background shadow-sm text-foreground"
+                            : "text-muted-foreground hover:text-foreground"
+                        }`}
+                      >
+                        {lc === "all" ? "All" : lc}
+                        {count > 0 && (
+                          <span className={`text-[10px] tabular-nums ${lifecycleFilter === lc ? "text-muted-foreground" : "text-muted-foreground/60"}`}>
+                            {count}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             </div>
@@ -789,6 +844,11 @@ export default function Library() {
                                   </span>
                                 )}
                               </div>
+                              {search && doc.snippet && (
+                                <p className="mt-1.5 text-[11px] font-mono text-muted-foreground/70 line-clamp-2 leading-relaxed">
+                                  {String(doc.snippet).replace(/\[\[/g, "").replace(/\]\]/g, "")}
+                                </p>
+                              )}
                             </div>
                           </div>
                           <div className="flex items-center gap-1 shrink-0">
@@ -866,6 +926,13 @@ export default function Library() {
                             </span>
                           )}
                         </div>
+
+                        {/* Search snippet */}
+                        {search && doc.snippet && (
+                          <p className="mt-2 text-[11px] font-mono text-muted-foreground/70 line-clamp-2 leading-relaxed">
+                            {String(doc.snippet).replace(/\[\[/g, "").replace(/\]\]/g, "")}
+                          </p>
+                        )}
 
                         {/* Error message */}
                         {hasError && doc.error_message && (

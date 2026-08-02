@@ -13,7 +13,7 @@ import {
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { format, formatDistanceToNow } from "date-fns";
-import { BookOpen, Library, MessageSquare, Target, Activity, FileText, CheckCircle2, Clock, Plus, Upload, FolderPlus, Sparkles, RefreshCw, ArrowRight, Lightbulb, Telescope, Zap, GitMerge } from "lucide-react";
+import { BookOpen, Library, MessageSquare, Target, Activity, FileText, CheckCircle2, Clock, Plus, Upload, FolderPlus, Sparkles, RefreshCw, ArrowRight, Lightbulb, Telescope, Zap, GitMerge, AlertTriangle } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -42,17 +42,21 @@ function SuggestionsWidget() {
   const [suggestions, setSuggestions] = useState<any[]>([]);
   const [loading, setLoading]   = useState(false);
   const [fetched, setFetched]   = useState(false);
+  const [fetchError, setFetchError] = useState(false);
   const [, setLocation] = useLocation();
 
   async function fetchSuggestions() {
+    setFetchError(false);
     try {
       const resp = await apiFetch(`${BASE}/suggestions?limit=6`);
       if (resp.ok) {
         const data = await resp.json();
         setSuggestions(data.suggestions ?? []);
         setFetched(true);
+      } else {
+        setFetchError(true);
       }
-    } catch { /* silent */ }
+    } catch { setFetchError(true); }
   }
 
   async function handleGenerate() {
@@ -99,7 +103,14 @@ function SuggestionsWidget() {
         </Button>
       </div>
 
-      {!fetched && !loading ? (
+      {fetchError && !fetched ? (
+        <div className="rounded-xl border border-dashed border-red-200/60 bg-red-50/30 p-6 text-center space-y-3">
+          <p className="text-sm text-red-600">Could not load suggestions — server may be unreachable.</p>
+          <Button size="sm" variant="outline" className="gap-1.5 border-red-200 text-red-600 hover:bg-red-50" onClick={fetchSuggestions}>
+            <RefreshCw className="w-3 h-3" />Retry
+          </Button>
+        </div>
+      ) : !fetched && !loading ? (
         <div className="rounded-xl border border-dashed border-border/50 bg-muted/10 p-8 text-center space-y-3">
           <Sparkles className="w-8 h-8 mx-auto text-muted-foreground opacity-40" />
           <p className="text-sm text-muted-foreground">
@@ -162,6 +173,84 @@ function Loader2Dash({ className }: { className?: string }) {
   return <svg className={className} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>;
 }
 
+interface TopGapEntry {
+  work_id: string; work_title: string;
+  kind: string; title: string; description: string; severity: string;
+}
+
+const SEV_DOT: Record<string, string>    = { high: "bg-red-500", medium: "bg-amber-400", low: "bg-blue-400" };
+const SEV_BADGE: Record<string, string>  = {
+  high:   "border-red-200 text-red-700 bg-red-50/70",
+  medium: "border-amber-200 text-amber-700 bg-amber-50/70",
+  low:    "border-blue-200 text-blue-700 bg-blue-50/70",
+};
+
+function TopGapsWidget() {
+  const [gaps, setGaps]       = useState<TopGapEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const loadGaps = async (forceRefresh = false) => {
+    const url = `${BASE}/gaps/top?limit=3${forceRefresh ? "&refresh=true" : ""}`;
+    try {
+      const r = await apiFetch(url);
+      const d = r.ok ? await r.json() : { gaps: [] };
+      setGaps(d.gaps ?? []);
+    } catch { /* silent */ } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  };
+
+  useEffect(() => { loadGaps(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (loading || gaps.length === 0) return null;
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <h2 className="text-lg font-serif font-semibold flex items-center gap-2">
+          <AlertTriangle className="w-4 h-4 text-amber-500" />
+          Research Gaps
+        </h2>
+        <div className="flex items-center gap-2">
+          <Badge variant="outline" className="font-mono text-[10px] uppercase text-amber-700 border-amber-200 bg-amber-50/70">
+            {gaps.filter(g => g.severity === "high").length > 0
+              ? `${gaps.filter(g => g.severity === "high").length} high`
+              : `${gaps.length} found`}
+          </Badge>
+          <button
+            onClick={() => { setRefreshing(true); loadGaps(true); }}
+            disabled={refreshing}
+            className="p-1 rounded hover:bg-muted/40 transition-colors text-muted-foreground hover:text-foreground disabled:opacity-40"
+            title="Refresh gap analysis"
+          >
+            <RefreshCw className={`w-3 h-3 ${refreshing ? "animate-spin" : ""}`} />
+          </button>
+        </div>
+      </div>
+      <div className="space-y-1.5">
+        {gaps.map((gap, i) => (
+          <Link key={i} href={`/works/${gap.work_id}`}>
+            <div className="flex items-start gap-3 p-3 rounded-lg border border-border/50 hover:border-primary/40 hover:bg-muted/20 transition-colors cursor-pointer group">
+              <span className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${SEV_DOT[gap.severity] ?? "bg-muted"}`} />
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium leading-snug line-clamp-1 group-hover:text-primary transition-colors">
+                  {gap.title}
+                </p>
+                <p className="text-[10px] font-mono text-muted-foreground mt-0.5">{gap.work_title}</p>
+              </div>
+              <Badge variant="outline" className={`text-[9px] font-mono uppercase shrink-0 ${SEV_BADGE[gap.severity] ?? ""}`}>
+                {gap.severity}
+              </Badge>
+            </div>
+          </Link>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function Dashboard() {
   const [, setLocation] = useLocation();
   const queryClient = useQueryClient();
@@ -187,8 +276,8 @@ export default function Dashboard() {
     { limit: 10 },
     { query: { queryKey: getGetDashboardActivityQueryKey({ limit: 10 }), refetchInterval: 30_000, staleTime: 20_000 } },
   );
-  const { data: briefing, isLoading: loadingBriefing } = useGetBriefing({
-    query: { queryKey: getGetBriefingQueryKey(), staleTime: 300_000 },
+  const { data: briefing, isLoading: loadingBriefing, isError: briefingError, refetch: refetchBriefing } = useGetBriefing({
+    query: { queryKey: getGetBriefingQueryKey(), staleTime: 300_000, retry: 1 },
   });
   const { data: convsResp, isLoading: loadingConvs } = useListConversations(
     { limit: 5 },
@@ -210,6 +299,8 @@ export default function Dashboard() {
         <div className="text-sm font-mono text-muted-foreground uppercase tracking-wider">
           {briefing
             ? format(new Date(briefing.date || new Date()), "EEEE, MMMM do, yyyy")
+            : briefingError
+            ? format(new Date(), "EEEE, MMMM do, yyyy")
             : <Skeleton className="h-4 w-40" />}
         </div>
         <h1 className="text-4xl font-serif font-semibold tracking-tight text-foreground">
@@ -219,6 +310,16 @@ export default function Dashboard() {
         </h1>
         {loadingBriefing ? (
           <Skeleton className="h-6 w-3/4 mt-4" />
+        ) : briefingError ? (
+          <p className="text-sm text-muted-foreground font-mono mt-2 flex items-center gap-2">
+            <span className="text-destructive/70">⚠ Could not load workspace briefing.</span>
+            <button
+              onClick={() => refetchBriefing()}
+              className="underline underline-offset-2 hover:text-foreground transition-colors"
+            >
+              Retry
+            </button>
+          </p>
         ) : (
           <p className="text-xl text-muted-foreground font-serif italic mt-2 max-w-3xl leading-relaxed">
             {briefing?.summary?.work_count
@@ -288,6 +389,9 @@ export default function Dashboard() {
           loading={loadingSummary}
         />
       </div>
+
+      {/* Research Gaps — only shown when there are active critical gaps */}
+      <TopGapsWidget />
 
       <div className="grid md:grid-cols-3 gap-8">
         {/* Recent Works */}

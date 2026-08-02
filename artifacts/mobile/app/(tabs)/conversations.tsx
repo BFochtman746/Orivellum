@@ -25,6 +25,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import type { Conversation } from '@workspace/api-client-react';
 import { OfflineBanner, ErrorScreen } from '@/components/OfflineBanner';
+import { stripMarkdown } from '@/lib/stripMarkdown';
 
 function ConversationItem({ item, onArchive }: { item: Conversation; onArchive?: (id: string) => void }) {
   const colors = useColors();
@@ -73,15 +74,7 @@ function ConversationItem({ item, onArchive }: { item: Conversation; onArchive?:
         </View>
         {item.last_message ? (
           <Text style={[styles.itemPreview, { color: colors.mutedForeground }]} numberOfLines={2}>
-            {item.last_message
-              .replace(/\*\*(.+?)\*\*/g, '$1')   // bold
-              .replace(/\*(.+?)\*/g, '$1')         // italic
-              .replace(/`{1,3}[^`]*`{1,3}/g, '')  // code
-              .replace(/^#{1,6}\s+/gm, '')         // headings
-              .replace(/^\s*[-*+]\s+/gm, '')       // list bullets
-              .replace(/!\[.*?\]\(.*?\)/g, '')      // images
-              .replace(/\[(.+?)\]\(.*?\)/g, '$1')  // links → label only
-              .trim()}
+            {stripMarkdown(item.last_message)}
           </Text>
         ) : (
           <Text style={[styles.itemPreview, { color: colors.muted }]}>No messages yet</Text>
@@ -120,7 +113,7 @@ export default function ConversationsScreen() {
   const conversations = search
     ? allConversations.filter((c) =>
         (c.title ?? '').toLowerCase().includes(search.toLowerCase()) ||
-        (c.last_message ?? '').toLowerCase().includes(search.toLowerCase())
+        stripMarkdown(c.last_message ?? '').toLowerCase().includes(search.toLowerCase())
       )
     : allConversations;
   const hasData = allConversations.length > 0;

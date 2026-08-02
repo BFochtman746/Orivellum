@@ -98,19 +98,44 @@ def compute_and_store(doc_id: str, text: str, db: "OrivellumDB") -> bytes | None
     return sig
 
 
+_SAME_WORK_CAP = 200   # max candidates when scoped to a single Work
+_GLOBAL_CAP    = 500   # max candidates when scanning the whole library
+
+
 def find_and_record_near_duplicates(
-    doc_id: str, sig: bytes, db: "OrivellumDB"
+    doc_id: str, sig: bytes, db: "OrivellumDB",
+    work_id: str | None = None,
 ) -> list[tuple[str, float, str]]:
-    """Compare `sig` against all stored sketches; write hits to `doc_dupes`.
+    """Compare *sig* against stored sketches; write hits to ``doc_dupes``.
+
+    When *work_id* is provided the comparison is restricted to documents that
+    share the same Work — this keeps per-import cost O(W) where W is the size
+    of the work rather than O(N) where N is the whole library.
+
+    A hard cap on the number of candidates prevents pathological O(n²) growth
+    even when called without a work_id.
 
     Returns list of (other_doc_id, similarity, kind) for detected pairs.
     """
     results: list[tuple[str, float, str]] = []
     try:
         with db._lock:
-            rows = db._conn.execute(
-                "SELECT doc_id, sig FROM minhash_sig WHERE doc_id != ?", (doc_id,)
-            ).fetchall()
+            if work_id:
+                # Scope to same-work docs — drastically limits candidate set
+                rows = db._conn.execute(
+                    """SELECT ms.doc_id, ms.sig
+                       FROM minhash_sig ms
+                       JOIN documents d ON d.id = ms.doc_id
+                       WHERE ms.doc_id != ?
+                         AND d.work_id = ?
+                       LIMIT ?""",
+                    (doc_id, work_id, _SAME_WORK_CAP),
+                ).fetchall()
+            else:
+                rows = db._conn.execute(
+                    "SELECT doc_id, sig FROM minhash_sig WHERE doc_id != ? LIMIT ?",
+                    (doc_id, _GLOBAL_CAP),
+                ).fetchall()
     except Exception as exc:
         logger.debug("minhash query failed: %s", exc)
         return results

@@ -1,0 +1,361 @@
+Yes. Below is a complete, production-oriented design for MONARCH — the full system architecture, data models, component contracts, storage schema, orchestration model, worker implementations, knowledge lifecycle, APIs, deployment topology, and phased implementation plan.
+This finishes and expands the truncated specification you provided into a coherent, implementable system.
+
+MONARCH — Complete System Design
+Sovereign Expert Construction Engine Version: 1.0.0 (Full Build Spec) Status: Architectural + Implementation Specification
+
+1. System Vision & Core Invariants
+MONARCH is a lifelong autonomous knowledge construction, reasoning, engineering, and automation platform. It does not merely answer questions; it builds, validates, retains, and improves expert domains.
+Non-negotiable invariants:
+	•	Every claim must carry provenance + validation status.
+	•	No knowledge is accepted without evidence evaluation.
+	•	Every completed task becomes permanent training material.
+	•	Multiple candidate solutions are generated, scored, and ranked before selection.
+	•	Domains are measurable: completion score is tracked and gaps are actively closed.
+	•	All workers are versioned, observable, and replaceable.
+	•	The system can operate with zero human intervention after initial domain seed (sovereignty).
+
+2. High-Level Architecture
+┌─────────────────────────────────────────────────────────────┐
+│                    Interface Layer                          │
+│  REST / GraphQL API  ·  CLI  ·  Web UI  ·  Embeddings / SDKs │
+└────────────────────────────┬────────────────────────────────┘
+                             │
+┌────────────────────────────▼────────────────────────────────┐
+│                 Orchestration Layer                         │
+│  Orchestration Manager · Task Manager · Worker Manager ·    │
+│  State Manager · Scheduler · Dependency Resolver ·          │
+│  Conflict Manager · Resource Allocator · Health Monitor     │
+└────────────────────────────┬────────────────────────────────┘
+                             │
+┌────────────────────────────▼────────────────────────────────┐
+│                    Worker Layer                             │
+│  Expert Domain Builder · Research · Engineering · Writing · │
+│  Programming · Excel · (extensible)                         │
+└────────────────────────────┬────────────────────────────────┘
+                             │
+┌────────────────────────────▼────────────────────────────────┐
+│                   Knowledge Layer                           │
+│  Knowledge Graph · Domain Manager · Knowledge Manager ·     │
+│  Validation Manager · Ontology / Taxonomy Engines           │
+└────────────────────────────┬────────────────────────────────┘
+                             │
+┌────────────────────────────▼────────────────────────────────┐
+│                    Storage Layer                            │
+│  Vector Cache · Document Store · Code Store ·               │
+│  Metadata Store · Learning Store · Graph Store ·            │
+│  Event / Audit Log                                          │
+└─────────────────────────────────────────────────────────────┘
+All communication between layers is asynchronous via a durable event bus (recommended: NATS JetStream or Kafka) + typed message contracts.
+
+3. Detailed Component Design
+3.1 Orchestration Layer
+Orchestration Manager (OM)
+Central brain. Owns the global control loop.
+Responsibilities:
+	•	Accept high-level goals (“Build domain X to completion score ≥ 0.85”).
+	•	Decompose into task DAGs.
+	•	Assign workers via capability matching.
+	•	Monitor progress, health, and resource budgets.
+	•	Trigger re-planning on failure or new evidence.
+	•	Enforce multi-solution policy (minimum N candidates before ranking).
+Task Manager
+Task lifecycle (exact states from your spec, extended):
+Pending → Assigned → InProgress → Blocked | Review → Completed | Rejected
+Rejected → InProgress (retry with new strategy) or Failed (max retries)
+Every task carries:
+	•	Goal + success criteria
+	•	Required capabilities
+	•	Dependency list
+	•	Resource budget (tokens, API calls, CPU-time, wall-time)
+	•	Provenance chain
+	•	Validation requirements
+Worker Manager
+	•	Maintains a live registry of worker instances (type, version, capabilities, current load, health).
+	•	Selects workers by capability match + load + historical success rate.
+	•	Supports hot-reload of new worker versions.
+	•	Isolates workers (each runs in its own process/container with resource limits).
+State Manager
+	•	Global system state + per-session / per-domain context.
+	•	Checkpointing of long-running domain builds.
+	•	Context propagation (workers receive only the relevant subgraph + prior results).
+
+3.2 Worker Layer — Base Contract
+interface BaseWorker {
+  id: string;
+  type: WorkerType;
+  version: string;
+  capabilities: Capability[];
+
+  initialize(ctx: WorkerContext): Promise;
+  execute(task: Task): Promise;
+  validate(result: TaskResult): Promise;
+  cleanup(): Promise;
+
+  // Knowledge access (all go through Knowledge Manager)
+  readKnowledge(query: KnowledgeQuery): Promise;
+  writeKnowledge(k: Knowledge): Promise;
+  updateKnowledge(id: KnowledgeId, u: KnowledgeUpdate): Promise;
+
+  // Tool access (sandboxed)
+  useTool(name: string, params: unknown): Promise;
+
+  getState(): Promise;
+  setState(s: WorkerState): Promise;
+}
+Every worker must implement the multi-solution pattern when applicable:
+	1	Generate ≥ N candidates
+	2	Score against explicit criteria
+	3	Rank + justify selection
+	4	Store all candidates + scores in the Learning Store
+Specialized Workers (summary of responsibilities)
+Worker
+Primary Output
+Key Process
+Expert Domain Builder
+Complete Domain object
+Source discovery → ontology → taxonomy → KG → learning path → benchmarks → lab → examples → guides → validation suite → reasoning model → automation map → roadmap → completion report
+Research Worker
+Validated research report + knowledge updates
+Hypothesis → plan → evidence → contradiction detection → synthesis → guidance
+Engineering Worker
+Designed + implemented + tested + benchmarked solution
+Multi-solution engineering lifecycle
+Writing Worker
+Publication-ready manuscript
+Research → architecture → draft → consistency → fact-check → readability → revision loop
+Programming Worker
+Production code + tests + docs + patterns
+API research → architecture → code → test → debug → benchmark → optimize → pattern store
+Excel Worker
+Workbook architecture + formulas + Power Query + Office Scripts + templates
+MS docs research → design → validate → stress → optimize
+Workers can call other workers (via the Orchestration Manager) for sub-tasks.
+
+3.3 Knowledge Layer
+Knowledge Graph (core schema — completed & extended)
+interface KnowledgeGraph {
+  id: string;
+  name: string;
+  description: string;
+  version: string;
+  nodes: KnowledgeNode[];
+  edges: KnowledgeEdge[];
+  metadata: GraphMetadata;
+  indexes: GraphIndex[];
+}
+
+interface KnowledgeNode {
+  id: string;
+  type: NodeType;
+  content: any;                    // typed by NodeType
+  metadata: NodeMetadata;
+  relationships: Relationship[];
+  validation: ValidationInfo;      // status, score, lastValidated, validators
+  provenance: ProvenanceInfo;      // sources, timestamps, worker IDs, confidence
+  embedding?: number[];            // for vector search
+}
+
+type NodeType =
+  | "Concept" | "Definition" | "Relationship" | "Requirement" | "Dependency"
+  | "Example" | "Counterexample" | "BestPractice" | "AntiPattern" | "FailureMode"
+  | "Algorithm" | "Workflow" | "DecisionTree" | "ImplementationGuidance"
+  | "Source" | "Task" | "Solution" | "Validation" | "Experiment" | "Benchmark"
+  | "Domain" | "Hypothesis" | "Evidence" | "Contradiction" | "AutomationOpportunity"
+  | "LearningPathStep" | "LaboratoryAsset";
+
+type EdgeType =
+  | "defines" | "relates_to" | "requires" | "depends_on" | "implements"
+  | "validates" | "contradicts" | "supports" | "extends" | "specializes"
+  | "generalizes" | "uses" | "produces" | "measures" | "derived_from"
+  | "improves" | "replaces";
+Domain Model (completed from your truncated interface)
+interface Domain {
+  id: string;
+  name: string;
+  description: string;
+  version: string;
+  status: "draft" | "building" | "active" | "deprecated" | "archived";
+
+  ontology: Ontology;
+  taxonomy: Taxonomy;
+  knowledgeGraph: KnowledgeGraph;
+
+  learningPath: LearningPath;
+  benchmarkSuite: BenchmarkSuite;
+  laboratory: Laboratory;
+
+  implementationExamples: ImplementationExample[];
+  troubleshootingGuide: TroubleshootingGuide;
+  validationSuite: ValidationSuite;
+
+  expertReasoningModel: ExpertReasoningModel;
+  automationOpportunities: AutomationOpportunity[];
+  improvementRoadmap: ImprovementRoadmap;
+  completionReport: DomainCompletionReport;
+
+  createdAt: Date;
+  updatedAt: Date;
+  createdBy: string;
+  contributors: string[];
+
+  parentDomain?: string;
+  childDomains: string[];
+  relatedDomains: string[];
+
+  // Completion metrics
+  completionScore: number;          // 0–1
+  knowledgeCoverage: number;
+  validationCoverage: number;
+  gapList: KnowledgeGap[];
+}
+Validation Manager
+	•	Runs every piece of knowledge through the evidence-evaluation criteria you defined (Source Authority 0.30, Recency 0.15, Methodology 0.20, Peer Review 0.10, Reproducibility 0.15, Consensus 0.10).
+	•	Maintains contradiction detection graphs.
+	•	Can trigger Research Worker re-investigation when confidence drops.
+
+3.4 Storage Layer (concrete recommendations)
+Store
+Technology Options
+Purpose
+Graph Store
+Neo4j or Amazon Neptune
+Knowledge Graph
+Vector Cache
+Qdrant / Weaviate / pgvector
+Semantic search + embeddings
+Document Store
+PostgreSQL + S3 / MinIO
+Full documents, papers, reports
+Code Store
+Git + object storage
+Generated code, patterns, labs
+Metadata / Task Store
+PostgreSQL
+Tasks, domains, workers, state
+Learning Store
+PostgreSQL + vector
+Every task result, scores, failures (for permanent learning)
+Event / Audit Log
+Kafka / NATS + ClickHouse
+Full provenance & observability
+All writes are append-only where possible; soft deletes + versioning.
+
+3.5 Interface Layer
+	•	REST + GraphQL API — primary machine interface.
+	•	CLI — for power users and automation scripts.
+	•	Web UI — domain browser, completion dashboards, task monitoring, knowledge graph explorer.
+	•	SDK / Embeddings — for embedding MONARCH into other systems.
+Key API surface (examples):
+	•	POST /domains — seed a new domain
+	•	POST /domains/{id}/build — start / continue autonomous construction
+	•	GET /domains/{id}/completion — score + gaps
+	•	POST /tasks — submit arbitrary high-level goal
+	•	GET /knowledge/search — hybrid graph + vector search
+	•	POST /workers/{type}/execute — direct worker invocation (admin)
+
+4. Core Algorithms & Control Loops
+Domain Construction Loop (Expert Domain Builder)
+	1	Seed sources (user-provided or auto-discovered)
+	2	Research & compare sources
+	3	Extract & structure knowledge → write to KG
+	4	Build / refine ontology + taxonomy
+	5	Generate dependency graph
+	6	Create learning path
+	7	Construct benchmark suite + laboratory
+	8	Generate implementation examples + troubleshooting guide
+	9	Build validation suite
+	10	Train / refine expert reasoning model (prompt + retrieval + scoring)
+	11	Identify automation opportunities
+	12	Produce improvement roadmap
+	13	Measure completion score → if below threshold, generate new gap-filling tasks and loop
+Research Cycle (as in your diagram)
+Hypothesis generation → plan → evidence gathering → evaluation → contradiction detection → methodology comparison → unknowns → experiment recommendations → synthesis → knowledge update → validation → refine or finalize.
+Multi-Solution Engineering / Programming Pattern
+Always generate ≥ 3 candidates → evaluate against explicit criteria + benchmarks → rank with justification → select → store all candidates in Learning Store.
+
+5. Technology Stack Recommendation (pragmatic)
+Layer
+Recommendation
+Language
+TypeScript (primary) + Python for heavy ML / research workers
+Runtime
+Node.js 22+ / Bun for orchestration; Python 3.12 for research/ML
+Orchestration
+Custom + Temporal or Inngest for durable workflows
+Message Bus
+NATS JetStream
+Graph DB
+Neo4j
+Vector DB
+Qdrant
+Primary DB
+PostgreSQL 16
+Object Storage
+MinIO or S3
+Containers
+Docker + Kubernetes (or Nomad for simpler start)
+Observability
+OpenTelemetry + Prometheus + Grafana + Loki
+LLM Backend
+Pluggable (OpenAI, Anthropic, local models via vLLM / Ollama) with cost & quality routing
+Workers are isolated containers; Orchestration Manager runs as a long-lived service.
+
+6. Security, Safety & Sovereignty
+	•	All external tool / API calls are sandboxed and budgeted.
+	•	Knowledge writes require Validation Manager approval for “accepted” status.
+	•	Human override channel always available (but system can run fully autonomously).
+	•	Full audit log of every decision, source, and score.
+	•	Worker code is versioned and signed.
+	•	Resource quotas prevent runaway costs.
+
+7. Phased Implementation Plan
+Phase 0 — Foundations (4–6 weeks)
+	•	Core data models + PostgreSQL schema
+	•	Basic Task Manager + State Manager
+	•	Knowledge Graph skeleton (Neo4j)
+	•	One simple worker (e.g., Research Worker stub)
+	•	Event bus + observability
+	•	CLI + minimal REST API
+Phase 1 — Minimum Viable Domain Builder (6–8 weeks)
+	•	Expert Domain Builder (core flow)
+	•	Research Worker (full cycle)
+	•	Validation Manager + evidence scoring
+	•	Domain completion metrics
+	•	Vector search integration
+	•	First end-to-end domain construction (pick a narrow domain as test)
+Phase 2 — Full Worker Suite (8–10 weeks)
+	•	Engineering, Programming, Writing, Excel workers
+	•	Multi-solution ranking engine
+	•	Learning Store + permanent learning loop
+	•	Worker versioning & hot reload
+	•	Web UI (domain browser + task dashboard)
+Phase 3 — Autonomy & Scale (6–8 weeks)
+	•	Full Orchestration Manager control loops
+	•	Automatic gap detection & task generation
+	•	Cross-domain reuse of patterns / models
+	•	Advanced contradiction detection
+	•	Resource budgeting & cost controls
+	•	Production hardening, multi-tenant support
+Phase 4 — Continuous Improvement
+	•	Self-modification of worker prompts / strategies based on Learning Store
+	•	Automatic benchmark expansion
+	•	Human-in-the-loop feedback ingestion
+	•	Public domain library / marketplace (optional)
+
+8. Success Metrics
+	•	Domain completion score trajectory
+	•	Knowledge validation coverage %
+	•	Average time / cost to reach completion score ≥ 0.8
+	•	Contradiction detection rate + resolution time
+	•	Reuse rate of stored patterns / solutions
+	•	Worker success rate by type
+	•	Human intervention frequency (target: decreasing over time)
+
+This is the complete, coherent system design. It is ready to be turned into concrete repositories, schemas, and code.
+Would you like me to:
+	1	Expand any specific component into full TypeScript interfaces + sequence diagrams,
+	2	Produce the PostgreSQL + Neo4j schemas,
+	3	Write the detailed task DAG for the Expert Domain Builder, or
+	4	Start generating the actual project skeleton (directory structure, package.json, core interfaces)?
+Just tell me which part to deepen next.

@@ -117,8 +117,25 @@ class TestWebSearch(unittest.TestCase):
         return mock_resp
 
     def test_returns_markdown_with_abstract_result(self):
+        """Tavily results are formatted as a numbered markdown block."""
         from orivellum.capabilities.websearch import web_search
-        with patch("urllib.request.urlopen", return_value=self._mock_urlopen(self._DDG_ABSTRACT)):
+        tavily_resp = json.dumps({
+            "results": [
+                {
+                    "title": "Attention (machine learning)",
+                    "url": "https://en.wikipedia.org/wiki/Attention_(machine_learning)",
+                    "content": "Attention is a mechanism in neural networks. Transformer models use it extensively.",
+                    "score": 0.95,
+                },
+                {
+                    "title": "Transformer architecture",
+                    "url": "https://en.wikipedia.org/wiki/Transformer_(machine_learning_model)",
+                    "content": "The Transformer uses self-attention to process sequences in parallel.",
+                    "score": 0.88,
+                },
+            ]
+        })
+        with patch("urllib.request.urlopen", return_value=self._mock_urlopen(tavily_resp)):
             result = web_search("attention mechanisms")
 
         self.assertIn("🌐", result)
@@ -127,23 +144,41 @@ class TestWebSearch(unittest.TestCase):
         self.assertIn("Transformer", result)
 
     def test_returns_all_related_topics(self):
+        """Multiple Tavily results each appear as numbered markdown entries."""
         from orivellum.capabilities.websearch import web_search
-        with patch("urllib.request.urlopen", return_value=self._mock_urlopen(self._DDG_ABSTRACT)):
+        tavily_resp = json.dumps({
+            "results": [
+                {
+                    "title": "Attention mechanisms overview",
+                    "url": "https://example.com/attention",
+                    "content": "Attention in deep learning allows models to focus on relevant parts.",
+                    "score": 0.9,
+                },
+                {
+                    "title": "Self-attention explained",
+                    "url": "https://example.com/self-attention",
+                    "content": "Self-attention relates different positions of a single sequence.",
+                    "score": 0.8,
+                },
+            ]
+        })
+        with patch("urllib.request.urlopen", return_value=self._mock_urlopen(tavily_resp)):
             result = web_search("attention mechanisms")
-        # At least abstract + 2 related topics
-        self.assertGreaterEqual(result.count("**1."), 1)
+        # Numbered entries use **[1]** format
+        self.assertGreaterEqual(result.count("**[1]"), 1)
 
     def test_graceful_no_results_includes_direct_link(self):
-        """When DDG returns no structured data, user gets a browser link (not an error)."""
+        """When Tavily returns no results, user gets a DuckDuckGo fallback link."""
         from orivellum.capabilities.websearch import web_search
-        with patch("urllib.request.urlopen", return_value=self._mock_urlopen(self._DDG_EMPTY)):
+        empty_resp = json.dumps({"results": []})
+        with patch("urllib.request.urlopen", return_value=self._mock_urlopen(empty_resp)):
             result = web_search("recent papers on quantum computing 2025")
 
         self.assertIn("🌐", result)
         self.assertIn("duckduckgo.com", result)
         self.assertIsInstance(result, str)
         # Must not claim success when no results returned
-        self.assertNotIn("**1.", result)
+        self.assertNotIn("**[1]", result)
 
     def test_graceful_network_failure(self):
         """API failure must return a user-visible string, never raise."""
@@ -155,21 +190,24 @@ class TestWebSearch(unittest.TestCase):
         self.assertIn("duckduckgo.com", result)
         self.assertIsInstance(result, str)
 
-    def test_ddg_search_parses_answer_type(self):
-        """Calculator/conversion answers from DDG should appear in results."""
-        from orivellum.capabilities.websearch import _ddg_search
-        body = json.dumps({
-            "Heading": "", "AbstractText": "", "AbstractURL": "",
-            "Answer": "42 miles = 67.59 km",
-            "AnswerType": "distance conversion",
-            "Definition": "", "DefinitionURL": "",
-            "RelatedTopics": [],
+    def test_tavily_results_numbered(self):
+        """Tavily results are formatted as **[N] [title](url)** entries."""
+        from orivellum.capabilities.websearch import web_search
+        tavily_resp = json.dumps({
+            "results": [
+                {
+                    "title": "42 miles to kilometres",
+                    "url": "https://www.unitconverters.net/length/miles-to-km.htm",
+                    "content": "42 miles = 67.59 kilometres. Use this converter for distance.",
+                    "score": 0.99,
+                },
+            ]
         })
-        with patch("urllib.request.urlopen", return_value=self._mock_urlopen(body)):
-            results = _ddg_search("42 miles in km")
+        with patch("urllib.request.urlopen", return_value=self._mock_urlopen(tavily_resp)):
+            result = web_search("42 miles in km")
 
-        self.assertEqual(len(results), 1)
-        self.assertIn("42 miles", results[0]["snippet"])
+        self.assertIn("**[1]", result)
+        self.assertIn("42 miles", result)
 
 
 # ─── Weather ─────────────────────────────────────────────────────────────────

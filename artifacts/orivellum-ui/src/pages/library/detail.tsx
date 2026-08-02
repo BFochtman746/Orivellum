@@ -112,7 +112,7 @@ function ReviewBadge({ status }: { status: string | null | undefined }) {
 
 function confidenceTier(pct: number): { label: string; color: string } {
   if (pct >= 80) return { label: "High confidence",   color: "bg-emerald-500" };
-  if (pct >= 60) return { label: "Medium confidence", color: "bg-amber-400" };
+  if (pct >= 50) return { label: "Medium confidence", color: "bg-amber-400" };
   return               { label: "Low confidence",    color: "bg-orange-400" };
 }
 
@@ -161,11 +161,11 @@ function ConfidenceLegend() {
             </div>
             <div className="flex items-center gap-2">
               <span className="w-2 h-2 rounded-full bg-amber-400 shrink-0" />
-              <span>60–79% — Medium · sentence or heading match</span>
+              <span>50–79% — Medium · sentence or heading match</span>
             </div>
             <div className="flex items-center gap-2">
               <span className="w-2 h-2 rounded-full bg-orange-400 shrink-0" />
-              <span>{"< 60% — Low · heuristic noun-phrase mention"}</span>
+              <span>{"< 50% — Low · heuristic noun-phrase mention"}</span>
             </div>
           </div>
           <p className="text-[10px] text-muted-foreground/80 pt-0.5 border-t border-border/40">

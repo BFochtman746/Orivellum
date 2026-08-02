@@ -695,14 +695,19 @@ export default function Chat() {
     };
   }, [activeId]);
 
-  // #40 — Show a toast when the AI service comes back online after being offline
+  // #40 — When AI comes back online: toast + refetch active conversation + conversation list
   const prevAiOnlineRef = useRef<boolean | undefined>(undefined);
   useEffect(() => {
     if (prevAiOnlineRef.current === false && aiOnline === true) {
       toast.success("AI is back online", { duration: 3000 });
+      // Refetch the active conversation so any missed/partial state is resolved
+      if (activeId) {
+        queryClient.invalidateQueries({ queryKey: getGetConversationQueryKey(activeId) });
+      }
+      queryClient.invalidateQueries({ queryKey: getListConversationsQueryKey() });
     }
     prevAiOnlineRef.current = aiOnline;
-  }, [aiOnline]);
+  }, [aiOnline, activeId, queryClient]);
 
   // Tab-focus flush — updates both main text and thinking accumulator
   const flushAccumulator = useCallback(() => {
@@ -972,12 +977,14 @@ export default function Chat() {
     ? localMessages
     : (activeConv?.messages ?? []).map((m) => {
         const rawText = m.text ?? "";
+        const hasCutShortMeta = !!(m as any).meta?.cut_short;
         const isServerTruncated =
-          m.role === "assistant" && rawText.endsWith(TRUNCATION_SUFFIX);
+          m.role === "assistant" && (hasCutShortMeta || rawText.endsWith(TRUNCATION_SUFFIX));
         return {
           id: m.id ?? "",
           role: m.role as "user" | "assistant",
-          text: isServerTruncated
+          // Strip suffix from legacy messages that used the text-suffix approach
+          text: !hasCutShortMeta && rawText.endsWith(TRUNCATION_SUFFIX)
             ? rawText.slice(0, -TRUNCATION_SUFFIX.length)
             : rawText,
           created_at: m.created_at ?? "",
@@ -986,7 +993,7 @@ export default function Chat() {
           isClarification: !!(m as any).meta?.isClarification,
           // Surface the tool intent badge from persisted meta
           intent: (m as any).meta?.intent as string | undefined,
-          // Surface incomplete flag for server-stored truncated replies
+          // Restore cut-short flag from meta (new) or suffix detection (legacy)
           incomplete: isServerTruncated || undefined,
           // Restore persisted reasoning / chain-of-thought
           thinking: (m as any).meta?.thinking as string | undefined,
@@ -1260,6 +1267,31 @@ export default function Chat() {
                                         className="text-xs font-mono text-amber-700 hover:text-amber-900 underline underline-offset-2 shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
                                       >
                                         Re-send
+                                      </button>
+                                    </div>
+                                  );
+                                })()}
+                                {(msg as any).failed && (() => {
+                                  // Failed send — offer to retry with the same user message
+                                  const prevUser = displayMessages.slice(0, msgIdx).reverse().find(m => m.role === "user");
+                                  const resendText = prevUser?.text || lastSentRef.current;
+                                  return (
+                                    <div className="mt-2 flex items-center justify-between gap-2 border-t border-destructive/20 pt-2">
+                                      <div className="flex items-center gap-1.5 text-xs text-destructive/70">
+                                        <AlertTriangle className="w-3 h-3 shrink-0" />
+                                        <span>Failed to send.</span>
+                                      </div>
+                                      <button
+                                        onClick={() => {
+                                          if (!resendText) return;
+                                          // Remove this failed bubble so retries don't accumulate duplicates
+                                          setLocalMessages((prev) => prev.filter((m) => m.id !== msg.id));
+                                          sendText(resendText);
+                                        }}
+                                        disabled={!resendText || sending}
+                                        className="text-xs font-mono text-destructive/80 hover:text-destructive underline underline-offset-2 shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
+                                      >
+                                        Try again
                                       </button>
                                     </div>
                                   );

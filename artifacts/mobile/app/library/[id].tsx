@@ -52,7 +52,7 @@ export default function LibraryDocDetail() {
 
   const { data: docData, isLoading: docLoading, isError: docError, refetch: refetchDoc } =
     useGetDocument(id ?? '', { query: { enabled: !!id, staleTime: 15_000 } } as any);
-  const { data: knData, isLoading: knLoading, refetch: refetchKn } = useQuery({
+  const { data: knData, isLoading: knLoading, isError: knError, refetch: refetchKn } = useQuery({
     queryKey: ['library-knowledge', id],
     queryFn: async () => {
       const res = await mobileFetch(`https://${domain}/api/library/${id}/knowledge`);
@@ -242,6 +242,16 @@ export default function LibraryDocDetail() {
           </Text>
           {knLoading ? (
             <ActivityIndicator color={colors.primary} style={{ marginVertical: 12 }} />
+          ) : knError ? (
+            <Pressable
+              onPress={refetchKn}
+              style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 10 }}
+            >
+              <Feather name="alert-circle" size={14} color={colors.destructive ?? '#ef4444'} />
+              <Text style={[styles.emptyText, { color: colors.destructive ?? '#ef4444' }]}>
+                Could not load knowledge — tap to retry
+              </Text>
+            </Pressable>
           ) : knowledge.length === 0 ? (
             <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
               No knowledge extracted yet

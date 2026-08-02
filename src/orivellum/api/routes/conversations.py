@@ -693,7 +693,7 @@ async def _stream_response(
         if full_reply:
             try:
                 truncated = full_reply + "\n\n*(Response was cut short — re-send to continue.)*"
-                _meta: dict = {"model": model}
+                _meta: dict = {"model": model, "cut_short": True}
                 if thinking_text:
                     _meta["thinking"] = thinking_text
                 db.add_message(conv_id, "assistant", truncated, meta=_meta)

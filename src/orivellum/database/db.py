@@ -220,29 +220,40 @@ class OrivellumDB:
     # Near-duplicate tracking (referenced by capabilities/dedup.py)
     # -------------------------------------------------------------------------
 
-    def list_near_duplicates(self, resolved: bool = False) -> list[dict]:
+    def list_near_duplicates(self, resolved: bool = False,
+                             work_id: str | None = None) -> list[dict]:
         """Return doc_dupes rows with document titles joined in.
 
         By default returns only unresolved pairs (resolved=False).
         Pass resolved=True to fetch already-actioned pairs instead.
+        Pass work_id to restrict to pairs where at least one document
+        belongs to that Work.
         """
-        q = """SELECT dd.*, da.title as doc_a_title, db2.title as doc_b_title
+        args: list = [1 if resolved else 0]
+        q = """SELECT dd.*, da.title as doc_a_title, db2.title as doc_b_title,
+                      da.work_id as doc_a_work_id, db2.work_id as doc_b_work_id
                FROM doc_dupes dd
                JOIN documents da  ON da.id  = dd.doc_a_id
                JOIN documents db2 ON db2.id = dd.doc_b_id
-               WHERE dd.resolved=?
-               ORDER BY dd.similarity DESC"""
+               WHERE dd.resolved=?"""
+        if work_id:
+            q += " AND (da.work_id=? OR db2.work_id=?)"
+            args.extend([work_id, work_id])
+        q += " ORDER BY dd.similarity DESC"
         with self._lock:
-            rows = self._conn.execute(q, (1 if resolved else 0,)).fetchall()
+            rows = self._conn.execute(q, args).fetchall()
         return [dict(r) for r in rows]
 
-    def resolve_near_duplicate(self, dupe_id: str, action: str) -> dict | None:
+    def resolve_near_duplicate(self, dupe_id: str, action: str,
+                               canonical_doc_id: str | None = None) -> dict | None:
         """Mark a near-duplicate pair as resolved.
 
         action options:
           keep_both        — dismiss the alert; keep both documents as-is
           mark_versions    — create a DERIVED_FROM relationship between the pair
-          mark_superseded  — set doc_b lifecycle to 'superseded'
+          mark_superseded  — set the non-canonical doc lifecycle to 'superseded';
+                             pass canonical_doc_id to specify which survives
+                             (defaults to doc_a if omitted)
 
         Returns the original doc_dupes row dict, or None if not found.
         """
@@ -287,9 +298,15 @@ class OrivellumDB:
                 logger.debug("mark_versions relationship insert failed: %s", exc)
 
         elif action == "mark_superseded":
-            # Mark doc_b as the superseded (older/draft) document
+            # Mark the non-canonical document as superseded.
+            # canonical_doc_id identifies the survivor; the other one is superseded.
+            # Defaults to doc_a as canonical (doc_b gets superseded) when not supplied.
+            if canonical_doc_id and canonical_doc_id == dupe["doc_b_id"]:
+                superseded_id = dupe["doc_a_id"]  # user chose doc_b as canonical
+            else:
+                superseded_id = dupe["doc_b_id"]  # default: doc_a is canonical
             try:
-                self.update_document_lifecycle(dupe["doc_b_id"], "superseded")
+                self.update_document_lifecycle(superseded_id, "superseded")
             except Exception as exc:
                 logger.debug("mark_superseded lifecycle update failed: %s", exc)
 
@@ -323,6 +340,9 @@ class OrivellumDB:
                    limit: int = 200) -> list[dict]:
         q = """SELECT w.*, o.created_at as obj_created, o.lifecycle,
                       (SELECT COUNT(*) FROM documents d WHERE d.work_id=w.id) as doc_count,
+                      (SELECT COUNT(*) FROM documents d WHERE d.work_id=w.id AND d.readiness='ready') as ready_doc_count,
+                      (SELECT COUNT(*) FROM documents d WHERE d.work_id=w.id AND d.readiness IN ('error','no_text')) as error_doc_count,
+                      (SELECT COUNT(*) FROM documents d WHERE d.work_id=w.id AND d.readiness='imported') as processing_doc_count,
                       (SELECT COUNT(*) FROM tasks t WHERE t.work_id=w.id AND t.status='pending') as pending_tasks,
                       (SELECT COUNT(*) FROM knowledge k WHERE k.work_id=w.id) as knowledge_count,
                       (SELECT COUNT(*) FROM conversations c WHERE c.work_id=w.id) as conv_count
@@ -672,21 +692,52 @@ class OrivellumDB:
 
     def search_chunks(self, query: str, work_id: str | None = None,
                       limit: int = 10) -> list[dict]:
-        q = """SELECT c.*, d.title as doc_title, d.kind as doc_kind, d.work_id
-               FROM chunks_fts f
-               JOIN chunks c ON c.id = f.chunk_id
-               JOIN documents d ON d.id = f.doc_id
-               WHERE chunks_fts MATCH ?"""
+        """BM25-ranked full-text search over document chunks.
+
+        Returns results ordered by relevance (bm25_score, lower = better).
+        Each result includes a ``snippet`` field with matched context wrapped
+        in ``[[`` / ``]]`` markers, and a ``bm25_score`` float.
+        Falls back to unranked FTS if the ranked query fails.
+        """
+        cap = min(limit, 50)
         args: list = [query]
+        work_clause = ""
         if work_id:
-            q += " AND d.work_id=?"
+            work_clause = " AND d.work_id=?"
             args.append(work_id)
-        q += f" LIMIT {min(limit, 50)}"
+
+        # BM25 + snippet query (SQLite FTS5 auxiliary functions)
+        q_ranked = f"""
+            SELECT c.id, c.doc_id, c.page, c.text, c.created_at,
+                   d.title as doc_title, d.kind as doc_kind, d.work_id,
+                   bm25(chunks_fts) as bm25_score,
+                   snippet(chunks_fts, 0, '[[', ']]', '…', 24) as snippet
+            FROM chunks_fts
+            JOIN chunks c ON c.id = chunks_fts.chunk_id
+            JOIN documents d ON d.id = c.doc_id
+            WHERE chunks_fts MATCH ?{work_clause}
+            ORDER BY bm25(chunks_fts)
+            LIMIT {cap}"""
+
+        # Plain FTS fallback (no BM25/snippet) for older SQLite builds
+        q_plain = f"""
+            SELECT c.id, c.doc_id, c.page, c.text, c.created_at,
+                   d.title as doc_title, d.kind as doc_kind, d.work_id,
+                   NULL as bm25_score, NULL as snippet
+            FROM chunks_fts
+            JOIN chunks c ON c.id = chunks_fts.chunk_id
+            JOIN documents d ON d.id = c.doc_id
+            WHERE chunks_fts MATCH ?{work_clause}
+            LIMIT {cap}"""
+
         with self._lock:
             try:
-                rows = self._conn.execute(q, args).fetchall()
+                rows = self._conn.execute(q_ranked, args).fetchall()
             except Exception:
-                rows = []
+                try:
+                    rows = self._conn.execute(q_plain, args).fetchall()
+                except Exception:
+                    rows = []
         return [dict(r) for r in rows]
 
     # -------------------------------------------------------------------------
@@ -1487,6 +1538,90 @@ class OrivellumDB:
                 (limit,),
             ).fetchall()
         return [dict(r) for r in rows]
+
+    # -------------------------------------------------------------------------
+    # Gap cache (v50)
+    # -------------------------------------------------------------------------
+
+    def cache_work_gaps(self, work_id: str, gaps: list[dict],
+                        coverage_pct: float | None = None) -> None:
+        """Persist the most-recent gap detection result for *work_id*.
+
+        Subsequent calls overwrite the previous row so each Work has at most
+        one cache entry.  The caller is responsible for serialising ``gaps``
+        via ``json.dumps`` / passing a list of dicts.
+        """
+        import json as _json
+        now = _now()
+        with self._lock:
+            self._conn.execute(
+                """INSERT INTO work_gap_cache (work_id, gaps_json, coverage_pct, evaluated_at)
+                   VALUES (?, ?, ?, ?)
+                   ON CONFLICT(work_id) DO UPDATE SET
+                     gaps_json    = excluded.gaps_json,
+                     coverage_pct = excluded.coverage_pct,
+                     evaluated_at = excluded.evaluated_at""",
+                (work_id, _json.dumps(gaps), coverage_pct, now),
+            )
+            self._conn.commit()
+
+    def get_cached_gaps(self, work_id: str,
+                        max_age_seconds: int = 3600) -> dict | None:
+        """Return the cached gap result for *work_id* if it is not stale.
+
+        Returns ``None`` when no cache entry exists or the entry is older than
+        *max_age_seconds* (default 1 h).
+        """
+        import json as _json
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT gaps_json, coverage_pct, evaluated_at "
+                "FROM work_gap_cache WHERE work_id=?",
+                (work_id,),
+            ).fetchone()
+        if not row:
+            return None
+        import datetime
+        evaluated = row["evaluated_at"]
+        try:
+            ts = datetime.datetime.fromisoformat(evaluated)
+            age = (datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None) - ts.replace(tzinfo=None)).total_seconds()
+            if age > max_age_seconds:
+                return None
+        except Exception:
+            return None
+        return {
+            "gaps": _json.loads(row["gaps_json"] or "[]"),
+            "coverage_pct": row["coverage_pct"],
+            "evaluated_at": evaluated,
+        }
+
+    def get_all_cached_gaps(self, max_age_seconds: int = 3600) -> list[dict]:
+        """Return all non-stale cached gap rows as a flat list.
+
+        Each entry includes ``work_id``, ``gaps`` (list), ``coverage_pct``,
+        and ``evaluated_at``.  Stale rows are silently excluded.
+        """
+        import json as _json, datetime
+        cutoff = (
+            datetime.datetime.now(datetime.timezone.utc)
+            - datetime.timedelta(seconds=max_age_seconds)
+        ).strftime("%Y-%m-%d %H:%M:%S")
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT work_id, gaps_json, coverage_pct, evaluated_at "
+                "FROM work_gap_cache WHERE evaluated_at >= ?",
+                (cutoff,),
+            ).fetchall()
+        result = []
+        for row in rows:
+            result.append({
+                "work_id":      row["work_id"],
+                "gaps":         _json.loads(row["gaps_json"] or "[]"),
+                "coverage_pct": row["coverage_pct"],
+                "evaluated_at": row["evaluated_at"],
+            })
+        return result
 
     # -------------------------------------------------------------------------
     # Health / diagnostics

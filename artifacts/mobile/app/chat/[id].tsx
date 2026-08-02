@@ -177,6 +177,19 @@ function MessageBubble({ message, colors, isDark }: { message: Message & { isErr
             </>
           )}
         </View>
+        {/* Model attribution — shown on assistant messages when meta.model is set */}
+        {!isUser && !isErr && (message as any).meta?.model && (
+          <Text style={{
+            fontSize: 9,
+            fontFamily: 'Inter_400Regular',
+            color: colors.mutedForeground,
+            marginTop: 3,
+            opacity: 0.6,
+            letterSpacing: 0.2,
+          }}>
+            {String((message as any).meta.model).split('/').pop()}
+          </Text>
+        )}
         {copied && (
           <Text style={{ fontSize: 10, color: colors.mutedForeground, marginTop: 2, fontFamily: 'Inter_400Regular' }}>
             Copied ✓
@@ -329,6 +342,18 @@ export default function ChatScreen() {
       setInitialized(true);
     }
   }, [serverMessages, isLoading, initialized]);
+
+  // #40 — When the server comes back (isError flips false), clear send-failure state
+  //        so the composer re-enables automatically without requiring a manual retry.
+  const prevIsErrorRef = useRef(false);
+  useEffect(() => {
+    if (prevIsErrorRef.current && !isError && initialized) {
+      setSendFailed(false);
+      // Purge optimistic error bubbles so the conversation looks clean after recovery
+      setLocalMessages((prev) => prev.filter((m) => !(m as any).isError));
+    }
+    prevIsErrorRef.current = isError;
+  }, [isError, initialized]);
 
   useEffect(() => {
     navigation.setOptions({ title: conversation?.title || 'Conversation' });
@@ -485,20 +510,22 @@ export default function ChatScreen() {
       </Modal>
 
       <View style={{ flex: 1, paddingTop: topPad }}>
-        {/* Model badge row */}
-        {models.length > 0 && (
+        {/* Model badge row — always shown once a conversation is loaded; falls back to "Default" */}
+        {conversation && (
           <Pressable
-            onPress={handlePickModel}
+            onPress={models.length > 0 ? handlePickModel : undefined}
             style={({ pressed }) => [
               styles.modelBadgeRow,
-              { borderBottomColor: colors.border, opacity: pressed ? 0.7 : 1 },
+              { borderBottomColor: colors.border, opacity: pressed && models.length > 0 ? 0.7 : 1 },
             ]}
           >
             <Feather name="cpu" size={11} color={colors.mutedForeground} />
             <Text style={[styles.modelBadgeText, { color: colors.mutedForeground }]}>
               {currentModelLabel}
             </Text>
-            <Feather name="chevron-down" size={11} color={colors.mutedForeground} />
+            {models.length > 0 && (
+              <Feather name="chevron-down" size={11} color={colors.mutedForeground} />
+            )}
           </Pressable>
         )}
 
@@ -574,7 +601,7 @@ export default function ChatScreen() {
                 fontFamily: 'Inter_400Regular',
               },
             ]}
-            placeholder={isError ? 'Server offline…' : 'Message…'}
+            placeholder={isError && !initialized ? 'Server offline…' : 'Message…'}
             placeholderTextColor={colors.mutedForeground}
             value={text}
             onChangeText={setText}
@@ -582,16 +609,17 @@ export default function ChatScreen() {
             maxLength={4000}
             returnKeyType="default"
             blurOnSubmit={false}
-            editable={!isError}
+            editable={!isError || initialized}
           />
           <Pressable
             onPress={handleSend}
-            disabled={!text.trim() || sending || isError}
+            disabled={!text.trim() || sending || (isError && !initialized)}
             style={({ pressed }) => [
               styles.sendBtn,
               {
                 backgroundColor:
-                  text.trim() && !sending && !isError ? colors.primary : colors.muted,
+                  text.trim() && !sending && (!isError || initialized)
+                    ? colors.primary : colors.muted,
                 opacity: pressed ? 0.7 : 1,
               },
             ]}
@@ -600,7 +628,7 @@ export default function ChatScreen() {
               name="arrow-up"
               size={20}
               color={
-                text.trim() && !sending && !isError
+                text.trim() && !sending && (!isError || initialized)
                   ? colors.primaryForeground
                   : colors.mutedForeground
               }

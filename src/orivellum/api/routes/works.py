@@ -1,12 +1,15 @@
 """Works domain routes — /api/works/*"""
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from orivellum.api._deps import get_db
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api")
 
@@ -102,6 +105,16 @@ def works_documents(work_id: str):
         raise HTTPException(404, f"Work {work_id!r} not found")
     docs = db.list_documents(work_id=work_id)
     return {"documents": docs, "count": len(docs)}
+
+
+@router.get("/works/{work_id}/duplicates")
+def works_duplicates(work_id: str, resolved: bool = False):
+    """Return near-duplicate document pairs where at least one doc belongs to this Work."""
+    db = get_db()
+    if not db.get_work(work_id):
+        raise HTTPException(404, f"Work {work_id!r} not found")
+    pairs = db.list_near_duplicates(resolved=resolved, work_id=work_id)
+    return {"pairs": pairs, "count": len(pairs)}
 
 
 @router.get("/works/{work_id}/knowledge")
@@ -298,6 +311,48 @@ def works_stats(work_id: str):
     }
 
 
+@router.get("/works/{work_id}/chapters")
+def works_chapters(work_id: str):
+    """Return all book chapters extracted from documents linked to this Work.
+
+    Results are grouped by document and ordered by document title then
+    chapter sequence number.  Each chapter record includes ``word_count``
+    (approximated from text), ``status``, and ``extraction_method``.
+    """
+    db = get_db()
+    if not db.get_work(work_id):
+        raise HTTPException(404, f"Work {work_id!r} not found")
+
+    with db._lock:
+        rows = db._conn.execute(
+            """SELECT bc.id, bc.seq, COALESCE(bc.level, 1) as level, bc.title,
+                      (length(coalesce(bc.text,'')) - length(replace(coalesce(bc.text,''), ' ', '')) + 1) as word_count,
+                      bc.status, bc.extraction_method, bc.created_at,
+                      bc.source_doc_id,
+                      d.title as doc_title
+               FROM book_chapters bc
+               JOIN documents d ON d.id = bc.source_doc_id
+               WHERE bc.work_id = ?
+               ORDER BY d.title, bc.seq""",
+            (work_id,),
+        ).fetchall()
+
+    by_doc: dict[str, dict] = {}
+    for r in rows:
+        doc_id = r["source_doc_id"]
+        if doc_id not in by_doc:
+            by_doc[doc_id] = {"doc_id": doc_id, "doc_title": r["doc_title"] or "Untitled", "chapters": []}
+        ch = dict(r)
+        ch.pop("doc_title", None)
+        by_doc[doc_id]["chapters"].append(ch)
+
+    return {
+        "work_id": work_id,
+        "total_chapters": len(rows),
+        "documents": list(by_doc.values()),
+    }
+
+
 # ─── Project Compass ───────────────────────────────────────────────────────────
 
 class CompassUpdate(BaseModel):
@@ -369,30 +424,121 @@ def works_graph(work_id: str, limit: int = 100):
     return {"work_id": work_id, **graph}
 
 
+@router.get("/gaps/top")
+def workspace_top_gaps(limit: int = 3, refresh: bool = False):
+    """Return the highest-severity research gaps across all active Works.
+
+    Strategy (v50 cache):
+    1. Read all non-stale (< 1 h) gap cache rows for active Works.
+    2. For Works with no cache entry (or when ``refresh=True``), run detection
+       now and write the results to the cache — capped at 10 Works to stay fast.
+    3. Sort all results by severity and return the top ``limit`` entries.
+
+    This makes the dashboard load in milliseconds on repeat visits while still
+    providing fresh data when the cache is cold or the caller forces a refresh.
+    """
+    db = get_db()
+    from orivellum.capabilities.gaps import detect_gaps
+
+    works = db.list_works(status="active")
+    work_by_id = {w["id"]: w for w in works}
+
+    sev_order = {"high": 0, "medium": 1, "low": 2, "critical": -1}
+
+    # ── 1. Load cached rows ────────────────────────────────────────────────────
+    all_gaps: list[dict] = []
+    cached_work_ids: set[str] = set()
+
+    if not refresh:
+        for cached in db.get_all_cached_gaps(max_age_seconds=3600):
+            wid = cached["work_id"]
+            if wid not in work_by_id:
+                continue  # Work was deleted or deactivated
+            cached_work_ids.add(wid)
+            title = work_by_id[wid].get("title", "")
+            for g in cached["gaps"]:
+                all_gaps.append({
+                    "work_id":    wid,
+                    "work_title": title,
+                    **{k: g.get(k, "") for k in ("kind", "title", "description", "severity", "metadata")},
+                })
+
+    # ── 2. Detect for uncached / stale Works (cap at 10 to stay fast) ─────────
+    stale_works = [w for w in works if refresh or w["id"] not in cached_work_ids]
+    for work in stale_works[:10]:
+        try:
+            report = detect_gaps(work["id"], db)
+            gap_dicts = [
+                {
+                    "kind": g.kind, "title": g.title, "description": g.description,
+                    "severity": g.severity, "metadata": g.metadata,
+                }
+                for g in report.gaps
+            ]
+            db.cache_work_gaps(work["id"], gap_dicts, report.coverage_pct)
+            for g in gap_dicts:
+                all_gaps.append({"work_id": work["id"], "work_title": work.get("title", ""), **g})
+        except Exception as exc:
+            logger.warning("Gap detection failed for work %s: %s", work.get("id"), exc)
+
+    all_gaps.sort(key=lambda x: sev_order.get(x.get("severity", ""), 3))
+
+    return {
+        "gaps": all_gaps[:max(1, limit)],
+        "total_works_analyzed": len(works),
+        "cache_hits": len(cached_work_ids),
+    }
+
+
 @router.get("/works/{work_id}/gaps")
-def works_gaps(work_id: str):
-    """Return research gap analysis for a Work."""
+def works_gaps(work_id: str, refresh: bool = False):
+    """Return research gap analysis for a Work.
+
+    Uses the cache (max 1 h staleness) unless ``refresh=True``.
+    Always writes fresh results to the cache after detection.
+    """
     db = get_db()
     if not db.get_work(work_id):
         raise HTTPException(404, f"Work {work_id!r} not found")
+
     from orivellum.capabilities.gaps import detect_gaps
-    report = detect_gaps(work_id, db)
-    return {
-        "work_id": report.work_id,
-        "coverage_pct": report.coverage_pct,
-        "total_chapters": report.total_chapters,
-        "suggested_queries": report.suggested_queries,
-        "evaluated_at": report.evaluated_at,
-        "gaps": [
-            {
-                "kind": g.kind,
-                "title": g.title,
-                "description": g.description,
-                "severity": g.severity,
-                "metadata": g.metadata,
+
+    # Try cache first
+    if not refresh:
+        cached = db.get_cached_gaps(work_id, max_age_seconds=3600)
+        if cached is not None:
+            return {
+                "work_id":         work_id,
+                "coverage_pct":    cached["coverage_pct"],
+                "total_chapters":  None,
+                "suggested_queries": [],
+                "evaluated_at":    cached["evaluated_at"],
+                "gaps":            cached["gaps"],
+                "from_cache":      True,
             }
-            for g in report.gaps
-        ],
+
+    report = detect_gaps(work_id, db)
+    gap_dicts = [
+        {
+            "kind": g.kind, "title": g.title, "description": g.description,
+            "severity": g.severity, "metadata": g.metadata,
+        }
+        for g in report.gaps
+    ]
+    # Write back to cache
+    try:
+        db.cache_work_gaps(work_id, gap_dicts, report.coverage_pct)
+    except Exception as exc:
+        logger.debug("Gap cache write failed: %s", exc)
+
+    return {
+        "work_id":           report.work_id,
+        "coverage_pct":      report.coverage_pct,
+        "total_chapters":    report.total_chapters,
+        "suggested_queries": report.suggested_queries,
+        "evaluated_at":      report.evaluated_at,
+        "gaps":              gap_dicts,
+        "from_cache":        False,
     }
 
 
