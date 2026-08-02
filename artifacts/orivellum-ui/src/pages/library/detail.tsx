@@ -584,20 +584,36 @@ export default function DocumentDetail() {
   const [reprocessing, setReprocessing] = useState(false);
   const [reviewing, setReviewing] = useState<string | null>(null);
   const [knFilter, setKnFilter] = useState<"all" | "pending" | "approved" | "rejected">("all");
-  // Read Aloud (TTS) state
-  const [ttsLoading, setTtsLoading] = useState(false);
+  // Read Aloud (TTS) state — long documents are split into parts and
+  // synthesized one part at a time, auto-advancing during playback.
+  const [ttsLoading, setTtsLoading] = useState(false);       // synthesizing the part about to play
   const [ttsAudioUrl, setTtsAudioUrl] = useState<string | null>(null);
   const [ttsPlaying, setTtsPlaying] = useState(false);
+  const [ttsChunks, setTtsChunks] = useState<string[]>([]);
+  const [ttsIndex, setTtsIndex] = useState(0);
   const ttsAudioRef = useRef<HTMLAudioElement | null>(null);
-  // Keep the latest object URL in a ref so the unmount cleanup never sees a stale value
-  const ttsUrlRef = useRef<string | null>(null);
-  ttsUrlRef.current = ttsAudioUrl;
+  const ttsUrlCacheRef = useRef<Map<number, string>>(new Map()); // part index → blob URL
+  const ttsPromisesRef = useRef<Map<number, Promise<string>>>(new Map()); // in-flight single-flight
+  const ttsAutoPlayRef = useRef(false); // play as soon as the next part's URL lands
+  // Monotonic session id — bumped on close, new read, doc change, and unmount.
+  // Any synthesis result from an older session is discarded (never cached).
+  const ttsSessionRef = useRef(0);
   useEffect(() => {
     return () => {
+      ttsSessionRef.current++;
       ttsAudioRef.current?.pause();
-      if (ttsUrlRef.current) URL.revokeObjectURL(ttsUrlRef.current);
+      for (const url of ttsUrlCacheRef.current.values()) URL.revokeObjectURL(url);
+      ttsUrlCacheRef.current.clear();
+      ttsPromisesRef.current.clear();
     };
   }, []);
+  // Auto-continue playback when advancing to the next part
+  useEffect(() => {
+    if (ttsAutoPlayRef.current && ttsAudioUrl && ttsAudioRef.current) {
+      ttsAutoPlayRef.current = false;
+      ttsAudioRef.current.play().catch(() => setTtsPlaying(false));
+    }
+  }, [ttsAudioUrl]);
   const queryClient = useQueryClient();
 
   const { data, isLoading, error, refetch } = useGetDocument(docId ?? "", {
@@ -744,17 +760,93 @@ export default function DocumentDetail() {
   };
 
   // ── Read Aloud (TTS) ──────────────────────────────────────────────────────
-  const TTS_MAX_CHARS = 5000;
+  // The TTS endpoint caps requests at 10 000 chars; stay well under it and
+  // split at paragraph/sentence boundaries so parts sound natural.
+  const TTS_PART_CHARS = 4500;
+  const TTS_MAX_PARTS = 40; // ~180k chars ≈ several hours of audio
+
+  const splitTextForTts = (text: string): string[] => {
+    const paras = text.replace(/\n{3,}/g, "\n\n").split(/\n\n+/);
+    const parts: string[] = [];
+    let cur = "";
+    const flush = () => { if (cur.trim()) parts.push(cur.trim()); cur = ""; };
+    for (const p of paras) {
+      if (p.length > TTS_PART_CHARS) {
+        for (const s of p.split(/(?<=[.!?])\s+/)) {
+          if (cur && cur.length + s.length + 1 > TTS_PART_CHARS) flush();
+          cur += (cur ? " " : "") + s;
+          while (cur.length > TTS_PART_CHARS) { // pathological unbroken text
+            parts.push(cur.slice(0, TTS_PART_CHARS));
+            cur = cur.slice(TTS_PART_CHARS);
+          }
+        }
+      } else {
+        if (cur && cur.length + p.length + 2 > TTS_PART_CHARS) flush();
+        cur += (cur ? "\n\n" : "") + p;
+      }
+    }
+    flush();
+    return parts;
+  };
+
+  const TTS_STALE = "tts-session-stale";
+
+  /** Synthesize one part, cache the blob URL, and return it.
+   *  Single-flight per part via a promise map; results from an older
+   *  session are discarded before any blob URL is created. */
+  const synthesizePart = (parts: string[], i: number): Promise<string> => {
+    const session = ttsSessionRef.current;
+    const cached = ttsUrlCacheRef.current.get(i);
+    if (cached) return Promise.resolve(cached);
+    const inflight = ttsPromisesRef.current.get(i);
+    if (inflight) return inflight;
+    const p = (async () => {
+      const resp = await apiFetch(`${BASE}/studio/tts`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: parts[i], voice: "af_heart", speed: 1.0 }),
+      });
+      if (ttsSessionRef.current !== session) throw new Error(TTS_STALE);
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        throw new Error((err as any).detail ?? `HTTP ${resp.status}`);
+      }
+      const blob = await resp.blob();
+      if (ttsSessionRef.current !== session) throw new Error(TTS_STALE);
+      const url = URL.createObjectURL(blob);
+      ttsUrlCacheRef.current.set(i, url);
+      return url;
+    })();
+    p.finally(() => {
+      if (ttsPromisesRef.current.get(i) === p) ttsPromisesRef.current.delete(i);
+    }).catch(() => {}); // avoid unhandled-rejection from the tracking chain
+    ttsPromisesRef.current.set(i, p);
+    return p;
+  };
+
+  /** Fire-and-forget prefetch of the next part so playback never stalls. */
+  const prefetchPart = (parts: string[], i: number) => {
+    if (i >= parts.length) return;
+    synthesizePart(parts, i).catch(() => {});
+  };
+
+  const resetTts = () => {
+    ttsSessionRef.current++;
+    ttsAutoPlayRef.current = false;
+    ttsAudioRef.current?.pause();
+    setTtsPlaying(false);
+    setTtsAudioUrl(null);
+    setTtsChunks([]);
+    setTtsIndex(0);
+    for (const url of ttsUrlCacheRef.current.values()) URL.revokeObjectURL(url);
+    ttsUrlCacheRef.current.clear();
+    ttsPromisesRef.current.clear();
+  };
 
   const handleReadAloud = async () => {
     if (!docId || ttsLoading) return;
     setTtsLoading(true);
-    setTtsPlaying(false);
-    // Release any previous blob URL
-    if (ttsAudioUrl) {
-      URL.revokeObjectURL(ttsAudioUrl);
-      setTtsAudioUrl(null);
-    }
+    resetTts();
     try {
       // Prefer the already-extracted text on the doc object; fall back to chunks.
       let text: string = (doc?.extracted_text as string) || "";
@@ -774,30 +866,56 @@ export default function DocumentDetail() {
         return;
       }
 
-      const truncated = text.length > TTS_MAX_CHARS;
-      const payloadText = truncated ? text.slice(0, TTS_MAX_CHARS) : text;
-
-      const ttsResp = await apiFetch(`${BASE}/studio/tts`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: payloadText, voice: "af_heart", speed: 1.0 }),
-      });
-      if (!ttsResp.ok) {
-        const err = await ttsResp.json().catch(() => ({}));
-        throw new Error((err as any).detail ?? `HTTP ${ttsResp.status}`);
+      let parts = splitTextForTts(text);
+      if (parts.length > TTS_MAX_PARTS) {
+        parts = parts.slice(0, TTS_MAX_PARTS);
+        toast.info(`Very long document — reading the first ${TTS_MAX_PARTS} parts.`);
       }
-      const blob = await ttsResp.blob();
-      const url = URL.createObjectURL(blob);
+      const session = ttsSessionRef.current;
+      setTtsChunks(parts);
+      setTtsIndex(0);
+      const url = await synthesizePart(parts, 0);
+      if (ttsSessionRef.current !== session) return; // closed/superseded meanwhile
       setTtsAudioUrl(url);
-      if (truncated) {
-        toast.info("Long document — reading first part.");
-      }
-      // Do NOT autoplay — iOS Safari blocks audio from async code.
-      // The audio player below has native controls; user taps play.
+      prefetchPart(parts, 1);
+      // Do NOT autoplay the first part — iOS Safari blocks audio from async
+      // code. The playback bar below appears; the user taps play.
     } catch (e: any) {
-      toast.error(`Read aloud failed: ${e.message ?? "unknown error"}`, { duration: 8000 });
+      if (e?.message !== TTS_STALE) {
+        toast.error(`Read aloud failed: ${e.message ?? "unknown error"}`, { duration: 8000 });
+        resetTts();
+      }
     } finally {
       setTtsLoading(false);
+    }
+  };
+
+  /** Advance to part `i` (auto-play unless this is a manual seek while paused). */
+  const goToPart = async (i: number, autoplay: boolean) => {
+    if (i < 0 || i >= ttsChunks.length) return;
+    const session = ttsSessionRef.current;
+    setTtsLoading(true);
+    try {
+      const url = await synthesizePart(ttsChunks, i);
+      if (ttsSessionRef.current !== session) return; // closed/superseded meanwhile
+      ttsAutoPlayRef.current = autoplay;
+      setTtsIndex(i);
+      setTtsAudioUrl(url);
+      prefetchPart(ttsChunks, i + 1);
+    } catch (e: any) {
+      if (e?.message !== TTS_STALE) {
+        setTtsPlaying(false);
+        toast.error(`Could not synthesize part ${i + 1}: ${e.message ?? "unknown error"}`);
+      }
+    } finally {
+      setTtsLoading(false);
+    }
+  };
+
+  const handleTtsEnded = () => {
+    setTtsPlaying(false);
+    if (ttsIndex + 1 < ttsChunks.length) {
+      void goToPart(ttsIndex + 1, true);
     }
   };
 
@@ -813,12 +931,14 @@ export default function DocumentDetail() {
     }
   };
 
-  const closeTtsPlayer = () => {
-    ttsAudioRef.current?.pause();
-    setTtsPlaying(false);
-    if (ttsAudioUrl) URL.revokeObjectURL(ttsAudioUrl);
-    setTtsAudioUrl(null);
-  };
+  const closeTtsPlayer = () => resetTts();
+
+  // Reset the TTS session when navigating between documents so audio from a
+  // previous doc can never surface on the new one.
+  useEffect(() => {
+    return () => resetTts();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [docId]);
 
   const handleDelete = () => {
     if (!docId || !confirm("Delete this document? This cannot be undone.")) return;
@@ -919,7 +1039,8 @@ export default function DocumentDetail() {
             variant="outline"
             size="sm"
             onClick={handleReadAloud}
-            disabled={ttsLoading}
+            disabled={ttsLoading || readiness === "no_text"}
+            title={readiness === "no_text" ? "This document has no readable text" : "Listen to this document"}
           >
             {ttsLoading ? (
               <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Preparing audio…</>
@@ -999,33 +1120,63 @@ export default function DocumentDetail() {
           </div>
         </div>
 
-        {/* Read Aloud audio player */}
+        {/* Read Aloud playback bar */}
         {ttsAudioUrl && (
-          <div className="mt-3 flex items-center gap-3 p-3 rounded-lg bg-muted/30 border border-border/50">
+          <div className="mt-3 flex items-center gap-2 p-3 rounded-lg bg-muted/30 border border-border/50 flex-wrap">
             <Button
               size="icon"
               variant="secondary"
               className="h-9 w-9 rounded-full shrink-0"
               onClick={toggleTtsPlay}
+              disabled={ttsLoading}
             >
-              {ttsPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+              {ttsLoading
+                ? <Loader2 className="w-4 h-4 animate-spin" />
+                : ttsPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
             </Button>
             <audio
               ref={ttsAudioRef}
               src={ttsAudioUrl}
-              onEnded={() => setTtsPlaying(false)}
+              onEnded={handleTtsEnded}
               onPause={() => setTtsPlaying(false)}
               onPlay={() => setTtsPlaying(true)}
               className="flex-1 h-8"
               controls
-              style={{ minWidth: 0 }}
+              style={{ minWidth: 160 }}
             />
+            {ttsChunks.length > 1 && (
+              <div className="flex items-center gap-1 shrink-0">
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="h-7 w-7"
+                  onClick={() => goToPart(ttsIndex - 1, ttsPlaying)}
+                  disabled={ttsLoading || ttsIndex === 0}
+                  title="Previous part"
+                >
+                  <ChevronDown className="w-3.5 h-3.5 rotate-90" />
+                </Button>
+                <span className="text-[11px] font-mono text-muted-foreground whitespace-nowrap tabular-nums">
+                  Part {ttsIndex + 1} / {ttsChunks.length}
+                </span>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="h-7 w-7"
+                  onClick={() => goToPart(ttsIndex + 1, ttsPlaying)}
+                  disabled={ttsLoading || ttsIndex >= ttsChunks.length - 1}
+                  title="Next part"
+                >
+                  <ChevronDown className="w-3.5 h-3.5 -rotate-90" />
+                </Button>
+              </div>
+            )}
             <Button
               size="icon"
               variant="ghost"
               className="shrink-0"
               onClick={closeTtsPlayer}
-              title="Close audio player"
+              title="Stop and close"
             >
               <X className="w-4 h-4" />
             </Button>
