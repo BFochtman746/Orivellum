@@ -886,4 +886,17 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         );
         CREATE INDEX IF NOT EXISTS rag_sweeps_started ON rag_sweeps(started_at)
     """),
+
+    # v54 — Governance review queue deferrals (MONARCH #151)
+    # A deferred review item is snoozed: excluded from /api/review/queue until
+    # deferred_until passes. item_key is "<type>:<row id>" (e.g. "knowledge:abc").
+    (54, "Add review_deferrals table for the governance review queue", """
+        CREATE TABLE IF NOT EXISTS review_deferrals (
+            item_key       TEXT PRIMARY KEY,
+            deferred_until TEXT NOT NULL,
+            reason         TEXT,
+            created_at     TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS rd_until ON review_deferrals(deferred_until)
+    """),
 ]

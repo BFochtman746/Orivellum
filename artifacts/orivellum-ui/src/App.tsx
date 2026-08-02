@@ -24,6 +24,7 @@ import WriteDeskPage from '@/pages/write/index';
 import Backups from '@/pages/backups/index';
 import System from '@/pages/system/index';
 import GovernancePage from '@/pages/governance/index';
+import ReviewPage from '@/pages/review/index';
 import Mcos from '@/pages/mcos/index';
 import NotFound from '@/pages/not-found';
 
@@ -66,6 +67,7 @@ function Router() {
         <Route path="/system">{() => <RouteWithBoundary component={System} />}</Route>
         <Route path="/mcos">{() => <RouteWithBoundary component={Mcos} />}</Route>
         <Route path="/governance">{() => <RouteWithBoundary component={GovernancePage} />}</Route>
+        <Route path="/review">{() => <RouteWithBoundary component={ReviewPage} />}</Route>
         <Route component={NotFound} />
       </Switch>
     </AppLayout>

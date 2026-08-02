@@ -20,7 +20,7 @@ import {
   Settings, HardDrive, Activity, Mic, Wifi, WifiOff,
   ChevronRight, Plus, Search, Archive, RotateCcw,
   Pencil, Check, X, Menu, DownloadCloud, Feather,
-  ALargeSmall, Loader2, CheckCircle2, ExternalLink, Gauge,
+  ALargeSmall, Loader2, CheckCircle2, ExternalLink, Gauge, Inbox,
 } from "lucide-react";
 import { useConnectivity } from "@/lib/useConnectivity";
 import { useQuery } from "@tanstack/react-query";
@@ -73,9 +73,10 @@ const PHASES = [
     id: "review",
     label: "Review",
     icon: Target,
-    routes: ["/projects", "/backups", "/system", "/mcos", "/governance"],
+    routes: ["/projects", "/backups", "/system", "/mcos", "/governance", "/review"],
     items: [
       { name: "Projects",    href: "/projects",   icon: Target },
+      { name: "Review Queue", href: "/review",    icon: Inbox },
       { name: "Governance",  href: "/governance", icon: CheckCircle2 },
       { name: "Backups",     href: "/backups",    icon: HardDrive },
       { name: "System",      href: "/system",     icon: Settings },
@@ -444,6 +445,19 @@ function PhaseNav({ location, onNavigate }: { location: string; onNavigate: () =
   const toggle = (id: string) =>
     setOpenPhases(prev => ({ ...prev, [id]: !prev[id] }));
 
+  // Review-queue badge: number of items awaiting a human decision.
+  const { data: reviewQueue } = useQuery<{ count: number }>({
+    queryKey: ["review-queue-count"],
+    queryFn: async () => {
+      const r = await apiFetch(`${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "") + "/review/queue?limit=1");
+      if (!r.ok) throw new Error("review queue count failed");
+      return r.json();
+    },
+    refetchInterval: 60_000,
+    staleTime: 55_000,
+  });
+  const reviewCount = reviewQueue?.count ?? 0;
+
   return (
     <div className="space-y-0.5">
       {PHASES.map(phase => (
@@ -469,6 +483,14 @@ function PhaseNav({ location, onNavigate }: { location: string; onNavigate: () =
                   >
                     <item.icon className="w-3.5 h-3.5 shrink-0" />
                     <span>{item.name}</span>
+                    {item.href === "/review" && reviewCount > 0 && (
+                      <span
+                        className="ml-auto min-w-[18px] px-1 py-px rounded-full bg-primary/15 text-primary text-[10px] font-mono text-center"
+                        data-testid="review-queue-badge"
+                      >
+                        {reviewCount > 99 ? "99+" : reviewCount}
+                      </span>
+                    )}
                     {disabled && <span className="ml-auto text-[9px] font-mono text-muted-foreground/40">soon</span>}
                   </Link>
                 );

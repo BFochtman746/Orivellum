@@ -136,6 +136,46 @@ def _explode_zip_into_documents(
     except zipfile.BadZipFile as exc:
         logger.error("ZIP explode: bad archive %s: %s", path.name, exc)
 
+    # Review-queue auto-populate (MONARCH #151): when an archive with no Work
+    # produces a group of >2 child docs, suggest assigning them to a new Work
+    # named after the archive.  A human approves/rejects it on /review.
+    if work_id is None and len(children) > 2:
+        try:
+            import json as _json
+            import uuid as _uuid_mod
+            from datetime import datetime as _dt, timezone as _tz
+
+            proposed = Path(zip_title).stem.replace("_", " ").replace("-", " ").strip() or zip_title
+            with db._lock:
+                exists = db._conn.execute(
+                    """SELECT 1 FROM suggestions
+                       WHERE kind='work_assignment'
+                         AND json_extract(meta,'$.archive_doc_id')=?""",
+                    (doc_id,),
+                ).fetchone()
+                if not exists:
+                    db._conn.execute(
+                        """INSERT INTO suggestions(id, work_id, kind, text, meta, created_at)
+                           VALUES(?,?,?,?,?,?)""",
+                        (
+                            str(_uuid_mod.uuid4()),
+                            None,
+                            "work_assignment",
+                            f"Archive \u201c{zip_title}\u201d produced {len(children)} documents. "
+                            f"Group them into a new Work \u201c{proposed}\u201d?",
+                            _json.dumps({
+                                "archive_doc_id": doc_id,
+                                "doc_ids": children,
+                                "proposed_title": proposed,
+                                "confidence": 0.6,
+                            }),
+                            _dt.now(_tz.utc).isoformat(),
+                        ),
+                    )
+                    db._conn.commit()
+        except Exception as exc:  # noqa: BLE001 — suggestion is best-effort
+            logger.warning("ZIP explode: could not create work_assignment suggestion: %s", exc)
+
     return children
 
 
