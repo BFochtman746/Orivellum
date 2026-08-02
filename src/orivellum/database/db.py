@@ -698,12 +698,12 @@ class OrivellumDB:
                     (cid, "chapter", now, now),
                 )
                 self._conn.execute(
-                    """INSERT INTO book_chapters(id,pipeline_id,work_id,seq,title,
+                    """INSERT INTO book_chapters(id,pipeline_id,work_id,seq,level,title,
                        text,source_doc_id,citations,status,meta,created_at,updated_at,
                        citation_count,extraction_method)
-                       VALUES(?,NULL,?,?,?,?,?,'[]','extracted','{}',?,?,0,'heading_parser')""",
-                    (cid, work_id, ch["seq"], ch["title"], ch.get("text", ""),
-                     doc_id, now, now),
+                       VALUES(?,NULL,?,?,?,?,?,?,'[]','extracted','{}',?,?,0,'heading_parser')""",
+                    (cid, work_id, ch["seq"], ch.get("level", 1), ch["title"],
+                     ch.get("text", ""), doc_id, now, now),
                 )
             self._conn.commit()
         return len(chapters)
@@ -712,8 +712,8 @@ class OrivellumDB:
         """Return all chapter rows for a document, ordered by seq."""
         with self._lock:
             rows = self._conn.execute(
-                """SELECT id, seq, title, status, extraction_method, created_at,
-                          citation_count, meta,
+                """SELECT id, seq, COALESCE(level, 1) as level, title, status,
+                          extraction_method, created_at, citation_count, meta,
                           (length(text) - length(replace(coalesce(text,''), ' ', '')) + 1) as word_count
                    FROM book_chapters WHERE source_doc_id=? ORDER BY seq""",
                 (doc_id,),

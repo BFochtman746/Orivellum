@@ -745,4 +745,9 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         CREATE INDEX IF NOT EXISTS dv_doc     ON doc_versions(doc_id);
         CREATE INDEX IF NOT EXISTS dv_canonical ON doc_versions(doc_id, is_canonical)
     """),
+
+    # v47 — Chapter heading level (H1/H2/H3) on book_chapters (MONARCH #144)
+    (47, "Add heading level column to book_chapters", """
+        ALTER TABLE book_chapters ADD COLUMN level INTEGER NOT NULL DEFAULT 1
+    """),
 ]

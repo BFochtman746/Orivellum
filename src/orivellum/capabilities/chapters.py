@@ -64,7 +64,7 @@ def extract_chapters(text: str, min_section_words: int = 20) -> list[ExtractedCh
     section rather than emitted as standalone entries, so shallow
     heading hierarchies don't produce dozens of empty chapters.
     """
-    if not text or len(text.strip()) < 100:
+    if not text or not text.strip():
         return []
 
     headings = _find_headings(text)
