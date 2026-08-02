@@ -149,6 +149,17 @@ function RootLayoutNav() {
           title: '',
         }}
       />
+      <Stack.Screen
+        name="studio"
+        options={{
+          headerShown: true,
+          headerBackTitle: 'Back',
+          headerStyle: { backgroundColor: 'transparent' },
+          headerTransparent: true,
+          headerBlurEffect: 'regular',
+          title: '',
+        }}
+      />
     </Stack>
   );
 }

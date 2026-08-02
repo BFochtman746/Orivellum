@@ -36,4 +36,6 @@
 - [WRITING_ARCHITECT WR-02](wa-wr02.md) — stdlib-only Python BPOS at writing_architect_pkg/; v0.2.0; WR-00 accepted; WR-02 research commands built; 28/28 tests; run with `uv run --with pytest pytest tests/`.
 - [Gap cache design](orivellum-gap-cache.md) — schema v50 work_gap_cache table; /gaps/top reads cache first, detects up to 10 uncached Works; nightshift writes cache; stale = > 1 h; ?refresh=true bypasses cache.
 - [Learning loop](orivellum-learning-loop.md) — evidence scoring always persists meta.evidence; conflicts batch-inserted; semantic hits must carry full knowledge shape; embeddings fail → silent FTS fallback.
+- [GitHub main sync](github-main-sync.md) — user's Windows clone pulls origin/main; ALWAYS push HEAD:main too (shell push with token), or their git pull gets nothing.
+- [Nightshift maintenance](orivellum-nightshift-maint.md) — 10-pass nightly runner; vectors table holds chunk AND knowledge types — orphan cleanup must be type-aware; VACUUM under db._lock; sequential recovery worker.
 - [Bulk reprocess pipeline](orivellum-reprocess-all.md) — POST /library/reprocess-all handles stuck (imported/error/no_text) + ZIP docs in one call; nightshift recovery pass retries stuck non-ZIP docs (max 5/run, >10 min old); stripMarkdown utility at artifacts/mobile/lib/stripMarkdown.ts.

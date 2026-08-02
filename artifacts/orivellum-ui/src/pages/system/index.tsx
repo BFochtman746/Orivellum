@@ -7,87 +7,177 @@ import { Activity, Database, Cpu, CheckCircle2, XCircle, AlertCircle, Terminal, 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 const API_BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") || "";
 
-// ─── Nightshift card ──────────────────────────────────────────────────────────
+// ─── Relative time helper ───────────────────────────────────────────────────
 
-function NightshiftCard() {
+function relativeTime(iso: string | null | undefined): string {
+  if (!iso) return "never";
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return "never";
+  const diff = Date.now() - then;
+  const sec = Math.round(diff / 1000);
+  if (sec < 60) return "just now";
+  const min = Math.round(sec / 60);
+  if (min < 60) return `${min} minute${min === 1 ? "" : "s"} ago`;
+  const hr = Math.round(min / 60);
+  if (hr < 24) return `${hr} hour${hr === 1 ? "" : "s"} ago`;
+  const day = Math.round(hr / 24);
+  if (day < 30) return `${day} day${day === 1 ? "" : "s"} ago`;
+  return new Date(iso).toLocaleDateString();
+}
+
+// ─── Maintenance card (Run Maintenance Now + Last Night Report) ─────────────────
+
+type NightshiftStatus = {
+  running: boolean;
+  started_at: string | null;
+  last_run: { ran_at: string; docs_processed: number; items_added: number } | null;
+};
+
+type NightshiftReport = {
+  ran_at?: string;
+  docs_processed?: number;
+  items_added?: number;
+  report_markdown: string | null;
+};
+
+function MaintenanceCard() {
   const qc = useQueryClient();
-  const { data, isLoading } = useQuery({
-    queryKey: ["system", "jobs"],
+  const [reportOpen, setReportOpen] = useState(false);
+
+  const { data: status, isLoading } = useQuery<NightshiftStatus>({
+    queryKey: ["system", "nightshift-status"],
     queryFn: async () => {
-      const r = await apiFetch(`${API_BASE}/api/system/jobs`);
-      if (!r.ok) throw new Error("jobs fetch failed");
-      return r.json() as Promise<{ nightshift: { ran_at: string; docs_processed: number; items_added: number; report_path: string | null } | null }>;
+      const r = await apiFetch(`${API_BASE}/api/system/nightshift/status`);
+      if (!r.ok) throw new Error("status fetch failed");
+      return r.json();
     },
-    staleTime: 30_000,
-    refetchInterval: 60_000,
+    staleTime: 5_000,
+    // Poll every 3s only while a run is in progress; stop when done.
+    refetchInterval: (query) => (query.state.data?.running ? 3_000 : false),
   });
 
-  const trigger = useMutation({
+  const running = status?.running ?? false;
+
+  const { data: report, isLoading: loadingReport } = useQuery<NightshiftReport>({
+    queryKey: ["system", "nightshift-report"],
+    queryFn: async () => {
+      const r = await apiFetch(`${API_BASE}/api/system/nightshift/last-report`);
+      if (!r.ok) throw new Error("report fetch failed");
+      return r.json();
+    },
+    staleTime: 30_000,
+  });
+
+  const runNow = useMutation({
     mutationFn: async () => {
-      const r = await apiFetch(`${API_BASE}/api/system/nightshift/run`, { method: "POST" });
+      const r = await apiFetch(`${API_BASE}/api/system/nightshift/run-now`, { method: "POST" });
+      if (r.status === 409) throw new Error("already running");
       if (!r.ok) throw new Error("trigger failed");
       return r.json();
     },
     onSuccess: () => {
-      toast.success("Nightshift started — re-processes documents with sparse knowledge");
-      setTimeout(() => qc.invalidateQueries({ queryKey: ["system", "jobs"] }), 5000);
+      toast.success("Maintenance started — running in the background");
+      qc.invalidateQueries({ queryKey: ["system", "nightshift-status"] });
     },
-    onError: () => toast.error("Could not start nightshift"),
+    onError: (e) =>
+      toast.error(e instanceof Error && e.message === "already running"
+        ? "Maintenance is already running"
+        : "Could not start maintenance"),
   });
 
-  const ns = data?.nightshift;
+  // When a run finishes, refresh status + report so the UI updates.
+  const prevRunning = useRef(running);
+  useEffect(() => {
+    if (prevRunning.current && !running) {
+      qc.invalidateQueries({ queryKey: ["system", "nightshift-report"] });
+      qc.invalidateQueries({ queryKey: ["system", "jobs"] });
+    }
+    prevRunning.current = running;
+  }, [running, qc]);
+
+  const lastRun = status?.last_run;
+  const busy = running || runNow.isPending;
+
   return (
     <Card>
-      <CardContent className="p-6">
-        <div className="flex items-center justify-between gap-3 mb-4">
+      <CardContent className="p-6 space-y-5">
+        <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <Moon className="w-5 h-5 text-primary" />
-            <h2 className="text-lg font-serif font-medium">Nightshift</h2>
+            <h2 className="text-lg font-serif font-medium">Maintenance</h2>
           </div>
           <Button
             size="sm"
             variant="outline"
             className="gap-1.5 text-xs"
-            onClick={() => trigger.mutate()}
-            disabled={trigger.isPending}
+            onClick={() => runNow.mutate()}
+            disabled={busy}
           >
-            {trigger.isPending ? (
+            {busy ? (
               <><Activity className="w-3 h-3 animate-spin" />Running…</>
             ) : (
-              <><Moon className="w-3 h-3" />Run Now</>
+              <><Moon className="w-3 h-3" />Run Maintenance Now</>
             )}
           </Button>
         </div>
+
         {isLoading ? (
           <Skeleton className="h-8 w-full" />
-        ) : ns ? (
-          <div className="space-y-1 text-sm">
-            <div className="flex items-center justify-between">
-              <span className="text-muted-foreground">Last run</span>
-              <span className="font-mono text-xs">{new Date(ns.ran_at).toLocaleString()}</span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-muted-foreground">Documents processed</span>
-              <Badge variant="secondary">{ns.docs_processed}</Badge>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-muted-foreground">Knowledge items added</span>
-              <Badge variant="secondary">{ns.items_added}</Badge>
-            </div>
-            {ns.report_path && (
-              <p className="text-[10px] font-mono text-muted-foreground pt-1 truncate">{ns.report_path}</p>
-            )}
+        ) : lastRun ? (
+          <div className="text-sm text-muted-foreground">
+            Last run: <span className="text-foreground">{relativeTime(lastRun.ran_at)}</span>
+            {" · "}
+            <Badge variant="secondary" className="mx-0.5">{lastRun.docs_processed}</Badge> docs processed
+            {" · "}
+            <Badge variant="secondary" className="mx-0.5">{lastRun.items_added}</Badge> items added
           </div>
         ) : (
           <p className="text-sm text-muted-foreground">
-            No nightshift runs yet — fires daily at 03:00 and re-processes documents with sparse knowledge. Use "Run Now" to trigger it manually.
+            No runs yet — nightshift fires at 3:00 AM.
           </p>
         )}
+
+        {/* ── Last Night Report ── */}
+        <div className="border-t border-border/40 pt-4">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <ScrollText className="w-4 h-4 text-muted-foreground" />
+              <h3 className="text-sm font-medium">Last Night Report</h3>
+              {report?.ran_at && (
+                <span className="text-xs text-muted-foreground font-mono">
+                  {new Date(report.ran_at).toLocaleString()}
+                </span>
+              )}
+            </div>
+            {report?.report_markdown && (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="text-xs"
+                onClick={() => setReportOpen((o) => !o)}
+              >
+                {reportOpen ? "Hide" : "View"}
+              </Button>
+            )}
+          </div>
+
+          {loadingReport ? (
+            <Skeleton className="h-8 w-full mt-3" />
+          ) : !report?.report_markdown ? (
+            <p className="text-sm text-muted-foreground mt-2">
+              No runs yet — nightshift fires at 3:00 AM.
+            </p>
+          ) : reportOpen ? (
+            <pre className="mt-3 text-xs font-mono whitespace-pre-wrap bg-muted/40 rounded-lg p-4 max-h-96 overflow-y-auto border border-border/40">
+              {report.report_markdown}
+            </pre>
+          ) : null}
+        </div>
       </CardContent>
     </Card>
   );
@@ -521,8 +611,8 @@ $env:ORIVELLUM_AI_URL="http://127.0.0.1:11434/v1"`}
         </Card>
       )}
 
-      {/* Nightshift */}
-      <NightshiftCard />
+      {/* Maintenance */}
+      <MaintenanceCard />
 
       {/* User Memory */}
       <UserMemoryCard />

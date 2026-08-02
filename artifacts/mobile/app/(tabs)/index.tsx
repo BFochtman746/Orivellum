@@ -93,6 +93,31 @@ function ActivityRow({ item }: { item: ActivityItem }) {
   );
 }
 
+function StudioCard() {
+  const colors = useColors();
+  const router = useRouter();
+  return (
+    <Pressable
+      onPress={() => router.push('/studio')}
+      style={({ pressed }) => [
+        styles.studioCard,
+        { backgroundColor: colors.card, borderColor: colors.border, opacity: pressed ? 0.75 : 1 },
+      ]}
+    >
+      <View style={[styles.studioIcon, { backgroundColor: colors.primary + '22' }]}>
+        <Feather name="mic" size={18} color={colors.primary} />
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={[styles.studioTitle, { color: colors.foreground }]}>Studio</Text>
+        <Text style={[styles.studioSub, { color: colors.mutedForeground }]}>
+          Text-to-speech & image generation
+        </Text>
+      </View>
+      <Feather name="chevron-right" size={16} color={colors.mutedForeground} />
+    </Pressable>
+  );
+}
+
 export default function DashboardScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
@@ -174,6 +199,9 @@ export default function DashboardScreen() {
             </Text>
           </View>
 
+          {/* Studio quick action */}
+          <StudioCard />
+
           {/* Offline banner — shown when we have cached data but server is unreachable */}
           {isError && hasData && (
             <OfflineBanner
@@ -238,6 +266,24 @@ const styles = StyleSheet.create({
   brand: { fontSize: 28, fontFamily: 'Inter_700Bold', letterSpacing: -0.5 },
   subtitle: { fontSize: 14, fontFamily: 'Inter_400Regular', marginTop: 2 },
   loader: { marginVertical: 24 },
+  studioCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 10,
+    borderWidth: 1,
+    padding: 14,
+    gap: 12,
+    marginBottom: 24,
+  },
+  studioIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  studioTitle: { fontSize: 15, fontFamily: 'Inter_600SemiBold', marginBottom: 2 },
+  studioSub: { fontSize: 12, fontFamily: 'Inter_400Regular' },
   statsGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',

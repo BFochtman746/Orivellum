@@ -168,12 +168,67 @@ function ModelPicker({ convId, currentModel, models, defaultModel, onChanged }: 
 
 // ─── Sources footer ───────────────────────────────────────────────────────────
 
-function SourcesFooter({ sources }: { sources: Array<{doc_id?: string; doc_title?: string; kind?: string}> }) {
+interface KnowledgeSource {
+  id?: string;
+  title?: string;
+  kind?: string;
+  work_id?: string | null;
+  work_title?: string;
+  source_doc_id?: string | null;
+  // Legacy fields (older persisted meta)
+  doc_id?: string;
+  doc_title?: string;
+}
+
+/** Normalize a source object across the current + legacy backend shapes. */
+function normalizeSource(s: KnowledgeSource) {
+  const docId = s.source_doc_id ?? s.doc_id ?? null;
+  const title = s.title ?? s.doc_title ?? (docId ? "Document" : "Knowledge");
+  const workTitle = s.work_title ?? s.doc_title ?? "General";
+  return {
+    id: s.id ?? docId ?? title,
+    title,
+    kind: s.kind,
+    workId: s.work_id ?? null,
+    workTitle,
+    docId,
+  };
+}
+
+function SourcesFooter({ sources }: { sources: KnowledgeSource[] }) {
   const [open, setOpen] = useState(false);
-  const unique = sources.filter((s, i, arr) =>
-    arr.findIndex(x => (x.doc_id && x.doc_id === s.doc_id) || x.doc_title === s.doc_title) === i
-  );
+
+  // Normalize then dedupe by stable id
+  const normalized = sources.map(normalizeSource);
+  const seen = new Set<string>();
+  const unique = normalized.filter((s) => {
+    const key = s.id ?? s.title;
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
   if (unique.length === 0) return null;
+
+  // Group by Work/topic
+  const groups: Array<{ title: string; items: typeof unique }> = [];
+  const groupIndex = new Map<string, number>();
+  for (const s of unique) {
+    const gkey = s.workTitle || "General";
+    let idx = groupIndex.get(gkey);
+    if (idx === undefined) {
+      idx = groups.length;
+      groupIndex.set(gkey, idx);
+      groups.push({ title: gkey, items: [] });
+    }
+    groups[idx].items.push(s);
+  }
+
+  const link = (s: (typeof unique)[number]): string | null => {
+    if (s.docId) return `${import.meta.env.BASE_URL}library/${s.docId}`.replace(/\/+/g, "/");
+    if (s.workId) return `${import.meta.env.BASE_URL}works/${s.workId}`.replace(/\/+/g, "/");
+    return null;
+  };
+
   return (
     <div className="mt-1.5">
       <button
@@ -181,27 +236,38 @@ function SourcesFooter({ sources }: { sources: Array<{doc_id?: string; doc_title
         className="flex items-center gap-1.5 text-[10px] font-mono text-muted-foreground/50 hover:text-muted-foreground/80 transition-colors"
       >
         <BookOpen className="w-2.5 h-2.5" />
-        <span>{unique.length} source{unique.length !== 1 ? "s" : ""}</span>
+        <span>Sources ({unique.length})</span>
         <ChevronDown className={`w-2.5 h-2.5 transition-transform duration-200 ${open ? "rotate-180" : ""}`} />
       </button>
       {open && (
-        <div className="mt-1.5 flex flex-col gap-0.5 pl-1 border-l border-border/30">
-          {unique.map((s, i) => (
-            s.doc_id ? (
-              <a
-                key={i}
-                href={`${import.meta.env.BASE_URL}library/${s.doc_id}`}
-                className="flex items-center gap-1.5 text-[10px] font-mono text-primary/60 hover:text-primary/90 transition-colors truncate max-w-xs"
-              >
-                <FileText className="w-2.5 h-2.5 shrink-0" />
-                <span className="truncate">{s.doc_title ?? "Document"}</span>
-              </a>
-            ) : (
-              <span key={i} className="flex items-center gap-1.5 text-[10px] font-mono text-muted-foreground/60 truncate max-w-xs">
-                <FileText className="w-2.5 h-2.5 shrink-0" />
-                <span className="truncate">{s.doc_title ?? "Knowledge"}</span>
+        <div className="mt-1.5 flex flex-col gap-1.5 pl-1 border-l border-border/30">
+          {groups.map((g, gi) => (
+            <div key={gi} className="flex flex-col gap-0.5">
+              <span className="text-[9px] font-mono uppercase tracking-wider text-muted-foreground/40 pl-1.5">
+                {g.title}
               </span>
-            )
+              {g.items.map((s, i) => {
+                const href = link(s);
+                return href ? (
+                  <a
+                    key={i}
+                    href={href}
+                    className="flex items-center gap-1.5 text-[10px] font-mono text-primary/60 hover:text-primary/90 transition-colors truncate max-w-xs pl-1.5"
+                  >
+                    <FileText className="w-2.5 h-2.5 shrink-0" />
+                    <span className="truncate">{s.title}</span>
+                  </a>
+                ) : (
+                  <span
+                    key={i}
+                    className="flex items-center gap-1.5 text-[10px] font-mono text-muted-foreground/60 truncate max-w-xs pl-1.5"
+                  >
+                    <FileText className="w-2.5 h-2.5 shrink-0" />
+                    <span className="truncate">{s.title}</span>
+                  </span>
+                );
+              })}
+            </div>
           ))}
         </div>
       )}
@@ -851,7 +917,7 @@ export default function Chat() {
       scheduleFlush();
 
       let streamedIntent: string | undefined;
-      let streamedSources: Array<{doc_id?: string; doc_title?: string; kind?: string}> | undefined;
+      let streamedSources: KnowledgeSource[] | undefined;
       const SOURCES_PREFIX = "\x02SOURCES\x02";
       try {
         for await (const token of streamChat(convId, text, controller.signal, deepMode, scopeAll ? "all" : "work", capturedImage?.data, capturedImage?.type)) {

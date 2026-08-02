@@ -323,6 +323,85 @@ async def trigger_nightshift(background_tasks: BackgroundTasks):
     return {"ok": True, "message": "Nightshift started in background"}
 
 
+def _last_nightshift_run(db) -> dict | None:
+    """Return the newest nightshift_runs row as a dict, or None."""
+    try:
+        with db._lock:
+            row = db._conn.execute(
+                "SELECT * FROM nightshift_runs ORDER BY ran_at DESC LIMIT 1"
+            ).fetchone()
+        return dict(row) if row else None
+    except Exception:
+        return None
+
+
+@router.post("/system/nightshift/run-now")
+def nightshift_run_now():
+    """Trigger a nightshift pass on a daemon thread. 409 if one is running."""
+    import threading
+    from orivellum.capabilities.nightshift import run_nightshift, is_running
+
+    if is_running():
+        raise HTTPException(409, "Nightshift is already running")
+
+    db = get_db()
+    cfg = get_config()
+    threading.Thread(
+        target=run_nightshift, args=(db, cfg),
+        name="nightshift-run-now", daemon=True,
+    ).start()
+    return {"started": True}
+
+
+@router.get("/system/nightshift/status")
+def nightshift_status():
+    """Return the current run state plus a summary of the last recorded run."""
+    from orivellum.capabilities.nightshift import get_status
+
+    st = get_status()
+    db = get_db()
+    last = _last_nightshift_run(db)
+    last_run = None
+    if last:
+        last_run = {
+            "ran_at": last.get("ran_at"),
+            "docs_processed": last.get("docs_processed"),
+            "items_added": last.get("items_added"),
+        }
+    return {
+        "running": bool(st.get("running")),
+        "started_at": st.get("started_at"),
+        "last_run": last_run,
+    }
+
+
+@router.get("/system/nightshift/last-report")
+def nightshift_last_report():
+    """Return the newest night report's markdown body plus run metadata."""
+    db = get_db()
+    last = _last_nightshift_run(db)
+    if not last:
+        return {"report_markdown": None}
+
+    report_markdown: str | None = None
+    report_path = last.get("report_path")
+    if report_path:
+        try:
+            from pathlib import Path
+            p = Path(report_path)
+            if p.exists():
+                report_markdown = p.read_text(encoding="utf-8")
+        except Exception as exc:
+            logger.warning("Could not read night report %s: %s", report_path, exc)
+
+    return {
+        "ran_at": last.get("ran_at"),
+        "docs_processed": last.get("docs_processed"),
+        "items_added": last.get("items_added"),
+        "report_markdown": report_markdown,
+    }
+
+
 @router.get("/system/jobs")
 def system_jobs():
     """Return documents currently in-progress (not ready/error/no_text), recently completed, and the last nightshift run."""

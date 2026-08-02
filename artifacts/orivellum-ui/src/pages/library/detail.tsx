@@ -4,7 +4,7 @@
  * Shows metadata, full extracted text, and all knowledge items
  * harvested from this specific document.
  */
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useParams, useLocation } from "wouter";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { useGetDocument, useDeleteDocument, useGetWork, useListWorks, getGetDocumentQueryKey, getGetWorkQueryKey } from "@workspace/api-client-react";
@@ -20,6 +20,7 @@ import {
   FileQuestion, RefreshCw, Trash2, Hash, Calendar, Database,
   BookOpen, Cpu, Sparkles, ThumbsUp, ThumbsDown, Link2, Info,
   List, History, Star, GitBranch, ChevronDown,
+  BookHeadphones, Loader2, Play, Pause, X,
 } from "lucide-react";
 import {
   Tooltip, TooltipContent, TooltipProvider, TooltipTrigger,
@@ -581,6 +582,11 @@ export default function DocumentDetail() {
   const [reprocessing, setReprocessing] = useState(false);
   const [reviewing, setReviewing] = useState<string | null>(null);
   const [knFilter, setKnFilter] = useState<"all" | "pending" | "approved" | "rejected">("all");
+  // Read Aloud (TTS) state
+  const [ttsLoading, setTtsLoading] = useState(false);
+  const [ttsAudioUrl, setTtsAudioUrl] = useState<string | null>(null);
+  const [ttsPlaying, setTtsPlaying] = useState(false);
+  const ttsAudioRef = useRef<HTMLAudioElement | null>(null);
   const queryClient = useQueryClient();
 
   const { data, isLoading, error, refetch } = useGetDocument(docId ?? "", {
@@ -714,6 +720,83 @@ export default function DocumentDetail() {
     }
   };
 
+  // ── Read Aloud (TTS) ──────────────────────────────────────────────────────
+  const TTS_MAX_CHARS = 5000;
+
+  const handleReadAloud = async () => {
+    if (!docId || ttsLoading) return;
+    setTtsLoading(true);
+    setTtsPlaying(false);
+    // Release any previous blob URL
+    if (ttsAudioUrl) {
+      URL.revokeObjectURL(ttsAudioUrl);
+      setTtsAudioUrl(null);
+    }
+    try {
+      // Prefer the already-extracted text on the doc object; fall back to chunks.
+      let text: string = (doc?.extracted_text as string) || "";
+      if (!text.trim()) {
+        const resp = await apiFetch(`${BASE}/library/${docId}/chunks`);
+        if (resp.ok) {
+          const data = await resp.json();
+          text = (data.chunks ?? [])
+            .map((c: any) => c.text ?? "")
+            .filter(Boolean)
+            .join("\n\n");
+        }
+      }
+      text = text.trim();
+      if (!text) {
+        toast.error("No extracted text available to read aloud.");
+        return;
+      }
+
+      const truncated = text.length > TTS_MAX_CHARS;
+      const payloadText = truncated ? text.slice(0, TTS_MAX_CHARS) : text;
+
+      const ttsResp = await apiFetch(`${BASE}/studio/tts`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: payloadText, voice: "af_heart", speed: 1.0 }),
+      });
+      if (!ttsResp.ok) {
+        const err = await ttsResp.json().catch(() => ({}));
+        throw new Error((err as any).detail ?? `HTTP ${ttsResp.status}`);
+      }
+      const blob = await ttsResp.blob();
+      const url = URL.createObjectURL(blob);
+      setTtsAudioUrl(url);
+      if (truncated) {
+        toast.info("Long document — reading first part.");
+      }
+      // Do NOT autoplay — iOS Safari blocks audio from async code.
+      // The audio player below has native controls; user taps play.
+    } catch (e: any) {
+      toast.error(`Read aloud failed: ${e.message ?? "unknown error"}`, { duration: 8000 });
+    } finally {
+      setTtsLoading(false);
+    }
+  };
+
+  const toggleTtsPlay = () => {
+    const el = ttsAudioRef.current;
+    if (!el) return;
+    if (ttsPlaying) {
+      el.pause();
+      setTtsPlaying(false);
+    } else {
+      el.play().catch(() => {});
+      setTtsPlaying(true);
+    }
+  };
+
+  const closeTtsPlayer = () => {
+    ttsAudioRef.current?.pause();
+    setTtsPlaying(false);
+    if (ttsAudioUrl) URL.revokeObjectURL(ttsAudioUrl);
+    setTtsAudioUrl(null);
+  };
+
   const handleDelete = () => {
     if (!docId || !confirm("Delete this document? This cannot be undone.")) return;
     deleteDoc.mutate(
@@ -823,6 +906,18 @@ export default function DocumentDetail() {
           <Button
             variant="outline"
             size="sm"
+            onClick={handleReadAloud}
+            disabled={ttsLoading}
+          >
+            {ttsLoading ? (
+              <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Preparing audio…</>
+            ) : (
+              <><BookHeadphones className="w-3.5 h-3.5 mr-1.5" /> Read Aloud</>
+            )}
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
             onClick={handleReprocess}
             disabled={reprocessing}
           >
@@ -891,6 +986,39 @@ export default function DocumentDetail() {
             </div>
           </div>
         </div>
+
+        {/* Read Aloud audio player */}
+        {ttsAudioUrl && (
+          <div className="mt-3 flex items-center gap-3 p-3 rounded-lg bg-muted/30 border border-border/50">
+            <Button
+              size="icon"
+              variant="secondary"
+              className="h-9 w-9 rounded-full shrink-0"
+              onClick={toggleTtsPlay}
+            >
+              {ttsPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+            </Button>
+            <audio
+              ref={ttsAudioRef}
+              src={ttsAudioUrl}
+              onEnded={() => setTtsPlaying(false)}
+              onPause={() => setTtsPlaying(false)}
+              onPlay={() => setTtsPlaying(true)}
+              className="flex-1 h-8"
+              controls
+              style={{ minWidth: 0 }}
+            />
+            <Button
+              size="icon"
+              variant="ghost"
+              className="shrink-0"
+              onClick={closeTtsPlayer}
+              title="Close audio player"
+            >
+              <X className="w-4 h-4" />
+            </Button>
+          </div>
+        )}
 
         {/* Error banner */}
         {hasError && doc.error_message && (

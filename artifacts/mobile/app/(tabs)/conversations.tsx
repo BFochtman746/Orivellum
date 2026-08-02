@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -104,18 +104,27 @@ export default function ConversationsScreen() {
   const isWeb = Platform.OS === 'web';
   const router = useRouter();
   const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+
+  // Debounce the search term (~200ms) so filtering doesn't run on every keystroke
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search), 200);
+    return () => clearTimeout(t);
+  }, [search]);
 
   const { data, isLoading, isError, refetch } = useListConversations(
     { archived: false, limit: 200 },
     { query: { refetchInterval: 15_000, staleTime: 10_000 } } as any
   );
   const allConversations = data?.conversations ?? [];
-  const conversations = search
-    ? allConversations.filter((c) =>
-        (c.title ?? '').toLowerCase().includes(search.toLowerCase()) ||
-        stripMarkdown(c.last_message ?? '').toLowerCase().includes(search.toLowerCase())
-      )
-    : allConversations;
+  const conversations = useMemo(() => {
+    const q = debouncedSearch.trim().toLowerCase();
+    if (!q) return allConversations;
+    return allConversations.filter((c) =>
+      (c.title ?? '').toLowerCase().includes(q) ||
+      stripMarkdown(c.last_message ?? '').toLowerCase().includes(q)
+    );
+  }, [allConversations, debouncedSearch]);
   const hasData = allConversations.length > 0;
 
   const { mutateAsync: createConversation, isPending: creating } = useCreateConversation();
@@ -231,10 +240,10 @@ export default function ConversationsScreen() {
         <View style={styles.centered}>
           <Feather name="message-square" size={44} color={colors.mutedForeground} />
           <Text style={[styles.emptyTitle, { color: colors.foreground }]}>
-            {search ? 'No results' : 'No conversations yet'}
+            {debouncedSearch ? 'No matching conversations' : 'No conversations yet'}
           </Text>
           <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
-            {search ? `Nothing matched "${search}"` : 'Tap + to start a new one'}
+            {debouncedSearch ? `Nothing matched "${debouncedSearch}"` : 'Tap + to start a new one'}
           </Text>
         </View>
       ) : (

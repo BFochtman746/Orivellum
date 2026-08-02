@@ -37,6 +37,23 @@ logger = logging.getLogger("orivellum.nightshift")
 _MIN_KNOWLEDGE_ITEMS = 3
 _MAX_DOCS_PER_RUN    = 20
 
+# ── Run-status tracker ──────────────────────────────────────────────────────
+# Module-level snapshot of the current/last in-process nightshift run, guarded
+# by its own lock so the API can report progress without touching the DB.
+_status_lock = threading.Lock()
+_status: dict = {"running": False, "started_at": None, "finished_at": None}
+
+
+def get_status() -> dict:
+    """Return a copy of the current nightshift run status."""
+    with _status_lock:
+        return dict(_status)
+
+
+def is_running() -> bool:
+    with _status_lock:
+        return bool(_status.get("running"))
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -447,6 +464,19 @@ def _pass_work_stats(db: "OrivellumDB", report: list[str]) -> None:
 
 def run_nightshift(db: "OrivellumDB", cfg: "OrivellumConfig") -> None:
     """Execute one complete nightshift pass synchronously."""
+    with _status_lock:
+        _status["running"] = True
+        _status["started_at"] = datetime.now(timezone.utc).isoformat()
+        _status["finished_at"] = None
+    try:
+        _run_nightshift_passes(db, cfg)
+    finally:
+        with _status_lock:
+            _status["running"] = False
+            _status["finished_at"] = datetime.now(timezone.utc).isoformat()
+
+
+def _run_nightshift_passes(db: "OrivellumDB", cfg: "OrivellumConfig") -> None:
     date_str = datetime.now().strftime("%Y-%m-%d")
     start_ts = time.time()
     logger.info("Nightshift starting for %s", date_str)

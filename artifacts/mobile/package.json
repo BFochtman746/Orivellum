@@ -56,6 +56,7 @@
     "zod-validation-error": "^3.4.0"
   },
   "dependencies": {
+    "expo-audio": "^57.0.3",
     "expo-clipboard": "^57.0.1",
     "expo-document-picker": "^57.0.1",
     "expo-secure-store": "^57.0.1",

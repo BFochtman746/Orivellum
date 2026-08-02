@@ -15,8 +15,11 @@ import { Feather } from '@expo/vector-icons';
 import { useListWorks, useCreateConversation } from '@workspace/api-client-react';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import * as Haptics from 'expo-haptics';
 import type { Work } from '@workspace/api-client-react';
 import { OfflineBanner, ErrorScreen } from '@/components/OfflineBanner';
+
+const TEAL = '#14b8a6';
 
 const TYPE_ICONS: Record<string, string> = {
   research: 'book-open',
@@ -41,14 +44,20 @@ function WorkCard({ work, onStartChat }: { work: Work; onStartChat: () => void }
       : colors.mutedForeground;
 
   const swipeRef = useRef<Swipeable>(null);
+  const isWeb = Platform.OS === 'web';
 
+  const triggerHaptic = () => {
+    if (!isWeb) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+  };
+
+  // Left-swipe reveals the teal "Chat" action (rendered on the right edge)
   const renderRightActions = () => (
-    <View style={{ flexDirection: 'row', alignItems: 'center', paddingRight: 12, gap: 8, marginVertical: 6 }}>
+    <View style={{ flexDirection: 'row', alignItems: 'center', paddingRight: 12, paddingLeft: 8, marginVertical: 6 }}>
       <Pressable
-        onPress={() => { swipeRef.current?.close(); onStartChat(); }}
+        onPress={() => { swipeRef.current?.close(); triggerHaptic(); onStartChat(); }}
         style={{
-          backgroundColor: colors.primary, borderRadius: 10,
-          paddingHorizontal: 14, paddingVertical: 10,
+          backgroundColor: TEAL, borderRadius: 10,
+          paddingHorizontal: 18, paddingVertical: 10,
           alignItems: 'center', justifyContent: 'center', gap: 3,
         }}
         hitSlop={4}
@@ -56,11 +65,17 @@ function WorkCard({ work, onStartChat }: { work: Work; onStartChat: () => void }
         <Feather name="message-circle" size={16} color="#fff" />
         <Text style={{ color: '#fff', fontSize: 10, fontFamily: 'Inter_600SemiBold' }}>Chat</Text>
       </Pressable>
+    </View>
+  );
+
+  // Right-swipe reveals the "Open" action (rendered on the left edge)
+  const renderLeftActions = () => (
+    <View style={{ flexDirection: 'row', alignItems: 'center', paddingLeft: 12, paddingRight: 8, marginVertical: 6 }}>
       <Pressable
-        onPress={() => { swipeRef.current?.close(); router.push(`/work/${work.id}`); }}
+        onPress={() => { swipeRef.current?.close(); triggerHaptic(); router.push(`/work/${work.id}`); }}
         style={{
           backgroundColor: colors.muted, borderRadius: 10,
-          paddingHorizontal: 14, paddingVertical: 10,
+          paddingHorizontal: 18, paddingVertical: 10,
           alignItems: 'center', justifyContent: 'center', gap: 3,
         }}
         hitSlop={4}
@@ -71,8 +86,7 @@ function WorkCard({ work, onStartChat }: { work: Work; onStartChat: () => void }
     </View>
   );
 
-  return (
-    <Swipeable ref={swipeRef} renderRightActions={renderRightActions} overshootRight={false} friction={2}>
+  const cardInner = (
     <Pressable
       onPress={() => router.push(`/work/${work.id}`)}
       style={({ pressed }) => [
@@ -176,6 +190,21 @@ function WorkCard({ work, onStartChat }: { work: Work; onStartChat: () => void }
         </Pressable>
       </View>
     </Pressable>
+  );
+
+  // No-op the Swipeable wrapper on web — swipe gestures are native-only here
+  if (isWeb) return cardInner;
+
+  return (
+    <Swipeable
+      ref={swipeRef}
+      renderRightActions={renderRightActions}
+      renderLeftActions={renderLeftActions}
+      overshootRight={false}
+      overshootLeft={false}
+      friction={2}
+    >
+      {cardInner}
     </Swipeable>
   );
 }

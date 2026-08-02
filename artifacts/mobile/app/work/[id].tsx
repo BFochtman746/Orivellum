@@ -210,14 +210,26 @@ function TaskRow({ task }: { task: Task }) {
 
 // ─── Gaps tab — research gap summary from the intelligence pipeline ───────────
 
-const GAP_COLORS: Record<string, { bg: string; text: string }> = {
-  critical: { bg: '#fee2e2', text: '#b91c1c' },
-  high:     { bg: '#fef3c7', text: '#92400e' },
-  medium:   { bg: '#e0f2fe', text: '#0369a1' },
-  low:      { bg: '#f0fdf4', text: '#166534' },
+// Severity color coding tuned for the dark theme: red (high/critical),
+// amber (medium), muted (low). `dot` drives the leading indicator + accent.
+const GAP_SEVERITY: Record<string, { bg: string; text: string; dot: string }> = {
+  critical: { bg: 'rgba(239,68,68,0.18)',  text: '#f87171', dot: '#ef4444' },
+  high:     { bg: 'rgba(239,68,68,0.15)',  text: '#f87171', dot: '#ef4444' },
+  medium:   { bg: 'rgba(245,158,11,0.15)', text: '#fbbf24', dot: '#f59e0b' },
+  low:      { bg: 'rgba(148,163,184,0.15)',text: '#94a3b8', dot: '#94a3b8' },
 };
 
-function GapsTab({ workId, colors }: { workId: string; colors: any }) {
+const SEVERITY_RANK: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
+
+function GapsTab({
+  workId,
+  colors,
+  onResearch,
+}: {
+  workId: string;
+  colors: any;
+  onResearch: (gapTitle: string) => void;
+}) {
   const domain = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -257,49 +269,72 @@ function GapsTab({ workId, colors }: { workId: string; colors: any }) {
       </View>
     );
   }
-  const gaps: any[] = data?.gaps ?? [];
+
+  const rawGaps: any[] = data?.gaps ?? [];
+  // Rank high → medium → low (critical sorts above high).
+  const gaps = [...rawGaps].sort(
+    (a, b) =>
+      (SEVERITY_RANK[a.severity ?? 'medium'] ?? 2) - (SEVERITY_RANK[b.severity ?? 'medium'] ?? 2),
+  );
+  const coverage: number | null = data?.coverage_pct != null ? Number(data.coverage_pct) : null;
+  const isComplete = gaps.length === 0 || coverage === 100;
+
   return (
     <ScrollView
       contentContainerStyle={[styles.listPad, { paddingBottom: 32 }]}
       showsVerticalScrollIndicator={false}
+      refreshControl={<RefreshControl refreshing={loading} onRefresh={fetchGaps} tintColor={colors.primary} />}
     >
-      {/* Summary strip */}
-      <View style={[styles.infoGrid, { borderColor: colors.border, marginBottom: 12 }]}>
-        <View style={[styles.infoRow, { borderBottomColor: colors.border }]}>
-          <Text style={[styles.infoLabel, { color: colors.mutedForeground }]}>Coverage</Text>
-          <Text style={[styles.infoValue, { color: colors.foreground }]}>
-            {data?.coverage_pct != null ? `${data.coverage_pct}%` : '—'}
+      {/* Coverage indicator */}
+      <View style={{ marginBottom: 16 }}>
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 }}>
+          <Text style={[styles.itemMeta, { color: colors.mutedForeground }]}>
+            Coverage · {gaps.length} gap{gaps.length !== 1 ? 's' : ''}
+          </Text>
+          <Text style={[styles.itemMeta, { color: colors.foreground, fontFamily: 'Inter_600SemiBold' }]}>
+            {coverage != null ? `${coverage}%` : '—'}
           </Text>
         </View>
-        <View style={[styles.infoRow, { borderBottomColor: colors.border }]}>
-          <Text style={[styles.infoLabel, { color: colors.mutedForeground }]}>Gaps found</Text>
-          <Text style={[styles.infoValue, { color: colors.foreground }]}>{gaps.length}</Text>
+        <View style={{ height: 6, backgroundColor: colors.muted, borderRadius: 3, overflow: 'hidden' }}>
+          <View
+            style={{
+              height: '100%',
+              width: `${Math.max(0, Math.min(100, coverage ?? 0))}%` as any,
+              backgroundColor: isComplete ? '#22c55e' : colors.primary,
+              borderRadius: 3,
+            }}
+          />
         </View>
       </View>
 
-      {gaps.length === 0 ? (
+      {isComplete ? (
         <View style={styles.centered}>
-          <Feather name="check-circle" size={32} color={colors.primary} />
-          <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>No gaps detected</Text>
+          <Feather name="check-circle" size={32} color="#22c55e" />
+          <Text style={[styles.emptyText, { color: colors.foreground, fontFamily: 'Inter_500Medium' }]}>
+            No gaps — coverage looks complete
+          </Text>
         </View>
       ) : (
         gaps.map((g: any, i: number) => {
-          const sev = g.severity ?? 'medium';
-          const gCol = GAP_COLORS[sev] ?? GAP_COLORS.medium;
+          const sev = (g.severity ?? 'medium') as string;
+          const gCol = GAP_SEVERITY[sev] ?? GAP_SEVERITY.medium;
+          const isHigh = sev === 'high' || sev === 'critical';
+          const gapTitle = g.title ?? g.kind ?? 'Research gap';
           return (
             <View
               key={i}
               style={[
                 styles.listItem,
-                { borderColor: colors.border, flexDirection: 'column', gap: 4, alignItems: 'flex-start' },
+                { borderColor: colors.border, flexDirection: 'column', gap: 6, alignItems: 'flex-start' },
               ]}
             >
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: gCol.dot }} />
                 <View style={[styles.statusBadge, { backgroundColor: gCol.bg, paddingHorizontal: 8, paddingVertical: 2 }]}>
                   <Text style={[styles.statusText, { color: gCol.text }]}>{sev}</Text>
                 </View>
                 <Text style={[styles.itemTitle, { color: colors.foreground, flex: 1 }]} numberOfLines={2}>
-                  {g.title ?? g.kind}
+                  {gapTitle}
                 </Text>
               </View>
               {g.description ? (
@@ -307,6 +342,27 @@ function GapsTab({ workId, colors }: { workId: string; colors: any }) {
                   {g.description}
                 </Text>
               ) : null}
+              {isHigh && (
+                <Pressable
+                  onPress={() => onResearch(gapTitle)}
+                  style={({ pressed }) => ({
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 4,
+                    marginTop: 4,
+                    paddingHorizontal: 10,
+                    paddingVertical: 5,
+                    borderRadius: 6,
+                    backgroundColor: colors.primary,
+                    opacity: pressed ? 0.7 : 1,
+                  })}
+                >
+                  <Feather name="search" size={12} color={colors.primaryForeground} />
+                  <Text style={{ fontSize: 12, color: colors.primaryForeground, fontFamily: 'Inter_600SemiBold' }}>
+                    Research →
+                  </Text>
+                </Pressable>
+              )}
             </View>
           );
         })
@@ -843,6 +899,35 @@ export default function WorkDetailScreen() {
     }
   };
 
+  // Research → : open a work-linked conversation pre-seeded with the gap title.
+  const handleResearchGap = async (gapTitle: string) => {
+    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    try {
+      const result = await createConversation({
+        data: {
+          title: gapTitle ? `Research: ${gapTitle}` : 'Research gap',
+          work_id: id,
+        },
+      });
+      const convoId = result?.conversation?.id;
+      if (convoId) {
+        const draft = gapTitle
+          ? `Help me research this gap: ${gapTitle}`
+          : undefined;
+        router.push({
+          pathname: '/chat/[id]',
+          params: draft ? { id: convoId, draft } : { id: convoId },
+        } as any);
+      }
+    } catch {
+      Alert.alert(
+        'Could not start research',
+        'Make sure the Orivellum server is running and try again.',
+        [{ text: 'OK' }]
+      );
+    }
+  };
+
   const handleAddTask = async () => {
     const trimmed = newTaskText.trim();
     if (!trimmed) return;
@@ -995,7 +1080,7 @@ export default function WorkDetailScreen() {
           </>
         );
       case 'gaps':
-        return <GapsTab workId={id} colors={colors} />;
+        return <GapsTab workId={id} colors={colors} onResearch={handleResearchGap} />;
       case 'learn':
         return <MobileLearnTab workId={id} colors={colors} />;
       case 'conversations': {

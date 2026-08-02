@@ -169,7 +169,7 @@ async def send_message(conv_id: str, body: MessageSend):
     _seen_ns: set = set()
     ns_sources: list = []
     for s in _ns_sources:
-        key = s.get("doc_id") or s.get("doc_title")
+        key = s.get("id") or s.get("source_doc_id") or s.get("title")
         if key and key not in _seen_ns:
             _seen_ns.add(key)
             ns_sources.append(s)
@@ -360,11 +360,18 @@ def _build_system_prompt(db: Any, conv: dict, scope: str = "work",
                         kind = k.get("kind", "note")
                         if text:
                             context_parts.append(f"  [{kind}] {text[:400]}")
-                            if out_sources is not None and k.get("source_doc_id"):
+                            if out_sources is not None:
+                                real_wid = k.get("work_id")
                                 out_sources.append({
+                                    "id": k.get("id"),
+                                    "title": text[:100],
+                                    "kind": kind,
+                                    "work_id": real_wid,
+                                    "work_title": group["title"],
+                                    "source_doc_id": k.get("source_doc_id"),
+                                    # Legacy fields kept for the existing footer link
                                     "doc_id": k.get("source_doc_id"),
                                     "doc_title": group["title"],
-                                    "kind": kind,
                                 })
                     for c in group["chunks"]:
                         text = c.get("text", "").strip()
@@ -372,10 +379,17 @@ def _build_system_prompt(db: Any, conv: dict, scope: str = "work",
                         if text:
                             context_parts.append(f"  [from '{doc}'] {text[:400]}")
                             if out_sources is not None:
+                                real_wid = c.get("work_id")
                                 out_sources.append({
+                                    "id": c.get("id"),
+                                    "title": doc,
+                                    "kind": "document",
+                                    "work_id": real_wid,
+                                    "work_title": group["title"],
+                                    "source_doc_id": c.get("doc_id"),
+                                    # Legacy fields kept for the existing footer link
                                     "doc_id": c.get("doc_id"),
                                     "doc_title": doc,
-                                    "kind": "document",
                                 })
 
                 return f"{base}\n\n" + "\n".join(context_parts)
@@ -516,7 +530,7 @@ async def _stream_response(
     _seen: set = set()
     sources: list = []
     for s in _sources:
-        key = s.get("doc_id") or s.get("doc_title")
+        key = s.get("id") or s.get("source_doc_id") or s.get("title")
         if key and key not in _seen:
             _seen.add(key)
             sources.append(s)

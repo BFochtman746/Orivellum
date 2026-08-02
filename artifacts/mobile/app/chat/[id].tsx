@@ -270,7 +270,7 @@ export default function ChatScreen() {
   const isWeb = Platform.OS === 'web';
   const colorScheme = useColorScheme();
   const isDark = colorScheme === 'dark';
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, draft } = useLocalSearchParams<{ id: string; draft?: string }>();
   const navigation = useNavigation();
   const inputRef = useRef<TextInput>(null);
 
@@ -358,6 +358,15 @@ export default function ChatScreen() {
   useEffect(() => {
     navigation.setOptions({ title: conversation?.title || 'Conversation' });
   }, [conversation?.title, navigation]);
+
+  // Pre-seed the composer from a `draft` navigation param (e.g. a research gap).
+  const seededRef = useRef(false);
+  useEffect(() => {
+    if (!seededRef.current && typeof draft === 'string' && draft.trim()) {
+      setText(draft);
+      seededRef.current = true;
+    }
+  }, [draft]);
 
   const displayMessages = [...localMessages].reverse();
 
