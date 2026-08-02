@@ -1410,8 +1410,17 @@ class OrivellumDB:
                        detail=f"{kind}: {text[:80]}")
         return kid
 
-    def update_knowledge_review_status(self, item_id: str, status: str) -> bool:
-        """Set review_status on a knowledge item. Returns True if found."""
+    def update_knowledge_review_status(self, item_id: str, status: str,
+                                       expected_status: tuple[str, ...] | None = None) -> str:
+        """Set review_status on a knowledge item.
+
+        When ``expected_status`` is given, the write is a compare-and-set: it
+        only applies while the current status is one of the expected values,
+        so a stale or concurrent request cannot overturn a decision that was
+        already finalized through another surface.
+
+        Returns "updated", "not_found", or "conflict" (CAS failed).
+        """
         valid = {"auto", "ai_auto", "approved", "rejected"}
         if status not in valid:
             raise ValueError(f"review_status must be one of {valid}")
@@ -1420,7 +1429,11 @@ class OrivellumDB:
             _row = self._conn.execute(
                 "SELECT review_status FROM knowledge WHERE id=?", (item_id,)
             ).fetchone()
-            _before_status = _row["review_status"] if _row else None
+            if not _row:
+                return "not_found"
+            _before_status = _row["review_status"]
+            if expected_status is not None and _before_status not in expected_status:
+                return "conflict"
             cur = self._conn.execute(
                 "UPDATE knowledge SET review_status=? WHERE id=?",
                 (status, item_id),
@@ -1432,7 +1445,7 @@ class OrivellumDB:
             self.audit("knowledge.review_updated", object_id=item_id, object_type="knowledge",
                        before_hash=_bh, after_hash=_ah,
                        detail=f"{_before_status}→{status}")
-        return cur.rowcount > 0
+        return "updated" if cur.rowcount > 0 else "not_found"
 
     def update_knowledge_confidence(self, item_id: str, confidence: float,
                                     evidence: dict | None = None) -> bool:

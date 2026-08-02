@@ -272,26 +272,16 @@ def review_resolve(item_type: str, item_id: str, body: ResolveBody,
 
 def _resolve_knowledge(db, item_id: str, body: ResolveBody) -> dict:
     status = "approved" if body.decision == "approve" else "rejected"
-    # Atomic claim: only flip items still awaiting review, so a stale card or
-    # concurrent request cannot overturn a decision already made elsewhere.
-    with db._lock:
-        cur = db._conn.execute(
-            "UPDATE knowledge SET review_status=? WHERE id=? AND review_status='ai_auto'",
-            (status, item_id),
-        )
-        claimed = cur.rowcount
-        if not claimed:
-            exists = db._conn.execute(
-                "SELECT review_status FROM knowledge WHERE id=?", (item_id,)
-            ).fetchone()
-        db._conn.commit()
-    if not claimed:
-        if not exists:
-            raise HTTPException(404, f"Knowledge item {item_id!r} not found")
-        raise HTTPException(
-            409, f"Knowledge item already resolved (status={exists['review_status']})")
-    db.audit("knowledge.review_updated", object_id=item_id, object_type="knowledge",
-             actor="user", detail=f"ai_auto→{status}")
+    # Claim-first via the shared db primitive: only items still awaiting
+    # review can be flipped, so a stale card or a concurrent request through
+    # any surface (this route or PATCH /api/knowledge/{id}/review) cannot
+    # overturn a decision already made.
+    result = db.update_knowledge_review_status(item_id, status,
+                                               expected_status=("ai_auto",))
+    if result == "not_found":
+        raise HTTPException(404, f"Knowledge item {item_id!r} not found")
+    if result == "conflict":
+        raise HTTPException(409, "Knowledge item was already resolved")
     return {"ok": True, "decision": body.decision, "review_status": status}
 
 

@@ -157,6 +157,36 @@ class ReviewQueueTests(unittest.TestCase):
         self.assertEqual(r.json()["review_status"], "rejected")
         self.assertEqual(self.client.get("/api/review/queue").json()["count"], 0)
 
+    def test_cross_endpoint_knowledge_resolution_is_final(self):
+        # Queue decision first → legacy PATCH cannot overturn it without force.
+        k1 = self.db.create_knowledge_item(None, "claim", "x", review_status="ai_auto")
+        self.client.post(f"/api/review/knowledge:{k1}/resolve",
+                         json={"decision": "approve"})
+        r = self.client.patch(f"/api/knowledge/{k1}/review",
+                              json={"review_status": "rejected"})
+        self.assertEqual(r.status_code, 409)
+        # Same status again is idempotent, not a conflict
+        r = self.client.patch(f"/api/knowledge/{k1}/review",
+                              json={"review_status": "approved"})
+        self.assertEqual(r.status_code, 200)
+        # Deliberate flip works with force=true
+        r = self.client.patch(f"/api/knowledge/{k1}/review",
+                              json={"review_status": "rejected", "force": True})
+        self.assertEqual(r.status_code, 200)
+
+        # Legacy PATCH first → queue resolve loses.
+        k2 = self.db.create_knowledge_item(None, "claim", "y", review_status="ai_auto")
+        r = self.client.patch(f"/api/knowledge/{k2}/review",
+                              json={"review_status": "approved"})
+        self.assertEqual(r.status_code, 200)
+        r = self.client.post(f"/api/review/knowledge:{k2}/resolve",
+                             json={"decision": "reject"})
+        self.assertEqual(r.status_code, 409)
+        with self.db._lock:
+            row = self.db._conn.execute(
+                "SELECT review_status FROM knowledge WHERE id=?", (k2,)).fetchone()
+        self.assertEqual(row["review_status"], "approved")
+
     def test_resolve_knowledge_stale_card_conflicts(self):
         # A decision already made elsewhere must not be overturned by a stale card.
         kid = self.db.create_knowledge_item(None, "claim", "x", review_status="ai_auto")

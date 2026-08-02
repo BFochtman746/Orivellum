@@ -836,11 +836,13 @@ function DocumentsTab({ workId }: { workId: string }) {
 
 const BASE_KN = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
 
-async function setKnowledgeReview(itemId: string, status: string): Promise<void> {
+async function setKnowledgeReview(itemId: string, status: string, force = false): Promise<void> {
   const resp = await apiFetch(`${BASE_KN}/knowledge/${itemId}/review`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ review_status: status }),
+    // force is required to deliberately flip an already-finalized decision;
+    // without it the API rejects stale/concurrent overwrites with 409.
+    body: JSON.stringify({ review_status: status, force }),
   });
   if (!resp.ok) throw new Error("Review update failed");
 }
@@ -873,10 +875,10 @@ function KnowledgeTab({ workId }: { workId: string }) {
     }
   }
 
-  const handleReview = async (itemId: string, status: "approved" | "rejected") => {
+  const handleReview = async (itemId: string, status: "approved" | "rejected", force = false) => {
     setReviewing(itemId);
     try {
-      await setKnowledgeReview(itemId, status);
+      await setKnowledgeReview(itemId, status, force);
       toast.success(status === "approved" ? "Approved" : "Dismissed");
       queryClient.invalidateQueries({ queryKey: getGetWorkKnowledgeQueryKey(workId, {}) });
     } catch {
@@ -1134,7 +1136,7 @@ function KnowledgeTab({ workId }: { workId: string }) {
                       <>
                         <button
                           disabled={isReviewing || isApproved}
-                          onClick={() => handleReview(item.id!, "approved")}
+                          onClick={() => handleReview(item.id!, "approved", isRejected)}
                           title="Approve"
                           className={`p-1.5 rounded transition-colors ${
                             isApproved
@@ -1146,7 +1148,7 @@ function KnowledgeTab({ workId }: { workId: string }) {
                         </button>
                         <button
                           disabled={isReviewing || isRejected}
-                          onClick={() => handleReview(item.id!, "rejected")}
+                          onClick={() => handleReview(item.id!, "rejected", isApproved)}
                           title="Dismiss"
                           className={`p-1.5 rounded transition-colors ${
                             isRejected

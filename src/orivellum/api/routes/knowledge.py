@@ -11,6 +11,7 @@ router = APIRouter(prefix="/api")
 
 class KnowledgeReview(BaseModel):
     review_status: str  # "approved" | "rejected" | "auto" | "ai_auto"
+    force: bool = False  # override an already-finalized decision (deliberate flip)
 
 
 @router.get("/knowledge")
@@ -69,12 +70,33 @@ def delete_knowledge(item_id: str):
 
 @router.patch("/knowledge/{item_id}/review")
 def review_knowledge(item_id: str, body: KnowledgeReview):
-    """Approve or dismiss a knowledge item."""
+    """Approve or dismiss a knowledge item.
+
+    By default this is claim-first: it only transitions items still awaiting
+    review ('auto'/'ai_auto'), returning 409 when the item was already
+    finalized elsewhere (stale card / concurrent request). Setting the same
+    status again is treated as an idempotent success. A deliberate flip of a
+    finalized decision must pass ``force: true``.
+    """
     db = get_db()
+    expected = None if body.force else ("auto", "ai_auto")
     try:
-        found = db.update_knowledge_review_status(item_id, body.review_status)
+        result = db.update_knowledge_review_status(item_id, body.review_status,
+                                                   expected_status=expected)
     except ValueError as exc:
         raise HTTPException(400, str(exc))
-    if not found:
+    if result == "not_found":
         raise HTTPException(404, f"Knowledge item {item_id!r} not found")
+    if result == "conflict":
+        with db._lock:
+            row = db._conn.execute(
+                "SELECT review_status FROM knowledge WHERE id=?", (item_id,)
+            ).fetchone()
+        current = row["review_status"] if row else None
+        if current == body.review_status:
+            return {"ok": True, "id": item_id, "review_status": current}
+        raise HTTPException(
+            409,
+            f"Item already resolved (status={current}); pass force=true to override",
+        )
     return {"ok": True, "id": item_id, "review_status": body.review_status}

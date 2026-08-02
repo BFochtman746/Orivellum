@@ -209,7 +209,7 @@ function AiKindSection({
   kind: AiKind;
   items: KnowledgeItem[];
   reviewing: string | null;
-  onReview: (id: string, status: "approved" | "rejected") => void;
+  onReview: (id: string, status: "approved" | "rejected", force?: boolean) => void;
   onDelete: (id: string) => void;
 }) {
   if (items.length === 0) return null;
@@ -249,7 +249,7 @@ function AiKindSection({
                   <>
                     <button
                       disabled={isReviewing || isApproved}
-                      onClick={() => onReview(item.id, "approved")}
+                      onClick={() => onReview(item.id, "approved", isRejected)}
                       title="Approve"
                       className={`p-1 rounded transition-colors ${isApproved ? "text-emerald-600 bg-emerald-50" : "text-muted-foreground hover:text-emerald-600 hover:bg-emerald-50"} disabled:opacity-40`}
                     >
@@ -257,7 +257,7 @@ function AiKindSection({
                     </button>
                     <button
                       disabled={isReviewing || isRejected}
-                      onClick={() => onReview(item.id, "rejected")}
+                      onClick={() => onReview(item.id, "rejected", isApproved)}
                       title="Dismiss"
                       className={`p-1 rounded transition-colors ${isRejected ? "text-red-600 bg-red-50" : "text-muted-foreground hover:text-red-600 hover:bg-red-50"} disabled:opacity-40`}
                     >
@@ -305,7 +305,7 @@ function KnowledgeTabContent({
   knFilter: KnFilter;
   setKnFilter: (f: KnFilter) => void;
   reviewing: string | null;
-  onReview: (id: string, status: "approved" | "rejected") => void;
+  onReview: (id: string, status: "approved" | "rejected", force?: boolean) => void;
   onDelete: (id: string) => void;
 }) {
   const [aiConfFilter, setAiConfFilter] = useState<ConfTier>("all");
@@ -566,11 +566,13 @@ async function reprocessDoc(docId: string): Promise<void> {
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 
-async function setKnowledgeReview(itemId: string, status: string): Promise<void> {
+async function setKnowledgeReview(itemId: string, status: string, force = false): Promise<void> {
   const resp = await apiFetch(`${BASE}/knowledge/${itemId}/review`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ review_status: status }),
+    // force is required to deliberately flip an already-finalized decision;
+    // without it the API rejects stale/concurrent overwrites with 409.
+    body: JSON.stringify({ review_status: status, force }),
   });
   if (!resp.ok) throw new Error("Review update failed");
 }
@@ -644,10 +646,10 @@ export default function DocumentDetail() {
     staleTime: 60_000,
   });
 
-  const handleReview = async (itemId: string, status: "approved" | "rejected") => {
+  const handleReview = async (itemId: string, status: "approved" | "rejected", force = false) => {
     setReviewing(itemId);
     try {
-      await setKnowledgeReview(itemId, status);
+      await setKnowledgeReview(itemId, status, force);
       toast.success(status === "approved" ? "Approved" : "Dismissed");
       queryClient.invalidateQueries({ queryKey: ["doc-knowledge", docId] });
     } catch {
