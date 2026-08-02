@@ -20,7 +20,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
   Search, Upload, FileText, Database, Filter,
   Library as LibraryIcon, AlertCircle, RefreshCw, Trash2,
-  CheckCircle2, Clock, FileQuestion, X,
+  CheckCircle2, Clock, FileQuestion, X, Package, Layers,
+  FolderOpen, Sparkles,
 } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
@@ -282,6 +283,9 @@ export default function Library() {
   const [workFilter, setWorkFilter] = useState<string>("all");
   const [showFilters, setShowFilters] = useState(false);
   const [sortBy, setSortBy] = useState<"newest" | "oldest" | "a-z" | "z-a">("newest");
+  const [groupByWork, setGroupByWork] = useState(false);
+  const [explodingZips, setExplodingZips] = useState(false);
+  const [organizingDocs, setOrganizingDocs] = useState(false);
   const { data: worksResp } = useListWorks();
   const workTitles: Record<string, string> = {};
   for (const w of worksResp?.works ?? []) {
@@ -330,6 +334,39 @@ export default function Library() {
   const invalidate = () =>
     queryClient.invalidateQueries({ queryKey: getListLibraryQueryKey({}) });
 
+  const zipCount = rawDocs.filter((d: any) => d.kind === "zip").length;
+
+  const handleExplodeZips = async () => {
+    setExplodingZips(true);
+    try {
+      const resp = await apiFetch(`${BASE}/library/explode-zips`, { method: "POST" });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error((data as any).detail ?? "Failed");
+      toast.success((data as any).message ?? "ZIP extraction queued");
+      setTimeout(invalidate, 2000);
+    } catch (err: any) {
+      toast.error(err.message ?? "ZIP extraction failed");
+    } finally {
+      setExplodingZips(false);
+    }
+  };
+
+  const handleSmartOrganize = async () => {
+    setOrganizingDocs(true);
+    try {
+      const resp = await apiFetch(`${BASE}/library/smart-organize`, { method: "POST" });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error((data as any).detail ?? "Failed");
+      const { works_created, docs_organised } = data as any;
+      toast.success(`Created ${works_created} topic(s), organised ${docs_organised} document(s)`);
+      setTimeout(invalidate, 1000);
+    } catch (err: any) {
+      toast.error(err.message ?? "Smart organize failed");
+    } finally {
+      setOrganizingDocs(false);
+    }
+  };
+
   const handleReprocess = async (docId: string, e: React.MouseEvent) => {
     e.stopPropagation();
     setReprocessingIds((s) => new Set(s).add(docId));
@@ -365,7 +402,43 @@ export default function Library() {
               {isLoading ? "Loading…" : `${docs.length} document${docs.length !== 1 ? "s" : ""}${search || readinessFilter !== "all" || kindFilter !== "all" || workFilter !== "all" ? " matching filters" : ""}`}
             </p>
           </div>
-          <ImportDialog onSuccess={invalidate} defaultOpen={openImport} />
+          <div className="flex items-center gap-2 flex-wrap">
+            {zipCount > 0 && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1.5 text-xs border-amber-300 text-amber-700 hover:bg-amber-50"
+                onClick={handleExplodeZips}
+                disabled={explodingZips}
+                title={`Extract ${zipCount} ZIP archive${zipCount !== 1 ? "s" : ""} into individual documents`}
+              >
+                <Package className={`w-3.5 h-3.5 ${explodingZips ? "animate-bounce" : ""}`} />
+                {explodingZips ? "Extracting…" : `Extract ${zipCount} ZIP${zipCount !== 1 ? "s" : ""}`}
+              </Button>
+            )}
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1.5 text-xs"
+              onClick={handleSmartOrganize}
+              disabled={organizingDocs}
+              title="Auto-group unassigned documents into Works by topic"
+            >
+              <Sparkles className={`w-3.5 h-3.5 ${organizingDocs ? "animate-spin" : ""}`} />
+              {organizingDocs ? "Organising…" : "Smart Sort"}
+            </Button>
+            <Button
+              variant={groupByWork ? "secondary" : "outline"}
+              size="sm"
+              className="gap-1.5 text-xs"
+              onClick={() => setGroupByWork((v) => !v)}
+              title="Group documents by Work/topic"
+            >
+              <Layers className="w-3.5 h-3.5" />
+              By Topic
+            </Button>
+            <ImportDialog onSuccess={invalidate} defaultOpen={openImport} />
+          </div>
         </div>
 
         {/* Search */}
@@ -469,6 +542,93 @@ export default function Library() {
         <div className="grid gap-3">
           {isLoading ? (
             [1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-20 w-full" />)
+          ) : groupByWork && !search ? (
+            // ── Grouped by Work/topic ────────────────────────────────────────
+            (() => {
+              const withWork = new Map<string, any[]>();
+              const unassigned: any[] = [];
+              for (const doc of docs) {
+                if (doc.work_id) {
+                  const arr = withWork.get(doc.work_id) ?? [];
+                  arr.push(doc);
+                  withWork.set(doc.work_id, arr);
+                } else {
+                  unassigned.push(doc);
+                }
+              }
+              const groups: Array<{ title: string; color: string; docs: any[] }> = [];
+              for (const [wid, wdocs] of withWork) {
+                groups.push({ title: workTitles[wid] ?? wid.slice(0, 8), color: "text-violet-600", docs: wdocs });
+              }
+              if (unassigned.length > 0) {
+                groups.push({ title: "Unassigned", color: "text-muted-foreground", docs: unassigned });
+              }
+              if (groups.length === 0) return (
+                <div className="text-center py-20 bg-muted/10 border border-dashed rounded-lg">
+                  <LibraryIcon className="w-10 h-10 text-muted-foreground mx-auto mb-4 opacity-50" />
+                  <h3 className="text-lg font-serif font-medium">No documents found</h3>
+                </div>
+              );
+              return groups.map((group) => (
+                <div key={group.title} className="space-y-2">
+                  <div className={`flex items-center gap-2 pt-2 pb-1 border-b border-border/40`}>
+                    <FolderOpen className={`w-4 h-4 ${group.color}`} />
+                    <span className={`text-sm font-semibold font-serif ${group.color}`}>{group.title}</span>
+                    <span className="text-xs font-mono text-muted-foreground">
+                      {group.docs.length} doc{group.docs.length !== 1 ? "s" : ""}
+                    </span>
+                  </div>
+                  {group.docs.map((doc: any) => {
+                    const readiness: string = doc.readiness ?? "imported";
+                    const hasError = readiness === "error" || readiness === "no_text";
+                    const isReprocessing = reprocessingIds.has(doc.id);
+                    return (
+                      <Card
+                        key={doc.id}
+                        onClick={() => navigate(`/library/${doc.id}`)}
+                        className={`transition-colors group cursor-pointer ${hasError ? "border-red-200/60" : "hover-elevate"}`}
+                      >
+                        <CardContent className="p-3 sm:p-4 flex items-center justify-between gap-4">
+                          <div className="flex items-center gap-3 min-w-0">
+                            <div className={`w-8 h-8 rounded flex items-center justify-center shrink-0 border ${hasError ? "bg-red-50 border-red-200" : "bg-muted/50 border-border/50"}`}>
+                              {hasError ? <AlertCircle className="w-3.5 h-3.5 text-red-500" /> : <FileText className="w-3.5 h-3.5 text-muted-foreground" />}
+                            </div>
+                            <div className="min-w-0">
+                              <h3 className="font-medium truncate text-sm">{doc.title || doc.source || "Untitled"}</h3>
+                              <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
+                                <Badge variant="secondary" className="font-mono text-[10px] uppercase">{doc.kind ?? "file"}</Badge>
+                                <ReadinessBadge readiness={readiness} />
+                                {doc.word_count > 0 && <span className="text-[10px] font-mono text-muted-foreground">{doc.word_count.toLocaleString()} words</span>}
+                                {doc.meta?.zip_exploded && (
+                                  <span className="text-[10px] text-amber-600 flex items-center gap-1 font-mono bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5">
+                                    <Package className="w-2.5 h-2.5" />{doc.meta.zip_child_count ?? "?"} inside
+                                  </span>
+                                )}
+                                {doc.meta?.from_zip && !doc.meta?.zip_exploded && (
+                                  <span className="text-[10px] text-violet-500 flex items-center gap-1 font-mono bg-violet-50 border border-violet-200 rounded px-1.5 py-0.5">
+                                    <FolderOpen className="w-2.5 h-2.5" />archive
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-1 shrink-0">
+                            {hasError && (
+                              <Button variant="ghost" size="icon" className="h-7 w-7 text-amber-600 hover:text-amber-700 hover:bg-amber-50" onClick={(e) => handleReprocess(doc.id, e)} disabled={isReprocessing}>
+                                <RefreshCw className={`w-3.5 h-3.5 ${isReprocessing ? "animate-spin" : ""}`} />
+                              </Button>
+                            )}
+                            <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10 opacity-40 group-hover:opacity-100 transition-opacity" onClick={(e) => handleDelete(doc.id, e)}>
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </Button>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    );
+                  })}
+                </div>
+              ));
+            })()
           ) : docs.length > 0 ? (
             docs.map((doc: any) => {
               const readiness: string = doc.readiness ?? "imported";
@@ -511,6 +671,18 @@ export default function Library() {
                             <span className="text-[10px] text-muted-foreground flex items-center gap-1 font-mono">
                               <Database className="w-2.5 h-2.5" />
                               {workTitles[doc.work_id] ?? "Linked Work"}
+                            </span>
+                          )}
+                          {doc.meta?.zip_exploded && (
+                            <span className="text-[10px] text-amber-600 flex items-center gap-1 font-mono bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5">
+                              <Package className="w-2.5 h-2.5" />
+                              {doc.meta.zip_child_count ?? "?"} docs inside
+                            </span>
+                          )}
+                          {doc.meta?.from_zip && !doc.meta?.zip_exploded && (
+                            <span className="text-[10px] text-violet-600 flex items-center gap-1 font-mono bg-violet-50 border border-violet-200 rounded px-1.5 py-0.5">
+                              <FolderOpen className="w-2.5 h-2.5" />
+                              {doc.meta.zip_folder ? `${doc.meta.zip_folder}/` : "archive"}
                             </span>
                           )}
                         </div>

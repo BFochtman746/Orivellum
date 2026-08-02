@@ -22,6 +22,123 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _explode_zip_into_documents(
+    doc_id: str, path: Path, work_id: str | None, zip_title: str, db: "OrivellumDB"
+) -> list[str]:
+    """Extract each supported file inside a ZIP as its own library document.
+
+    Returns the list of child document IDs created (or found via dedup).
+    Each child document is immediately queued for the normal processing pipeline
+    in a daemon thread so the ZIP handler returns quickly.
+    """
+    import hashlib
+    import threading
+    import zipfile
+
+    from orivellum.api._deps import get_config
+
+    cfg = get_config()
+    lib_root = Path(cfg.data_dir) / "library"
+
+    _EXT_KIND = {
+        ".pdf": "pdf", ".docx": "docx", ".doc": "docx",
+        ".xlsx": "excel", ".xls": "excel", ".csv": "csv",
+        ".pptx": "pptx", ".ppt": "pptx",
+        ".txt": "text", ".md": "markdown",
+        ".png": "image", ".jpg": "image", ".jpeg": "image", ".webp": "image",
+        ".html": "html", ".htm": "html",
+        ".json": "json",
+        ".rtf": "file", ".epub": "file",
+    }
+
+    children: list[str] = []
+
+    try:
+        with zipfile.ZipFile(path, "r") as zf:
+            members = [n for n in zf.namelist() if not n.endswith("/")]
+            for name in members:
+                basename = Path(name).name
+                # Skip macOS metadata and hidden files
+                if name.startswith("__MACOSX/") or basename.startswith("._") or basename.startswith("."):
+                    continue
+                # Skip nested ZIPs (only go one level deep)
+                if Path(name).suffix.lower() == ".zip":
+                    continue
+
+                ext = Path(name).suffix.lower()
+                kind = _EXT_KIND.get(ext)
+                if not kind:
+                    continue
+
+                try:
+                    content = zf.read(name)
+                except Exception as exc:
+                    logger.warning("ZIP explode: cannot read %s from %s: %s", name, path.name, exc)
+                    continue
+
+                if not content:
+                    continue
+
+                sha256 = hashlib.sha256(content).hexdigest()
+
+                # Dedup: if this file is already in the library, link it and skip
+                with db._lock:
+                    existing_row = db._conn.execute(
+                        "SELECT id FROM documents WHERE sha256=?", (sha256,)
+                    ).fetchone()
+                if existing_row:
+                    children.append(existing_row["id"])
+                    continue
+
+                # Derive clean title from filename (strip leading index digits like "01_")
+                stem = Path(basename).stem
+                import re as _re
+                title = _re.sub(r"^(\d+[_\-\s]+)", "", stem).strip() or stem
+                if not title:
+                    title = stem
+
+                # Folder hint for grouping (the path inside the ZIP minus filename)
+                folder_hint = str(Path(name).parent)
+                if folder_hint == ".":
+                    folder_hint = ""
+
+                # Save to sharded library directory
+                subdir = lib_root / sha256[:2] / sha256[2:4]
+                subdir.mkdir(parents=True, exist_ok=True)
+                file_path = subdir / basename
+                if file_path.exists():
+                    file_path = subdir / f"{sha256[:8]}_{basename}"
+                file_path.write_bytes(content)
+
+                doc = db.create_document(
+                    title=title,
+                    source=str(file_path),
+                    sha256=sha256,
+                    kind=kind,
+                    work_id=work_id,
+                    content_path=str(file_path.relative_to(lib_root)),
+                    meta={
+                        "from_zip": doc_id,
+                        "zip_name": zip_title,
+                        "zip_path": name,
+                        "zip_folder": folder_hint,
+                    },
+                )
+                children.append(doc["id"])
+
+                # Queue processing in a daemon thread so we return quickly
+                threading.Thread(
+                    target=process_document,
+                    args=(doc["id"], str(file_path), kind, work_id, title, db),
+                    daemon=True,
+                ).start()
+
+    except zipfile.BadZipFile as exc:
+        logger.error("ZIP explode: bad archive %s: %s", path.name, exc)
+
+    return children
+
+
 def resolve_file_path(file_path: str, doc_id: str, db: "OrivellumDB") -> Path | None:
     """Return the file as a Path, falling back to content_path from the DB.
 
@@ -73,6 +190,34 @@ def process_document(doc_id: str, file_path: str, kind: str,
             db.update_document_extracted(doc_id, "", 0,
                                          readiness="error",
                                          error_message=msg)
+            return
+
+        # ZIP archives: explode into individual child documents instead of
+        # concatenating everything into one blob.  Each file inside the ZIP
+        # becomes its own library document with its own processing pipeline.
+        if kind == "zip":
+            children = _explode_zip_into_documents(doc_id, path, work_id, title, db)
+            summary = (
+                f"Archive extracted: {len(children)} document(s) added to your library."
+                if children
+                else "Archive is empty or contains no supported file types."
+            )
+            db.update_document_extracted(doc_id, summary, 0, readiness="ready")
+            try:
+                import json as _jz
+                with db._lock:
+                    db._conn.execute(
+                        "UPDATE documents SET meta=? WHERE id=?",
+                        (_jz.dumps({
+                            "zip_exploded": True,
+                            "zip_child_count": len(children),
+                            "zip_children": children,
+                        }), doc_id),
+                    )
+                    db._conn.commit()
+            except Exception:
+                pass
+            logger.info("ZIP %s exploded → %d child docs", doc_id, len(children))
             return
 
         # Step 1: extract text

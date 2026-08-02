@@ -339,3 +339,137 @@ def library_set_active_work(body: LibraryActiveWork):
         raise HTTPException(404, f"Work {body.work_id!r} not found")
     db.set_setting("active_work_id", body.work_id or "")
     return {"ok": True, "work_id": body.work_id}
+
+
+@router.post("/library/explode-zips")
+def library_explode_zips(background_tasks: BackgroundTasks):
+    """Re-process every ZIP document, exploding each archive into individual
+    child documents so users see content rather than opaque zip containers.
+    Safe to call multiple times — already-exploded archives will just
+    re-enumerate (dedup by SHA-256 prevents duplicate child docs).
+    """
+    db = get_db()
+    lib_root = _library_root()
+
+    with db._lock:
+        rows = db._conn.execute(
+            "SELECT id, source, content_path, work_id, title FROM documents WHERE kind='zip'"
+        ).fetchall()
+
+    queued = 0
+    for row in rows:
+        content_path = row["content_path"]
+        if content_path:
+            file_path = lib_root / content_path
+        else:
+            file_path = Path(row["source"]) if row["source"] else None
+
+        if not file_path or not file_path.exists():
+            logger.warning("ZIP explode: file missing for doc %s — skipping", row["id"])
+            continue
+
+        db.delete_extraction_warnings(row["id"])
+        db.update_document_extracted(row["id"], "", 0,
+                                     readiness="imported", error_message=None)
+        background_tasks.add_task(
+            process_document,
+            doc_id=row["id"],
+            file_path=str(file_path),
+            kind="zip",
+            work_id=row["work_id"],
+            title=row["title"] or file_path.name,
+            db=db,
+        )
+        queued += 1
+        logger.info("Queued ZIP explosion for doc=%s", row["id"])
+
+    return {
+        "queued": queued,
+        "message": (
+            f"Queued {queued} ZIP archive(s) for extraction. "
+            "Each file inside will become its own library document."
+        ),
+    }
+
+
+@router.post("/library/smart-organize")
+def library_smart_organize():
+    """Group unassigned documents into Works based on their ZIP origin.
+
+    Documents extracted from the same ZIP archive are grouped under a Work
+    named after that archive.  Documents already linked to a Work are skipped.
+    Returns a summary of Works created and documents organised.
+    """
+    import json as _json
+    import re as _re
+
+    db = get_db()
+
+    with db._lock:
+        rows = db._conn.execute(
+            """SELECT id, title, meta, work_id
+               FROM documents
+               WHERE readiness = 'ready'
+               ORDER BY created_at DESC
+               LIMIT 2000"""
+        ).fetchall()
+
+    # Group docs without a Work by their zip_name origin
+    groups: dict[str, list[str]] = {}
+    for row in rows:
+        if row["work_id"]:
+            continue  # Already organised
+        try:
+            meta = _json.loads(row["meta"] or "{}")
+        except Exception:
+            meta = {}
+
+        zip_name = meta.get("zip_name", "")
+        zip_folder = meta.get("zip_folder", "")
+
+        if zip_name:
+            # Use zip filename stem, cleaned up
+            key = Path(zip_name).stem
+            key = _re.sub(r"[_\-\s]+(archive|files|docs|documents|library|collection|pack)$",
+                          "", key, flags=_re.I).strip() or key
+        elif zip_folder and zip_folder not in (".", ""):
+            key = zip_folder.split("/")[0]
+        else:
+            continue  # No grouping hint
+
+        if key:
+            groups.setdefault(key, []).append(row["id"])
+
+    # Create / reuse a Work for each group with at least 2 documents
+    created_works: list[dict] = []
+    total_assigned = 0
+    for key, doc_ids in groups.items():
+        if len(doc_ids) < 2:
+            continue
+
+        # Reuse existing work with same title (case-insensitive)
+        with db._lock:
+            existing = db._conn.execute(
+                "SELECT id FROM works WHERE lower(title)=lower(?)", (key,)
+            ).fetchone()
+
+        if existing:
+            work_id = existing["id"]
+        else:
+            work = db.create_work(title=key)
+            work_id = work["id"]
+            created_works.append({"id": work_id, "title": key, "doc_count": len(doc_ids)})
+
+        for doc_id in doc_ids:
+            db.update_document_work(doc_id, work_id)
+        total_assigned += len(doc_ids)
+
+    return {
+        "works_created": len(created_works),
+        "works": created_works,
+        "docs_organised": total_assigned,
+        "message": (
+            f"Created {len(created_works)} Work(s) and organised "
+            f"{total_assigned} document(s)."
+        ),
+    }

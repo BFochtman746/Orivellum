@@ -1085,7 +1085,7 @@ export default function Chat() {
                         )}
                       </div>
                     </div>
-                    <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity shrink-0 mt-0.5">
+                    <div className="flex items-center gap-0.5 opacity-40 group-hover:opacity-100 transition-opacity shrink-0 mt-0.5">
                       {!c.archived && (
                         <button
                           onClick={(e) => { e.stopPropagation(); updateConvMeta.mutate({ convId: c.id!, data: { archived: true } }, { onSuccess: () => { queryClient.invalidateQueries({ queryKey: getListConversationsQueryKey() }); toast.success("Archived"); }, onError: () => toast.error("Could not archive") }); }}
