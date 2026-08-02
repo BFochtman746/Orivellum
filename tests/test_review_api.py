@@ -157,6 +157,18 @@ class ReviewQueueTests(unittest.TestCase):
         self.assertEqual(r.json()["review_status"], "rejected")
         self.assertEqual(self.client.get("/api/review/queue").json()["count"], 0)
 
+    def test_resolve_knowledge_stale_card_conflicts(self):
+        # A decision already made elsewhere must not be overturned by a stale card.
+        kid = self.db.create_knowledge_item(None, "claim", "x", review_status="ai_auto")
+        self.db.update_knowledge_review_status(kid, "approved")
+        r = self.client.post(f"/api/review/knowledge:{kid}/resolve",
+                             json={"decision": "reject"})
+        self.assertEqual(r.status_code, 409)
+        with self.db._lock:
+            row = self.db._conn.execute(
+                "SELECT review_status FROM knowledge WHERE id=?", (kid,)).fetchone()
+        self.assertEqual(row["review_status"], "approved")
+
     # ── resolve: defer ────────────────────────────────────────────────────────
 
     def test_defer_snoozes_item_from_queue(self):
@@ -173,6 +185,23 @@ class ReviewQueueTests(unittest.TestCase):
                                   ((datetime.now(timezone.utc) - timedelta(hours=1)).isoformat(),))
             self.db._conn.commit()
         self.assertEqual(self.client.get("/api/review/queue").json()["count"], 1)
+
+    def test_defer_nonexistent_or_resolved_item_404(self):
+        # nonexistent
+        r = self.client.post(f"/api/review/knowledge:{uuid.uuid4()}/resolve",
+                             json={"decision": "defer"})
+        self.assertEqual(r.status_code, 404)
+        # already resolved → no orphaned deferral
+        kid = self.db.create_knowledge_item(None, "claim", "done",
+                                            review_status="ai_auto")
+        self.db.update_knowledge_review_status(kid, "approved")
+        r = self.client.post(f"/api/review/knowledge:{kid}/resolve",
+                             json={"decision": "defer"})
+        self.assertEqual(r.status_code, 404)
+        with self.db._lock:
+            n = self.db._conn.execute(
+                "SELECT COUNT(*) c FROM review_deferrals").fetchone()["c"]
+        self.assertEqual(n, 0)
 
     # ── resolve: reclassify ───────────────────────────────────────────────────
 

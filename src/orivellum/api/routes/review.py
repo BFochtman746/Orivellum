@@ -202,15 +202,35 @@ class ResolveBody(BaseModel):
     canonical_doc_id: str | None = None  # duplicates: which doc survives on approve
 
 
-def _defer(db, item_key: str, reason: str) -> dict:
+_PENDING_SQL = {
+    "knowledge": "SELECT 1 FROM knowledge WHERE id=? AND review_status='ai_auto'",
+    "reclassify": "SELECT 1 FROM pending_reclassify WHERE id=?",
+    "duplicate": "SELECT 1 FROM doc_dupes WHERE id=? AND resolved=0",
+}
+
+
+def _defer(db, item_type: str, item_id: str, reason: str) -> dict:
+    """Snooze a still-pending item. Validation + insert run under one lock so a
+    concurrent resolution cannot leave an orphaned deferral."""
     until = (datetime.now(timezone.utc) + timedelta(days=_DEFER_DAYS)).isoformat()
+    key = f"{item_type}:{item_id}"
+    now = _now_iso()
     with db._lock:
+        if item_type == "suggestion":
+            pending = db._conn.execute(
+                "SELECT 1 FROM suggestions WHERE id=? AND (expires_at IS NULL OR expires_at > ?)",
+                (item_id, now),
+            ).fetchone()
+        else:
+            pending = db._conn.execute(_PENDING_SQL[item_type], (item_id,)).fetchone()
+        if not pending:
+            raise HTTPException(404, f"No pending {item_type} item {item_id!r}")
         db._conn.execute(
             """INSERT INTO review_deferrals(item_key, deferred_until, reason, created_at)
                VALUES(?,?,?,?)
                ON CONFLICT(item_key) DO UPDATE SET
                  deferred_until=excluded.deferred_until, reason=excluded.reason""",
-            (item_key, until, reason or None, _now_iso()),
+            (key, until, reason or None, now),
         )
         db._conn.commit()
     return {"ok": True, "decision": "defer", "deferred_until": until}
@@ -229,7 +249,7 @@ def review_resolve(item_type: str, item_id: str, body: ResolveBody,
     key = f"{item_type}:{item_id}"
 
     if body.decision == "defer":
-        result = _defer(db, key, body.reason)
+        result = _defer(db, item_type, item_id, body.reason)
     elif item_type == "knowledge":
         result = _resolve_knowledge(db, item_id, body)
     elif item_type == "reclassify":
@@ -252,9 +272,26 @@ def review_resolve(item_type: str, item_id: str, body: ResolveBody,
 
 def _resolve_knowledge(db, item_id: str, body: ResolveBody) -> dict:
     status = "approved" if body.decision == "approve" else "rejected"
-    ok = db.update_knowledge_review_status(item_id, status)
-    if not ok:
-        raise HTTPException(404, f"Knowledge item {item_id!r} not found")
+    # Atomic claim: only flip items still awaiting review, so a stale card or
+    # concurrent request cannot overturn a decision already made elsewhere.
+    with db._lock:
+        cur = db._conn.execute(
+            "UPDATE knowledge SET review_status=? WHERE id=? AND review_status='ai_auto'",
+            (status, item_id),
+        )
+        claimed = cur.rowcount
+        if not claimed:
+            exists = db._conn.execute(
+                "SELECT review_status FROM knowledge WHERE id=?", (item_id,)
+            ).fetchone()
+        db._conn.commit()
+    if not claimed:
+        if not exists:
+            raise HTTPException(404, f"Knowledge item {item_id!r} not found")
+        raise HTTPException(
+            409, f"Knowledge item already resolved (status={exists['review_status']})")
+    db.audit("knowledge.review_updated", object_id=item_id, object_type="knowledge",
+             actor="user", detail=f"ai_auto→{status}")
     return {"ok": True, "decision": body.decision, "review_status": status}
 
 
