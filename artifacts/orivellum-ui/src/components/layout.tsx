@@ -786,7 +786,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
                 )}
               </button>
             </div>
-            <div className="h-full w-full max-w-[1400px] mx-auto px-6 lg:px-8 py-6 lg:py-8">
+            <div className="w-full max-w-[1400px] mx-auto px-6 lg:px-8 py-6 lg:py-8">
               {children}
             </div>
           </main>

@@ -1,9 +1,21 @@
-"""Nightshift — nightly background processing and auto-memory extraction.
+"""Nightshift — nightly background maintenance, processing, and auto-memory.
 
 Runs as a daemon thread started in the FastAPI lifespan.  Wakes at the
-configured hour (default 03:00 local time), iterates documents that have
-few knowledge items, re-runs rule-based harvest (and optionally LLM
-harvest if enabled), then writes a markdown Night Report to data/nightshift/.
+configured hour (default 03:00 local time) and executes every maintenance
+pass in order, each in its own try/except so one failure never blocks the
+rest.  Writes a markdown Night Report to data/nightshift/.
+
+Passes (in order):
+  1. Database optimisation  — VACUUM, ANALYZE, integrity check
+  2. Temp-file cleanup      — delete zero-byte files from outputs/
+  3. Old report pruning     — keep last 30 night reports
+  4. Orphan cleanup         — knowledge / chunks with no parent document
+  5. Stuck-document retry   — re-queue imported/error/no_text docs (up to 20)
+  6. Sparse-doc harvest     — re-harvest docs with < 3 knowledge items
+  7. Gap analysis           — detect research gaps for every active Work
+  8. Evidence rescoring     — update confidence + detect contradictions
+  9. Embedding backfill     — embed up to 300 new knowledge items
+ 10. Work stats refresh     — recompute cached stats for every active Work
 """
 from __future__ import annotations
 
@@ -22,14 +34,13 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("orivellum.nightshift")
 
-# Re-process docs whose knowledge count is below this threshold
 _MIN_KNOWLEDGE_ITEMS = 3
-# Max docs processed per run (safety valve)
-_MAX_DOCS_PER_RUN = 20
+_MAX_DOCS_PER_RUN    = 20
 
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _get_docs_needing_work(db: "OrivellumDB") -> list[dict]:
-    """Return ready documents that have fewer than _MIN_KNOWLEDGE_ITEMS knowledge entries."""
     with db._lock:
         rows = db._conn.execute(
             """SELECT d.id, d.work_id, d.title, d.source,
@@ -46,14 +57,7 @@ def _get_docs_needing_work(db: "OrivellumDB") -> list[dict]:
     return [dict(r) for r in rows]
 
 
-def _get_stuck_docs(db: "OrivellumDB", max_docs: int = 10) -> list[dict]:
-    """Return documents stuck in 'imported' or 'error' / 'no_text' that have a
-    resolvable source file — these were never fully extracted and should be
-    retried during the nightshift recovery pass.
-
-    Skips documents created within the last 10 minutes (may still be in-flight)
-    and ZIP archives (those are handled by the dedicated explode-zips logic).
-    """
+def _get_stuck_docs(db: "OrivellumDB", max_docs: int = 20) -> list[dict]:
     with db._lock:
         rows = db._conn.execute(
             """SELECT d.id, d.work_id, d.title, d.source, d.content_path,
@@ -69,21 +73,23 @@ def _get_stuck_docs(db: "OrivellumDB", max_docs: int = 10) -> list[dict]:
     return [dict(r) for r in rows]
 
 
-def _record_run(db: "OrivellumDB", docs_processed: int, items_added: int, report_path: str | None) -> None:
+def _record_run(db: "OrivellumDB", docs_processed: int, items_added: int,
+                report_path: str | None) -> None:
     run_id = str(uuid.uuid4())
     now    = datetime.now(timezone.utc).isoformat()
     with db._lock:
         try:
             db._conn.execute(
-                "INSERT OR REPLACE INTO nightshift_runs(id,ran_at,docs_processed,items_added,report_path) VALUES(?,?,?,?,?)",
+                "INSERT OR REPLACE INTO nightshift_runs"
+                "(id,ran_at,docs_processed,items_added,report_path) VALUES(?,?,?,?,?)",
                 (run_id, now, docs_processed, items_added, report_path),
             )
             db._conn.commit()
         except Exception as exc:
             logger.warning("Could not record nightshift run: %s", exc)
     try:
-        db.audit("system.nightshift_run", object_id=run_id, object_type="nightshift_run",
-                 actor="system",
+        db.audit("system.nightshift_run", object_id=run_id,
+                 object_type="nightshift_run", actor="system",
                  detail=f"docs={docs_processed} items={items_added}")
     except Exception:
         pass
@@ -99,18 +105,191 @@ def _write_report(data_dir: Path, date_str: str, items: list[str]) -> str:
     return str(path)
 
 
-def run_nightshift(db: "OrivellumDB", cfg: "OrivellumConfig") -> None:
-    """Execute one nightshift pass synchronously.  Called by the daemon thread."""
-    date_str = datetime.now().strftime("%Y-%m-%d")
-    logger.info("Nightshift starting for %s", date_str)
+# ── Passes ────────────────────────────────────────────────────────────────────
 
+def _pass_db_optimise(db: "OrivellumDB", report: list[str]) -> None:
+    """VACUUM + ANALYZE + integrity check.  Keeps SQLite fast and healthy."""
+    try:
+        with db._lock:
+            # integrity_check returns list of rows; "ok" means clean
+            result = db._conn.execute("PRAGMA integrity_check(10)").fetchall()
+            ok = len(result) == 1 and result[0][0] == "ok"
+            if not ok:
+                errors = [r[0] for r in result]
+                logger.warning("DB integrity issues: %s", errors)
+                report.append(f"⚠ DB integrity: {len(errors)} issue(s) — {errors[:3]}")
+            else:
+                logger.debug("DB integrity: ok")
+
+            # WAL checkpoint — flush WAL to main DB file
+            db._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            # ANALYZE updates query-planner statistics
+            db._conn.execute("ANALYZE")
+            db._conn.commit()
+
+        # VACUUM rewrites the whole file — must run outside a transaction
+        # and outside the lock to avoid deadlock
+        import sqlite3
+        db_path = None
+        try:
+            db_path = db._conn.execute("PRAGMA database_list").fetchone()
+            if db_path:
+                db_path = db_path[2]  # filename column
+        except Exception:
+            pass
+
+        if db_path and os.path.exists(db_path):
+            size_before = os.path.getsize(db_path)
+            # Use a separate connection for VACUUM (cannot run in WAL tx)
+            conn = sqlite3.connect(db_path, timeout=30)
+            conn.execute("VACUUM")
+            conn.close()
+            size_after = os.path.getsize(db_path)
+            saved_mb = max(0, (size_before - size_after) / 1_048_576)
+            msg = f"DB optimised — VACUUM saved {saved_mb:.1f} MB" if saved_mb > 0.05 \
+                  else "DB optimised — VACUUM (no size change)"
+            report.append(msg)
+            logger.info(msg)
+        else:
+            report.append("DB optimised — ANALYZE + WAL checkpoint (VACUUM skipped: path unknown)")
+
+    except Exception as exc:
+        logger.warning("DB optimise pass failed: %s", exc)
+        report.append(f"⚠ DB optimise: {exc}")
+
+
+def _pass_cleanup_outputs(cfg: "OrivellumConfig", report: list[str]) -> None:
+    """Delete zero-byte temp files from the outputs directory."""
+    try:
+        out_dir = Path(cfg.data_dir) / "outputs"
+        if not out_dir.exists():
+            return
+        deleted = 0
+        for f in out_dir.rglob("*"):
+            if f.is_file() and f.stat().st_size == 0:
+                try:
+                    f.unlink()
+                    deleted += 1
+                except Exception:
+                    pass
+        # Also remove empty subdirectories
+        for d in sorted(out_dir.rglob("*"), reverse=True):
+            if d.is_dir() and d != out_dir:
+                try:
+                    if not any(d.iterdir()):
+                        d.rmdir()
+                except Exception:
+                    pass
+        if deleted:
+            report.append(f"Cleaned up {deleted} zero-byte temp file(s) from outputs/")
+            logger.info("Nightshift: removed %d empty temp files", deleted)
+    except Exception as exc:
+        logger.warning("Output cleanup pass failed: %s", exc)
+
+
+def _pass_prune_old_reports(cfg: "OrivellumConfig", keep: int = 30) -> None:
+    """Keep only the most recent `keep` night reports."""
+    try:
+        report_dir = Path(cfg.data_dir) / "nightshift"
+        if not report_dir.exists():
+            return
+        reports = sorted(report_dir.glob("*.md"), reverse=True)
+        for old in reports[keep:]:
+            try:
+                old.unlink()
+            except Exception:
+                pass
+    except Exception as exc:
+        logger.warning("Report pruning failed: %s", exc)
+
+
+def _pass_orphan_cleanup(db: "OrivellumDB", report: list[str]) -> None:
+    """Remove knowledge items and chunks whose parent document no longer exists."""
+    try:
+        with db._lock:
+            # Knowledge items with no document
+            k_deleted = db._conn.execute(
+                """DELETE FROM knowledge
+                   WHERE source_doc_id IS NOT NULL
+                     AND source_doc_id NOT IN (SELECT id FROM documents)"""
+            ).rowcount
+            # Chunks with no document
+            c_deleted = db._conn.execute(
+                """DELETE FROM chunks
+                   WHERE doc_id NOT IN (SELECT id FROM documents)"""
+            ).rowcount
+            # Embeddings with no knowledge item
+            v_deleted = 0
+            try:
+                v_deleted = db._conn.execute(
+                    """DELETE FROM vectors
+                       WHERE object_id NOT IN (SELECT id FROM knowledge)"""
+                ).rowcount
+            except Exception:
+                pass
+            db._conn.commit()
+
+        removed = k_deleted + c_deleted + v_deleted
+        if removed:
+            report.append(
+                f"Orphan cleanup: removed {k_deleted} knowledge, "
+                f"{c_deleted} chunks, {v_deleted} vectors"
+            )
+            logger.info("Nightshift orphan cleanup: k=%d c=%d v=%d",
+                        k_deleted, c_deleted, v_deleted)
+    except Exception as exc:
+        logger.warning("Orphan cleanup pass failed: %s", exc)
+
+
+def _pass_stuck_docs(db: "OrivellumDB", cfg: "OrivellumConfig",
+                     report: list[str]) -> None:
+    """Re-queue all stuck documents (imported/error/no_text) that have a file."""
+    try:
+        from orivellum.capabilities.pipeline import process_document as _proc
+        lib_root = Path(cfg.data_dir) / "library"
+        stuck = _get_stuck_docs(db, max_docs=20)
+        recovered = 0
+        for sdoc in stuck:
+            content_path = sdoc.get("content_path")
+            file_path: Path | None = None
+            if content_path:
+                file_path = lib_root / content_path
+            elif sdoc.get("source"):
+                file_path = Path(sdoc["source"])
+            if not file_path or not file_path.exists():
+                continue
+            try:
+                db.update_document_extracted(sdoc["id"], "", 0,
+                                             readiness="imported",
+                                             error_message=None)
+                t = threading.Thread(
+                    target=_proc,
+                    kwargs=dict(doc_id=sdoc["id"], file_path=str(file_path),
+                                kind=sdoc.get("kind") or "text",
+                                work_id=sdoc.get("work_id"),
+                                title=sdoc.get("title") or sdoc["id"],
+                                db=db),
+                    daemon=True,
+                )
+                t.start()
+                recovered += 1
+            except Exception as rec_exc:
+                logger.warning("Recovery failed for %s: %s", sdoc["id"], rec_exc)
+
+        if recovered:
+            report.append(f"Recovery: re-queued {recovered} stuck document(s)")
+            logger.info("Nightshift: queued %d stuck docs", recovered)
+    except Exception as exc:
+        logger.warning("Stuck-doc pass failed: %s", exc)
+
+
+def _pass_sparse_harvest(db: "OrivellumDB", report: list[str]) -> int:
+    """Re-harvest documents with few knowledge items; returns items added."""
+    items_added = 0
     docs = _get_docs_needing_work(db)
-    items_added   = 0
-    report_lines: list[str] = []
-
     if not docs:
-        logger.info("Nightshift: no documents need re-processing")
-    else:
+        return 0
+    try:
         from orivellum.capabilities.knowledge_harvest import harvest
         from orivellum.capabilities.extraction import ExtractionResult, PageSegment
         ai_enabled = db.get_setting("ai_extraction_enabled", "false").lower() == "true"
@@ -127,28 +306,21 @@ def run_nightshift(db: "OrivellumDB", cfg: "OrivellumConfig") -> None:
                     ).fetchall()
                 full_text = "\n".join(r["text"] for r in chunks_row)
                 if not full_text.strip():
-                    logger.debug(
-                        "Nightshift: skipping %s — no extractable text in chunks",
-                        doc_id,
-                    )
-                    report_lines.append(f"{title}: skipped — no text in chunks")
                     continue
 
-                doc_info = db.get_document(doc_id)
-                doc_kind = (doc_info or {}).get("kind") or "text"
-                pages = [
-                    PageSegment(page=i + 1, text=r["text"])
-                    for i, r in enumerate(chunks_row)
-                ]
+                doc_info = db.get_document(doc_id) or {}
+                pages = [PageSegment(page=i + 1, text=r["text"])
+                         for i, r in enumerate(chunks_row)]
                 result = ExtractionResult(
-                    kind=doc_kind,
+                    kind=doc_info.get("kind") or "text",
                     full_text=full_text,
                     word_count=len(full_text.split()),
                     pages=pages,
                 )
 
                 before = len(db.list_knowledge(work_id=work_id, limit=500))
-                harvest(result, doc_id=doc_id, work_id=work_id, doc_title=title, db=db)
+                harvest(result, doc_id=doc_id, work_id=work_id,
+                        doc_title=title, db=db)
 
                 if ai_enabled:
                     try:
@@ -156,142 +328,184 @@ def run_nightshift(db: "OrivellumDB", cfg: "OrivellumConfig") -> None:
                         llm_harvest(result, doc_id=doc_id, work_id=work_id,
                                     doc_title=title, db=db)
                     except Exception as ai_exc:
-                        logger.warning("Nightshift LLM harvest failed for %s: %s", doc_id, ai_exc)
+                        logger.warning("LLM harvest failed for %s: %s", doc_id, ai_exc)
 
-                after  = len(db.list_knowledge(work_id=work_id, limit=500))
-                added  = max(0, after - before)
+                after = len(db.list_knowledge(work_id=work_id, limit=500))
+                added = max(0, after - before)
                 items_added += added
-                report_lines.append(f"{title}: +{added} knowledge items")
+                if added:
+                    report.append(f"Harvest: {title[:60]} +{added} item(s)")
             except Exception as exc:
-                logger.warning("Nightshift failed for doc %s: %s", doc_id, exc)
-                report_lines.append(f"{title}: ERROR — {exc}")
+                logger.warning("Sparse harvest failed for %s: %s", doc_id, exc)
 
-    # ── Recovery pass — retry documents stuck in imported / error / no_text ─────
-    try:
-        from orivellum.capabilities.pipeline import process_document as _process_doc
-        from pathlib import Path as _Path
-        cfg_data_dir = _Path(cfg.data_dir)
-        lib_root = cfg_data_dir / "library"
-        stuck = _get_stuck_docs(db, max_docs=5)
-        recovered = 0
-        for sdoc in stuck:
-            sdoc_id      = sdoc["id"]
-            content_path = sdoc.get("content_path")
-            kind         = sdoc.get("kind") or "text"
-            title        = sdoc.get("title") or sdoc.get("source") or sdoc_id
-            file_path: _Path | None = None
-            if content_path:
-                file_path = lib_root / content_path
-            elif sdoc.get("source"):
-                file_path = _Path(sdoc["source"])
-            if not file_path or not file_path.exists():
-                logger.debug("Nightshift recovery: file missing for doc %s — skip", sdoc_id)
-                continue
-            try:
-                db.update_document_extracted(sdoc_id, "", 0,
-                                             readiness="imported", error_message=None)
-                t = threading.Thread(
-                    target=_process_doc,
-                    kwargs=dict(doc_id=sdoc_id, file_path=str(file_path),
-                                kind=kind, work_id=sdoc.get("work_id"),
-                                title=title, db=db),
-                    daemon=True,
-                )
-                t.start()
-                recovered += 1
-                logger.info("Nightshift recovery: queued doc=%s kind=%s", sdoc_id, kind)
-            except Exception as rec_exc:
-                logger.warning("Nightshift recovery failed for %s: %s", sdoc_id, rec_exc)
-        if recovered:
-            report_lines.append(f"Recovery: re-queued {recovered} stuck document(s) for extraction")
     except Exception as exc:
-        logger.warning("Nightshift recovery pass failed: %s", exc)
+        logger.warning("Sparse harvest pass failed: %s", exc)
 
-    # ── Gap analysis — runs every night regardless of doc processing ──────────
+    return items_added
+
+
+def _pass_gap_analysis(db: "OrivellumDB", report: list[str]) -> None:
+    """Detect research gaps for every active Work and cache results."""
     try:
         from orivellum.capabilities.gaps import detect_gaps
         active_works = db.list_works(status="active")
-        gap_lines: list[str] = []
+        high_gaps: list[str] = []
         for work in active_works[:20]:
             try:
                 gr = detect_gaps(work["id"], db)
-                # Cache the result so /gaps/top can serve it instantly
                 try:
                     gap_dicts = [
-                        {"kind": g.kind, "title": g.title, "description": g.description,
+                        {"kind": g.kind, "title": g.title,
+                         "description": g.description,
                          "severity": g.severity, "metadata": g.metadata}
                         for g in gr.gaps
                     ]
                     db.cache_work_gaps(work["id"], gap_dicts, gr.coverage_pct)
                 except Exception:
                     pass
-                high_gaps = [g for g in gr.gaps if g.severity == "high"][:3]
-                if high_gaps:
-                    wtitle = work.get("title", work["id"][:12])
-                    for gap in high_gaps:
-                        gap_lines.append(f"{wtitle}: {gap.title}")
+                for g in gr.gaps:
+                    if g.severity == "high":
+                        wtitle = work.get("title", work["id"][:12])
+                        high_gaps.append(f"{wtitle}: {g.title}")
             except Exception:
                 pass
-        if gap_lines:
-            report_lines.append(
-                f"Research gaps — {len(gap_lines)} critical item(s) across "
-                f"{len(active_works)} work(s):"
-            )
-            report_lines.extend(f"  ⚠ {line}" for line in gap_lines[:10])
-        elif active_works:
-            report_lines.append(
-                f"Research coverage: no critical gaps across {len(active_works)} work(s)."
-            )
-    except Exception as exc:
-        logger.warning("Nightshift gap analysis failed: %s", exc)
 
-    # ── Learning loop: evidence re-scoring + contradiction detection ─────────
+        if high_gaps:
+            report.append(f"Research gaps — {len(high_gaps)} critical item(s) across "
+                          f"{len(active_works)} work(s):")
+            report.extend(f"  ⚠ {line}" for line in high_gaps[:10])
+        elif active_works:
+            report.append(f"Research coverage: no critical gaps across "
+                          f"{len(active_works)} work(s)")
+    except Exception as exc:
+        logger.warning("Gap analysis pass failed: %s", exc)
+
+
+def _pass_evidence(db: "OrivellumDB", report: list[str]) -> None:
+    """Rescore confidence and detect contradictions for every active Work."""
     try:
         from orivellum.capabilities.evidence import rescore_work, detect_contradictions
-        rescored = conflicts_found = 0
+        rescored = conflicts = 0
         for work in db.list_works(status="active")[:20]:
             try:
-                rescored += rescore_work(work["id"], db)
-                conflicts_found += detect_contradictions(work["id"], db)
+                rescored  += rescore_work(work["id"], db)
+                conflicts += detect_contradictions(work["id"], db)
             except Exception as exc:
-                logger.warning("Evidence pass failed for work %s: %s",
+                logger.warning("Evidence pass failed for %s: %s",
                                work.get("id", "?")[:8], exc)
         if rescored:
-            report_lines.append(f"Evidence: re-scored confidence on {rescored} knowledge item(s)")
-        if conflicts_found:
-            report_lines.append(
-                f"⚠ Contradictions: {conflicts_found} new conflict(s) detected — review in Governance")
+            report.append(f"Evidence: re-scored {rescored} knowledge item(s)")
+        if conflicts:
+            report.append(f"⚠ Contradictions: {conflicts} new conflict(s) — review in Governance")
     except Exception as exc:
-        logger.warning("Nightshift evidence pass failed: %s", exc)
+        logger.warning("Evidence pass failed: %s", exc)
 
-    # ── Semantic embeddings backfill (skips silently when AI endpoint is down) ─
+
+def _pass_embeddings(db: "OrivellumDB", report: list[str]) -> None:
+    """Embed up to 300 unembedded knowledge items."""
     try:
         from orivellum.capabilities.embeddings import backfill_embeddings
         embedded = backfill_embeddings(db, max_items=300)
         if embedded:
-            report_lines.append(f"Semantic index: embedded {embedded} new item(s)")
+            report.append(f"Semantic index: embedded {embedded} new item(s)")
     except Exception as exc:
-        logger.warning("Nightshift embedding pass failed: %s", exc)
-
-    report_path = _write_report(Path(cfg.data_dir), date_str, report_lines)
-    _record_run(db, len(docs), items_added, report_path)
-    logger.info("Nightshift complete — processed %d docs, added %d items", len(docs), items_added)
+        logger.warning("Embedding pass failed: %s", exc)
 
 
-def start_nightshift_daemon(db: "OrivellumDB", cfg: "OrivellumConfig") -> threading.Thread:
+def _pass_work_stats(db: "OrivellumDB", report: list[str]) -> None:
+    """Refresh cached stats for every active Work so the UI is always current."""
+    try:
+        works = db.list_works(status="active")
+        refreshed = 0
+        for work in works:
+            try:
+                # get_work_stats rebuilds counts from scratch
+                db.get_work_stats(work["id"])
+                refreshed += 1
+            except Exception:
+                pass
+        if refreshed:
+            logger.debug("Nightshift: refreshed stats for %d works", refreshed)
+    except Exception as exc:
+        logger.warning("Work stats pass failed: %s", exc)
+
+
+# ── Main runner ───────────────────────────────────────────────────────────────
+
+def run_nightshift(db: "OrivellumDB", cfg: "OrivellumConfig") -> None:
+    """Execute one complete nightshift pass synchronously."""
+    date_str = datetime.now().strftime("%Y-%m-%d")
+    start_ts = time.time()
+    logger.info("Nightshift starting for %s", date_str)
+    report: list[str] = []
+
+    # 1 — Database maintenance
+    logger.info("Nightshift pass 1/10: database optimisation")
+    _pass_db_optimise(db, report)
+
+    # 2 — Zero-byte temp file cleanup
+    logger.info("Nightshift pass 2/10: output temp-file cleanup")
+    _pass_cleanup_outputs(cfg, report)
+
+    # 3 — Prune old night reports
+    logger.info("Nightshift pass 3/10: prune old reports")
+    _pass_prune_old_reports(cfg)
+
+    # 4 — Orphaned knowledge / chunks / vectors
+    logger.info("Nightshift pass 4/10: orphan cleanup")
+    _pass_orphan_cleanup(db, report)
+
+    # 5 — Retry stuck documents
+    logger.info("Nightshift pass 5/10: stuck document recovery")
+    _pass_stuck_docs(db, cfg, report)
+
+    # 6 — Harvest sparse documents
+    logger.info("Nightshift pass 6/10: sparse document harvest")
+    items_added = _pass_sparse_harvest(db, report)
+
+    # 7 — Gap analysis
+    logger.info("Nightshift pass 7/10: gap analysis")
+    _pass_gap_analysis(db, report)
+
+    # 8 — Evidence rescoring + contradiction detection
+    logger.info("Nightshift pass 8/10: evidence rescoring")
+    _pass_evidence(db, report)
+
+    # 9 — Semantic embedding backfill
+    logger.info("Nightshift pass 9/10: embedding backfill")
+    _pass_embeddings(db, report)
+
+    # 10 — Work stats refresh
+    logger.info("Nightshift pass 10/10: work stats refresh")
+    _pass_work_stats(db, report)
+
+    elapsed = time.time() - start_ts
+    report.append(f"Completed in {elapsed:.0f}s")
+
+    report_path = _write_report(Path(cfg.data_dir), date_str, report)
+    _record_run(db, len(_get_docs_needing_work(db)), items_added, report_path)
+    logger.info("Nightshift complete in %.0fs — %d report lines", elapsed, len(report))
+
+
+def start_nightshift_daemon(db: "OrivellumDB",
+                            cfg: "OrivellumConfig") -> threading.Thread:
     """Start the nightshift daemon thread.  Returns the thread (daemon=True)."""
     nightshift_hour = int(db.get_setting("nightshift_hour", "3"))
 
-    def _loop():
-        logger.info("Nightshift daemon ready (fires at %02d:00 local time)", nightshift_hour)
+    def _loop() -> None:
+        logger.info("Nightshift daemon ready (fires at %02d:00 local time)",
+                    nightshift_hour)
         while True:
-            now  = datetime.now()
-            # Sleep until the next occurrence of nightshift_hour:00
-            target = now.replace(hour=nightshift_hour, minute=0, second=0, microsecond=0)
+            now    = datetime.now()
+            target = now.replace(hour=nightshift_hour, minute=0, second=0,
+                                 microsecond=0)
             if target <= now:
-                target = target.replace(day=target.day + 1)
+                # Already past today's window — aim for tomorrow
+                from datetime import timedelta
+                target += timedelta(days=1)
             wait_secs = (target - now).total_seconds()
-            logger.debug("Nightshift sleeping %.0f s until %s", wait_secs, target.isoformat())
+            logger.debug("Nightshift sleeping %.0f s until %s",
+                         wait_secs, target.isoformat())
             time.sleep(max(wait_secs, 1))
 
             enabled = db.get_setting("nightshift_enabled", "true").lower() == "true"
@@ -299,7 +513,7 @@ def start_nightshift_daemon(db: "OrivellumDB", cfg: "OrivellumConfig") -> thread
                 try:
                     run_nightshift(db, cfg)
                 except Exception as exc:
-                    logger.error("Nightshift run crashed: %s", exc)
+                    logger.error("Nightshift run crashed: %s", exc, exc_info=True)
             else:
                 logger.info("Nightshift disabled — skipping run")
 
