@@ -79,6 +79,7 @@ import {
   Share2,
 } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
+import { BookTab } from "./book-tab";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { toast } from "sonner";
 
@@ -349,9 +350,10 @@ export default function WorkDetail() {
 
       {/* Tabs */}
       <div className="pt-8">
-        <Tabs defaultValue="documents" className="w-full">
+        <Tabs defaultValue="book" className="w-full">
           <TabsList className="w-full justify-start border-b border-border/50 rounded-none bg-transparent h-auto p-0 space-x-6">
             {[
+              { value: "book",         icon: BookOpen,      label: "Book",         badge: null },
               { value: "documents",    icon: FileText,      label: "Documents",    badge: null },
               { value: "knowledge",    icon: Network,       label: "Knowledge",    badge: null },
               { value: "graph",        icon: Share2,        label: "Graph",        badge: null },
@@ -379,6 +381,7 @@ export default function WorkDetail() {
           </TabsList>
 
           <div className="mt-8">
+            <TabsContent value="book"><ErrorBoundary label="book tab"><BookTab workId={workId!} /></ErrorBoundary></TabsContent>
             <TabsContent value="documents"><ErrorBoundary label="documents tab"><DocumentsTab workId={workId!} /></ErrorBoundary></TabsContent>
             <TabsContent value="knowledge"><ErrorBoundary label="knowledge tab"><KnowledgeTab workId={workId!} /></ErrorBoundary></TabsContent>
             <TabsContent value="graph"><ErrorBoundary label="graph tab"><GraphTab workId={workId!} /></ErrorBoundary></TabsContent>

@@ -316,6 +316,25 @@ def works_stats(work_id: str):
     }
 
 
+@router.get("/works/{work_id}/book-intelligence")
+def works_book_intelligence(work_id: str):
+    """Unified Knowledge Object view of a Work: canonical manuscript,
+    manuscript versions, merged outline with per-chapter status and research
+    counts, completeness dimensions, gaps, and the next recommended action.
+
+    All data derives from existing extracted text, knowledge items, and
+    book_chapters records — nothing is recomputed from source files.
+    """
+    db = get_db()
+    if not db.get_work(work_id):
+        raise HTTPException(404, f"Work {work_id!r} not found")
+    from orivellum.capabilities.book_intelligence import build_book_intelligence
+    try:
+        return build_book_intelligence(work_id, db)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc))
+
+
 @router.get("/works/{work_id}/chapters")
 def works_chapters(work_id: str):
     """Return all book chapters extracted from documents linked to this Work.
