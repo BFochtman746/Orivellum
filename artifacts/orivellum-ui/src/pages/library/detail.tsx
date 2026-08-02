@@ -761,9 +761,11 @@ export default function DocumentDetail() {
 
   // ── Read Aloud (TTS) ──────────────────────────────────────────────────────
   // The TTS endpoint caps requests at 10 000 chars; stay well under it and
-  // split at paragraph/sentence boundaries so parts sound natural.
+  // split at paragraph/sentence boundaries so parts sound natural. The whole
+  // document is read — parts are synthesized lazily (current + next prefetch)
+  // and old blob URLs are evicted so memory stays bounded regardless of length.
   const TTS_PART_CHARS = 4500;
-  const TTS_MAX_PARTS = 40; // ~180k chars ≈ several hours of audio
+  const TTS_KEEP_BEHIND = 1; // keep this many already-played parts cached for quick back-seek
 
   const splitTextForTts = (text: string): string[] => {
     const paras = text.replace(/\n{3,}/g, "\n\n").split(/\n\n+/);
@@ -830,6 +832,17 @@ export default function DocumentDetail() {
     synthesizePart(parts, i).catch(() => {});
   };
 
+  /** Revoke cached blob URLs far behind the current part so memory stays
+   *  bounded on arbitrarily long documents. */
+  const evictOldParts = (current: number) => {
+    for (const [idx, url] of ttsUrlCacheRef.current) {
+      if (idx < current - TTS_KEEP_BEHIND) {
+        URL.revokeObjectURL(url);
+        ttsUrlCacheRef.current.delete(idx);
+      }
+    }
+  };
+
   const resetTts = () => {
     ttsSessionRef.current++;
     ttsAutoPlayRef.current = false;
@@ -866,11 +879,7 @@ export default function DocumentDetail() {
         return;
       }
 
-      let parts = splitTextForTts(text);
-      if (parts.length > TTS_MAX_PARTS) {
-        parts = parts.slice(0, TTS_MAX_PARTS);
-        toast.info(`Very long document — reading the first ${TTS_MAX_PARTS} parts.`);
-      }
+      const parts = splitTextForTts(text);
       const session = ttsSessionRef.current;
       setTtsChunks(parts);
       setTtsIndex(0);
@@ -902,6 +911,7 @@ export default function DocumentDetail() {
       setTtsIndex(i);
       setTtsAudioUrl(url);
       prefetchPart(ttsChunks, i + 1);
+      evictOldParts(i);
     } catch (e: any) {
       if (e?.message !== TTS_STALE) {
         setTtsPlaying(false);

@@ -64,3 +64,4 @@ attached_assets/
 # data/.session_secret — session-signing secret written by the API server
 data/api_key.txt
 data/.session_secret
+data/outputs/
