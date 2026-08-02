@@ -477,25 +477,31 @@ def list_outputs():
         return {"outputs": [], "count": 0}
     files = sorted(out_dir.rglob("*"), key=lambda f: f.stat().st_mtime, reverse=True)
     result = []
-    for f in files[:100]:
-        if f.is_file():
-            suffix = f.suffix.lower()
-            if suffix in {".wav", ".mp3", ".m4a", ".m4b", ".ogg"}:
-                kind = "audio"
-            elif suffix in {".mp4", ".webm", ".mov"}:
-                kind = "video"
-            elif suffix in {".png", ".jpg", ".jpeg", ".webp", ".gif"}:
-                kind = "image"
-            else:
-                kind = "file"
-            rel = str(f.relative_to(out_dir))
-            result.append({
-                "name": f.name,
-                "path": rel,
-                "size_bytes": f.stat().st_size,
-                "kind": kind,
-                "mtime": f.stat().st_mtime,
-            })
+    for f in files[:200]:
+        if not f.is_file():
+            continue
+        sz = f.stat().st_size
+        if sz == 0:  # skip empty temp files
+            continue
+        suffix = f.suffix.lower()
+        if suffix in {".wav", ".mp3", ".m4a", ".m4b", ".ogg"}:
+            kind = "audio"
+        elif suffix in {".mp4", ".webm", ".mov"}:
+            kind = "video"
+        elif suffix in {".png", ".jpg", ".jpeg", ".webp", ".gif"}:
+            kind = "image"
+        else:
+            kind = "file"
+        rel = str(f.relative_to(out_dir))
+        result.append({
+            "name": f.name,
+            "path": rel,
+            "size_bytes": sz,
+            "kind": kind,
+            "mtime": f.stat().st_mtime,
+        })
+        if len(result) >= 100:
+            break
     return {"outputs": result, "count": len(result)}
 
 

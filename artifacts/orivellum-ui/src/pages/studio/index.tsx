@@ -547,47 +547,71 @@ function OutputsGallery() {
   );
   const outputs: any[] = outputsResp?.outputs ?? [];
 
-  // Lightbox state for images
   const [lightbox, setLightbox] = useState<string | null>(null);
-  // Active audio player
+  const [lightboxName, setLightboxName] = useState("");
   const [playing, setPlaying] = useState<string | null>(null);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [clearing, setClearing] = useState(false);
+  // Real DOM audio element — required for iOS Safari autoplay policy
+  const audioElRef = useRef<HTMLAudioElement | null>(null);
 
   function serveUrl(path: string) {
     return `${BASE}/studio/outputs/serve?path=${encodeURIComponent(path)}`;
   }
 
   function handlePlay(out: any) {
+    const el = audioElRef.current;
+    if (!el) return;
     if (playing === out.path) {
-      audioRef.current?.pause();
+      el.pause();
       setPlaying(null);
       return;
     }
-    if (audioRef.current) audioRef.current.pause();
-    const el = new Audio(serveUrl(out.path));
-    audioRef.current = el;
-    el.onended = () => setPlaying(null);
-    el.play().catch(() => toast.error("Could not play audio"));
+    el.pause();
+    el.src = serveUrl(out.path);
+    el.load();
+    el.play().catch(() => toast.error("Could not play — tap again or download"));
     setPlaying(out.path);
   }
 
   function handleDownload(out: any) {
+    // Use an anchor with download attr — works on desktop and iOS share sheet
     const a = document.createElement("a");
     a.href = serveUrl(out.path);
     a.download = out.name;
+    document.body.appendChild(a);
     a.click();
+    document.body.removeChild(a);
   }
 
   async function handleArchive(out: any, e: React.MouseEvent) {
     e.stopPropagation();
-    if (playing === out.path) { audioRef.current?.pause(); setPlaying(null); }
+    if (playing === out.path) { audioElRef.current?.pause(); setPlaying(null); }
     try {
       const r = await apiFetch(`${BASE}/studio/outputs/archive?path=${encodeURIComponent(out.path)}`, { method: "DELETE" });
       if (!r.ok) throw new Error();
       qc.invalidateQueries({ queryKey: ["listStudioOutputs"] });
-      toast.success("Removed");
     } catch {
       toast.error("Could not remove output");
+    }
+  }
+
+  async function handleClearAll() {
+    if (!confirm(`Delete all ${outputs.length} outputs? This cannot be undone.`)) return;
+    setClearing(true);
+    audioElRef.current?.pause();
+    setPlaying(null);
+    try {
+      await Promise.all(
+        outputs.map(o =>
+          apiFetch(`${BASE}/studio/outputs/archive?path=${encodeURIComponent(o.path)}`, { method: "DELETE" }).catch(() => null)
+        )
+      );
+      qc.invalidateQueries({ queryKey: ["listStudioOutputs"] });
+      toast.success("All outputs cleared");
+    } catch {
+      toast.error("Some outputs could not be removed");
+    } finally {
+      setClearing(false);
     }
   }
 
@@ -595,18 +619,36 @@ function OutputsGallery() {
     return b >= 1_048_576 ? `${(b / 1_048_576).toFixed(1)} MB` : `${Math.round(b / 1024)} KB`;
   }
 
+  const images = outputs.filter(o => o.kind === "image");
+  const others = outputs.filter(o => o.kind !== "image");
+
   return (
     <>
+      {/* Hidden DOM audio element — iOS Safari requires a real element, not new Audio() */}
+      <audio
+        ref={audioElRef}
+        onEnded={() => setPlaying(null)}
+        onError={() => { toast.error("Playback error"); setPlaying(null); }}
+        className="hidden"
+      />
+
       {/* Image lightbox */}
       {lightbox && (
-        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4" onClick={() => setLightbox(null)}>
-          <div className="relative max-w-4xl max-h-full" onClick={e => e.stopPropagation()}>
-            <img src={lightbox} alt="" className="max-h-[85vh] max-w-full rounded-lg shadow-2xl object-contain" />
+        <div
+          className="fixed inset-0 z-50 bg-black/85 flex items-center justify-center p-4"
+          onClick={() => setLightbox(null)}
+        >
+          <div className="relative max-w-4xl w-full max-h-full" onClick={e => e.stopPropagation()}>
+            <img src={lightbox} alt={lightboxName} className="max-h-[80vh] max-w-full mx-auto rounded-lg shadow-2xl object-contain" />
             <div className="absolute top-3 right-3 flex gap-2">
-              <button className="rounded-full bg-black/60 text-white p-2 hover:bg-black/80 transition-colors"
-                onClick={() => { const a = document.createElement("a"); a.href = lightbox; a.download = lightbox.split("/").pop() ?? "image.png"; a.click(); }}>
+              <a
+                href={lightbox}
+                download={lightboxName}
+                className="rounded-full bg-black/60 text-white p-2 hover:bg-black/80 transition-colors flex items-center justify-center"
+                onClick={e => e.stopPropagation()}
+              >
                 <Download className="w-4 h-4" />
-              </button>
+              </a>
               <button className="rounded-full bg-black/60 text-white p-2 hover:bg-black/80 transition-colors" onClick={() => setLightbox(null)}>
                 <X className="w-4 h-4" />
               </button>
@@ -617,13 +659,21 @@ function OutputsGallery() {
 
       <Card className="border-border/50">
         <CardHeader className="pb-3">
-          <CardTitle className="flex items-center gap-2 font-serif text-lg">
-            <Video className="w-5 h-5 text-muted-foreground" />
-            Recent Outputs
+          <div className="flex items-center justify-between gap-3">
+            <CardTitle className="flex items-center gap-2 font-serif text-lg">
+              <Video className="w-5 h-5 text-muted-foreground" />
+              Recent Outputs
+              {outputs.length > 0 && (
+                <Badge variant="secondary" className="text-[10px] font-mono ml-1">{outputs.length}</Badge>
+              )}
+            </CardTitle>
             {outputs.length > 0 && (
-              <Badge variant="secondary" className="text-[10px] font-mono ml-1">{outputs.length}</Badge>
+              <Button variant="outline" size="sm" className="gap-1.5 text-xs text-destructive border-destructive/30 hover:bg-destructive/5" onClick={handleClearAll} disabled={clearing}>
+                <Trash2 className="w-3.5 h-3.5" />
+                {clearing ? "Clearing…" : "Clear All"}
+              </Button>
             )}
-          </CardTitle>
+          </div>
         </CardHeader>
         <CardContent>
           {isLoading ? (
@@ -637,26 +687,33 @@ function OutputsGallery() {
               </p>
             </div>
           ) : (
-            <div className="space-y-3">
+            <div className="space-y-4">
               {/* Image grid */}
-              {outputs.filter(o => o.kind === "image").length > 0 && (
+              {images.length > 0 && (
                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
-                  {outputs.filter(o => o.kind === "image").map((out: any) => (
-                    <div key={out.path} className="relative group rounded-lg overflow-hidden border border-border/50 bg-muted/10 aspect-square cursor-pointer"
-                      onClick={() => setLightbox(serveUrl(out.path))}>
-                      <img src={serveUrl(out.path)} alt={out.name} className="w-full h-full object-cover" />
-                      <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-colors flex items-end">
-                        <div className="w-full p-2 translate-y-full group-hover:translate-y-0 transition-transform flex items-center justify-between gap-1">
-                          <span className="text-[10px] font-mono text-white truncate">{out.name}</span>
-                          <div className="flex gap-1 shrink-0">
-                            <button className="rounded bg-white/20 hover:bg-white/40 p-1 text-white" onClick={e => { e.stopPropagation(); handleDownload(out); }}>
-                              <Download className="w-3 h-3" />
-                            </button>
-                            <button className="rounded bg-white/20 hover:bg-red-500/80 p-1 text-white" onClick={e => handleArchive(out, e)}>
-                              <Trash2 className="w-3 h-3" />
-                            </button>
-                          </div>
-                        </div>
+                  {images.map((out: any) => (
+                    <div
+                      key={out.path}
+                      className="relative group rounded-lg overflow-hidden border border-border/50 bg-muted/10 aspect-square cursor-pointer"
+                      onClick={() => { setLightbox(serveUrl(out.path)); setLightboxName(out.name); }}
+                    >
+                      <img src={serveUrl(out.path)} alt={out.name} className="w-full h-full object-cover" loading="lazy" />
+                      {/* Always-visible controls on mobile, hover on desktop */}
+                      <div className="absolute top-1.5 right-1.5 flex gap-1 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
+                        <a
+                          href={serveUrl(out.path)}
+                          download={out.name}
+                          className="rounded bg-black/50 hover:bg-black/70 p-1.5 text-white"
+                          onClick={e => e.stopPropagation()}
+                        >
+                          <Download className="w-3 h-3" />
+                        </a>
+                        <button
+                          className="rounded bg-black/50 hover:bg-red-600/80 p-1.5 text-white"
+                          onClick={e => handleArchive(out, e)}
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
                       </div>
                     </div>
                   ))}
@@ -664,41 +721,55 @@ function OutputsGallery() {
               )}
 
               {/* Audio + other list */}
-              {outputs.filter(o => o.kind !== "image").map((out: any) => (
-                <div key={out.path}
-                  className="flex items-center gap-3 p-3 rounded-lg border border-border/50 bg-muted/10 hover:border-primary/20 transition-colors group">
-                  <div className="shrink-0">
-                    {out.kind === "audio" ? (
-                      <button
-                        className="w-9 h-9 rounded-full bg-primary/10 hover:bg-primary/20 flex items-center justify-center transition-colors"
-                        onClick={() => handlePlay(out)}>
-                        {playing === out.path
-                          ? <Pause className="w-4 h-4 text-primary" />
-                          : <Play className="w-4 h-4 text-primary ml-0.5" />}
-                      </button>
-                    ) : (
-                      <div className="w-9 h-9 rounded-full bg-muted flex items-center justify-center">
-                        <Video className="w-4 h-4 text-muted-foreground" />
-                      </div>
-                    )}
-                  </div>
+              {others.map((out: any) => (
+                <div
+                  key={out.path}
+                  className="flex items-center gap-3 p-3 rounded-lg border border-border/50 bg-muted/10"
+                >
+                  {out.kind === "audio" ? (
+                    <button
+                      className="w-10 h-10 rounded-full bg-primary/10 active:bg-primary/30 flex items-center justify-center transition-colors shrink-0 touch-manipulation"
+                      onClick={() => handlePlay(out)}
+                    >
+                      {playing === out.path
+                        ? <Pause className="w-4 h-4 text-primary" />
+                        : <Play className="w-4 h-4 text-primary ml-0.5" />}
+                    </button>
+                  ) : (
+                    <div className="w-10 h-10 rounded-full bg-muted flex items-center justify-center shrink-0">
+                      <Video className="w-4 h-4 text-muted-foreground" />
+                    </div>
+                  )}
+
                   <div className="min-w-0 flex-1">
                     <p className="text-xs font-medium truncate">{out.name}</p>
                     <div className="flex items-center gap-2 mt-0.5">
                       <Badge variant="outline" className="text-[9px] font-mono uppercase">{out.kind}</Badge>
                       <span className="text-[10px] font-mono text-muted-foreground">{fmtSize(out.size_bytes)}</span>
                       {playing === out.path && (
-                        <span className="text-[10px] font-mono text-primary animate-pulse">playing…</span>
+                        <span className="text-[10px] font-mono text-primary animate-pulse">▶ playing</span>
                       )}
                     </div>
                   </div>
-                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
-                    <Button variant="ghost" size="icon" className="h-7 w-7" title="Download" onClick={() => handleDownload(out)}>
+
+                  {/* Controls — always visible on mobile */}
+                  <div className="flex items-center gap-1 shrink-0">
+                    <a
+                      href={serveUrl(out.path)}
+                      download={out.name}
+                      className="inline-flex items-center justify-center h-8 w-8 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+                      title="Download"
+                      onClick={e => e.stopPropagation()}
+                    >
                       <Download className="w-3.5 h-3.5" />
-                    </Button>
-                    <Button variant="ghost" size="icon" className="h-7 w-7 hover:text-destructive hover:bg-destructive/10" title="Remove" onClick={e => handleArchive(out, e)}>
+                    </a>
+                    <button
+                      className="inline-flex items-center justify-center h-8 w-8 rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+                      title="Remove"
+                      onClick={e => handleArchive(out, e)}
+                    >
                       <Trash2 className="w-3.5 h-3.5" />
-                    </Button>
+                    </button>
                   </div>
                 </div>
               ))}

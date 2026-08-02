@@ -584,63 +584,59 @@ export default function Library() {
     <TooltipProvider>
       <div className="space-y-6 animate-in fade-in duration-500">
         {/* Header */}
-        <div className="border-b border-border/50 pb-4 space-y-3">
-          <div className="flex items-start justify-between gap-4">
-            <div>
+        <div className="border-b border-border/50 pb-4">
+          <div className="flex items-start gap-4 flex-wrap justify-between">
+            <div className="min-w-0">
               <h1 className="text-3xl font-serif font-semibold tracking-tight">Library</h1>
               <p className="text-muted-foreground mt-1 font-serif">
                 {isLoading ? "Loading…" : `${docs.length} document${docs.length !== 1 ? "s" : ""}${search || readinessFilter !== "all" || kindFilter !== "all" || workFilter !== "all" || lifecycleFilter !== "all" ? " matching filters" : ""}`}
               </p>
             </div>
-            <ImportDialog onSuccess={invalidate} defaultOpen={openImport} />
-          </div>
-          <div className="flex items-center gap-2 flex-wrap">
-            {/* Reprocess All — always visible */}
-            <Button
-              variant="outline"
-              size="sm"
-              className="gap-1.5 text-xs border-primary/40 text-primary hover:bg-primary/5"
-              onClick={handleReprocessAll}
-              disabled={reprocessingAll}
-              title="Re-extract all stuck, errored, or ZIP documents"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${reprocessingAll ? "animate-spin" : ""}`} />
-              {reprocessingAll ? "Processing…" : "Reprocess All"}
-            </Button>
-            {zipCount > 0 && (
+            <div className="flex items-center gap-2 flex-wrap shrink-0">
               <Button
                 variant="outline"
                 size="sm"
-                className="gap-1.5 text-xs border-amber-300 text-amber-700 hover:bg-amber-50"
-                onClick={handleExplodeZips}
-                disabled={explodingZips}
-                title={`Extract ${zipCount} ZIP archive${zipCount !== 1 ? "s" : ""} into individual documents`}
+                className="gap-1.5 text-xs border-primary/40 text-primary hover:bg-primary/5"
+                onClick={handleReprocessAll}
+                disabled={reprocessingAll}
+                title="Re-extract all stuck, errored, or ZIP documents"
               >
-                <Package className={`w-3.5 h-3.5 ${explodingZips ? "animate-bounce" : ""}`} />
-                {explodingZips ? "Extracting…" : `Extract ${zipCount} ZIP${zipCount !== 1 ? "s" : ""}`}
+                <RefreshCw className={`w-3.5 h-3.5 ${reprocessingAll ? "animate-spin" : ""}`} />
+                {reprocessingAll ? "Processing…" : "Reprocess All"}
               </Button>
-            )}
-            <Button
-              variant="outline"
-              size="sm"
-              className="gap-1.5 text-xs"
-              onClick={handleSmartOrganize}
-              disabled={organizingDocs}
-              title="Auto-group unassigned documents into Works by topic"
-            >
-              <Sparkles className={`w-3.5 h-3.5 ${organizingDocs ? "animate-spin" : ""}`} />
-              {organizingDocs ? "Organising…" : "Smart Sort"}
-            </Button>
-            <Button
-              variant={groupByWork ? "secondary" : "outline"}
-              size="sm"
-              className="gap-1.5 text-xs"
-              onClick={() => setGroupByWork((v) => !v)}
-              title="Group documents by Work/topic"
-            >
-              <Layers className="w-3.5 h-3.5" />
-              By Topic
-            </Button>
+              {zipCount > 0 && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-1.5 text-xs border-amber-300 text-amber-700 hover:bg-amber-50"
+                  onClick={handleExplodeZips}
+                  disabled={explodingZips}
+                >
+                  <Package className={`w-3.5 h-3.5 ${explodingZips ? "animate-bounce" : ""}`} />
+                  {explodingZips ? "Extracting…" : `Extract ${zipCount} ZIP${zipCount !== 1 ? "s" : ""}`}
+                </Button>
+              )}
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1.5 text-xs"
+                onClick={handleSmartOrganize}
+                disabled={organizingDocs}
+              >
+                <Sparkles className={`w-3.5 h-3.5 ${organizingDocs ? "animate-spin" : ""}`} />
+                {organizingDocs ? "Organising…" : "Smart Sort"}
+              </Button>
+              <Button
+                variant={groupByWork ? "secondary" : "outline"}
+                size="sm"
+                className="gap-1.5 text-xs"
+                onClick={() => setGroupByWork((v) => !v)}
+              >
+                <Layers className="w-3.5 h-3.5" />
+                By Topic
+              </Button>
+              <ImportDialog onSuccess={invalidate} defaultOpen={openImport} />
+            </div>
           </div>
         </div>
 
