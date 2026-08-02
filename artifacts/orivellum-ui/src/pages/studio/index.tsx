@@ -11,12 +11,14 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Mic, Play, Pause, Settings2, Video, Image as ImageIcon,
   FileAudio, Loader2, Volume2, Download, BookHeadphones, FileText,
+  X, Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Link } from "wouter";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
+import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { apiFetch } from "@/lib/auth";
 
@@ -539,60 +541,172 @@ function ImageGenPanel() {
 // ── Outputs gallery ────────────────────────────────────────────────────────────
 
 function OutputsGallery() {
+  const qc = useQueryClient();
   const { data: outputsResp, isLoading } = useListStudioOutputs(
     { query: { refetchInterval: 15_000 } } as any
   );
-  const outputs = outputsResp?.outputs ?? [];
+  const outputs: any[] = outputsResp?.outputs ?? [];
+
+  // Lightbox state for images
+  const [lightbox, setLightbox] = useState<string | null>(null);
+  // Active audio player
+  const [playing, setPlaying] = useState<string | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  function serveUrl(path: string) {
+    return `${BASE}/studio/outputs/serve?path=${encodeURIComponent(path)}`;
+  }
+
+  function handlePlay(out: any) {
+    if (playing === out.path) {
+      audioRef.current?.pause();
+      setPlaying(null);
+      return;
+    }
+    if (audioRef.current) audioRef.current.pause();
+    const el = new Audio(serveUrl(out.path));
+    audioRef.current = el;
+    el.onended = () => setPlaying(null);
+    el.play().catch(() => toast.error("Could not play audio"));
+    setPlaying(out.path);
+  }
+
+  function handleDownload(out: any) {
+    const a = document.createElement("a");
+    a.href = serveUrl(out.path);
+    a.download = out.name;
+    a.click();
+  }
+
+  async function handleArchive(out: any, e: React.MouseEvent) {
+    e.stopPropagation();
+    if (playing === out.path) { audioRef.current?.pause(); setPlaying(null); }
+    try {
+      const r = await apiFetch(`${BASE}/studio/outputs/archive?path=${encodeURIComponent(out.path)}`, { method: "DELETE" });
+      if (!r.ok) throw new Error();
+      qc.invalidateQueries({ queryKey: ["listStudioOutputs"] });
+      toast.success("Removed");
+    } catch {
+      toast.error("Could not remove output");
+    }
+  }
+
+  function fmtSize(b: number) {
+    return b >= 1_048_576 ? `${(b / 1_048_576).toFixed(1)} MB` : `${Math.round(b / 1024)} KB`;
+  }
 
   return (
-    <Card className="border-border/50">
-      <CardHeader className="pb-3">
-        <CardTitle className="flex items-center gap-2 font-serif text-lg">
-          <Video className="w-5 h-5 text-muted-foreground" />
-          Recent Outputs
-          {outputs.length > 0 && (
-            <Badge variant="secondary" className="text-[10px] font-mono ml-1">{outputs.length}</Badge>
-          )}
-        </CardTitle>
-      </CardHeader>
-      <CardContent>
-        {isLoading ? (
-          <div className="grid sm:grid-cols-2 gap-3">
-            {[1, 2, 3, 4].map(i => <Skeleton key={i} className="h-24 w-full" />)}
+    <>
+      {/* Image lightbox */}
+      {lightbox && (
+        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4" onClick={() => setLightbox(null)}>
+          <div className="relative max-w-4xl max-h-full" onClick={e => e.stopPropagation()}>
+            <img src={lightbox} alt="" className="max-h-[85vh] max-w-full rounded-lg shadow-2xl object-contain" />
+            <div className="absolute top-3 right-3 flex gap-2">
+              <button className="rounded-full bg-black/60 text-white p-2 hover:bg-black/80 transition-colors"
+                onClick={() => { const a = document.createElement("a"); a.href = lightbox; a.download = lightbox.split("/").pop() ?? "image.png"; a.click(); }}>
+                <Download className="w-4 h-4" />
+              </button>
+              <button className="rounded-full bg-black/60 text-white p-2 hover:bg-black/80 transition-colors" onClick={() => setLightbox(null)}>
+                <X className="w-4 h-4" />
+              </button>
+            </div>
           </div>
-        ) : outputs.length === 0 ? (
-          <div className="py-10 text-center border border-dashed rounded-lg bg-muted/5">
-            <p className="text-sm text-muted-foreground">
-              No outputs yet — synthesize speech or generate an image above.
-            </p>
-          </div>
-        ) : (
-          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {outputs.map((out: any, i: number) => (
-              <div key={i}
-                className="flex items-center gap-3 p-3 rounded-lg border border-border/50 bg-muted/10 hover:border-primary/30 transition-colors group">
-                <div className="shrink-0 w-9 h-9 rounded-full bg-muted flex items-center justify-center">
-                  {out.kind === "audio" ? <FileAudio className="w-4 h-4 text-muted-foreground" />
-                    : out.kind === "image" ? <ImageIcon className="w-4 h-4 text-muted-foreground" />
-                    : <Video className="w-4 h-4 text-muted-foreground" />}
+        </div>
+      )}
+
+      <Card className="border-border/50">
+        <CardHeader className="pb-3">
+          <CardTitle className="flex items-center gap-2 font-serif text-lg">
+            <Video className="w-5 h-5 text-muted-foreground" />
+            Recent Outputs
+            {outputs.length > 0 && (
+              <Badge variant="secondary" className="text-[10px] font-mono ml-1">{outputs.length}</Badge>
+            )}
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {isLoading ? (
+            <div className="grid sm:grid-cols-2 gap-3">
+              {[1, 2, 3, 4].map(i => <Skeleton key={i} className="h-24 w-full" />)}
+            </div>
+          ) : outputs.length === 0 ? (
+            <div className="py-10 text-center border border-dashed rounded-lg bg-muted/5">
+              <p className="text-sm text-muted-foreground">
+                No outputs yet — synthesize speech or generate an image above.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {/* Image grid */}
+              {outputs.filter(o => o.kind === "image").length > 0 && (
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
+                  {outputs.filter(o => o.kind === "image").map((out: any) => (
+                    <div key={out.path} className="relative group rounded-lg overflow-hidden border border-border/50 bg-muted/10 aspect-square cursor-pointer"
+                      onClick={() => setLightbox(serveUrl(out.path))}>
+                      <img src={serveUrl(out.path)} alt={out.name} className="w-full h-full object-cover" />
+                      <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-colors flex items-end">
+                        <div className="w-full p-2 translate-y-full group-hover:translate-y-0 transition-transform flex items-center justify-between gap-1">
+                          <span className="text-[10px] font-mono text-white truncate">{out.name}</span>
+                          <div className="flex gap-1 shrink-0">
+                            <button className="rounded bg-white/20 hover:bg-white/40 p-1 text-white" onClick={e => { e.stopPropagation(); handleDownload(out); }}>
+                              <Download className="w-3 h-3" />
+                            </button>
+                            <button className="rounded bg-white/20 hover:bg-red-500/80 p-1 text-white" onClick={e => handleArchive(out, e)}>
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
                 </div>
-                <div className="min-w-0 flex-1">
-                  <p className="text-xs font-medium truncate">{out.name}</p>
-                  <div className="flex items-center gap-2 mt-0.5">
-                    <Badge variant="outline" className="text-[9px] font-mono uppercase">{out.kind}</Badge>
-                    <span className="text-[10px] font-mono text-muted-foreground">
-                      {out.size_bytes >= 1_048_576
-                        ? `${(out.size_bytes / 1_048_576).toFixed(1)} MB`
-                        : `${Math.round(out.size_bytes / 1024)} KB`}
-                    </span>
+              )}
+
+              {/* Audio + other list */}
+              {outputs.filter(o => o.kind !== "image").map((out: any) => (
+                <div key={out.path}
+                  className="flex items-center gap-3 p-3 rounded-lg border border-border/50 bg-muted/10 hover:border-primary/20 transition-colors group">
+                  <div className="shrink-0">
+                    {out.kind === "audio" ? (
+                      <button
+                        className="w-9 h-9 rounded-full bg-primary/10 hover:bg-primary/20 flex items-center justify-center transition-colors"
+                        onClick={() => handlePlay(out)}>
+                        {playing === out.path
+                          ? <Pause className="w-4 h-4 text-primary" />
+                          : <Play className="w-4 h-4 text-primary ml-0.5" />}
+                      </button>
+                    ) : (
+                      <div className="w-9 h-9 rounded-full bg-muted flex items-center justify-center">
+                        <Video className="w-4 h-4 text-muted-foreground" />
+                      </div>
+                    )}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs font-medium truncate">{out.name}</p>
+                    <div className="flex items-center gap-2 mt-0.5">
+                      <Badge variant="outline" className="text-[9px] font-mono uppercase">{out.kind}</Badge>
+                      <span className="text-[10px] font-mono text-muted-foreground">{fmtSize(out.size_bytes)}</span>
+                      {playing === out.path && (
+                        <span className="text-[10px] font-mono text-primary animate-pulse">playing…</span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                    <Button variant="ghost" size="icon" className="h-7 w-7" title="Download" onClick={() => handleDownload(out)}>
+                      <Download className="w-3.5 h-3.5" />
+                    </Button>
+                    <Button variant="ghost" size="icon" className="h-7 w-7 hover:text-destructive hover:bg-destructive/10" title="Remove" onClick={e => handleArchive(out, e)}>
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </Button>
                   </div>
                 </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </CardContent>
-    </Card>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </>
   );
 }
 

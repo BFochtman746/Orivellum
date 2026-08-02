@@ -488,13 +488,66 @@ def list_outputs():
                 kind = "image"
             else:
                 kind = "file"
+            rel = str(f.relative_to(out_dir))
             result.append({
                 "name": f.name,
-                "path": str(f.relative_to(out_dir)),
+                "path": rel,
                 "size_bytes": f.stat().st_size,
                 "kind": kind,
+                "mtime": f.stat().st_mtime,
             })
     return {"outputs": result, "count": len(result)}
+
+
+@router.get("/studio/outputs/serve")
+def serve_output(path: str):
+    """Stream an output file for playback or download.  `path` is relative to the outputs dir."""
+    cfg = get_config()
+    out_dir = Path(cfg.data_dir) / "outputs"
+    # Sanitise — prevent path traversal
+    try:
+        target = (out_dir / path).resolve()
+        target.relative_to(out_dir.resolve())
+    except (ValueError, Exception):
+        raise HTTPException(status_code=400, detail="Invalid path")
+    if not target.exists() or not target.is_file():
+        raise HTTPException(status_code=404, detail="Output not found")
+    suffix = target.suffix.lower()
+    mime_map = {
+        ".mp3": "audio/mpeg", ".wav": "audio/wav", ".ogg": "audio/ogg",
+        ".m4a": "audio/mp4", ".m4b": "audio/mp4",
+        ".mp4": "video/mp4", ".webm": "video/webm",
+        ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+        ".webp": "image/webp", ".gif": "image/gif",
+    }
+    media_type = mime_map.get(suffix, "application/octet-stream")
+    return FileResponse(str(target), media_type=media_type,
+                        filename=target.name,
+                        headers={"Content-Disposition": f'attachment; filename="{target.name}"'})
+
+
+@router.delete("/studio/outputs/archive")
+def archive_output(path: str):
+    """Delete (archive) an output file."""
+    cfg = get_config()
+    out_dir = Path(cfg.data_dir) / "outputs"
+    try:
+        target = (out_dir / path).resolve()
+        target.relative_to(out_dir.resolve())
+    except (ValueError, Exception):
+        raise HTTPException(status_code=400, detail="Invalid path")
+    if not target.exists():
+        raise HTTPException(status_code=404, detail="Output not found")
+    target.unlink()
+    # Remove empty parent dirs up to out_dir
+    try:
+        parent = target.parent
+        while parent != out_dir and not any(parent.iterdir()):
+            parent.rmdir()
+            parent = parent.parent
+    except Exception:
+        pass
+    return {"ok": True}
 
 
 # ── Image generation ──────────────────────────────────────────────────────────

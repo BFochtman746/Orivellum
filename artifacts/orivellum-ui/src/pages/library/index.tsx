@@ -21,7 +21,7 @@ import {
   Search, Upload, FileText, Database, Filter,
   Library as LibraryIcon, AlertCircle, RefreshCw, Trash2,
   CheckCircle2, Clock, FileQuestion, X, Package, Layers,
-  FolderOpen, Sparkles, GitMerge, Star, GitBranch,
+  FolderOpen, Sparkles, GitMerge, Star, GitBranch, Download,
 } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
@@ -584,15 +584,18 @@ export default function Library() {
     <TooltipProvider>
       <div className="space-y-6 animate-in fade-in duration-500">
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-border/50 pb-4">
-          <div>
-            <h1 className="text-3xl font-serif font-semibold tracking-tight">Library</h1>
-            <p className="text-muted-foreground mt-1 font-serif">
-              {isLoading ? "Loading…" : `${docs.length} document${docs.length !== 1 ? "s" : ""}${search || readinessFilter !== "all" || kindFilter !== "all" || workFilter !== "all" || lifecycleFilter !== "all" ? " matching filters" : ""}`}
-            </p>
+        <div className="border-b border-border/50 pb-4 space-y-3">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h1 className="text-3xl font-serif font-semibold tracking-tight">Library</h1>
+              <p className="text-muted-foreground mt-1 font-serif">
+                {isLoading ? "Loading…" : `${docs.length} document${docs.length !== 1 ? "s" : ""}${search || readinessFilter !== "all" || kindFilter !== "all" || workFilter !== "all" || lifecycleFilter !== "all" ? " matching filters" : ""}`}
+              </p>
+            </div>
+            <ImportDialog onSuccess={invalidate} defaultOpen={openImport} />
           </div>
           <div className="flex items-center gap-2 flex-wrap">
-            {/* Reprocess All — always visible, handles ZIPs + stuck docs in one shot */}
+            {/* Reprocess All — always visible */}
             <Button
               variant="outline"
               size="sm"
@@ -638,7 +641,6 @@ export default function Library() {
               <Layers className="w-3.5 h-3.5" />
               By Topic
             </Button>
-            <ImportDialog onSuccess={invalidate} defaultOpen={openImport} />
           </div>
         </div>
 
@@ -855,7 +857,11 @@ export default function Library() {
                                 <RefreshCw className={`w-3.5 h-3.5 ${isReprocessing ? "animate-spin" : ""}`} />
                               </Button>
                             )}
-                            <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10 opacity-40 group-hover:opacity-100 transition-opacity" onClick={(e) => handleDelete(doc.id, e)}>
+                            <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" title="Download original file"
+                              onClick={(e) => { e.stopPropagation(); window.open(`${BASE}/library/${doc.id}/download`, "_blank"); }}>
+                              <Download className="w-3.5 h-3.5" />
+                            </Button>
+                            <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10 opacity-0 group-hover:opacity-100 transition-opacity" onClick={(e) => handleDelete(doc.id, e)}>
                               <Trash2 className="w-3.5 h-3.5" />
                             </Button>
                           </div>
@@ -975,13 +981,7 @@ export default function Library() {
                         {hasError && (
                           <Tooltip>
                             <TooltipTrigger asChild>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-7 w-7 text-amber-600 hover:text-amber-700 hover:bg-amber-50"
-                                onClick={(e) => handleReprocess(doc.id, e)}
-                                disabled={isReprocessing}
-                              >
+                              <Button variant="ghost" size="icon" className="h-7 w-7 text-amber-600 hover:text-amber-700 hover:bg-amber-50" onClick={(e) => handleReprocess(doc.id, e)} disabled={isReprocessing}>
                                 <RefreshCw className={`w-3.5 h-3.5 ${isReprocessing ? "animate-spin" : ""}`} />
                               </Button>
                             </TooltipTrigger>
@@ -990,12 +990,16 @@ export default function Library() {
                         )}
                         <Tooltip>
                           <TooltipTrigger asChild>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10 opacity-0 group-hover:opacity-100 transition-opacity"
-                              onClick={(e) => handleDelete(doc.id, e)}
-                            >
+                            <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity"
+                              onClick={(e) => { e.stopPropagation(); window.open(`${BASE}/library/${doc.id}/download`, "_blank"); }}>
+                              <Download className="w-3.5 h-3.5" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>Download original file</TooltipContent>
+                        </Tooltip>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10 opacity-0 group-hover:opacity-100 transition-opacity" onClick={(e) => handleDelete(doc.id, e)}>
                               <Trash2 className="w-3.5 h-3.5" />
                             </Button>
                           </TooltipTrigger>

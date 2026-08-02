@@ -554,6 +554,35 @@ def library_reprocess(
     return {"ok": True, "doc_id": doc_id, "message": "Reprocessing queued"}
 
 
+@router.get("/library/{doc_id}/download")
+def download_document(doc_id: str):
+    """Serve the original stored file as a download."""
+    from fastapi.responses import FileResponse
+    import mimetypes
+    db = get_db()
+    doc = db.get_document(doc_id)
+    if not doc:
+        raise HTTPException(404, f"Document {doc_id!r} not found")
+    content_path = doc.get("content_path")
+    if not content_path:
+        raise HTTPException(400, "Document has no stored file (content_path is empty)")
+    lib_root = _library_root()
+    file_path = lib_root / content_path
+    if not file_path.exists():
+        raise HTTPException(404, "Stored file not found — it may have been deleted")
+    filename = doc.get("title") or file_path.name
+    # Ensure filename has the right extension
+    if not Path(filename).suffix:
+        filename = filename + file_path.suffix
+    mime, _ = mimetypes.guess_type(file_path.name)
+    return FileResponse(
+        str(file_path),
+        media_type=mime or "application/octet-stream",
+        filename=filename,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @router.get("/library/active-work")
 def library_get_active_work():
     db = get_db()
