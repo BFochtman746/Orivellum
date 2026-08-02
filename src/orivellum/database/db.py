@@ -235,15 +235,16 @@ class OrivellumDB:
     # Object creation helper
     # -------------------------------------------------------------------------
 
-    def _create_object(self, obj_type: str, extra: dict | None = None) -> str:
+    def _create_object(self, obj_type: str, extra: dict | None = None,
+                       lifecycle: str = "active") -> str:
         oid = _uuid()
         now = _now()
         with self._lock:
             self._conn.execute(
                 """INSERT INTO objects(id, type, version, lifecycle, provenance, permissions,
                    created_at, updated_at, created_by)
-                   VALUES(?,?,1,'active','{}','{}',?,?,'user')""",
-                (oid, obj_type, now, now),
+                   VALUES(?,?,1,?,'{}','{}',?,?,'user')""",
+                (oid, obj_type, lifecycle, now, now),
             )
         return oid
 
@@ -473,20 +474,31 @@ class OrivellumDB:
     # Documents
     # -------------------------------------------------------------------------
 
+    # Valid lifecycle states for documents
+    _DOC_LIFECYCLES: frozenset[str] = frozenset(
+        {"draft", "canonical", "superseded", "reference", "active"}
+    )
+
     def list_documents(self, work_id: str | None = None, kind: str | None = None,
-                       readiness: str | None = None, limit: int = 200) -> list[dict]:
-        q = "SELECT * FROM documents WHERE 1=1"
+                       readiness: str | None = None, lifecycle: str | None = None,
+                       limit: int = 200) -> list[dict]:
+        q = """SELECT d.*, COALESCE(o.lifecycle, 'draft') AS lifecycle
+               FROM documents d LEFT JOIN objects o ON o.id = d.id
+               WHERE 1=1"""
         args: list = []
         if work_id:
-            q += " AND work_id=?"
+            q += " AND d.work_id=?"
             args.append(work_id)
         if kind:
-            q += " AND kind=?"
+            q += " AND d.kind=?"
             args.append(kind)
         if readiness:
-            q += " AND readiness=?"
+            q += " AND d.readiness=?"
             args.append(readiness)
-        q += " ORDER BY created_at DESC LIMIT ?"
+        if lifecycle:
+            q += " AND COALESCE(o.lifecycle, 'draft')=?"
+            args.append(lifecycle)
+        q += " ORDER BY d.created_at DESC LIMIT ?"
         args.append(limit)
         with self._lock:
             rows = self._conn.execute(q, args).fetchall()
@@ -494,13 +506,54 @@ class OrivellumDB:
 
     def get_document(self, doc_id: str) -> dict | None:
         with self._lock:
-            row = self._conn.execute("SELECT * FROM documents WHERE id=?", (doc_id,)).fetchone()
+            row = self._conn.execute(
+                """SELECT d.*, COALESCE(o.lifecycle, 'draft') AS lifecycle
+                   FROM documents d LEFT JOIN objects o ON o.id = d.id
+                   WHERE d.id=?""",
+                (doc_id,),
+            ).fetchone()
         return self._doc_dict(row) if row else None
+
+    def update_document_lifecycle(self, doc_id: str, lifecycle: str) -> bool:
+        """Set the lifecycle state for a document.
+
+        When marking 'canonical', all other docs in the same Work/kind group are
+        moved to 'draft' unless they are already 'superseded' or 'deleted'.
+        """
+        if lifecycle not in self._DOC_LIFECYCLES:
+            raise ValueError(f"Invalid lifecycle: {lifecycle!r}. "
+                             f"Valid values: {sorted(self._DOC_LIFECYCLES)}")
+        now = _now()
+        with self._lock:
+            cur = self._conn.execute(
+                "UPDATE objects SET lifecycle=?, updated_at=? WHERE id=?",
+                (lifecycle, now, doc_id),
+            )
+            if lifecycle == "canonical" and cur.rowcount > 0:
+                row = self._conn.execute(
+                    "SELECT work_id, kind FROM documents WHERE id=?", (doc_id,)
+                ).fetchone()
+                if row and row["work_id"]:
+                    # Demote all other same-work docs of same kind to 'draft'
+                    # (skip superseded and deleted so they stay as-is)
+                    self._conn.execute(
+                        """UPDATE objects SET lifecycle='draft', updated_at=?
+                           WHERE id IN (
+                               SELECT id FROM documents
+                               WHERE work_id=? AND kind=? AND id!=?
+                           ) AND lifecycle NOT IN ('superseded','deleted')""",
+                        (now, row["work_id"], row["kind"], doc_id),
+                    )
+            self._conn.commit()
+        if cur.rowcount > 0:
+            self.audit("document.lifecycle_updated", object_id=doc_id,
+                       object_type="document", detail=lifecycle)
+        return cur.rowcount > 0
 
     def create_document(self, title: str, source: str | None = None, sha256: str | None = None,
                         kind: str | None = None, work_id: str | None = None,
                         content_path: str | None = None, meta: dict | None = None) -> dict:
-        oid = self._create_object("document")
+        oid = self._create_object("document", lifecycle="draft")
         now = _now()
         with self._lock:
             self._conn.execute(

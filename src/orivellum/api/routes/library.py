@@ -3,7 +3,11 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
 import logging
+import re as _re
+import uuid as _uuid_mod
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +18,85 @@ from orivellum.api._deps import get_db, get_config
 from orivellum.capabilities.pipeline import process_document
 
 logger = logging.getLogger(__name__)
+
+
+# ── Version-suggestion helpers ─────────────────────────────────────────────────
+
+def _stems_similar(a: str, b: str) -> bool:
+    """Return True if two filename stems look like versions of the same document."""
+    if not a or not b:
+        return False
+    a = a.lower().strip()
+    b = b.lower().strip()
+    if a == b:
+        return True
+    # Strip common version/edition suffixes, then compare cleaned bases
+    _VER = _re.compile(
+        r"[_\s\-]*(v\d+[\d.]*|draft\d*|rev\d*|copy\d*|\d+|final|interim|updated?)$",
+        _re.I,
+    )
+    a_base = _VER.sub("", a).strip()
+    b_base = _VER.sub("", b).strip()
+    if a_base and b_base and a_base == b_base:
+        return True
+    return SequenceMatcher(None, a, b).ratio() >= 0.75
+
+
+def _maybe_suggest_version(db, new_doc_id: str, work_id: str, filename: str) -> None:
+    """After importing a doc to a Work, check for similar-titled existing docs
+    and create a version-relationship suggestion if one is found."""
+    try:
+        stem = Path(filename).stem
+        existing = db.list_documents(work_id=work_id, limit=200)
+        for other in existing:
+            if other.get("id") == new_doc_id:
+                continue
+            other_stem = Path(other.get("title") or "").stem
+            if not other_stem:
+                continue
+            if not _stems_similar(stem, other_stem):
+                continue
+            # Avoid creating duplicate suggestions for the same pair
+            with db._lock:
+                already = db._conn.execute(
+                    """SELECT id FROM suggestions
+                       WHERE work_id=? AND kind='version_relationship'
+                       AND (
+                           (json_extract(meta,'$.doc_a_id')=? AND json_extract(meta,'$.doc_b_id')=?)
+                        OR (json_extract(meta,'$.doc_a_id')=? AND json_extract(meta,'$.doc_b_id')=?)
+                       )""",
+                    (work_id, other["id"], new_doc_id, new_doc_id, other["id"]),
+                ).fetchone()
+                if already:
+                    continue
+                import datetime as _dt
+                now_iso = _dt.datetime.now(_dt.timezone.utc).isoformat()
+                meta_payload = json.dumps({
+                    "doc_a_id": other["id"],
+                    "doc_b_id": new_doc_id,
+                    "doc_a_title": other.get("title", ""),
+                    "doc_b_title": filename,
+                    "similarity_basis": "filename_stem",
+                })
+                text_label = (
+                    f'"{other.get("title") or other_stem}" and "{filename}" '
+                    f"may be versions of the same document"
+                )
+                db._conn.execute(
+                    """INSERT INTO suggestions(id, work_id, kind, text, meta, created_at)
+                       VALUES(?,?,?,?,?,?)""",
+                    (
+                        str(_uuid_mod.uuid4()), work_id, "version_relationship",
+                        text_label, meta_payload, now_iso,
+                    ),
+                )
+                db._conn.commit()
+                logger.debug(
+                    "Version suggestion created: %s ↔ %s in work %s",
+                    other["id"], new_doc_id, work_id,
+                )
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("Version suggestion check failed: %s", exc)
 
 router = APIRouter(prefix="/api")
 
@@ -62,10 +145,11 @@ class LibraryActiveWork(BaseModel):
 
 @router.get("/library")
 def library_list(work_id: str | None = None, kind: str | None = None,
-                 readiness: str | None = None, limit: int = 200):
+                 readiness: str | None = None, lifecycle: str | None = None,
+                 limit: int = 200):
     db = get_db()
     docs = db.list_documents(work_id=work_id, kind=kind, readiness=readiness,
-                             limit=min(limit, 1000))
+                             lifecycle=lifecycle, limit=min(limit, 1000))
     # Attach extraction warnings to failed documents so the list UI can surface
     # them without a separate per-document request.
     _FAILED = {"error", "no_text"}
@@ -113,6 +197,28 @@ def library_update(doc_id: str, body: DocumentUpdate):
         raise HTTPException(404, f"Document {doc_id!r} not found")
     db.update_document_work(doc_id, body.work_id)
     return {"document": db.get_document(doc_id)}
+
+
+_VALID_DOC_LIFECYCLES = {"draft", "canonical", "superseded", "reference"}
+
+
+class LifecycleUpdate(BaseModel):
+    lifecycle: str
+
+
+@router.patch("/library/{doc_id}/lifecycle")
+def library_set_lifecycle(doc_id: str, body: LifecycleUpdate):
+    """Declare a document's authority state: draft | canonical | superseded | reference."""
+    if body.lifecycle not in _VALID_DOC_LIFECYCLES:
+        raise HTTPException(
+            400,
+            f"lifecycle must be one of: {', '.join(sorted(_VALID_DOC_LIFECYCLES))}",
+        )
+    db = get_db()
+    ok = db.update_document_lifecycle(doc_id, body.lifecycle)
+    if not ok:
+        raise HTTPException(404, f"Document {doc_id!r} not found")
+    return {"ok": True, "lifecycle": body.lifecycle, "document": db.get_document(doc_id)}
 
 
 @router.delete("/library/{doc_id}")
@@ -323,6 +429,10 @@ def library_import(body: LibraryImport, background_tasks: BackgroundTasks):
             title=name,
             db=db,
         )
+
+    # Version suggestion: check for similar-named docs in the same Work
+    if body.work_id:
+        _maybe_suggest_version(db, doc["id"], body.work_id, name)
 
     return {"document": doc, "duplicate": False}
 

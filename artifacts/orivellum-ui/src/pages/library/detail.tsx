@@ -19,7 +19,7 @@ import {
   ArrowLeft, FileText, AlertCircle, CheckCircle2, Clock,
   FileQuestion, RefreshCw, Trash2, Hash, Calendar, Database,
   BookOpen, Cpu, Sparkles, ThumbsUp, ThumbsDown, Link2, Info,
-  List, History, Star,
+  List, History, Star, GitBranch, ChevronDown,
 } from "lucide-react";
 import {
   Tooltip, TooltipContent, TooltipProvider, TooltipTrigger,
@@ -750,6 +750,28 @@ export default function DocumentDetail() {
   const readiness: string = doc.readiness ?? "imported";
   const hasError = readiness === "error" || readiness === "no_text";
   const title = doc.title || doc.source || "Untitled Document";
+  const docLifecycle: string = (doc as any).lifecycle ?? "draft";
+
+  const lifecycleOptions = [
+    { value: "draft",      label: "Draft",      className: "text-muted-foreground" },
+    { value: "canonical",  label: "Canonical",  className: "text-amber-700 font-semibold" },
+    { value: "reference",  label: "Reference",  className: "text-blue-700" },
+    { value: "superseded", label: "Superseded", className: "text-muted-foreground" },
+  ] as const;
+
+  const handleSetLifecycle = async (lc: string) => {
+    const resp = await apiFetch(`${BASE}/library/${docId}/lifecycle`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ lifecycle: lc }),
+    });
+    if (resp.ok) {
+      toast.success(`Lifecycle set to "${lc}"`);
+      queryClient.invalidateQueries({ queryKey: getGetDocumentQueryKey(docId!) });
+    } else {
+      toast.error("Could not update lifecycle");
+    }
+  };
 
   const tabs: { key: Tab; label: string; icon: React.ElementType; badge?: number }[] = [
     { key: "overview",  label: "Overview",  icon: FileText },
@@ -836,6 +858,31 @@ export default function DocumentDetail() {
                 {doc.kind ?? "file"}
               </Badge>
               <ReadinessBadge readiness={readiness} />
+              {/* Lifecycle badge + inline picker */}
+              <Select value={docLifecycle} onValueChange={handleSetLifecycle}>
+                <SelectTrigger
+                  className={`h-auto py-0.5 px-1.5 text-[10px] font-mono uppercase border rounded gap-1 w-auto min-w-0 focus:ring-0 shadow-none ${
+                    docLifecycle === "canonical"
+                      ? "bg-amber-50 border-amber-300 text-amber-800"
+                      : docLifecycle === "reference"
+                      ? "bg-blue-50 border-blue-200 text-blue-700"
+                      : docLifecycle === "superseded"
+                      ? "bg-muted/50 border-border text-muted-foreground"
+                      : "bg-muted/30 border-border/50 text-muted-foreground"
+                  }`}
+                >
+                  {docLifecycle === "canonical" && <Star className="w-2.5 h-2.5 text-amber-600" />}
+                  <SelectValue />
+                  <ChevronDown className="w-3 h-3 opacity-50" />
+                </SelectTrigger>
+                <SelectContent>
+                  {lifecycleOptions.map((o) => (
+                    <SelectItem key={o.value} value={o.value} className={`text-xs font-mono ${o.className}`}>
+                      {o.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
               {doc.word_count > 0 && (
                 <span className="text-xs font-mono text-muted-foreground">
                   {doc.word_count.toLocaleString()} words

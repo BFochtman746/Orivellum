@@ -24,7 +24,7 @@ import {
   getGetWorkConversationsQueryKey,
   getListConversationsQueryKey,
 } from "@workspace/api-client-react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { apiFetch } from "@/lib/auth";
 import { Card, CardContent } from "@/components/ui/card";
@@ -74,6 +74,8 @@ import {
   TrendingUp,
   Lightbulb,
   Brain,
+  Star,
+  GitBranch,
 } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -600,6 +602,21 @@ function DocumentsTab({ workId }: { workId: string }) {
                         {isProcessing && <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse mr-1 inline-block" />}
                         {doc.readiness}
                       </Badge>
+                      {(doc as any).lifecycle === "canonical" && (
+                        <span className="text-[10px] font-mono flex items-center gap-0.5 bg-amber-50 border border-amber-300 text-amber-800 rounded px-1.5 py-0.5">
+                          <Star className="w-2.5 h-2.5" />canonical
+                        </span>
+                      )}
+                      {(doc as any).lifecycle === "superseded" && (
+                        <span className="text-[10px] font-mono bg-muted/50 border border-border text-muted-foreground rounded px-1.5 py-0.5 line-through">
+                          superseded
+                        </span>
+                      )}
+                      {(doc as any).lifecycle === "reference" && (
+                        <span className="text-[10px] font-mono bg-blue-50 border border-blue-200 text-blue-700 rounded px-1.5 py-0.5">
+                          reference
+                        </span>
+                      )}
                     </div>
                   </div>
                 </div>

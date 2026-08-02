@@ -466,6 +466,9 @@ paths:
         - name: readiness
           in: query
           schema: { type: string }
+        - name: lifecycle
+          in: query
+          schema: { type: string, description: "Filter by lifecycle state: draft | canonical | superseded | reference" }
         - name: limit
           in: query
           schema: { type: integer, default: 200 }
@@ -573,6 +576,37 @@ paths:
                 type: object
                 properties:
                   ok: { type: boolean }
+
+  /library/{docId}/lifecycle:
+    patch:
+      operationId: setDocumentLifecycle
+      summary: Declare a document's authority state (draft | canonical | superseded | reference)
+      tags: [library]
+      parameters:
+        - name: docId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [lifecycle]
+              properties:
+                lifecycle: { type: string, description: "draft | canonical | superseded | reference" }
+      responses:
+        "200":
+          description: Lifecycle updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  lifecycle: { type: string }
+                  document: { $ref: "#/components/schemas/Document" }
 
   /library/import:
     post:
@@ -1049,6 +1083,7 @@ components:
         kind: { type: string, nullable: true }
         classification: { type: string, nullable: true }
         readiness: { type: string }
+        lifecycle: { type: string, nullable: true, description: "draft | canonical | superseded | reference" }
         word_count: { type: integer, nullable: true }
         error_message: { type: string, nullable: true }
         meta: { type: object }

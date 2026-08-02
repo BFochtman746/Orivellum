@@ -73,6 +73,8 @@ import type {
   SearchLibrary200,
   SearchLibraryParams,
   SendMessage200,
+  SetDocumentLifecycle200,
+  SetDocumentLifecycleBody,
   SystemHealth,
   TaskCreate,
   TaskUpdate,
@@ -2194,6 +2196,78 @@ export const useDeleteDocument = <TError = ErrorType<unknown>,
         TContext
       > => {
       return useMutation(getDeleteDocumentMutationOptions(options));
+    }
+
+export const getSetDocumentLifecycleUrl = (docId: string,) => {
+
+
+
+
+  return `/api/library/${docId}/lifecycle`
+}
+
+/**
+ * @summary Declare a document's authority state (draft | canonical | superseded | reference)
+ */
+export const setDocumentLifecycle = async (docId: string,
+    setDocumentLifecycleBody: SetDocumentLifecycleBody, options?: Parameters<typeof customFetch>[1]): Promise<SetDocumentLifecycle200> => {
+
+  return customFetch<SetDocumentLifecycle200>(getSetDocumentLifecycleUrl(docId),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(setDocumentLifecycleBody)
+  }
+);}
+
+
+
+
+
+export const getSetDocumentLifecycleMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setDocumentLifecycle>>, TError,{docId: string;data: BodyType<SetDocumentLifecycleBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof setDocumentLifecycle>>, TError,{docId: string;data: BodyType<SetDocumentLifecycleBody>}, TContext> => {
+
+const mutationKey = ['setDocumentLifecycle'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof setDocumentLifecycle>>, {docId: string;data: BodyType<SetDocumentLifecycleBody>}> = (props) => {
+          const {docId,data} = props ?? {};
+
+          return  setDocumentLifecycle(docId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SetDocumentLifecycleMutationResult = NonNullable<Awaited<ReturnType<typeof setDocumentLifecycle>>>
+    export type SetDocumentLifecycleMutationBody = BodyType<SetDocumentLifecycleBody>
+    export type SetDocumentLifecycleMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Declare a document's authority state (draft | canonical | superseded | reference)
+ */
+export const useSetDocumentLifecycle = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setDocumentLifecycle>>, TError,{docId: string;data: BodyType<SetDocumentLifecycleBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof setDocumentLifecycle>>,
+        TError,
+        {docId: string;data: BodyType<SetDocumentLifecycleBody>},
+        TContext
+      > => {
+      return useMutation(getSetDocumentLifecycleMutationOptions(options));
     }
 
 export const getImportDocumentUrl = () => {

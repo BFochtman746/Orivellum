@@ -21,7 +21,7 @@ import {
   Search, Upload, FileText, Database, Filter,
   Library as LibraryIcon, AlertCircle, RefreshCw, Trash2,
   CheckCircle2, Clock, FileQuestion, X, Package, Layers,
-  FolderOpen, Sparkles, GitMerge,
+  FolderOpen, Sparkles, GitMerge, Star, GitBranch,
 } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
@@ -33,6 +33,29 @@ import {
 import { toast } from "sonner";
 
 const BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
+
+// ── Lifecycle badge ────────────────────────────────────────────────────────────
+
+type Lifecycle = "draft" | "canonical" | "superseded" | "reference";
+
+const LIFECYCLE_CFG: Record<string, { label: string; className: string; icon?: React.ElementType }> = {
+  canonical:  { label: "canonical",  className: "bg-amber-50 border border-amber-300 text-amber-800", icon: Star },
+  superseded: { label: "superseded", className: "bg-muted/50 border border-border text-muted-foreground line-through" },
+  reference:  { label: "reference",  className: "bg-blue-50 border border-blue-200 text-blue-700" },
+};
+
+function LifecycleBadge({ lifecycle }: { lifecycle?: string }) {
+  if (!lifecycle || lifecycle === "draft") return null;
+  const cfg = LIFECYCLE_CFG[lifecycle];
+  if (!cfg) return null;
+  const Icon = cfg.icon;
+  return (
+    <span className={`text-[10px] font-mono flex items-center gap-0.5 rounded px-1.5 py-0.5 ${cfg.className}`}>
+      {Icon && <Icon className="w-2.5 h-2.5" />}
+      {cfg.label}
+    </span>
+  );
+}
 
 // ─── Near-duplicates banner ───────────────────────────────────────────────────
 
@@ -330,6 +353,7 @@ export default function Library() {
   const [readinessFilter, setReadinessFilter] = useState<"all" | "ready" | "processing" | "error">("all");
   const [kindFilter, setKindFilter] = useState<string>("all");
   const [workFilter, setWorkFilter] = useState<string>("all");
+  const [lifecycleFilter, setLifecycleFilter] = useState<string>("all");
   const [showFilters, setShowFilters] = useState(false);
   const [sortBy, setSortBy] = useState<"newest" | "oldest" | "a-z" | "z-a">("newest");
   const [groupByWork, setGroupByWork] = useState(false);
@@ -368,7 +392,8 @@ export default function Library() {
         : workFilter === "__none__"
           ? !d.work_id
           : d.work_id === workFilter;
-      return matchesReadiness && matchesKind && matchesWork;
+      const matchesLifecycle = lifecycleFilter === "all" || (d.lifecycle ?? "draft") === lifecycleFilter;
+      return matchesReadiness && matchesKind && matchesWork && matchesLifecycle;
     })
     .sort((a, b) => {
       if (sortBy === "newest") return new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime();
@@ -448,7 +473,7 @@ export default function Library() {
           <div>
             <h1 className="text-3xl font-serif font-semibold tracking-tight">Library</h1>
             <p className="text-muted-foreground mt-1 font-serif">
-              {isLoading ? "Loading…" : `${docs.length} document${docs.length !== 1 ? "s" : ""}${search || readinessFilter !== "all" || kindFilter !== "all" || workFilter !== "all" ? " matching filters" : ""}`}
+              {isLoading ? "Loading…" : `${docs.length} document${docs.length !== 1 ? "s" : ""}${search || readinessFilter !== "all" || kindFilter !== "all" || workFilter !== "all" || lifecycleFilter !== "all" ? " matching filters" : ""}`}
             </p>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
@@ -586,6 +611,24 @@ export default function Library() {
                   </div>
                 </div>
               )}
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-mono text-muted-foreground uppercase">Lifecycle:</span>
+                <div className="flex items-center gap-1 p-0.5 bg-muted/30 rounded-lg">
+                  {(["all", "canonical", "draft", "reference", "superseded"] as const).map((lc) => (
+                    <button
+                      key={lc}
+                      onClick={() => setLifecycleFilter(lc)}
+                      className={`px-2.5 py-1 rounded text-xs font-mono transition-colors ${
+                        lifecycleFilter === lc
+                          ? "bg-background shadow-sm text-foreground"
+                          : "text-muted-foreground hover:text-foreground"
+                      }`}
+                    >
+                      {lc === "all" ? "All" : lc}
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
           )}
         </div>
@@ -650,6 +693,7 @@ export default function Library() {
                               <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
                                 <Badge variant="secondary" className="font-mono text-[10px] uppercase">{doc.kind ?? "file"}</Badge>
                                 <ReadinessBadge readiness={readiness} />
+                                <LifecycleBadge lifecycle={doc.lifecycle} />
                                 {doc.word_count > 0 && <span className="text-[10px] font-mono text-muted-foreground">{doc.word_count.toLocaleString()} words</span>}
                                 {doc.meta?.zip_exploded && (
                                   <span className="text-[10px] text-amber-600 flex items-center gap-1 font-mono bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5">
@@ -714,6 +758,7 @@ export default function Library() {
                             {doc.kind ?? "file"}
                           </Badge>
                           <ReadinessBadge readiness={readiness} />
+                          <LifecycleBadge lifecycle={doc.lifecycle} />
                           {doc.word_count > 0 && (
                             <span className="text-[10px] font-mono text-muted-foreground">
                               {doc.word_count.toLocaleString()} words

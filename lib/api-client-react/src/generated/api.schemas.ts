@@ -128,6 +128,11 @@ export interface Document {
   /** @nullable */
   classification?: string | null;
   readiness?: string;
+  /**
+     * draft | canonical | superseded | reference
+     * @nullable
+     */
+  lifecycle?: string | null;
   /** @nullable */
   word_count?: number | null;
   /** @nullable */
@@ -433,6 +438,10 @@ export type ListLibraryParams = {
 work_id?: string;
 kind?: string;
 readiness?: string;
+/**
+ * Filter by lifecycle state: draft | canonical | superseded | reference
+ */
+lifecycle?: string;
 limit?: number;
 };
 
@@ -470,6 +479,17 @@ export type UpdateDocument200 = {
 
 export type DeleteDocument200 = {
   ok?: boolean;
+};
+
+export type SetDocumentLifecycleBody = {
+  /** draft | canonical | superseded | reference */
+  lifecycle: string;
+};
+
+export type SetDocumentLifecycle200 = {
+  ok?: boolean;
+  lifecycle?: string;
+  document?: Document;
 };
 
 export type ImportDocument200 = {

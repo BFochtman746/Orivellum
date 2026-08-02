@@ -240,6 +240,7 @@ export const GetWorkDocumentsResponse = zod.object({
   "kind": zod.string().nullish(),
   "classification": zod.string().nullish(),
   "readiness": zod.string().optional(),
+  "lifecycle": zod.string().nullish().describe('draft | canonical | superseded | reference'),
   "word_count": zod.int().nullish(),
   "error_message": zod.string().nullish(),
   "meta": zod.looseObject({
@@ -557,6 +558,7 @@ export const ListLibraryQueryParams = zod.object({
   "work_id": zod.coerce.string().optional(),
   "kind": zod.coerce.string().optional(),
   "readiness": zod.coerce.string().optional(),
+  "lifecycle": zod.coerce.string().optional(),
   "limit": zod.coerce.number().int().default(listLibraryQueryLimitDefault)
 })
 
@@ -570,6 +572,7 @@ export const ListLibraryResponse = zod.object({
   "kind": zod.string().nullish(),
   "classification": zod.string().nullish(),
   "readiness": zod.string().optional(),
+  "lifecycle": zod.string().nullish().describe('draft | canonical | superseded | reference'),
   "word_count": zod.int().nullish(),
   "error_message": zod.string().nullish(),
   "meta": zod.looseObject({
@@ -618,6 +621,7 @@ export const GetDocumentResponse = zod.object({
   "kind": zod.string().nullish(),
   "classification": zod.string().nullish(),
   "readiness": zod.string().optional(),
+  "lifecycle": zod.string().nullish().describe('draft | canonical | superseded | reference'),
   "word_count": zod.int().nullish(),
   "error_message": zod.string().nullish(),
   "meta": zod.looseObject({
@@ -649,6 +653,7 @@ export const UpdateDocumentResponse = zod.object({
   "kind": zod.string().nullish(),
   "classification": zod.string().nullish(),
   "readiness": zod.string().optional(),
+  "lifecycle": zod.string().nullish().describe('draft | canonical | superseded | reference'),
   "word_count": zod.int().nullish(),
   "error_message": zod.string().nullish(),
   "meta": zod.looseObject({
@@ -668,6 +673,40 @@ export const DeleteDocumentParams = zod.object({
 
 export const DeleteDocumentResponse = zod.object({
   "ok": zod.boolean().optional()
+})
+
+
+/**
+ * @summary Declare a document's authority state (draft | canonical | superseded | reference)
+ */
+export const SetDocumentLifecycleParams = zod.object({
+  "docId": zod.coerce.string()
+})
+
+export const SetDocumentLifecycleBody = zod.object({
+  "lifecycle": zod.string().describe('draft | canonical | superseded | reference')
+})
+
+export const SetDocumentLifecycleResponse = zod.object({
+  "ok": zod.boolean().optional(),
+  "lifecycle": zod.string().optional(),
+  "document": zod.object({
+  "id": zod.string().optional(),
+  "work_id": zod.string().nullish(),
+  "title": zod.string().nullish(),
+  "source": zod.string().nullish(),
+  "sha256": zod.string().nullish(),
+  "kind": zod.string().nullish(),
+  "classification": zod.string().nullish(),
+  "readiness": zod.string().optional(),
+  "lifecycle": zod.string().nullish().describe('draft | canonical | superseded | reference'),
+  "word_count": zod.int().nullish(),
+  "error_message": zod.string().nullish(),
+  "meta": zod.looseObject({
+
+}).optional(),
+  "created_at": zod.string().optional()
+}).optional()
 })
 
 
@@ -693,6 +732,7 @@ export const ImportDocumentResponse = zod.object({
   "kind": zod.string().nullish(),
   "classification": zod.string().nullish(),
   "readiness": zod.string().optional(),
+  "lifecycle": zod.string().nullish().describe('draft | canonical | superseded | reference'),
   "word_count": zod.int().nullish(),
   "error_message": zod.string().nullish(),
   "meta": zod.looseObject({

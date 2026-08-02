@@ -750,4 +750,12 @@ MIGRATIONS: list[tuple[int, str, str]] = [
     (47, "Add heading level column to book_chapters", """
         ALTER TABLE book_chapters ADD COLUMN level INTEGER NOT NULL DEFAULT 1
     """),
+
+    # v48 — Document lifecycle activation (MONARCH #146)
+    # Sets all existing document objects from 'active' → 'draft' so lifecycle
+    # is meaningful for every document, new or old.
+    (48, "Activate document lifecycle field — existing docs become draft", """
+        UPDATE objects SET lifecycle='draft', updated_at=datetime('now')
+        WHERE type='document' AND lifecycle='active'
+    """),
 ]
