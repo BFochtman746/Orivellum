@@ -19,8 +19,9 @@ Scaled-down build of the user's 14-layer MCOS spec (attached_assets/Pasted-Proje
 - **Judges**: rule (0.5) + LLM judge (0.3, purpose "mcos.judge", strict JSON rubric, absent on failure, scores must pass math.isfinite BEFORE clamping — NaN survives min/max) + grounding (0.2, sentence/context word-overlap, absent w/o context). Consensus renormalizes over present finite judges. Retrieval cases use judge key "retrieval".
 - **Regression → governance**: regressed finalize writes audit_log (actor 'mcos'); /api/mcos/regressions + /regressions/{run_id}/ack; ack MUST be a single atomic json_set UPDATE with regressed predicate (read-then-write raced with finalize and could erase meta). Governance page has a Benchmark Regressions section.
 
-## Planned next phases
-- Phase 4: prompt registry table + candidate-vs-active benchmarking; dashboard exists already.
-- Phase 5: RAG calibration — chunk size/overlap currently hardcoded (500/50 words in chunking.py); make settings + sweep harness.
+## Built (Phases 4-5)
+- **Prompt registry** (schema v53 `prompts` table, partial unique index on active-per-slot): slot `chat.base` seeded from the hardcoded persona; `_build_system_prompt` reads `db.get_active_prompt("chat.base")` with hardcoded-constant fallback in try/except — chat must never break on a bad/missing prompt row. Activation/deletion must do check+mutation in ONE db._lock transaction (TOCTOU otherwise leaves a slot with zero active prompts).
+- **Candidate-vs-active benchmarking**: paired eval_runs carry meta `prompt_id/prompt_version/prompt_role`; ALL paired run rows must be reserved inside one lock before scheduling (409 for losers). Prompt runs are excluded from regression baselines/listing AND from `_run_row_to_dict` delta recomputation — three separate leak paths.
+- **RAG calibration** (v53 `rag_sweeps`): chunk_target_words/chunk_overlap_words settings (clamp target 100-2000, overlap 0..target//2) read by chunk_and_store; sweep is purely in-memory (rebuild doc text from chunks, word-overlap ranking, no LLM, no chunk writes); same never-stuck-running rules as eval_runs incl. stale reaping in both POST and GET sweep routes.
 
 **Why scaled down:** single-user, single local OpenAI-compatible endpoint — multi-model benchmark center, speech/vision suites, and 8-judge board deliberately cut.
