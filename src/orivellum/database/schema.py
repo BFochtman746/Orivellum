@@ -728,4 +728,21 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         );
         CREATE INDEX IF NOT EXISTS work_mastery_concept ON work_mastery(concept_id)
     """),
+
+    # v46 — Document version tracking (MONARCH #146)
+    (46, "Document version snapshots and canonical flag", """
+        CREATE TABLE IF NOT EXISTS doc_versions (
+            id            TEXT PRIMARY KEY,
+            doc_id        TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+            version_num   INTEGER NOT NULL DEFAULT 1,
+            sha256        TEXT,
+            word_count    INTEGER NOT NULL DEFAULT 0,
+            notes         TEXT,
+            is_canonical  INTEGER NOT NULL DEFAULT 0,
+            created_at    TEXT NOT NULL,
+            created_by    TEXT NOT NULL DEFAULT 'user'
+        );
+        CREATE INDEX IF NOT EXISTS dv_doc     ON doc_versions(doc_id);
+        CREATE INDEX IF NOT EXISTS dv_canonical ON doc_versions(doc_id, is_canonical)
+    """),
 ]

@@ -30,3 +30,4 @@
 - [Chat send failure UX](orivellum-chat-failure.md) — on thrown stream errors, message stays as a red "failed" bubble (failed:true); finally block filters to keep m.incomplete||m.failed; web only; mobile still needs this (task #140).
 - [Upload progress tracking](orivellum-upload-progress.md) — web library import dialog tracks base64 chunking progress via uploadPct state (0→92 during chunks, 95 after btoa, 100 on success); shown as a progress bar in the dialog.
 - [Duplicate send guard](orivellum-dup-send.md) — conversations.py checks db._conn directly for a matching user message within 5s before storing; uses db._lock; should be moved to a public db method (task #139).
+- [MONARCH intelligence capabilities](orivellum-monarch.md) — chapters/dedup/completeness/gaps/governance/audit/versioning/graph all wired; schema v46; pipeline steps 4.5+4.6; book intelligence page at /works/:id/intelligence; governance at /governance.

@@ -69,6 +69,11 @@ import {
   BookOpen,
   ChevronDown,
   Trophy,
+  BarChart2,
+  AlertTriangle,
+  TrendingUp,
+  Lightbulb,
+  Brain,
 } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -158,6 +163,15 @@ export default function WorkDetail() {
         </div>
         {work && (
           <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => navigate(`/works/${workId}/intelligence`)}
+              className="gap-1.5 text-xs border-primary/30 text-primary hover:bg-primary/5"
+            >
+              <Brain className="w-3.5 h-3.5" />
+              Intelligence
+            </Button>
             <QuickChatButton workId={workId!} />
             <button
               onClick={handleDelete}
@@ -335,13 +349,15 @@ export default function WorkDetail() {
         <Tabs defaultValue="documents" className="w-full">
           <TabsList className="w-full justify-start border-b border-border/50 rounded-none bg-transparent h-auto p-0 space-x-6">
             {[
-              { value: "documents", icon: FileText, label: "Documents", badge: null },
-              { value: "knowledge", icon: Network, label: "Knowledge", badge: null },
-              { value: "tasks", icon: CheckSquare, label: "Tasks", badge: pendingTaskCount ?? null },
-              { value: "conversations", icon: MessageSquare, label: "Conversations", badge: null },
-              { value: "search", icon: Search, label: "Search", badge: null },
-              { value: "quiz",  icon: GraduationCap, label: "Quiz", badge: null },
-              { value: "learn", icon: BookOpen,      label: "Learn", badge: null },
+              { value: "documents",    icon: FileText,      label: "Documents",    badge: null },
+              { value: "knowledge",    icon: Network,       label: "Knowledge",    badge: null },
+              { value: "completeness", icon: BarChart2,     label: "Completeness", badge: null },
+              { value: "gaps",         icon: AlertTriangle, label: "Gaps",         badge: null },
+              { value: "tasks",        icon: CheckSquare,   label: "Tasks",        badge: pendingTaskCount ?? null },
+              { value: "conversations",icon: MessageSquare, label: "Conversations",badge: null },
+              { value: "search",       icon: Search,        label: "Search",       badge: null },
+              { value: "quiz",         icon: GraduationCap, label: "Quiz",         badge: null },
+              { value: "learn",        icon: BookOpen,      label: "Learn",        badge: null },
             ].map(({ value, icon: Icon, label, badge }) => (
               <TabsTrigger
                 key={value}
@@ -361,6 +377,8 @@ export default function WorkDetail() {
           <div className="mt-8">
             <TabsContent value="documents"><ErrorBoundary label="documents tab"><DocumentsTab workId={workId!} /></ErrorBoundary></TabsContent>
             <TabsContent value="knowledge"><ErrorBoundary label="knowledge tab"><KnowledgeTab workId={workId!} /></ErrorBoundary></TabsContent>
+            <TabsContent value="completeness"><ErrorBoundary label="completeness tab"><CompletenessTab workId={workId!} /></ErrorBoundary></TabsContent>
+            <TabsContent value="gaps"><ErrorBoundary label="gaps tab"><GapsTab workId={workId!} /></ErrorBoundary></TabsContent>
             <TabsContent value="tasks"><ErrorBoundary label="tasks tab"><TasksTab workId={workId!} /></ErrorBoundary></TabsContent>
             <TabsContent value="conversations"><ErrorBoundary label="conversations tab"><ConversationsTab workId={workId!} /></ErrorBoundary></TabsContent>
             <TabsContent value="search"><ErrorBoundary label="search tab"><SearchTab workId={workId!} /></ErrorBoundary></TabsContent>
@@ -1448,6 +1466,246 @@ interface AssessResult {
   graduated: boolean;
   next_concept_id: string | null;
   summary: { total: number; graduated: number; mastery_pct: number };
+}
+
+// ─── Gaps tab ────────────────────────────────────────────────────────────────
+
+interface GapItem {
+  kind: string; title: string; description: string; severity: string;
+  metadata: Record<string, unknown>;
+}
+interface GapReport {
+  coverage_pct: number; total_chapters: number;
+  gaps: GapItem[]; suggested_queries: string[]; evaluated_at: string;
+}
+
+const GAP_SEVERITY_STYLE: Record<string, string> = {
+  high:   "border-red-200 bg-red-50/40 text-red-900",
+  medium: "border-amber-200 bg-amber-50/40 text-amber-900",
+  low:    "border-blue-200 bg-blue-50/40 text-blue-900",
+};
+const GAP_DOT: Record<string, string> = {
+  high: "bg-red-500", medium: "bg-amber-400", low: "bg-blue-400",
+};
+
+function GapsTab({ workId }: { workId: string }) {
+  const { data, isLoading, error, refetch, isFetching } = useQuery<GapReport>({
+    queryKey: ["work-gaps", workId],
+    queryFn: () =>
+      apiFetch(`${WORK_API_BASE}/works/${workId}/gaps`).then((r) => {
+        if (!r.ok) throw new Error("gaps fetch failed");
+        return r.json();
+      }),
+    staleTime: 120_000,
+  });
+
+  if (isLoading) return (
+    <div className="space-y-3">{[1,2,3].map(i => <Skeleton key={i} className="h-20 w-full" />)}</div>
+  );
+  if (error || !data) return (
+    <div className="text-center py-16 text-muted-foreground border border-dashed rounded-lg">
+      <AlertTriangle className="w-8 h-8 mx-auto mb-3 opacity-40" />
+      <p className="text-sm">Could not load gap analysis.</p>
+    </div>
+  );
+
+  const byKind = data.gaps.reduce<Record<string, GapItem[]>>((acc, g) => {
+    (acc[g.severity] ??= []).push(g);
+    return acc;
+  }, {});
+
+  return (
+    <div className="space-y-6">
+      {/* Coverage bar */}
+      <div className="p-4 rounded-xl border border-border/50 bg-muted/10 space-y-2">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <TrendingUp className="w-4 h-4 text-primary" />
+            <span className="font-medium text-sm">Research coverage</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-lg font-mono font-bold">{data.coverage_pct}%</span>
+            <button onClick={() => refetch()} disabled={isFetching}
+              className="text-[10px] font-mono text-muted-foreground hover:text-foreground">
+              {isFetching ? "…" : "refresh"}
+            </button>
+          </div>
+        </div>
+        <div className="h-2.5 bg-muted rounded-full overflow-hidden">
+          <div
+            className={`h-full rounded-full transition-all duration-500 ${
+              data.coverage_pct >= 80 ? "bg-emerald-500" :
+              data.coverage_pct >= 50 ? "bg-amber-400" : "bg-red-400"
+            }`}
+            style={{ width: `${data.coverage_pct}%` }}
+          />
+        </div>
+        <p className="text-xs font-mono text-muted-foreground">
+          {data.total_chapters} chapter{data.total_chapters !== 1 ? "s" : ""} analysed
+        </p>
+      </div>
+
+      {/* Gaps list */}
+      {data.gaps.length === 0 ? (
+        <div className="text-center py-10 border border-dashed rounded-lg text-muted-foreground text-sm">
+          No gaps detected — all chapters have sufficient research coverage.
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {(["high", "medium", "low"] as const).map((sev) => {
+            const items = byKind[sev] ?? [];
+            if (items.length === 0) return null;
+            return (
+              <div key={sev} className="space-y-2">
+                <h4 className="text-[11px] font-mono uppercase tracking-widest text-muted-foreground flex items-center gap-2">
+                  <span className={`w-2 h-2 rounded-full ${GAP_DOT[sev]}`} />
+                  {sev} priority ({items.length})
+                </h4>
+                {items.map((g, i) => (
+                  <div key={i} className={`p-3.5 rounded-lg border ${GAP_SEVERITY_STYLE[sev]}`}>
+                    <p className="font-medium text-sm mb-1">{g.title}</p>
+                    <p className="text-[12px] leading-relaxed opacity-80">{g.description}</p>
+                  </div>
+                ))}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Suggested queries */}
+      {data.suggested_queries.length > 0 && (
+        <div className="space-y-2">
+          <h4 className="text-[11px] font-mono uppercase tracking-widest text-muted-foreground flex items-center gap-2">
+            <Lightbulb className="w-3.5 h-3.5" /> Suggested research queries
+          </h4>
+          <div className="flex flex-wrap gap-2">
+            {data.suggested_queries.map((q, i) => (
+              <span key={i} className="px-3 py-1.5 rounded-full text-xs font-mono border border-border/60 bg-muted/20 text-muted-foreground hover:text-foreground transition-colors cursor-default">
+                {q}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Completeness tab ─────────────────────────────────────────────────────────
+
+const WORK_API_BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
+
+interface ComplDimension {
+  name: string; label: string; score: number;
+  current: number | string; target: number | string; unit: string;
+  rule: string; evidence: string[];
+}
+interface ComplReport {
+  overall: number; readiness: string; summary: string; evaluated_at: string;
+  dimensions: ComplDimension[];
+}
+
+const READINESS_COLOR: Record<string, string> = {
+  "Ready":          "text-emerald-700 bg-emerald-50 border-emerald-200",
+  "Near-Complete":  "text-blue-700 bg-blue-50 border-blue-200",
+  "Substantial":    "text-violet-700 bg-violet-50 border-violet-200",
+  "Developing":     "text-amber-700 bg-amber-50 border-amber-200",
+  "Draft":          "text-muted-foreground bg-muted border-border",
+};
+
+const DIM_BAR_COLOR: Record<string, string> = {
+  structural: "bg-violet-500",
+  content:    "bg-blue-500",
+  research:   "bg-emerald-500",
+  editorial:  "bg-amber-500",
+  source:     "bg-orange-400",
+};
+
+function CompletenessTab({ workId }: { workId: string }) {
+  const { data, isLoading, error, refetch, isFetching } = useQuery<ComplReport>({
+    queryKey: ["work-completeness", workId],
+    queryFn: () =>
+      apiFetch(`${WORK_API_BASE}/works/${workId}/completeness`).then((r) => {
+        if (!r.ok) throw new Error("completeness fetch failed");
+        return r.json();
+      }),
+    staleTime: 60_000,
+  });
+
+  if (isLoading) return (
+    <div className="space-y-4">
+      {[1,2,3,4,5].map(i => <Skeleton key={i} className="h-16 w-full" />)}
+    </div>
+  );
+
+  if (error || !data) return (
+    <div className="text-center py-16 text-muted-foreground border border-dashed rounded-lg">
+      <BarChart2 className="w-8 h-8 mx-auto mb-3 opacity-40" />
+      <p className="text-sm">Could not load completeness — re-extract documents first.</p>
+    </div>
+  );
+
+  const readinessClass = READINESS_COLOR[data.readiness] ?? READINESS_COLOR["Draft"];
+
+  return (
+    <div className="space-y-6">
+      {/* Overall banner */}
+      <div className={`flex items-center justify-between p-4 rounded-xl border ${readinessClass}`}>
+        <div>
+          <p className="text-xs font-mono uppercase tracking-wider opacity-70 mb-0.5">Readiness</p>
+          <p className="text-2xl font-serif font-semibold">{data.readiness}</p>
+          <p className="text-xs font-mono mt-1 opacity-70">{data.summary}</p>
+        </div>
+        <div className="text-right shrink-0 ml-6">
+          <p className="text-4xl font-mono font-bold">{data.overall}%</p>
+          <button
+            onClick={() => refetch()}
+            disabled={isFetching}
+            className="text-[10px] font-mono opacity-60 hover:opacity-100 transition-opacity mt-1"
+          >
+            {isFetching ? "updating…" : "refresh"}
+          </button>
+        </div>
+      </div>
+
+      {/* Dimension breakdown */}
+      <div className="space-y-3">
+        <h3 className="text-xs font-mono uppercase tracking-widest text-muted-foreground">
+          Five dimensions
+        </h3>
+        {data.dimensions.map((dim) => (
+          <div key={dim.name} className="p-4 rounded-lg border border-border/50 bg-muted/10 space-y-2">
+            <div className="flex items-center justify-between">
+              <div>
+                <span className="font-medium text-sm">{dim.label}</span>
+                <span className="ml-2 text-[11px] font-mono text-muted-foreground">
+                  {Number(dim.current).toLocaleString()} / {Number(dim.target).toLocaleString()} {dim.unit}
+                </span>
+              </div>
+              <span className="text-sm font-mono font-semibold">{dim.score}%</span>
+            </div>
+            {/* Progress bar */}
+            <div className="h-2 bg-muted rounded-full overflow-hidden">
+              <div
+                className={`h-full rounded-full transition-all duration-500 ${DIM_BAR_COLOR[dim.name] ?? "bg-primary"}`}
+                style={{ width: `${dim.score}%` }}
+              />
+            </div>
+            {/* Rule + evidence */}
+            <p className="text-[11px] font-mono text-muted-foreground">{dim.rule}</p>
+            {dim.evidence.map((ev, i) => (
+              <p key={i} className="text-[11px] text-muted-foreground/70 pl-2 border-l border-border/50">{ev}</p>
+            ))}
+          </div>
+        ))}
+      </div>
+
+      <p className="text-[10px] font-mono text-muted-foreground/50 text-right">
+        Evaluated {data.evaluated_at ? new Date(data.evaluated_at).toLocaleString() : "recently"}
+      </p>
+    </div>
+  );
 }
 
 function LearnTab({ workId }: { workId: string }) {

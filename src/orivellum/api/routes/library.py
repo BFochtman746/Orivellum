@@ -7,7 +7,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Body, HTTPException
 from pydantic import BaseModel
 
 from orivellum.api._deps import get_db, get_config
@@ -141,6 +141,65 @@ def library_doc_knowledge(doc_id: str, limit: int = 200):
         ).fetchall()
     items = [db._k_dict(r) for r in rows]
     return {"knowledge": items, "count": len(items), "doc_id": doc_id}
+
+
+@router.get("/library/duplicates")
+def library_duplicates():
+    """Return all detected near-duplicate / likely-revision document pairs."""
+    db = get_db()
+    pairs = db.list_near_duplicates()
+    return {"pairs": pairs, "count": len(pairs)}
+
+
+@router.get("/library/{doc_id}/versions")
+def library_versions(doc_id: str):
+    db = get_db()
+    if not db.get_document(doc_id):
+        raise HTTPException(404, f"Document {doc_id!r} not found")
+    versions = db.list_document_versions(doc_id)
+    return {"versions": versions, "count": len(versions), "doc_id": doc_id}
+
+
+@router.post("/library/{doc_id}/versions")
+def library_create_version(doc_id: str, body: dict = Body(default={})):
+    """Snapshot current document state as a new version."""
+    db = get_db()
+    doc = db.get_document(doc_id)
+    if not doc:
+        raise HTTPException(404, f"Document {doc_id!r} not found")
+    version = db.create_document_version(
+        doc_id=doc_id,
+        sha256=doc.get("sha256"),
+        word_count=doc.get("word_count") or 0,
+        notes=body.get("notes"),
+        is_canonical=bool(body.get("is_canonical", False)),
+    )
+    db.audit("document.version.created", object_id=doc_id, object_type="document",
+             actor="user", detail=f"v{version['version_num']}")
+    return {"version": version}
+
+
+@router.patch("/library/{doc_id}/versions/{version_id}/canonical")
+def library_set_canonical(doc_id: str, version_id: str):
+    """Mark a version as canonical (the authoritative version)."""
+    db = get_db()
+    ok = db.set_canonical_version(doc_id, version_id)
+    if not ok:
+        raise HTTPException(404, "Version not found")
+    db.audit("document.version.canonical", object_id=doc_id, object_type="document",
+             actor="user", detail=version_id[:8])
+    return {"ok": True}
+
+
+@router.get("/library/{doc_id}/chapters")
+def library_chapters(doc_id: str):
+    """Return all extracted chapter/section records for a document."""
+    db = get_db()
+    doc = db.get_document(doc_id)
+    if not doc:
+        raise HTTPException(404, f"Document {doc_id!r} not found")
+    chapters = db.get_book_chapters(doc_id)
+    return {"chapters": chapters, "count": len(chapters), "doc_id": doc_id}
 
 
 @router.get("/library/{doc_id}/chunks")

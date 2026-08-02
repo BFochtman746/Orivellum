@@ -12,6 +12,7 @@ import { Input } from '@/components/ui/input';
 import Dashboard from '@/pages/dashboard';
 import WorksList from '@/pages/works/index';
 import WorkDetail from '@/pages/works/detail';
+import WorkIntelligence from '@/pages/works/intelligence';
 import Chat from '@/pages/chat/index';
 import Library from '@/pages/library/index';
 import DocumentDetail from '@/pages/library/detail';
@@ -22,6 +23,7 @@ import Studio from '@/pages/studio/index';
 import WriteDeskPage from '@/pages/write/index';
 import Backups from '@/pages/backups/index';
 import System from '@/pages/system/index';
+import GovernancePage from '@/pages/governance/index';
 import NotFound from '@/pages/not-found';
 
 const queryClient = new QueryClient({
@@ -50,6 +52,7 @@ function Router() {
         <Route path="/">{() => <RouteWithBoundary component={Dashboard} />}</Route>
         <Route path="/works">{() => <RouteWithBoundary component={WorksList} />}</Route>
         <Route path="/works/:workId">{() => <RouteWithBoundary component={WorkDetail} />}</Route>
+        <Route path="/works/:workId/intelligence">{() => <RouteWithBoundary component={WorkIntelligence} />}</Route>
         <Route path="/chat">{() => <RouteWithBoundary component={Chat} />}</Route>
         <Route path="/library">{() => <RouteWithBoundary component={Library} />}</Route>
         <Route path="/library/:docId">{() => <RouteWithBoundary component={DocumentDetail} />}</Route>
@@ -60,6 +63,7 @@ function Router() {
         <Route path="/write">{() => <RouteWithBoundary component={WriteDeskPage} />}</Route>
         <Route path="/backups">{() => <RouteWithBoundary component={Backups} />}</Route>
         <Route path="/system">{() => <RouteWithBoundary component={System} />}</Route>
+        <Route path="/governance">{() => <RouteWithBoundary component={GovernancePage} />}</Route>
         <Route component={NotFound} />
       </Switch>
     </AppLayout>

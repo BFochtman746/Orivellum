@@ -73,11 +73,12 @@ const PHASES = [
     id: "review",
     label: "Review",
     icon: Target,
-    routes: ["/projects", "/backups", "/system"],
+    routes: ["/projects", "/backups", "/system", "/governance"],
     items: [
-      { name: "Projects", href: "/projects", icon: Target },
-      { name: "Backups",  href: "/backups",  icon: HardDrive },
-      { name: "System",   href: "/system",   icon: Settings },
+      { name: "Projects",   href: "/projects",   icon: Target },
+      { name: "Governance", href: "/governance", icon: CheckCircle2 },
+      { name: "Backups",    href: "/backups",    icon: HardDrive },
+      { name: "System",     href: "/system",     icon: Settings },
     ],
   },
 ] as const;

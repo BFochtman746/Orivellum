@@ -19,6 +19,7 @@ import {
   ArrowLeft, FileText, AlertCircle, CheckCircle2, Clock,
   FileQuestion, RefreshCw, Trash2, Hash, Calendar, Database,
   BookOpen, Cpu, Sparkles, ThumbsUp, ThumbsDown, Link2, Info,
+  List, History, Star,
 } from "lucide-react";
 import {
   Tooltip, TooltipContent, TooltipProvider, TooltipTrigger,
@@ -31,7 +32,7 @@ const BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-type Tab = "overview" | "text" | "knowledge";
+type Tab = "overview" | "text" | "knowledge" | "chapters" | "versions";
 
 const AI_KINDS = ["entity", "claim", "relationship"] as const;
 type AiKind = (typeof AI_KINDS)[number];
@@ -610,6 +611,17 @@ export default function DocumentDetail() {
     staleTime: 30_000,
   });
 
+  // Chapter/section structure for this document
+  const { data: chapData, isLoading: chapLoading } = useQuery<{
+    chapters: Array<{ id: string; seq: number; title: string; word_count: number; status: string; extraction_method: string }>;
+    count: number;
+  }>({
+    queryKey: ["doc-chapters", docId],
+    queryFn: () => apiFetch(`${BASE}/library/${docId}/chapters`).then((r) => r.json()),
+    enabled: !!docId && activeTab === "chapters",
+    staleTime: 60_000,
+  });
+
   // AI extraction setting — used to gate the AI section in the knowledge tab
   const { data: aiExtData } = useQuery<{ enabled: boolean }>({
     queryKey: ["system", "ai-extraction"],
@@ -739,11 +751,44 @@ export default function DocumentDetail() {
   const hasError = readiness === "error" || readiness === "no_text";
   const title = doc.title || doc.source || "Untitled Document";
 
-  const tabs: { key: Tab; label: string; icon: React.ElementType }[] = [
+  const tabs: { key: Tab; label: string; icon: React.ElementType; badge?: number }[] = [
     { key: "overview",  label: "Overview",  icon: FileText },
-    { key: "text",      label: "Text",       icon: BookOpen },
-    { key: "knowledge", label: "Knowledge",  icon: Cpu },
+    { key: "chapters",  label: "Chapters",  icon: List,    badge: chapData?.count ?? 0 },
+    { key: "versions",  label: "Versions",  icon: History },
+    { key: "text",      label: "Text",      icon: BookOpen },
+    { key: "knowledge", label: "Knowledge", icon: Cpu },
   ];
+
+  // Versions for this document
+  const { data: versData, isLoading: versLoading, refetch: versRefetch } = useQuery<{
+    versions: Array<{ id: string; version_num: number; sha256: string | null; word_count: number; notes: string | null; is_canonical: boolean; created_at: string }>;
+    count: number;
+  }>({
+    queryKey: ["doc-versions", docId],
+    queryFn: () => apiFetch(`${BASE}/library/${docId}/versions`).then((r) => r.json()),
+    enabled: !!docId && activeTab === "versions",
+    staleTime: 60_000,
+  });
+
+  const snapshotVersion = async () => {
+    try {
+      await apiFetch(`${BASE}/library/${docId}/versions`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ notes: "Manual snapshot" }) });
+      toast.success("Version snapshot saved");
+      versRefetch();
+    } catch {
+      toast.error("Could not snapshot version");
+    }
+  };
+
+  const setCanonical = async (versionId: string) => {
+    try {
+      await apiFetch(`${BASE}/library/${docId}/versions/${versionId}/canonical`, { method: "PATCH" });
+      toast.success("Canonical version updated");
+      versRefetch();
+    } catch {
+      toast.error("Could not set canonical");
+    }
+  };
 
   return (
     <div className="space-y-6 animate-in fade-in duration-300 max-w-4xl">
@@ -851,7 +896,7 @@ export default function DocumentDetail() {
 
       {/* Tab bar */}
       <div className="flex items-center gap-1 border-b border-border/50">
-        {tabs.map(({ key, label, icon: Icon }) => (
+        {tabs.map(({ key, label, icon: Icon, badge }) => (
           <button
             key={key}
             onClick={() => setActiveTab(key)}
@@ -863,6 +908,11 @@ export default function DocumentDetail() {
           >
             <Icon className="w-3.5 h-3.5" />
             {label}
+            {badge != null && badge > 0 && (
+              <span className="ml-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-mono bg-muted text-muted-foreground">
+                {badge}
+              </span>
+            )}
           </button>
         ))}
       </div>
@@ -967,6 +1017,105 @@ export default function DocumentDetail() {
                   : "No text was extracted from this document."}
               </p>
             </div>
+          )}
+        </div>
+      )}
+
+      {activeTab === "versions" && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-mono text-muted-foreground">
+              {versData?.count ?? 0} version snapshot{(versData?.count ?? 0) !== 1 ? "s" : ""}
+            </p>
+            <Button size="sm" variant="outline" onClick={snapshotVersion} className="gap-1.5 text-xs">
+              <History className="w-3.5 h-3.5" /> Save Snapshot
+            </Button>
+          </div>
+          {versLoading ? (
+            [1,2].map(i => <div key={i} className="h-14 rounded-lg bg-muted/30 animate-pulse" />)
+          ) : (versData?.versions ?? []).length === 0 ? (
+            <div className="text-center py-14 border border-dashed rounded-lg text-muted-foreground">
+              <History className="w-7 h-7 mx-auto mb-3 opacity-40" />
+              <p className="text-sm">No version snapshots yet.</p>
+              <p className="text-xs opacity-60 mt-1">Click "Save Snapshot" to record the current state of this document.</p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {(versData?.versions ?? []).map((v) => (
+                <div key={v.id} className={`flex items-center gap-4 p-3.5 rounded-lg border transition-colors ${v.is_canonical ? "border-primary/40 bg-primary/5" : "border-border/50 bg-muted/10"}`}>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-0.5">
+                      <span className="text-sm font-mono font-semibold">v{v.version_num}</span>
+                      {v.is_canonical && (
+                        <span className="flex items-center gap-1 text-[10px] font-mono px-1.5 py-0.5 rounded bg-primary/10 text-primary border border-primary/20">
+                          <Star className="w-2.5 h-2.5" /> canonical
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-3 text-[11px] font-mono text-muted-foreground">
+                      <span>{v.word_count.toLocaleString()} words</span>
+                      {v.sha256 && <span title={v.sha256}>{v.sha256.slice(0, 8)}…</span>}
+                      {v.notes && <span className="italic">{v.notes}</span>}
+                      <span>{v.created_at ? new Date(v.created_at).toLocaleDateString() : ""}</span>
+                    </div>
+                  </div>
+                  {!v.is_canonical && (
+                    <button
+                      onClick={() => setCanonical(v.id)}
+                      title="Mark as canonical"
+                      className="text-xs font-mono text-muted-foreground hover:text-primary transition-colors shrink-0"
+                    >
+                      Mark canonical
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {activeTab === "chapters" && (
+        <div className="space-y-3">
+          {chapLoading ? (
+            [1,2,3].map((i) => <div key={i} className="h-16 rounded-lg bg-muted/30 animate-pulse" />)
+          ) : (chapData?.chapters ?? []).length === 0 ? (
+            <div className="text-center py-16 bg-muted/10 border border-dashed rounded-lg">
+              <List className="w-8 h-8 text-muted-foreground mx-auto mb-3 opacity-50" />
+              <p className="text-muted-foreground text-sm">
+                {readiness === "imported"
+                  ? "Extraction in progress — chapters will appear when ready."
+                  : "No chapter structure detected in this document."}
+              </p>
+              <p className="text-xs text-muted-foreground/60 mt-1">
+                Chapter extraction works on DOCX, PDF, and Markdown files with headings.
+              </p>
+            </div>
+          ) : (
+            <>
+              <p className="text-xs font-mono text-muted-foreground">
+                {chapData!.count} section{chapData!.count !== 1 ? "s" : ""} detected
+                {chapData!.chapters[0]?.extraction_method && (
+                  <span className="ml-2 opacity-60">· {chapData!.chapters[0].extraction_method}</span>
+                )}
+              </p>
+              {chapData!.chapters.map((ch) => (
+                <div
+                  key={ch.id}
+                  className="flex items-start gap-4 p-4 rounded-lg border border-border/50 bg-muted/10 hover:bg-muted/20 transition-colors"
+                >
+                  <span className="text-xs font-mono text-muted-foreground/50 w-6 pt-0.5 shrink-0 text-right">
+                    {ch.seq + 1}
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-medium text-sm leading-snug">{ch.title}</p>
+                  </div>
+                  <div className="shrink-0 text-[11px] font-mono text-muted-foreground">
+                    {ch.word_count > 0 ? `${ch.word_count.toLocaleString()} words` : "empty"}
+                  </div>
+                </div>
+              ))}
+            </>
           )}
         </div>
       )}

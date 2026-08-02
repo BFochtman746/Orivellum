@@ -317,6 +317,117 @@ def get_compass(work_id: str):
     return {"work_id": work_id, "compass": compass}
 
 
+@router.get("/works/{work_id}/graph")
+def works_graph(work_id: str, limit: int = 50):
+    """Return entity graph nodes and edges for a Work.
+
+    Entities are sourced from knowledge items (kind=entity or relationship).
+    This is a lightweight projection — not a full knowledge graph extraction.
+    """
+    db = get_db()
+    if not db.get_work(work_id):
+        raise HTTPException(404, f"Work {work_id!r} not found")
+
+    with db._lock:
+        # Source entities from knowledge items
+        kn_rows = db._conn.execute(
+            """SELECT id, kind, text, subject, predicate, object, confidence
+               FROM knowledge WHERE work_id=? AND kind IN ('entity','relationship') LIMIT ?""",
+            (work_id, limit * 2),
+        ).fetchall()
+
+    nodes: list[dict] = []
+    edges: list[dict] = []
+    seen_nodes: set[str] = set()
+
+    for row in kn_rows:
+        r = dict(row)
+        if r["kind"] == "entity" and r["text"]:
+            key = r["text"].lower()
+            if key not in seen_nodes:
+                seen_nodes.add(key)
+                nodes.append({"id": r["id"], "label": r["text"], "type": "entity"})
+        elif r["kind"] == "relationship" and r["subject"] and r["object"]:
+            # Create nodes for subject and object if not already present
+            for label in (r["subject"], r["object"]):
+                key = label.lower()
+                if key not in seen_nodes:
+                    seen_nodes.add(key)
+                    nodes.append({"id": f"auto-{key}", "label": label, "type": "concept"})
+            edges.append({
+                "source": f"auto-{r['subject'].lower()}",
+                "target": f"auto-{r['object'].lower()}",
+                "label": r["predicate"] or "relates to",
+                "confidence": r["confidence"],
+            })
+
+    return {
+        "work_id": work_id,
+        "nodes": nodes[:limit],
+        "edges": edges[:limit],
+        "node_count": len(nodes),
+        "edge_count": len(edges),
+    }
+
+
+@router.get("/works/{work_id}/gaps")
+def works_gaps(work_id: str):
+    """Return research gap analysis for a Work."""
+    db = get_db()
+    if not db.get_work(work_id):
+        raise HTTPException(404, f"Work {work_id!r} not found")
+    from orivellum.capabilities.gaps import detect_gaps
+    report = detect_gaps(work_id, db)
+    return {
+        "work_id": report.work_id,
+        "coverage_pct": report.coverage_pct,
+        "total_chapters": report.total_chapters,
+        "suggested_queries": report.suggested_queries,
+        "evaluated_at": report.evaluated_at,
+        "gaps": [
+            {
+                "kind": g.kind,
+                "title": g.title,
+                "description": g.description,
+                "severity": g.severity,
+                "metadata": g.metadata,
+            }
+            for g in report.gaps
+        ],
+    }
+
+
+@router.get("/works/{work_id}/completeness")
+def works_completeness(work_id: str):
+    """Return multi-dimensional completeness scoring for a Work."""
+    db = get_db()
+    if not db.get_work(work_id):
+        raise HTTPException(404, f"Work {work_id!r} not found")
+    from orivellum.capabilities.completeness import calculate_work_completeness
+    report = calculate_work_completeness(work_id, db)
+    return {
+        "work_id": report.work_id,
+        "work_title": report.work_title,
+        "overall": report.overall,
+        "readiness": report.readiness,
+        "summary": report.summary,
+        "evaluated_at": report.evaluated_at,
+        "dimensions": [
+            {
+                "name": d.name,
+                "label": d.label,
+                "score": d.score,
+                "current": d.current,
+                "target": d.target,
+                "unit": d.unit,
+                "rule": d.rule,
+                "evidence": d.evidence,
+            }
+            for d in report.dimensions
+        ],
+    }
+
+
 @router.patch("/works/{work_id}/compass")
 def patch_compass(work_id: str, body: CompassUpdate):
     """Partial-update the Project Compass state for a Work.

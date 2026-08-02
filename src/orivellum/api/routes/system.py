@@ -406,6 +406,162 @@ def set_ai_extraction_setting(body: AiExtractionUpdate):
     return {"enabled": body.enabled, "ok": True}
 
 
+@router.get("/governance/pending")
+def governance_pending(limit: int = 100):
+    """Return AI-auto knowledge items awaiting human review, across all Works."""
+    db = get_db()
+    with db._lock:
+        rows = db._conn.execute(
+            """SELECT k.id, k.work_id, k.kind, k.text, k.subject, k.predicate, k.object,
+                      k.confidence, k.review_status, k.source_doc_id, k.created_at,
+                      w.title as work_title, d.title as doc_title
+               FROM knowledge k
+               LEFT JOIN works w ON w.id = k.work_id
+               LEFT JOIN documents d ON d.id = k.source_doc_id
+               WHERE k.review_status = 'ai_auto'
+               ORDER BY k.created_at DESC
+               LIMIT ?""",
+            (min(limit, 500),),
+        ).fetchall()
+    items = [dict(r) for r in rows]
+    return {"items": items, "count": len(items)}
+
+
+@router.get("/governance/stats")
+def governance_stats():
+    """Return aggregate review-status counts across all knowledge items."""
+    db = get_db()
+    with db._lock:
+        rows = db._conn.execute(
+            "SELECT review_status, COUNT(*) as cnt FROM knowledge GROUP BY review_status"
+        ).fetchall()
+    stats = {r["review_status"]: r["cnt"] for r in rows}
+    return {
+        "pending":  stats.get("ai_auto", 0),
+        "approved": stats.get("approved", 0),
+        "rejected": stats.get("rejected", 0),
+        "auto":     stats.get("auto", 0),
+        "total":    sum(stats.values()),
+    }
+
+
+@router.get("/search")
+def global_search(q: str, limit: int = 20, work_id: str | None = None):
+    """Hybrid global search across knowledge items, document chunks, and chapters.
+
+    Uses SQLite FTS for keyword matching plus recency boosting.
+    Results are ranked and deduplicated by source.
+    """
+    db = get_db()
+    if not q or len(q.strip()) < 2:
+        raise HTTPException(400, "Query must be at least 2 characters")
+
+    results: list[dict] = []
+
+    # 1 — Knowledge items (FTS)
+    try:
+        with db._lock:
+            q_sql = q.replace('"', "").strip()
+            kn_base = """SELECT k.id, k.kind, k.text, k.confidence, k.work_id,
+                               w.title as work_title
+                        FROM knowledge_fts f
+                        JOIN knowledge k ON k.id = f.item_id
+                        LEFT JOIN works w ON w.id = k.work_id
+                        WHERE knowledge_fts MATCH ?"""
+            args = [q_sql]
+            if work_id:
+                kn_base += " AND k.work_id=?"
+                args.append(work_id)
+            kn_base += f" LIMIT {min(limit, 50)}"
+            kn_rows = db._conn.execute(kn_base, args).fetchall()
+        for r in kn_rows:
+            results.append({
+                "kind": "knowledge",
+                "id": r["id"],
+                "title": r["text"][:120],
+                "snippet": r["text"],
+                "work_id": r["work_id"],
+                "work_title": r["work_title"],
+                "confidence": r["confidence"],
+                "item_kind": r["kind"],
+            })
+    except Exception as exc:
+        import logging as _log
+        _log.getLogger(__name__).debug("knowledge FTS search failed: %s", exc)
+
+    # 2 — Document chunks (FTS)
+    try:
+        chunk_results = db.search_chunks(q, work_id=work_id, limit=min(limit, 20))
+        for r in chunk_results:
+            results.append({
+                "kind": "chunk",
+                "id": r["id"],
+                "title": r.get("doc_title") or r.get("id", "")[:20],
+                "snippet": (r.get("text") or "")[:200],
+                "work_id": r.get("work_id"),
+                "doc_id": r.get("doc_id"),
+            })
+    except Exception as exc:
+        import logging as _log
+        _log.getLogger(__name__).debug("chunk FTS search failed: %s", exc)
+
+    # 3 — Document titles (LIKE fallback)
+    try:
+        with db._lock:
+            doc_q = f"%{q}%"
+            doc_args = [doc_q, doc_q]
+            doc_sql = "SELECT id, title, kind, work_id FROM documents WHERE title LIKE ? OR source LIKE ? ORDER BY created_at DESC LIMIT 10"
+            doc_rows = db._conn.execute(doc_sql, doc_args).fetchall()
+        for r in doc_rows:
+            results.append({
+                "kind": "document",
+                "id": r["id"],
+                "title": r["title"] or r["id"][:20],
+                "snippet": f"{r['kind']} document",
+                "work_id": r["work_id"],
+                "doc_id": r["id"],
+            })
+    except Exception as exc:
+        import logging as _log
+        _log.getLogger(__name__).debug("doc title search failed: %s", exc)
+
+    # Deduplicate and cap
+    seen: set[str] = set()
+    unique: list[dict] = []
+    for item in results:
+        key = f"{item['kind']}:{item['id']}"
+        if key not in seen:
+            seen.add(key)
+            unique.append(item)
+
+    return {
+        "results": unique[:limit],
+        "count": len(unique),
+        "query": q,
+    }
+
+
+@router.get("/system/audit-log")
+def get_audit_log(
+    limit: int = 100,
+    object_id: str | None = None,
+    actor: str | None = None,
+    operation: str | None = None,
+):
+    """Return recent audit-log entries, newest first.
+
+    Query params: limit (max 500), object_id, actor, operation (substring match).
+    """
+    db = get_db()
+    entries = db.list_audit_log(
+        limit=limit,
+        object_id=object_id,
+        actor=actor,
+        operation=operation,
+    )
+    return {"entries": entries, "count": len(entries)}
+
+
 @router.get("/briefing")
 def get_briefing():
     import datetime

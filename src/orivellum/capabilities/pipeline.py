@@ -263,6 +263,47 @@ def process_document(doc_id: str, file_path: str, kind: str,
         )
         logger.info("Doc %s processed — %d words, ready", doc_id, result.word_count)
 
+        # Step 4.5: chapter/section extraction — runs after readiness so it
+        # never delays the document appearing as usable.  Non-fatal: failure
+        # is logged but does not change readiness.
+        try:
+            from orivellum.capabilities.chapters import extract_chapters
+            _text_for_chapters = result.full_text
+            if _text_for_chapters:
+                _chapters = extract_chapters(_text_for_chapters)
+                if _chapters:
+                    _chapter_dicts = [
+                        {"seq": c.seq, "level": c.level,
+                         "title": c.title, "text": c.text}
+                        for c in _chapters
+                    ]
+                    _n = db.upsert_book_chapters(doc_id, work_id, _chapter_dicts)
+                    logger.info("Doc %s: %d chapter(s) extracted", doc_id, _n)
+        except Exception as _ch_exc:
+            logger.debug("Chapter extraction non-fatal for %s: %s", doc_id, _ch_exc)
+
+        # Step 4.6: near-duplicate detection — compare against all stored sketches.
+        # Completely non-fatal; results land in doc_dupes for the UI to surface.
+        try:
+            from orivellum.capabilities.dedup import compute_and_store, find_and_record_near_duplicates
+            _text_for_dedup = result.full_text
+            if _text_for_dedup:
+                _sig = compute_and_store(doc_id, _text_for_dedup, db)
+                if _sig is not None:
+                    _hits = find_and_record_near_duplicates(doc_id, _sig, db)
+                    if _hits:
+                        logger.info("Doc %s: %d near-duplicate(s) found", doc_id, len(_hits))
+        except Exception as _dd_exc:
+            logger.debug("Dedup step non-fatal for %s: %s", doc_id, _dd_exc)
+
+        # Audit: document became ready
+        try:
+            db.audit("document.ready", object_id=doc_id, object_type="document",
+                     actor="pipeline", result="ok",
+                     detail=f"words={result.word_count}")
+        except Exception:
+            pass
+
         # Step 5 (optional): LLM-powered harvest — runs after readiness is set so
         # latency here never blocks the document from appearing as ready.
         if db.get_setting("ai_extraction_enabled", "false").lower() == "true":

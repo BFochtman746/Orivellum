@@ -3,7 +3,7 @@ import { apiFetch } from "@/lib/auth";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
-import { Activity, Database, Cpu, CheckCircle2, XCircle, AlertCircle, Terminal, Sparkles, Moon, Brain, Trash2 } from "lucide-react";
+import { Activity, Database, Cpu, CheckCircle2, XCircle, AlertCircle, Terminal, Sparkles, Moon, Brain, Trash2, ScrollText, User, Settings } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -468,6 +468,90 @@ $env:ORIVELLUM_AI_URL="http://127.0.0.1:11434/v1"`}
           )}
         </div>
       </div>
+
+      {/* Audit log */}
+      <AuditLogCard />
+    </div>
+  );
+}
+
+// ─── Audit log card ───────────────────────────────────────────────────────────
+
+const ACTOR_ICONS: Record<string, React.ElementType> = {
+  pipeline: Cpu,
+  system: Settings,
+  user: User,
+};
+
+function AuditLogCard() {
+  const { data, isLoading, refetch, isFetching } = useQuery<{
+    entries: Array<{
+      id: string; timestamp: string; actor: string; operation: string;
+      object_id: string | null; object_type: string | null;
+      result: string; detail: string | null;
+    }>;
+    count: number;
+  }>({
+    queryKey: ["system", "audit-log"],
+    queryFn: async () => {
+      const r = await apiFetch(`${API_BASE}/api/system/audit-log?limit=50`);
+      if (!r.ok) throw new Error("audit log fetch failed");
+      return r.json();
+    },
+    staleTime: 60_000,
+  });
+
+  const entries = data?.entries ?? [];
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between border-b border-border/50 pb-2">
+        <h2 className="text-xl font-serif font-medium flex items-center gap-2">
+          <ScrollText className="w-5 h-5 text-muted-foreground" />
+          Audit Log
+        </h2>
+        <button
+          onClick={() => refetch()}
+          disabled={isFetching}
+          className="text-xs font-mono text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1"
+        >
+          {isFetching ? "refreshing…" : `${data?.count ?? 0} entries · refresh`}
+        </button>
+      </div>
+
+      {isLoading ? (
+        [1,2,3].map((i) => <Skeleton key={i} className="h-10 w-full" />)
+      ) : entries.length === 0 ? (
+        <div className="text-center py-10 text-muted-foreground text-sm border border-dashed rounded-lg">
+          No audit events recorded yet — actions will appear here as you use the system.
+        </div>
+      ) : (
+        <div className="rounded-lg border border-border/50 overflow-hidden divide-y divide-border/30 max-h-80 overflow-y-auto">
+          {entries.map((e) => {
+            const ActorIcon = ACTOR_ICONS[e.actor] ?? Activity;
+            const isOk = e.result === "ok";
+            return (
+              <div key={e.id} className="flex items-center gap-3 px-4 py-2.5 hover:bg-muted/20 transition-colors">
+                <ActorIcon className="w-3.5 h-3.5 text-muted-foreground/60 shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <span className="text-xs font-mono font-medium">{e.operation}</span>
+                  {e.detail && (
+                    <span className="text-[11px] font-mono text-muted-foreground ml-2">{e.detail}</span>
+                  )}
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className={`text-[10px] font-mono ${isOk ? "text-emerald-600" : "text-red-600"}`}>
+                    {e.result}
+                  </span>
+                  <span className="text-[10px] font-mono text-muted-foreground/50">
+                    {e.timestamp ? new Date(e.timestamp).toLocaleTimeString() : ""}
+                  </span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

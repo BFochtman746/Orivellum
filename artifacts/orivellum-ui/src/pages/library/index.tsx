@@ -9,7 +9,7 @@ import {
   useListWorks,
   getListLibraryQueryKey,
 } from "@workspace/api-client-react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -21,7 +21,7 @@ import {
   Search, Upload, FileText, Database, Filter,
   Library as LibraryIcon, AlertCircle, RefreshCw, Trash2,
   CheckCircle2, Clock, FileQuestion, X, Package, Layers,
-  FolderOpen, Sparkles,
+  FolderOpen, Sparkles, GitMerge,
 } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
@@ -33,6 +33,55 @@ import {
 import { toast } from "sonner";
 
 const BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
+
+// ─── Near-duplicates banner ───────────────────────────────────────────────────
+
+function DuplicatesBanner() {
+  const [dismissed, setDismissed] = useState(false);
+  const { data } = useQuery<{
+    pairs: Array<{ id: string; doc_a_id: string; doc_b_id: string; doc_a_title: string; doc_b_title: string; similarity: number; kind: string }>;
+    count: number;
+  }>({
+    queryKey: ["library", "duplicates"],
+    queryFn: () => apiFetch(`${BASE}/library/duplicates`).then((r) => r.json()),
+    staleTime: 120_000,
+  });
+
+  const count = data?.count ?? 0;
+  if (dismissed || count === 0) return null;
+
+  return (
+    <div className="flex items-start gap-3 px-4 py-3 rounded-lg border border-amber-200 bg-amber-50/60 text-amber-900">
+      <GitMerge className="w-4 h-4 mt-0.5 shrink-0 text-amber-600" />
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-medium">
+          {count} near-duplicate pair{count !== 1 ? "s" : ""} detected
+        </p>
+        <div className="mt-1.5 space-y-1">
+          {(data?.pairs ?? []).slice(0, 3).map((p) => (
+            <p key={p.id} className="text-[11px] font-mono text-amber-800">
+              <span className="font-semibold">{p.doc_a_title}</span>
+              <span className="mx-1.5 opacity-60">↔</span>
+              <span className="font-semibold">{p.doc_b_title}</span>
+              <span className="ml-2 opacity-60">{Math.round(p.similarity * 100)}% similar · {p.kind.replace("_", " ")}</span>
+            </p>
+          ))}
+          {count > 3 && (
+            <p className="text-[11px] font-mono text-amber-700 opacity-70">
+              and {count - 3} more…
+            </p>
+          )}
+        </div>
+      </div>
+      <button
+        onClick={() => setDismissed(true)}
+        className="text-amber-600/60 hover:text-amber-600 transition-colors shrink-0"
+      >
+        <X className="w-4 h-4" />
+      </button>
+    </div>
+  );
+}
 
 // ── Readiness config ─────────────────────────────────────────────────────────
 
@@ -440,6 +489,9 @@ export default function Library() {
             <ImportDialog onSuccess={invalidate} defaultOpen={openImport} />
           </div>
         </div>
+
+        {/* Near-duplicates banner */}
+        <DuplicatesBanner />
 
         {/* Search */}
         <div className="space-y-3">

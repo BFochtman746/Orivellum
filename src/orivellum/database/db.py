@@ -140,6 +140,80 @@ class OrivellumDB:
             self._conn.commit()
 
     # -------------------------------------------------------------------------
+    # Audit log
+    # -------------------------------------------------------------------------
+
+    def audit(
+        self,
+        operation: str,
+        object_id: str | None = None,
+        object_type: str | None = None,
+        actor: str = "system",
+        result: str = "ok",
+        detail: str | None = None,
+        before_hash: str | None = None,
+        after_hash: str | None = None,
+    ) -> None:
+        """Append a single audit-log entry.  Never raises — audit failures are
+        logged as warnings, never allowed to break the calling operation."""
+        try:
+            entry_id = _uuid()
+            now = _now()
+            with self._lock:
+                self._conn.execute(
+                    """INSERT INTO audit_log(id, timestamp, actor, operation,
+                       object_id, object_type, before_hash, after_hash,
+                       result, detail, app_version)
+                       VALUES(?,?,?,?,?,?,?,?,?,?,'0.1.0')""",
+                    (entry_id, now, actor, operation, object_id,
+                     object_type, before_hash, after_hash, result, detail),
+                )
+                self._conn.commit()
+        except Exception as exc:
+            import logging as _log
+            _log.getLogger(__name__).warning("audit write failed: %s", exc)
+
+    def list_audit_log(
+        self,
+        limit: int = 100,
+        object_id: str | None = None,
+        actor: str | None = None,
+        operation: str | None = None,
+    ) -> list[dict]:
+        """Return recent audit-log entries, newest first."""
+        q = "SELECT * FROM audit_log WHERE 1=1"
+        args: list = []
+        if object_id:
+            q += " AND object_id=?"
+            args.append(object_id)
+        if actor:
+            q += " AND actor=?"
+            args.append(actor)
+        if operation:
+            q += " AND operation LIKE ?"
+            args.append(f"%{operation}%")
+        q += " ORDER BY timestamp DESC LIMIT ?"
+        args.append(min(limit, 500))
+        with self._lock:
+            rows = self._conn.execute(q, args).fetchall()
+        return [dict(r) for r in rows]
+
+    # -------------------------------------------------------------------------
+    # Near-duplicate tracking (referenced by capabilities/dedup.py)
+    # -------------------------------------------------------------------------
+
+    def list_near_duplicates(self, resolved: bool = False) -> list[dict]:
+        """Return doc_dupes rows with document titles joined in."""
+        q = """SELECT dd.*, da.title as doc_a_title, db2.title as doc_b_title
+               FROM doc_dupes dd
+               JOIN documents da  ON da.id  = dd.doc_a_id
+               JOIN documents db2 ON db2.id = dd.doc_b_id
+               ORDER BY dd.similarity DESC"""
+        with self._lock:
+            rows = self._conn.execute(q).fetchall()
+        return [dict(r) for r in rows]
+
+    # -------------------------------------------------------------------------
     # Object creation helper
     # -------------------------------------------------------------------------
 
@@ -594,6 +668,63 @@ class OrivellumDB:
             )
             self._conn.commit()
 
+    def upsert_book_chapters(self, doc_id: str, work_id: str | None,
+                             chapters: list[dict]) -> int:
+        """Replace all book_chapters rows for a document with new extractions.
+
+        Each chapter dict must contain: seq, level, title, text.
+        Old rows (and their objects entries) are deleted first so the
+        operation is fully idempotent — safe to call on reprocess.
+        Returns the count of chapters written.
+        """
+        now = _now()
+        with self._lock:
+            # Clean up old extraction
+            existing = self._conn.execute(
+                "SELECT id FROM book_chapters WHERE source_doc_id=?", (doc_id,)
+            ).fetchall()
+            for row in existing:
+                self._conn.execute("DELETE FROM objects WHERE id=?", (row["id"],))
+            self._conn.execute(
+                "DELETE FROM book_chapters WHERE source_doc_id=?", (doc_id,)
+            )
+
+            for ch in chapters:
+                cid = _uuid()
+                self._conn.execute(
+                    """INSERT INTO objects(id,type,version,lifecycle,provenance,
+                       permissions,created_at,updated_at,created_by)
+                       VALUES(?,?,1,'active','{}','{}',?,?,'system')""",
+                    (cid, "chapter", now, now),
+                )
+                self._conn.execute(
+                    """INSERT INTO book_chapters(id,pipeline_id,work_id,seq,title,
+                       text,source_doc_id,citations,status,meta,created_at,updated_at,
+                       citation_count,extraction_method)
+                       VALUES(?,NULL,?,?,?,?,?,'[]','extracted','{}',?,?,0,'heading_parser')""",
+                    (cid, work_id, ch["seq"], ch["title"], ch.get("text", ""),
+                     doc_id, now, now),
+                )
+            self._conn.commit()
+        return len(chapters)
+
+    def get_book_chapters(self, doc_id: str) -> list[dict]:
+        """Return all chapter rows for a document, ordered by seq."""
+        with self._lock:
+            rows = self._conn.execute(
+                """SELECT id, seq, title, status, extraction_method, created_at,
+                          citation_count, meta,
+                          (length(text) - length(replace(coalesce(text,''), ' ', '')) + 1) as word_count
+                   FROM book_chapters WHERE source_doc_id=? ORDER BY seq""",
+                (doc_id,),
+            ).fetchall()
+        result = []
+        for r in rows:
+            d = dict(r)
+            d["meta"] = _jload(d.get("meta"), {})
+            result.append(d)
+        return result
+
     # -------------------------------------------------------------------------
     # Knowledge items
     # -------------------------------------------------------------------------
@@ -653,6 +784,59 @@ class OrivellumDB:
             cur = self._conn.execute(
                 "UPDATE knowledge SET review_status=? WHERE id=?",
                 (status, item_id),
+            )
+            self._conn.commit()
+        return cur.rowcount > 0
+
+    # -------------------------------------------------------------------------
+    # Document versions (#146)
+    # -------------------------------------------------------------------------
+
+    def create_document_version(
+        self, doc_id: str, sha256: str | None = None,
+        word_count: int = 0, notes: str | None = None,
+        is_canonical: bool = False, created_by: str = "user",
+    ) -> dict:
+        """Snapshot the current state of a document as a new version row."""
+        vid = _uuid()
+        now = _now()
+        # Find next version_num
+        with self._lock:
+            last = self._conn.execute(
+                "SELECT MAX(version_num) FROM doc_versions WHERE doc_id=?", (doc_id,)
+            ).fetchone()[0]
+            version_num = (last or 0) + 1
+            if is_canonical:
+                # Unset previous canonical
+                self._conn.execute(
+                    "UPDATE doc_versions SET is_canonical=0 WHERE doc_id=?", (doc_id,)
+                )
+            self._conn.execute(
+                """INSERT INTO doc_versions(id, doc_id, version_num, sha256,
+                   word_count, notes, is_canonical, created_at, created_by)
+                   VALUES(?,?,?,?,?,?,?,?,?)""",
+                (vid, doc_id, version_num, sha256, word_count,
+                 notes, 1 if is_canonical else 0, now, created_by),
+            )
+            self._conn.commit()
+        return {"id": vid, "doc_id": doc_id, "version_num": version_num,
+                "sha256": sha256, "word_count": word_count, "notes": notes,
+                "is_canonical": is_canonical, "created_at": now}
+
+    def list_document_versions(self, doc_id: str) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM doc_versions WHERE doc_id=? ORDER BY version_num DESC",
+                (doc_id,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def set_canonical_version(self, doc_id: str, version_id: str) -> bool:
+        with self._lock:
+            self._conn.execute("UPDATE doc_versions SET is_canonical=0 WHERE doc_id=?", (doc_id,))
+            cur = self._conn.execute(
+                "UPDATE doc_versions SET is_canonical=1 WHERE id=? AND doc_id=?",
+                (version_id, doc_id),
             )
             self._conn.commit()
         return cur.rowcount > 0
