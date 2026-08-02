@@ -856,4 +856,34 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         );
         CREATE INDEX IF NOT EXISTS evr_run ON eval_results(run_id)
     """),
+
+    # v53 — MCOS Phase 4/5: prompt registry + RAG calibration sweeps.
+    # prompts: versioned system-prompt candidates per slot; exactly one active
+    # per slot (enforced by activation transaction + partial unique index).
+    # rag_sweeps: in-memory chunking grid-search runs (no chunk-table writes).
+    (53, "Add MCOS prompt registry and RAG sweep tables", """
+        CREATE TABLE IF NOT EXISTS prompts (
+            id         TEXT PRIMARY KEY,
+            slot       TEXT NOT NULL,
+            name       TEXT NOT NULL,
+            content    TEXT NOT NULL,
+            version    INTEGER NOT NULL DEFAULT 1,
+            active     INTEGER NOT NULL DEFAULT 0,
+            notes      TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS prompts_slot ON prompts(slot);
+        CREATE UNIQUE INDEX IF NOT EXISTS prompts_active_per_slot
+            ON prompts(slot) WHERE active=1;
+        CREATE TABLE IF NOT EXISTS rag_sweeps (
+            id           TEXT PRIMARY KEY,
+            started_at   TEXT NOT NULL DEFAULT (datetime('now')),
+            finished_at  TEXT,
+            status       TEXT NOT NULL DEFAULT 'running',
+            docs_sampled INTEGER NOT NULL DEFAULT 0,
+            results      TEXT NOT NULL DEFAULT '[]',
+            meta         TEXT NOT NULL DEFAULT '{}'
+        );
+        CREATE INDEX IF NOT EXISTS rag_sweeps_started ON rag_sweeps(started_at)
+    """),
 ]

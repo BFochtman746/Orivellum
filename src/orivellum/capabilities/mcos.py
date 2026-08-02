@@ -388,10 +388,44 @@ def seed_default_benchmarks(db: Any) -> dict:
         "retrieval", "retrieval", retrieval_cases,
     )
 
+    seed_default_prompts(db)
+
     with db._lock:
         n_bench = db._conn.execute("SELECT COUNT(*) FROM benchmarks").fetchone()[0]
         n_cases = db._conn.execute("SELECT COUNT(*) FROM benchmark_cases").fetchone()[0]
     return {"benchmarks": int(n_bench), "cases": int(n_cases)}
+
+
+def seed_default_prompts(db: Any) -> None:
+    """Seed slot 'chat.base' v1 (active) from the chat base persona constant.
+
+    Idempotent: skips entirely if the slot already has any rows.  The content
+    mirrors conversations._CHAT_BASE_PROMPT exactly so the registry starts as a
+    no-op override of the hardcoded default.
+    """
+    try:
+        with db._lock:
+            existing = db._conn.execute(
+                "SELECT 1 FROM prompts WHERE slot='chat.base' LIMIT 1"
+            ).fetchone()
+        if existing:
+            return
+        try:
+            from orivellum.api.routes.conversations import _CHAT_BASE_PROMPT as base
+        except Exception:
+            # Route module may be unavailable in some contexts; the seed is a
+            # convenience, not a correctness requirement.
+            return
+        with db._lock:
+            db._conn.execute(
+                "INSERT INTO prompts(id,slot,name,content,version,active,notes,"
+                "created_at) VALUES(?,?,?,?,1,1,?,?)",
+                (_uuid(), "chat.base", "Default chat persona", base,
+                 "Seeded from the hardcoded chat base persona.", _now()),
+            )
+            db._conn.commit()
+    except Exception as exc:  # pragma: no cover — seeding must never break
+        logger.warning("seed_default_prompts failed: %s", exc)
 
 
 # ── Scoring rule engine ──────────────────────────────────────────────────────
@@ -670,19 +704,29 @@ def _judge_case(case: dict, response: str, cfg: Any, db: Any,
 # ── Run execution ────────────────────────────────────────────────────────────
 
 def _prev_finished_avg(db: Any, benchmark_id: str, exclude_run_id: str) -> float | None:
-    """Return the avg_score of the most recent previously-finished run."""
+    """Return the avg_score of the most recent previously-finished NORMAL run.
+
+    Prompt A/B runs (meta carries a ``prompt_id``) are excluded so they neither
+    become a regression baseline nor are compared against normal runs.
+    """
     with db._lock:
         row = db._conn.execute(
             "SELECT avg_score FROM eval_runs WHERE benchmark_id=? AND status='done' "
             "AND id != ? AND avg_score IS NOT NULL "
+            "AND (NOT json_valid(meta) OR json_extract(meta, '$.prompt_id') IS NULL) "
             "ORDER BY finished_at DESC, started_at DESC LIMIT 1",
             (benchmark_id, exclude_run_id),
         ).fetchone()
     return float(row["avg_score"]) if row and row["avg_score"] is not None else None
 
 
-def _create_run_row(db: Any, cfg: Any, benchmark_id: str) -> str:
-    """Insert a fresh ``eval_runs`` row (status='running') and return its id."""
+def _create_run_row(db: Any, cfg: Any, benchmark_id: str,
+                    *, initial_meta: dict | None = None) -> str:
+    """Insert a fresh ``eval_runs`` row (status='running') and return its id.
+
+    ``initial_meta`` seeds the meta blob (e.g. prompt attribution) so a run is
+    attributable even while still running / if it later fails.
+    """
     model = ""
     if cfg is not None:
         try:
@@ -696,8 +740,9 @@ def _create_run_row(db: Any, cfg: Any, benchmark_id: str) -> str:
         run_id = _uuid()
         db._conn.execute(
             "INSERT INTO eval_runs(id,benchmark_id,started_at,model,status,total_cases,"
-            "meta) VALUES(?,?,?,?,'running',?,'{}')",
-            (run_id, benchmark_id, _now(), model, int(n_cases)),
+            "meta) VALUES(?,?,?,?,'running',?,?)",
+            (run_id, benchmark_id, _now(), model, int(n_cases),
+             _jdump(initial_meta or {})),
         )
         db._conn.commit()
     return run_id
@@ -715,6 +760,67 @@ def run_benchmark(db: Any, cfg: Any, benchmark_id: str) -> str:
         raise ValueError(f"unknown benchmark: {benchmark_id}")
     run_id = _create_run_row(db, cfg, benchmark_id)
     return _execute_run(db, cfg, benchmark_id, run_id)
+
+
+def _enabled_llm_benchmarks(db: Any) -> list[dict]:
+    """Return enabled kind='llm' benchmarks (prompt benchmarks skip retrieval)."""
+    with db._lock:
+        rows = db._conn.execute(
+            "SELECT id, name FROM benchmarks WHERE enabled=1 AND kind='llm' "
+            "ORDER BY category, name"
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def run_prompt_benchmark(db: Any, cfg: Any, prompt_id: str) -> dict:
+    """Run every enabled llm suite twice: once with the candidate prompt as the
+    system preamble, once with the currently active prompt for the same slot.
+
+    Runs sequentially in the calling (background) worker to avoid hammering the
+    local model.  Each eval_runs row is tagged in meta with prompt_id /
+    prompt_version / prompt_role so the paired runs are attributable.  Returns
+    ``{"candidate_runs":[...],"active_runs":[...]}``.
+    """
+    with db._lock:
+        cand = db._conn.execute(
+            "SELECT id, slot, content, version FROM prompts WHERE id=?", (prompt_id,)
+        ).fetchone()
+    if cand is None:
+        raise ValueError(f"unknown prompt: {prompt_id}")
+    cand = dict(cand)
+    slot = cand["slot"]
+    with db._lock:
+        active = db._conn.execute(
+            "SELECT id, content, version FROM prompts WHERE slot=? AND active=1 LIMIT 1",
+            (slot,),
+        ).fetchone()
+    active = dict(active) if active else None
+
+    suites = _enabled_llm_benchmarks(db)
+    candidate_runs: list[str] = []
+    active_runs: list[str] = []
+
+    for suite in suites:
+        bid = suite["id"]
+        # Candidate run.
+        c_meta = {"prompt_id": prompt_id, "prompt_version": cand["version"],
+                  "prompt_role": "candidate", "prompt_slot": slot}
+        c_run = _create_run_row(db, cfg, bid, initial_meta=c_meta)
+        candidate_runs.append(c_run)
+        _execute_run(db, cfg, bid, c_run,
+                     system_prompt=cand["content"], run_meta=c_meta)
+
+        # Active run (only if there is an active prompt to compare against).
+        if active:
+            a_meta = {"prompt_id": prompt_id, "prompt_version": active["version"],
+                      "prompt_role": "active", "prompt_slot": slot,
+                      "active_prompt_id": active["id"]}
+            a_run = _create_run_row(db, cfg, bid, initial_meta=a_meta)
+            active_runs.append(a_run)
+            _execute_run(db, cfg, bid, a_run,
+                         system_prompt=active["content"], run_meta=a_meta)
+
+    return {"candidate_runs": candidate_runs, "active_runs": active_runs}
 
 
 def _finalize_run(db: Any, run_id: str, *, status: str, avg_score: float | None,
@@ -740,13 +846,22 @@ def _finalize_run(db: Any, run_id: str, *, status: str, avg_score: float | None,
     logger.error("finalize run %s permanently failed — row may be stuck", run_id[:8])
 
 
-def _execute_run(db: Any, cfg: Any, benchmark_id: str, run_id: str) -> str:
+def _execute_run(db: Any, cfg: Any, benchmark_id: str, run_id: str,
+                 *, system_prompt: str | None = None,
+                 run_meta: dict | None = None) -> str:
     """Run every case for an already-created ``eval_runs`` row and finalize it.
 
     The ENTIRE worker body — benchmark lookup, case loading and the case loop —
     is wrapped so that any exception (including pre-loop setup failures) marks
     the reserved row ``failed`` with a finished_at + error, rather than leaving
     it stuck at ``running`` (which would otherwise trip the 409 guard forever).
+
+    ``system_prompt`` (Phase 4): when set, it is prepended as a single system
+    message before every case; if a case also carries context, the two are
+    merged into ONE system message.  ``run_meta`` carries extra attribution
+    (e.g. prompt_id/prompt_version/prompt_role) that is merged into the final
+    meta.  Runs carrying a ``prompt_id`` are excluded from regression baselines
+    and never emit a regression audit.
     """
     scores: list[float] = []
     run_status = "done"
@@ -784,10 +899,14 @@ def _execute_run(db: Any, cfg: Any, benchmark_id: str, run_id: str) -> str:
                 else:
                     messages = []
                     ctx = (case.get("context") or "").strip()
-                    if ctx:
+                    ctx_block = ("Use the following context to answer.\n\n" + ctx) if ctx else ""
+                    # Merge the injected system preamble and the per-case
+                    # context into a SINGLE system message.
+                    sys_parts = [p for p in (system_prompt, ctx_block) if p]
+                    if sys_parts:
                         messages.append({
                             "role": "system",
-                            "content": "Use the following context to answer.\n\n" + ctx,
+                            "content": "\n\n".join(sys_parts),
                         })
                     messages.append({"role": "user", "content": case.get("question", "")})
                     result = llm_call(
@@ -828,23 +947,29 @@ def _execute_run(db: Any, cfg: Any, benchmark_id: str, run_id: str) -> str:
         logger.error("benchmark run %s crashed: %s", run_id[:8], exc, exc_info=True)
 
     avg_score = (sum(scores) / len(scores)) if scores else None
+    is_prompt_run = bool(run_meta and run_meta.get("prompt_id"))
     delta = None
     regressed = False
-    try:
-        prev_avg = _prev_finished_avg(db, benchmark_id, run_id)
-        if avg_score is not None and prev_avg is not None:
-            delta = round(avg_score - prev_avg, 6)
-            regressed = delta < -0.15
-    except Exception as exc:  # never let delta computation strand the row
-        logger.warning("delta computation for run %s failed: %s", run_id[:8], exc)
+    # Prompt A/B runs are attribution-only: never compute a regression against
+    # normal-run baselines and never flag them as regressions.
+    if not is_prompt_run:
+        try:
+            prev_avg = _prev_finished_avg(db, benchmark_id, run_id)
+            if avg_score is not None and prev_avg is not None:
+                delta = round(avg_score - prev_avg, 6)
+                regressed = delta < -0.15
+        except Exception as exc:  # never let delta computation strand the row
+            logger.warning("delta computation for run %s failed: %s", run_id[:8], exc)
     meta: dict = {"delta": delta, "regressed": regressed}
+    if run_meta:
+        meta.update(run_meta)
     if run_error:
         meta["error"] = run_error
 
     _finalize_run(db, run_id, status=run_status, avg_score=avg_score, meta=meta)
 
     # Phase 3 — surface regressions to governance via the audit log.
-    if regressed:
+    if regressed and not is_prompt_run:
         try:
             db.audit(
                 "benchmark_regression",
@@ -861,6 +986,179 @@ def _execute_run(db: Any, cfg: Any, benchmark_id: str, run_id: str) -> str:
     logger.info("benchmark %s run %s: status=%s avg=%s delta=%s",
                 benchmark_id, run_id[:8], run_status, avg_score, delta)
     return run_id
+
+
+# ── RAG calibration sweep (Phase 5) ──────────────────────────────────────────
+
+# Grid of (target_words, overlap_words) combos; overlap must be < target/2.
+_SWEEP_TARGETS = [300, 500, 800]
+_SWEEP_OVERLAPS = [30, 50, 80]
+_SWEEP_MAX_DOCS = 8
+_SWEEP_QUERIES_PER_DOC = 3
+
+
+def _sweep_grid() -> list[tuple[int, int]]:
+    return [(t, o) for t in _SWEEP_TARGETS for o in _SWEEP_OVERLAPS if o < t / 2]
+
+
+def _sample_sweep_docs(db: Any, limit: int = _SWEEP_MAX_DOCS) -> list[dict]:
+    """Reconstruct up to ``limit`` docs' text from their chunks.
+
+    Text is rebuilt by concatenating a doc's chunks ordered by (page, id).
+    NOTE: because stored chunks overlap, the reconstruction contains duplicated
+    overlap regions — acceptable for calibration (we only need representative
+    text to re-chunk in memory, not a faithful original).
+    """
+    with db._lock:
+        doc_rows = db._conn.execute(
+            "SELECT doc_id FROM chunks GROUP BY doc_id "
+            "HAVING COUNT(*) > 0 ORDER BY doc_id LIMIT ?",
+            (limit,),
+        ).fetchall()
+    docs: list[dict] = []
+    for dr in doc_rows:
+        doc_id = dr["doc_id"]
+        with db._lock:
+            crows = db._conn.execute(
+                "SELECT text FROM chunks WHERE doc_id=? ORDER BY page, id",
+                (doc_id,),
+            ).fetchall()
+        text = " ".join((c["text"] or "").strip() for c in crows if c["text"])
+        if text.strip():
+            docs.append({"doc_id": doc_id, "text": text})
+    return docs
+
+
+def _sweep_queries(docs: list[dict]) -> list[dict]:
+    """Up to N distinctive sentences (>=25 chars) per doc, labeled by doc_id."""
+    queries: list[dict] = []
+    for d in docs:
+        sentences = re.split(r"(?<=[.!?])\s+", d["text"])
+        taken = 0
+        for s in sentences:
+            s = s.strip()
+            if len(s) >= 25 and len(_meaningful_words(s)) >= 2:
+                queries.append({"doc_id": d["doc_id"], "query": s[:300]})
+                taken += 1
+                if taken >= _SWEEP_QUERIES_PER_DOC:
+                    break
+    return queries
+
+
+def _score_combo(docs: list[dict], queries: list[dict],
+                 target: int, overlap: int) -> tuple[float, int]:
+    """Re-chunk every doc in memory, build a chunk→doc index, rank chunks per
+    query by shared meaningful-word count, and score retrieval.
+
+    Score per query: 1.0 if the correct doc appears among the top-3 chunks'
+    docs, 0.5 if among the top-10, else 0.  Combo score = mean over queries.
+    Returns ``(mean_score, total_chunk_count)``.  No DB writes, no LLM calls.
+    """
+    from orivellum.capabilities.chunking import _sliding_chunks
+
+    index: list[tuple[str, set[str]]] = []  # (doc_id, meaningful words)
+    for d in docs:
+        for ch in _sliding_chunks(d["text"], target, overlap):
+            ch = ch.strip()
+            if len(ch) < 20:
+                continue
+            index.append((d["doc_id"], _meaningful_words(ch)))
+    chunk_count = len(index)
+    if not index or not queries:
+        return 0.0, chunk_count
+
+    scores: list[float] = []
+    for q in queries:
+        q_words = _meaningful_words(q["query"])
+        if not q_words:
+            scores.append(0.0)
+            continue
+        ranked = sorted(
+            index,
+            key=lambda entry: len(entry[1] & q_words),
+            reverse=True,
+        )
+        top_docs = [doc_id for doc_id, _ in ranked]
+        expected = q["doc_id"]
+        if expected in top_docs[:3]:
+            scores.append(1.0)
+        elif expected in top_docs[:10]:
+            scores.append(0.5)
+        else:
+            scores.append(0.0)
+    mean = sum(scores) / len(scores) if scores else 0.0
+    return mean, chunk_count
+
+
+def _finalize_sweep(db: Any, sweep_id: str, *, status: str,
+                    results: list[dict], docs_sampled: int, meta: dict) -> None:
+    """Best-effort, retried final write for a sweep (never leaves it running)."""
+    for attempt in range(3):
+        try:
+            with db._lock:
+                db._conn.execute(
+                    "UPDATE rag_sweeps SET status=?, finished_at=?, results=?, "
+                    "docs_sampled=?, meta=? WHERE id=?",
+                    (status, _now(), _jdump(results), int(docs_sampled),
+                     _jdump(meta), sweep_id),
+                )
+                db._conn.commit()
+            return
+        except Exception as exc:  # pragma: no cover — retry path
+            logger.warning("finalize sweep %s attempt %d failed: %s",
+                           sweep_id[:8], attempt + 1, exc)
+    logger.error("finalize sweep %s permanently failed — row may be stuck",
+                 sweep_id[:8])
+
+
+def rag_sweep(db: Any, sweep_id: str) -> str:
+    """Execute a chunking grid-search for an already-created ``rag_sweeps`` row.
+
+    Samples docs, builds queries, scores every (target, overlap) combo purely
+    in memory (no chunk-table writes, no LLM), and finalizes the row.  The whole
+    body is guarded so the row is never left stuck at ``running``.
+    """
+    status = "done"
+    results: list[dict] = []
+    docs_sampled = 0
+    meta: dict = {}
+    try:
+        docs = _sample_sweep_docs(db)
+        docs_sampled = len(docs)
+        queries = _sweep_queries(docs)
+        best: dict | None = None
+        for target, overlap in _sweep_grid():
+            score, chunk_count = _score_combo(docs, queries, target, overlap)
+            row = {"target_words": target, "overlap_words": overlap,
+                   "score": round(score, 6), "chunk_count": chunk_count}
+            results.append(row)
+            if best is None or score > best["score"]:
+                best = {"target_words": target, "overlap_words": overlap,
+                        "score": round(score, 6)}
+        meta = {"best": best, "queries": len(queries)}
+    except Exception as exc:
+        status = "failed"
+        meta = {"error": f"{type(exc).__name__}: {exc}"[:500]}
+        logger.error("rag sweep %s crashed: %s", sweep_id[:8], exc, exc_info=True)
+
+    _finalize_sweep(db, sweep_id, status=status, results=results,
+                    docs_sampled=docs_sampled, meta=meta)
+    logger.info("rag sweep %s: status=%s docs=%d combos=%d",
+                sweep_id[:8], status, docs_sampled, len(results))
+    return sweep_id
+
+
+def create_sweep_row(db: Any) -> str:
+    """Insert a running rag_sweeps row and return its id."""
+    sweep_id = _uuid()
+    with db._lock:
+        db._conn.execute(
+            "INSERT INTO rag_sweeps(id,started_at,status,docs_sampled,results,meta)"
+            " VALUES(?,?,'running',0,'[]','{}')",
+            (sweep_id, _now()),
+        )
+        db._conn.commit()
+    return sweep_id
 
 
 def is_ai_reachable(cfg: Any) -> bool:

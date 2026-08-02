@@ -146,6 +146,23 @@ class OrivellumDB:
         self.audit("setting.updated", object_id=key, object_type="setting",
                    actor=actor, detail=safe_detail)
 
+    def get_active_prompt(self, slot: str) -> str | None:
+        """Return the active prompt content for a slot, or None.
+
+        Never raises — returns None if the prompts table is missing/empty or
+        anything goes wrong, so callers can safely fall back to a hardcoded
+        default (e.g. the chat base persona).
+        """
+        try:
+            with self._lock:
+                row = self._conn.execute(
+                    "SELECT content FROM prompts WHERE slot=? AND active=1 LIMIT 1",
+                    (slot,),
+                ).fetchone()
+            return row["content"] if row and row["content"] else None
+        except Exception:
+            return None
+
     # -------------------------------------------------------------------------
     # Audit log
     # -------------------------------------------------------------------------

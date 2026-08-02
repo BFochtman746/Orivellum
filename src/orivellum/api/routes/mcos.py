@@ -9,7 +9,8 @@ from __future__ import annotations
 import json
 import logging
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Response
+from pydantic import BaseModel
 
 from orivellum.api._deps import get_db, get_config
 
@@ -31,11 +32,16 @@ def _jload(s, default=None):
 
 def _prev_finished_avg(db, benchmark_id: str, before_started_at: str,
                        exclude_run_id: str) -> float | None:
-    """Avg_score of the most recent finished run strictly before this one."""
+    """Avg_score of the most recent finished NORMAL run strictly before this one.
+
+    Prompt A/B runs (meta.prompt_id set) are excluded so they never become a
+    regression baseline nor are compared against normal runs.
+    """
     with db._lock:
         row = db._conn.execute(
             "SELECT avg_score FROM eval_runs WHERE benchmark_id=? AND status='done' "
             "AND id != ? AND avg_score IS NOT NULL AND started_at < ? "
+            "AND (NOT json_valid(meta) OR json_extract(meta, '$.prompt_id') IS NULL) "
             "ORDER BY finished_at DESC, started_at DESC LIMIT 1",
             (benchmark_id, exclude_run_id, before_started_at),
         ).fetchone()
@@ -47,7 +53,13 @@ def _run_row_to_dict(db, row) -> dict:
     d = dict(row)
     meta = _jload(d.get("meta"), {}) or {}
     avg = d.get("avg_score")
-    if avg is not None:
+    # Prompt A/B runs are attribution-only: they are never compared against
+    # normal-run baselines, so keep their stored meta as-is (delta=None /
+    # regressed=false) rather than recomputing a spurious regression.
+    if meta.get("prompt_id"):
+        meta.setdefault("delta", None)
+        meta.setdefault("regressed", False)
+    elif avg is not None:
         prev = _prev_finished_avg(db, d["benchmark_id"], d.get("started_at") or "",
                                   d["id"])
         if prev is not None:
@@ -326,6 +338,7 @@ def list_regressions(limit: int = Query(20, ge=1, le=200)):
             "JOIN benchmarks b ON b.id = r.benchmark_id "
             "WHERE r.status='done' "
             "AND json_valid(r.meta) AND json_extract(r.meta, '$.regressed')=1 "
+            "AND json_extract(r.meta, '$.prompt_id') IS NULL "
             "ORDER BY r.finished_at DESC LIMIT ?",
             (limit,),
         ).fetchall()
@@ -377,3 +390,408 @@ def ack_regression(run_id: str):
             raise HTTPException(status_code=404, detail="Run not found")
         raise HTTPException(status_code=404, detail="Run is not a regression")
     return {"run_id": run_id, "acknowledged": True}
+
+
+# ── Phase 4: prompt registry ─────────────────────────────────────────────────
+
+class PromptCreate(BaseModel):
+    slot: str
+    name: str
+    content: str
+    notes: str | None = None
+
+
+class RagApply(BaseModel):
+    target_words: int
+    overlap_words: int
+
+
+def _prompt_dict(db, row) -> dict:
+    """Serialize a prompts row, attaching last_benchmark aggregate if present."""
+    d = dict(row)
+    return {
+        "id": d["id"],
+        "slot": d["slot"],
+        "name": d["name"],
+        "content": d["content"],
+        "version": d["version"],
+        "active": bool(d["active"]),
+        "created_at": d["created_at"],
+        "notes": d.get("notes"),
+        "last_benchmark": _prompt_benchmark_status(db, d["id"], quiet=True),
+    }
+
+
+@router.get("/prompts")
+def list_prompts(slot: str | None = None):
+    db = get_db()
+    q = "SELECT * FROM prompts"
+    args: list = []
+    if slot:
+        q += " WHERE slot=?"
+        args.append(slot)
+    q += " ORDER BY slot, version DESC"
+    with db._lock:
+        rows = db._conn.execute(q, args).fetchall()
+    return {"prompts": [_prompt_dict(db, r) for r in rows]}
+
+
+@router.post("/prompts")
+def create_prompt(body: PromptCreate):
+    import uuid
+    from datetime import datetime, timezone
+    db = get_db()
+    slot = body.slot.strip()
+    name = body.name.strip()
+    content = body.content
+    if not slot or not name or not content:
+        raise HTTPException(status_code=400, detail="slot, name and content are required")
+    with db._lock:
+        row = db._conn.execute(
+            "SELECT COALESCE(MAX(version),0) AS mv FROM prompts WHERE slot=?", (slot,)
+        ).fetchone()
+        version = int(row["mv"]) + 1
+        pid = str(uuid.uuid4())
+        created = datetime.now(timezone.utc).isoformat()
+        db._conn.execute(
+            "INSERT INTO prompts(id,slot,name,content,version,active,notes,created_at)"
+            " VALUES(?,?,?,?,?,0,?,?)",
+            (pid, slot, name, content, version, body.notes, created),
+        )
+        db._conn.commit()
+        new_row = db._conn.execute("SELECT * FROM prompts WHERE id=?", (pid,)).fetchone()
+    return {"prompt": _prompt_dict(db, new_row)}
+
+
+def _get_prompt(db, prompt_id: str) -> dict | None:
+    with db._lock:
+        row = db._conn.execute("SELECT * FROM prompts WHERE id=?", (prompt_id,)).fetchone()
+    return dict(row) if row else None
+
+
+@router.post("/prompts/{prompt_id}/benchmark")
+def benchmark_prompt(prompt_id: str, background_tasks: BackgroundTasks):
+    import uuid
+    from datetime import datetime, timezone
+    from orivellum.capabilities import mcos
+    db = get_db()
+    cfg = get_config()
+    prompt = _get_prompt(db, prompt_id)
+    if prompt is None:
+        raise HTTPException(status_code=404, detail="Prompt not found")
+    slot = prompt["slot"]
+    # Reap stale prompt runs (>30 min) before the 409 check so a crashed worker
+    # doesn't wrongly 409 a fresh request.
+    _reap_stale_prompt_runs(db, slot)
+
+    model = ""
+    try:
+        model = cfg.serving.workhorse_model or ""
+    except Exception:
+        model = ""
+    suites = mcos._enabled_llm_benchmarks(db)
+
+    # Race-safe: the running-check AND all paired eval_runs reservations happen
+    # inside ONE lock, so two concurrent requests cannot both start pairs — the
+    # loser sees the winner's freshly-inserted running rows and gets a 409.
+    candidate_runs: list[str] = []
+    active_runs: list[str] = []
+    plan: list[dict] = []  # worker execution plan (run_id, content, meta)
+    now = datetime.now(timezone.utc).isoformat()
+    with db._lock:
+        busy = db._conn.execute(
+            "SELECT 1 FROM eval_runs WHERE status='running' AND json_valid(meta) "
+            "AND json_extract(meta,'$.prompt_slot')=? LIMIT 1",
+            (slot,),
+        ).fetchone()
+        if busy is not None:
+            raise HTTPException(
+                status_code=409,
+                detail="A prompt benchmark for this slot is already running")
+
+        active = db._conn.execute(
+            "SELECT id, content, version FROM prompts WHERE slot=? AND active=1 LIMIT 1",
+            (slot,),
+        ).fetchone()
+        active = dict(active) if active else None
+
+        def _reserve(content, meta):
+            rid = str(uuid.uuid4())
+            n_cases = db._conn.execute(
+                "SELECT COUNT(*) FROM benchmark_cases WHERE benchmark_id=?",
+                (meta["benchmark_id"],),
+            ).fetchone()[0]
+            db._conn.execute(
+                "INSERT INTO eval_runs(id,benchmark_id,started_at,model,status,"
+                "total_cases,meta) VALUES(?,?,?,?,'running',?,?)",
+                (rid, meta["benchmark_id"], now, model, int(n_cases), _dumps(meta)),
+            )
+            plan.append({"run_id": rid, "content": content, "meta": meta})
+            return rid
+
+        for suite in suites:
+            bid = suite["id"]
+            c_meta = {"benchmark_id": bid, "prompt_id": prompt_id,
+                      "prompt_version": prompt["version"],
+                      "prompt_role": "candidate", "prompt_slot": slot}
+            candidate_runs.append(_reserve(prompt["content"], c_meta))
+            if active:
+                a_meta = {"benchmark_id": bid, "prompt_id": prompt_id,
+                          "prompt_version": active["version"],
+                          "prompt_role": "active", "prompt_slot": slot,
+                          "active_prompt_id": active["id"]}
+                active_runs.append(_reserve(active["content"], a_meta))
+        db._conn.commit()
+
+    background_tasks.add_task(_run_prompt_pairs, db, cfg, plan)
+    return {"candidate_runs": candidate_runs, "active_runs": active_runs}
+
+
+def _dumps(obj) -> str:
+    return json.dumps(obj, ensure_ascii=False)
+
+
+def _run_prompt_pairs(db, cfg, plan):
+    """Execute the pre-reserved candidate/active runs sequentially (background).
+
+    Each plan entry carries its own run_id, system-prompt content and meta.  The
+    eval_runs rows already exist (status='running'); the worker only executes and
+    finalizes them, and never strands a reserved row on failure.
+    """
+    from orivellum.capabilities import mcos
+    for entry in plan:
+        rid = entry["run_id"]
+        meta = entry["meta"]
+        bid = meta["benchmark_id"]
+        try:
+            mcos._execute_run(db, cfg, bid, rid,
+                              system_prompt=entry["content"], run_meta=meta)
+        except Exception as exc:  # never strand a reserved row
+            logger.warning("prompt run %s failed: %s", rid[:8], exc)
+            mcos._finalize_run(db, rid, status="failed", avg_score=None,
+                               meta={**meta, "error": str(exc)[:300]})
+
+
+def _reap_stale_prompt_runs(db, slot: str) -> None:
+    with db._lock:
+        db._conn.execute(
+            "UPDATE eval_runs SET status='failed', finished_at=datetime('now'), "
+            "meta=json_set(CASE WHEN json_valid(meta) THEN meta ELSE '{}' END, "
+            "'$.error','stale prompt run reaped') "
+            "WHERE status='running' AND json_valid(meta) "
+            "AND json_extract(meta,'$.prompt_slot')=? "
+            "AND started_at < datetime('now', ?)",
+            (slot, f"-{_STALE_RUN_MINUTES} minutes"),
+        )
+        db._conn.commit()
+
+
+def _prompt_benchmark_status(db, prompt_id: str, quiet: bool = False) -> dict | None:
+    """Aggregate the paired runs for a prompt by role.
+
+    Returns None when there are no prompt runs (used for last_benchmark).
+    Otherwise {status, candidate:{avg,per_suite}, active:{...}, delta}.
+    """
+    with db._lock:
+        rows = db._conn.execute(
+            "SELECT id, benchmark_id, status, avg_score, meta FROM eval_runs "
+            "WHERE json_valid(meta) AND json_extract(meta,'$.prompt_id')=? "
+            "ORDER BY started_at",
+            (prompt_id,),
+        ).fetchall()
+    if not rows:
+        return None
+
+    def _role_agg(role: str) -> dict:
+        per_suite = []
+        avgs = []
+        any_running = False
+        for r in rows:
+            meta = _jload(r["meta"], {}) or {}
+            if meta.get("prompt_role") != role:
+                continue
+            if r["status"] == "running":
+                any_running = True
+            per_suite.append({
+                "benchmark_id": r["benchmark_id"],
+                "avg_score": r["avg_score"],
+                "status": r["status"],
+            })
+            if r["avg_score"] is not None and r["status"] == "done":
+                avgs.append(r["avg_score"])
+        avg = (sum(avgs) / len(avgs)) if avgs else None
+        return {"avg": avg, "per_suite": per_suite, "_running": any_running}
+
+    cand = _role_agg("candidate")
+    act = _role_agg("active")
+    running = cand["_running"] or act["_running"]
+    status = "running" if running else "done"
+    delta = None
+    if cand["avg"] is not None and act["avg"] is not None:
+        delta = round(cand["avg"] - act["avg"], 6)
+    result = {
+        "status": status,
+        "candidate": {"avg": cand["avg"], "per_suite": cand["per_suite"]},
+        "active": {"avg": act["avg"], "per_suite": act["per_suite"]},
+        "delta": delta,
+    }
+    return result
+
+
+@router.get("/prompts/{prompt_id}/benchmark")
+def get_prompt_benchmark(prompt_id: str):
+    db = get_db()
+    if _get_prompt(db, prompt_id) is None:
+        raise HTTPException(status_code=404, detail="Prompt not found")
+    status = _prompt_benchmark_status(db, prompt_id)
+    if status is None:
+        return {"status": "none", "candidate": {"avg": None, "per_suite": []},
+                "active": {"avg": None, "per_suite": []}, "delta": None}
+    return status
+
+
+@router.post("/prompts/{prompt_id}/activate")
+def activate_prompt(prompt_id: str):
+    db = get_db()
+    # Existence check AND the deactivate/activate swap all happen under ONE lock
+    # so a concurrent delete cannot leave the slot with no active prompt (or
+    # delete the row between our read and our activation).
+    with db._lock:
+        prompt = db._conn.execute(
+            "SELECT slot, version FROM prompts WHERE id=?", (prompt_id,)
+        ).fetchone()
+        if prompt is None:
+            raise HTTPException(status_code=404, detail="Prompt not found")
+        slot = prompt["slot"]
+        version = prompt["version"]
+        db._conn.execute("UPDATE prompts SET active=0 WHERE slot=?", (slot,))
+        cur = db._conn.execute("UPDATE prompts SET active=1 WHERE id=?", (prompt_id,))
+        if cur.rowcount == 0:  # deleted between the SELECT and this UPDATE
+            db._conn.rollback()
+            raise HTTPException(status_code=404, detail="Prompt not found")
+        db._conn.commit()
+        new_row = db._conn.execute("SELECT * FROM prompts WHERE id=?", (prompt_id,)).fetchone()
+    db.audit("prompt_activated", object_id=prompt_id, object_type="prompt",
+             actor="mcos", detail=f"slot={slot} version={version}")
+    return {"prompt": _prompt_dict(db, new_row)}
+
+
+@router.delete("/prompts/{prompt_id}", status_code=204)
+def delete_prompt(prompt_id: str):
+    db = get_db()
+    # Existence + active check + DELETE inside ONE lock/transaction so a
+    # concurrent activate cannot make this row active between our check and the
+    # delete (which would drop the slot's only active prompt).  The WHERE clause
+    # enforces "not active"; rowcount disambiguates 404 vs 409.
+    with db._lock:
+        exists = db._conn.execute(
+            "SELECT active FROM prompts WHERE id=?", (prompt_id,)
+        ).fetchone()
+        if exists is None:
+            raise HTTPException(status_code=404, detail="Prompt not found")
+        cur = db._conn.execute(
+            "DELETE FROM prompts WHERE id=? AND active=0", (prompt_id,)
+        )
+        if cur.rowcount == 0:
+            db._conn.rollback()
+            raise HTTPException(status_code=409, detail="Cannot delete the active prompt")
+        db._conn.commit()
+    return Response(status_code=204)
+
+
+# ── Phase 5: RAG calibration ─────────────────────────────────────────────────
+
+_RAG_DEFAULTS = {"target_words": 500, "overlap_words": 50}
+_RAG_TARGET_MIN, _RAG_TARGET_MAX = 100, 2000
+
+
+@router.get("/rag/config")
+def rag_config():
+    db = get_db()
+    try:
+        target = int(db.get_setting("chunk_target_words", "500"))
+    except (TypeError, ValueError):
+        target = _RAG_DEFAULTS["target_words"]
+    try:
+        overlap = int(db.get_setting("chunk_overlap_words", "50"))
+    except (TypeError, ValueError):
+        overlap = _RAG_DEFAULTS["overlap_words"]
+    return {"target_words": target, "overlap_words": overlap,
+            "defaults": dict(_RAG_DEFAULTS)}
+
+
+def _reap_stale_sweeps(db) -> None:
+    """Mark sweeps stuck at 'running' for >30 min as failed (crashed worker).
+
+    Mirrors the eval_runs stale-reap so the UI never polls a phantom sweep
+    forever.
+    """
+    with db._lock:
+        db._conn.execute(
+            "UPDATE rag_sweeps SET status='failed', finished_at=datetime('now'), "
+            "meta=json_set(CASE WHEN json_valid(meta) THEN meta ELSE '{}' END, "
+            "'$.error','stale sweep reaped') "
+            "WHERE status='running' AND started_at < datetime('now', ?)",
+            (f"-{_STALE_RUN_MINUTES} minutes",),
+        )
+        db._conn.commit()
+
+
+@router.post("/rag/sweep", status_code=202)
+def rag_sweep_start(background_tasks: BackgroundTasks):
+    from orivellum.capabilities import mcos
+    db = get_db()
+    # Reap stale sweeps first, then race-safely reserve a running row: reject
+    # with 409 if a non-stale sweep is already running.
+    _reap_stale_sweeps(db)
+    with db._lock:
+        busy = db._conn.execute(
+            "SELECT 1 FROM rag_sweeps WHERE status='running' LIMIT 1"
+        ).fetchone()
+        if busy is not None:
+            raise HTTPException(status_code=409, detail="A sweep is already running")
+        sweep_id = mcos.create_sweep_row(db)
+    background_tasks.add_task(mcos.rag_sweep, db, sweep_id)
+    return {"sweep_id": sweep_id}
+
+
+@router.get("/rag/sweeps")
+def rag_sweeps(limit: int = Query(5, ge=1, le=50)):
+    db = get_db()
+    # Reap stale sweeps so the listing reflects crashed workers as 'failed'.
+    _reap_stale_sweeps(db)
+    with db._lock:
+        rows = db._conn.execute(
+            "SELECT * FROM rag_sweeps ORDER BY started_at DESC LIMIT ?", (limit,)
+        ).fetchall()
+    out = []
+    for r in rows:
+        meta = _jload(r["meta"], {}) or {}
+        out.append({
+            "id": r["id"],
+            "started_at": r["started_at"],
+            "finished_at": r["finished_at"],
+            "status": r["status"],
+            "results": _jload(r["results"], []) or [],
+            "best": meta.get("best"),
+            "docs_sampled": r["docs_sampled"],
+        })
+    return {"sweeps": out}
+
+
+@router.post("/rag/apply")
+def rag_apply(body: RagApply):
+    db = get_db()
+    target = body.target_words
+    overlap = body.overlap_words
+    if not isinstance(target, int) or not (_RAG_TARGET_MIN <= target <= _RAG_TARGET_MAX):
+        raise HTTPException(status_code=400,
+                            detail=f"target_words must be {_RAG_TARGET_MIN}-{_RAG_TARGET_MAX}")
+    if not isinstance(overlap, int) or overlap < 0 or overlap > target // 2:
+        raise HTTPException(status_code=400,
+                            detail="overlap_words must be 0..target_words/2")
+    db.set_setting("chunk_target_words", str(target), actor="mcos")
+    db.set_setting("chunk_overlap_words", str(overlap), actor="mcos")
+    db.audit("rag_config_changed", object_id="chunking", object_type="setting",
+             actor="mcos", detail=f"target={target} overlap={overlap}")
+    return {"target_words": target, "overlap_words": overlap}

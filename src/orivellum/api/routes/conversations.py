@@ -263,6 +263,26 @@ def _model_for_vision(conv: dict) -> str:
     return conv.get("model") or cfg.serving.vision_model or cfg.serving.workhorse_model
 
 
+# Hardcoded fallback for the chat base persona.  The MCOS prompt registry
+# (slot 'chat.base') is seeded from this exact string; if the registry is
+# missing/empty or a lookup raises, chat falls back to this constant.
+_CHAT_BASE_PROMPT = (
+    "You are Orivellum, a capable local-first AI assistant. "
+    "Answer any question using your full training knowledge — science, history, "
+    "analysis, writing, coding, general facts, explanations, and more. "
+    "You are knowledgeable and helpful; never refuse a question just because it "
+    "is not in the user's uploaded documents. "
+    "The user may also upload documents to a local knowledge base; relevant "
+    "excerpts are injected below when they match the query — use them as "
+    "additional context when present. "
+    "For live internet data (today's breaking news, real-time prices, live events) "
+    "you cannot browse the web directly, but a built-in web search tool is "
+    "available — the user can ask you to 'search for X' or 'look up X online' "
+    "and it will fetch results automatically. "
+    "Be concise, precise, and honest. Never fabricate citations or facts."
+)
+
+
 def _build_system_prompt(db: Any, conv: dict, scope: str = "work",
                          user_query: str | None = None,
                          out_sources: list | None = None) -> str:
@@ -277,21 +297,16 @@ def _build_system_prompt(db: Any, conv: dict, scope: str = "work",
     Only trusted items (rule-based "auto" + user-approved "approved") are injected.
     Pending AI items ("ai_auto") are excluded until the user approves them.
     """
-    base = (
-        "You are Orivellum, a capable local-first AI assistant. "
-        "Answer any question using your full training knowledge — science, history, "
-        "analysis, writing, coding, general facts, explanations, and more. "
-        "You are knowledgeable and helpful; never refuse a question just because it "
-        "is not in the user's uploaded documents. "
-        "The user may also upload documents to a local knowledge base; relevant "
-        "excerpts are injected below when they match the query — use them as "
-        "additional context when present. "
-        "For live internet data (today's breaking news, real-time prices, live events) "
-        "you cannot browse the web directly, but a built-in web search tool is "
-        "available — the user can ask you to 'search for X' or 'look up X online' "
-        "and it will fetch results automatically. "
-        "Be concise, precise, and honest. Never fabricate citations or facts."
-    )
+    # Base persona comes from the MCOS prompt registry (slot 'chat.base') so it
+    # can be A/B-benchmarked and swapped without a code change.  Never let this
+    # break chat — fall back to the hardcoded constant on any failure.
+    base = _CHAT_BASE_PROMPT
+    try:
+        active = db.get_active_prompt("chat.base")
+        if active:
+            base = active
+    except Exception:
+        base = _CHAT_BASE_PROMPT
 
     # Prepend durable user memory facts
     try:

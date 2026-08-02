@@ -742,5 +742,413 @@ class TestRegressionGovernance(unittest.TestCase):
                 self.assertTrue(_math.isfinite(r["score"]))
 
 
+class TestPromptRegistry(unittest.TestCase):
+
+    def _fake_llm(self):
+        from orivellum.capabilities.llm import LLMResult
+
+        def _fn(messages, **kwargs):
+            return LLMResult(text="42", ok=True, model="fake", latency_ms=1)
+        return _fn
+
+    def test_seed_creates_active_chat_base(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _app, db, _cfg = _make_app(tmp)
+            from orivellum.capabilities.mcos import seed_default_benchmarks
+            seed_default_benchmarks(db)
+            # Idempotent: second call must not create a duplicate.
+            seed_default_benchmarks(db)
+            with db._lock:
+                rows = db._conn.execute(
+                    "SELECT * FROM prompts WHERE slot='chat.base'"
+                ).fetchall()
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["version"], 1)
+            self.assertTrue(rows[0]["active"])
+            self.assertEqual(db.get_active_prompt("chat.base"), rows[0]["content"])
+
+    def test_build_system_prompt_uses_active(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _app, db, _cfg = _make_app(tmp)
+            from orivellum.api.routes import conversations
+            from orivellum.capabilities.mcos import seed_default_prompts
+            import uuid as _uuid
+            from datetime import datetime, timezone
+            seed_default_prompts(db)
+            with db._lock:
+                db._conn.execute("UPDATE prompts SET active=0 WHERE slot='chat.base'")
+                db._conn.execute(
+                    "INSERT INTO prompts(id,slot,name,content,version,active,created_at)"
+                    " VALUES(?,?,?,?,2,1,?)",
+                    (str(_uuid.uuid4()), "chat.base", "custom",
+                     "CUSTOM PERSONA MARKER",
+                     datetime.now(timezone.utc).isoformat()),
+                )
+                db._conn.commit()
+            sp = conversations._build_system_prompt(db, {"work_id": None})
+            self.assertIn("CUSTOM PERSONA MARKER", sp)
+
+    def test_build_system_prompt_falls_back(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _app, db, _cfg = _make_app(tmp)
+            from orivellum.api.routes import conversations
+            # No prompts seeded → falls back to hardcoded constant.
+            sp = conversations._build_system_prompt(db, {"work_id": None})
+            self.assertIn("You are Orivellum", sp)
+
+    def test_create_list_activate_delete(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            app, db, _cfg = _make_app(tmp)
+            client = TestClient(app, raise_server_exceptions=True, headers=AUTH_HEADERS)
+            client.post("/api/mcos/seed")
+
+            resp = client.post("/api/mcos/prompts", json={
+                "slot": "chat.base", "name": "cand", "content": "candidate body"})
+            self.assertEqual(resp.status_code, 200)
+            pid = resp.json()["prompt"]["id"]
+            self.assertEqual(resp.json()["prompt"]["version"], 2)
+            self.assertFalse(resp.json()["prompt"]["active"])
+
+            resp = client.get("/api/mcos/prompts?slot=chat.base")
+            self.assertEqual(resp.status_code, 200)
+            self.assertEqual(len(resp.json()["prompts"]), 2)
+
+            # Cannot delete the active (seeded v1); can delete inactive candidate.
+            with db._lock:
+                seeded = db._conn.execute(
+                    "SELECT id FROM prompts WHERE slot='chat.base' AND active=1"
+                ).fetchone()["id"]
+            self.assertEqual(client.delete(f"/api/mcos/prompts/{seeded}").status_code, 409)
+
+            resp = client.post(f"/api/mcos/prompts/{pid}/activate")
+            self.assertEqual(resp.status_code, 200)
+            self.assertTrue(resp.json()["prompt"]["active"])
+            self.assertEqual(db.get_active_prompt("chat.base"), "candidate body")
+            # Old active is now inactive → deletable.
+            self.assertEqual(client.delete(f"/api/mcos/prompts/{seeded}").status_code, 204)
+
+    def test_prompt_run_excluded_from_regression(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _app, db, cfg = _make_app(tmp)
+            from orivellum.capabilities import mcos
+            bid = _seed_bench_with_case(db)
+            # Establish a strong prior baseline so a low candidate would regress.
+            _seed_prev_run(db, bid, avg=0.95)
+
+            with patch.object(mcos, "llm_call", self._fake_llm()):
+                pmeta = {"prompt_id": "p1", "prompt_role": "candidate",
+                         "prompt_slot": "chat.base"}
+                run_id = mcos._create_run_row(db, cfg, bid, initial_meta=pmeta)
+                mcos._execute_run(db, cfg, bid, run_id,
+                                  system_prompt="X", run_meta=pmeta)
+
+            import json as _json
+            with db._lock:
+                meta = _json.loads(db._conn.execute(
+                    "SELECT meta FROM eval_runs WHERE id=?", (run_id,)
+                ).fetchone()["meta"])
+            # Prompt run: never flagged regressed, no delta computed, tagged.
+            self.assertFalse(meta.get("regressed"))
+            self.assertIsNone(meta.get("delta"))
+            self.assertEqual(meta.get("prompt_id"), "p1")
+
+            # The baseline query returns the NORMAL prior run (0.95), never the
+            # prompt run — i.e. the prompt run did not become a baseline.
+            self.assertAlmostEqual(mcos._prev_finished_avg(db, bid, "nope"), 0.95)
+
+    def test_get_prompt_benchmark_status(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            app, db, cfg = _make_app(tmp)
+            client = TestClient(app, raise_server_exceptions=True, headers=AUTH_HEADERS)
+            client.post("/api/mcos/seed")
+            resp = client.post("/api/mcos/prompts", json={
+                "slot": "chat.base", "name": "c", "content": "cand"})
+            pid = resp.json()["prompt"]["id"]
+            # No runs yet.
+            resp = client.get(f"/api/mcos/prompts/{pid}/benchmark")
+            self.assertEqual(resp.status_code, 200)
+            self.assertEqual(resp.json()["status"], "none")
+
+    def test_benchmark_prompt_pairs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            app, db, cfg = _make_app(tmp)
+            client = TestClient(app, raise_server_exceptions=True, headers=AUTH_HEADERS)
+            client.post("/api/mcos/seed")
+            resp = client.post("/api/mcos/prompts", json={
+                "slot": "chat.base", "name": "c", "content": "cand body"})
+            pid = resp.json()["prompt"]["id"]
+            from orivellum.capabilities import mcos
+            with patch.object(mcos, "llm_call", self._fake_llm()):
+                resp = client.post(f"/api/mcos/prompts/{pid}/benchmark")
+                self.assertEqual(resp.status_code, 200)
+                body = resp.json()
+                self.assertGreater(len(body["candidate_runs"]), 0)
+                # There is an active seeded prompt → active runs too.
+                self.assertGreater(len(body["active_runs"]), 0)
+            # Background tasks run synchronously in TestClient; status is done.
+            resp = client.get(f"/api/mcos/prompts/{pid}/benchmark")
+            self.assertEqual(resp.status_code, 200)
+            self.assertEqual(resp.json()["status"], "done")
+            self.assertIsNotNone(resp.json()["candidate"]["avg"])
+            self.assertIsNotNone(resp.json()["delta"])
+
+
+class TestRagCalibration(unittest.TestCase):
+
+    def test_chunk_params_clamped(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _app, db, _cfg = _make_app(tmp)
+            from orivellum.capabilities.chunking import _resolve_chunk_params
+            # Out-of-range + garbage → clamped/defaulted.
+            db.set_setting("chunk_target_words", "999999")
+            db.set_setting("chunk_overlap_words", "5000")
+            t, o = _resolve_chunk_params(db)
+            self.assertEqual(t, 2000)
+            self.assertLessEqual(o, t // 2)
+
+            db.set_setting("chunk_target_words", "not-a-number")
+            db.set_setting("chunk_overlap_words", "50")
+            t, o = _resolve_chunk_params(db)
+            self.assertEqual(t, 500)
+            self.assertEqual(o, 50)
+
+            db.set_setting("chunk_target_words", "50")  # below min
+            t, o = _resolve_chunk_params(db)
+            self.assertEqual(t, 100)
+
+    def test_sweep_end_to_end_no_writes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _app, db, _cfg = _make_app(tmp)
+            from orivellum.capabilities import mcos
+            # Seed a few docs with distinctive chunk text.
+            for i in range(3):
+                doc = db.create_document(title=f"Doc {i}", kind="note")
+                db.add_chunk(doc["id"],
+                             f"Document number {i} discusses topic alpha{i} "
+                             f"beta{i} gamma{i} delta{i} in great technical detail. "
+                             f"The special marker phrase for doc {i} is zephyr{i}quux.")
+            with db._lock:
+                before = db._conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+            sweep_id = mcos.create_sweep_row(db)
+            mcos.rag_sweep(db, sweep_id)
+            with db._lock:
+                after = db._conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+                row = dict(db._conn.execute(
+                    "SELECT * FROM rag_sweeps WHERE id=?", (sweep_id,)).fetchone())
+            self.assertEqual(before, after)  # NO chunk-table writes
+            self.assertEqual(row["status"], "done")
+            self.assertGreater(row["docs_sampled"], 0)
+            import json as _json
+            results = _json.loads(row["results"])
+            self.assertGreater(len(results), 0)
+            for r in results:
+                self.assertLess(r["overlap_words"], r["target_words"] / 2)
+
+    def test_rag_config_and_apply(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            app, db, _cfg = _make_app(tmp)
+            client = TestClient(app, raise_server_exceptions=True, headers=AUTH_HEADERS)
+            resp = client.get("/api/mcos/rag/config")
+            self.assertEqual(resp.status_code, 200)
+            self.assertIn("target_words", resp.json())
+
+            # Valid apply.
+            resp = client.post("/api/mcos/rag/apply",
+                               json={"target_words": 800, "overlap_words": 80})
+            self.assertEqual(resp.status_code, 200)
+            self.assertEqual(db.get_setting("chunk_target_words"), "800")
+
+            # Invalid: overlap >= target/2.
+            resp = client.post("/api/mcos/rag/apply",
+                               json={"target_words": 400, "overlap_words": 300})
+            self.assertEqual(resp.status_code, 400)
+            # Invalid: target out of bounds.
+            resp = client.post("/api/mcos/rag/apply",
+                               json={"target_words": 50, "overlap_words": 10})
+            self.assertEqual(resp.status_code, 400)
+
+    def test_rag_sweep_endpoint(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            app, db, _cfg = _make_app(tmp)
+            client = TestClient(app, raise_server_exceptions=True, headers=AUTH_HEADERS)
+            doc = db.create_document(title="D", kind="note")
+            db.add_chunk(doc["id"], "Alpha beta gamma delta epsilon marker phrase here "
+                                    "for retrieval calibration testing purposes indeed.")
+            resp = client.post("/api/mcos/rag/sweep")
+            self.assertEqual(resp.status_code, 202)
+            sid = resp.json()["sweep_id"]
+            resp = client.get("/api/mcos/rag/sweeps")
+            self.assertEqual(resp.status_code, 200)
+            sweeps = resp.json()["sweeps"]
+            self.assertTrue(any(s["id"] == sid for s in sweeps))
+
+
+class TestPromptConcurrency(unittest.TestCase):
+    """Regression tests for the review-flagged TOCTOU / race issues."""
+
+    def _make_two_prompts(self, db):
+        """Return (active_id, candidate_id) in slot 'chat.base'."""
+        import uuid
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc).isoformat()
+        active_id = str(uuid.uuid4())
+        cand_id = str(uuid.uuid4())
+        with db._lock:
+            db._conn.execute(
+                "INSERT INTO prompts(id,slot,name,content,version,active,created_at)"
+                " VALUES(?,?,?,?,1,1,?)",
+                (active_id, "chat.base", "active", "ACTIVE BODY", now))
+            db._conn.execute(
+                "INSERT INTO prompts(id,slot,name,content,version,active,created_at)"
+                " VALUES(?,?,?,?,2,0,?)",
+                (cand_id, "chat.base", "cand", "CAND BODY", now))
+            db._conn.commit()
+        return active_id, cand_id
+
+    def test_delete_active_conflicts_and_slot_keeps_active(self):
+        """delete_prompt must 409 on the active row and never leave the slot
+        without an active prompt (fix #1)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            _app, db, _cfg = _make_app(tmp)
+            from orivellum.api.routes import mcos as routes
+            from fastapi import HTTPException
+            active_id, cand_id = self._make_two_prompts(db)
+
+            with self.assertRaises(HTTPException) as ctx:
+                routes.delete_prompt(active_id)
+            self.assertEqual(ctx.exception.status_code, 409)
+
+            # Slot still has exactly one active prompt.
+            with db._lock:
+                n = db._conn.execute(
+                    "SELECT COUNT(*) FROM prompts WHERE slot='chat.base' AND active=1"
+                ).fetchone()[0]
+            self.assertEqual(n, 1)
+
+    def test_activate_then_delete_old_keeps_one_active(self):
+        """After activating the candidate, deleting the now-inactive old prompt
+        is allowed and the slot retains one active prompt (fix #1)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            _app, db, _cfg = _make_app(tmp)
+            from orivellum.api.routes import mcos as routes
+            active_id, cand_id = self._make_two_prompts(db)
+
+            routes.activate_prompt(cand_id)
+            # Old active is now deletable.
+            resp = routes.delete_prompt(active_id)
+            self.assertEqual(resp.status_code, 204)
+            with db._lock:
+                rows = db._conn.execute(
+                    "SELECT id, active FROM prompts WHERE slot='chat.base'"
+                ).fetchall()
+            self.assertEqual(len(rows), 1)
+            self.assertTrue(rows[0]["active"])
+            self.assertEqual(rows[0]["id"], cand_id)
+
+    def test_activate_missing_after_delete_is_404(self):
+        """Activating a prompt deleted between read and write yields 404, not a
+        slot with zero active prompts (fix #1)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            _app, db, _cfg = _make_app(tmp)
+            from orivellum.api.routes import mcos as routes
+            from fastapi import HTTPException
+            import uuid
+            with self.assertRaises(HTTPException) as ctx:
+                routes.activate_prompt(str(uuid.uuid4()))
+            self.assertEqual(ctx.exception.status_code, 404)
+
+    def test_benchmark_prompt_second_request_409(self):
+        """Concurrent prompt-benchmark requests: the second sees the first's
+        reserved running rows and 409s (fix #2)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            app, db, cfg = _make_app(tmp)
+            client = TestClient(app, raise_server_exceptions=True, headers=AUTH_HEADERS)
+            client.post("/api/mcos/seed")
+            pid = client.post("/api/mcos/prompts", json={
+                "slot": "chat.base", "name": "c", "content": "cand"}).json()["prompt"]["id"]
+
+            from orivellum.api.routes import mcos as routes
+            from orivellum.capabilities import mcos
+            from fastapi import BackgroundTasks, HTTPException
+
+            with patch.object(mcos, "llm_call", lambda messages, **kw: _ok_llm()):
+                # First reservation (don't run worker) leaves running rows.
+                bg1 = BackgroundTasks()
+                body = routes.benchmark_prompt(pid, bg1)
+                self.assertGreater(len(body["candidate_runs"]), 0)
+                # A second request while those rows are 'running' must 409.
+                bg2 = BackgroundTasks()
+                with self.assertRaises(HTTPException) as ctx:
+                    routes.benchmark_prompt(pid, bg2)
+                self.assertEqual(ctx.exception.status_code, 409)
+
+    def test_prompt_run_no_regressed_in_run_row(self):
+        """_run_row_to_dict must not recompute delta/regressed for prompt runs
+        even against a strong normal baseline (fix #3)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            _app, db, cfg = _make_app(tmp)
+            from orivellum.api.routes import mcos as routes
+            from orivellum.capabilities import mcos
+            bid = _seed_bench_with_case(db)
+            _seed_prev_run(db, bid, avg=0.95)  # strong normal baseline
+
+            with patch.object(mcos, "llm_call", lambda messages, **kw: _ok_llm()):
+                pmeta = {"prompt_id": "p1", "prompt_role": "candidate",
+                         "prompt_slot": "chat.base"}
+                rid = mcos._create_run_row(db, cfg, bid, initial_meta=pmeta)
+                mcos._execute_run(db, cfg, bid, rid, system_prompt="X", run_meta=pmeta)
+
+            with db._lock:
+                row = db._conn.execute(
+                    "SELECT r.*, b.name AS benchmark_name FROM eval_runs r "
+                    "JOIN benchmarks b ON b.id=r.benchmark_id WHERE r.id=?", (rid,)
+                ).fetchone()
+            d = routes._run_row_to_dict(db, row)
+            self.assertFalse(d["meta"]["regressed"])
+            self.assertIsNone(d["meta"]["delta"])
+
+
+class TestSweepLifecycle(unittest.TestCase):
+
+    def test_stale_sweep_reaped(self):
+        """A sweep stuck 'running' for >30 min is marked failed on the next
+        list/start (fix #4)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            app, db, _cfg = _make_app(tmp)
+            client = TestClient(app, raise_server_exceptions=True, headers=AUTH_HEADERS)
+            import uuid
+            sid = str(uuid.uuid4())
+            with db._lock:
+                db._conn.execute(
+                    "INSERT INTO rag_sweeps(id,started_at,status) "
+                    "VALUES(?, datetime('now','-45 minutes'), 'running')", (sid,))
+                db._conn.commit()
+            resp = client.get("/api/mcos/rag/sweeps")
+            self.assertEqual(resp.status_code, 200)
+            match = [s for s in resp.json()["sweeps"] if s["id"] == sid]
+            self.assertEqual(len(match), 1)
+            self.assertEqual(match[0]["status"], "failed")
+
+    def test_concurrent_sweep_409(self):
+        """POST /rag/sweep 409s while a non-stale sweep is running (fix #4)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            app, db, _cfg = _make_app(tmp)
+            client = TestClient(app, raise_server_exceptions=True, headers=AUTH_HEADERS)
+            import uuid
+            sid = str(uuid.uuid4())
+            with db._lock:
+                db._conn.execute(
+                    "INSERT INTO rag_sweeps(id,started_at,status) "
+                    "VALUES(?, datetime('now'), 'running')", (sid,))
+                db._conn.commit()
+            resp = client.post("/api/mcos/rag/sweep")
+            self.assertEqual(resp.status_code, 409)
+
+
+def _ok_llm():
+    from orivellum.capabilities.llm import LLMResult
+    return LLMResult(text="42", ok=True, model="fake", latency_ms=1)
+
+
 if __name__ == "__main__":
     unittest.main()

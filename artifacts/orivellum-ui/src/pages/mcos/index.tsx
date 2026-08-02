@@ -21,8 +21,16 @@ import {
   Collapsible, CollapsibleContent, CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import {
+  Dialog, DialogContent, DialogHeader, DialogFooter, DialogTitle,
+  DialogDescription, DialogTrigger, DialogClose,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
+import {
   Gauge, Play, Loader2, RefreshCw, AlertCircle, Sparkles,
   ArrowUp, ArrowDown, ChevronDown, ChevronRight, Activity,
+  FlaskConical, Trash2, Plus, CheckCircle2, SlidersHorizontal,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -478,6 +486,584 @@ function BenchmarkCard({ bench, running, onRun }: {
   );
 }
 
+// ── Prompt Lab (Phase 4) ──────────────────────────────────────────────────────
+
+const PROMPT_SLOT = "chat.base";
+
+interface Prompt {
+  id: string;
+  slot: string;
+  name: string;
+  content: string;
+  version: number;
+  active: boolean;
+  created_at: string | null;
+  notes: string | null;
+  last_benchmark: unknown | null;
+}
+
+interface BenchPerSuite {
+  benchmark_id: string;
+  avg_score: number | null;
+  status: string;
+}
+
+interface BenchSide {
+  avg: number | null;
+  per_suite: BenchPerSuite[];
+}
+
+interface PromptBenchmark {
+  status: "running" | "done" | "none";
+  candidate: BenchSide | null;
+  active: BenchSide | null;
+  delta: number | null;
+}
+
+// Dialog for creating a new candidate prompt.
+function NewCandidateDialog({ activeContent, onCreate, pending }: {
+  activeContent: string;
+  onCreate: (body: { name: string; content: string; notes: string }) => Promise<void>;
+  pending: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState("");
+  const [content, setContent] = useState(activeContent);
+  const [notes, setNotes] = useState("");
+
+  // Re-seed the textarea with the active content whenever the dialog opens.
+  const handleOpenChange = (v: boolean) => {
+    if (v) {
+      setName("");
+      setContent(activeContent);
+      setNotes("");
+    }
+    setOpen(v);
+  };
+
+  const submit = async () => {
+    if (!name.trim() || !content.trim()) return;
+    await onCreate({ name: name.trim(), content, notes: notes.trim() });
+    setOpen(false);
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      <DialogTrigger asChild>
+        <Button size="sm" variant="outline">
+          <Plus className="w-3.5 h-3.5 mr-1.5" />
+          New candidate
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>New prompt candidate</DialogTitle>
+          <DialogDescription>
+            Create an inactive candidate for <span className="font-mono">{PROMPT_SLOT}</span>. Benchmark it against the active prompt before activating.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div className="space-y-1.5">
+            <Label htmlFor="prompt-name">Name</Label>
+            <Input id="prompt-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Concise system preamble" />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="prompt-content">Content</Label>
+            <Textarea
+              id="prompt-content"
+              value={content}
+              onChange={(e) => setContent(e.target.value)}
+              rows={10}
+              className="font-mono text-xs"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="prompt-notes">Notes (optional)</Label>
+            <Input id="prompt-notes" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="What changed and why" />
+          </div>
+        </div>
+        <DialogFooter>
+          <DialogClose asChild>
+            <Button variant="ghost">Cancel</Button>
+          </DialogClose>
+          <Button onClick={submit} disabled={pending || !name.trim() || !content.trim()}>
+            {pending ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <Plus className="w-4 h-4 mr-1.5" />}
+            Create candidate
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// A single candidate row with its benchmark-vs-active controls.
+function CandidatePrompt({ prompt, onChanged }: { prompt: Prompt; onChanged: () => void }) {
+  const [showSuites, setShowSuites] = useState(false);
+
+  const benchQuery = useQuery<PromptBenchmark>({
+    queryKey: ["mcos", "prompt-benchmark", prompt.id],
+    queryFn: () => apiFetch(`${BASE}/mcos/prompts/${prompt.id}/benchmark`).then((r) => {
+      if (!r.ok) throw new Error("Failed to load benchmark");
+      return r.json();
+    }),
+    staleTime: 2_000,
+    refetchInterval: (query) => (query.state.data?.status === "running" ? 3_000 : false),
+    retry: false,
+  });
+
+  const status = benchQuery.data?.status ?? "none";
+  const running = status === "running";
+  const done = status === "done";
+
+  const startBench = useMutation<{ candidate_runs: string[]; active_runs: string[] }, Error, void>({
+    mutationFn: () => apiFetch(`${BASE}/mcos/prompts/${prompt.id}/benchmark`, { method: "POST" }).then(async (r) => {
+      if (r.status === 409) throw new Error("409");
+      if (!r.ok) throw new Error("Benchmark failed");
+      return r.json();
+    }),
+    onSuccess: () => {
+      toast.success("Benchmark started");
+      benchQuery.refetch();
+    },
+    onError: (err) => {
+      if (err.message === "409") toast.error("A prompt benchmark for this slot is already in progress");
+      else toast.error("Could not start benchmark");
+    },
+  });
+
+  const activate = useMutation<unknown, Error, void>({
+    mutationFn: () => apiFetch(`${BASE}/mcos/prompts/${prompt.id}/activate`, { method: "POST" }).then((r) => {
+      if (!r.ok) throw new Error("Activate failed");
+      return r.json();
+    }),
+    onSuccess: () => {
+      toast.success("Prompt activated");
+      onChanged();
+    },
+    onError: () => toast.error("Could not activate prompt"),
+  });
+
+  const remove = useMutation<void, Error, void>({
+    mutationFn: () => apiFetch(`${BASE}/mcos/prompts/${prompt.id}`, { method: "DELETE" }).then((r) => {
+      if (r.status === 409) throw new Error("409");
+      if (!r.ok && r.status !== 204) throw new Error("Delete failed");
+    }),
+    onSuccess: () => {
+      toast.success("Candidate deleted");
+      onChanged();
+    },
+    onError: (err) => {
+      if (err.message === "409") toast.error("Cannot delete the active prompt");
+      else toast.error("Could not delete candidate");
+    },
+  });
+
+  const handleActivate = () => {
+    if (!window.confirm(`Activate "${prompt.name}" (v${prompt.version})? This deactivates the current active prompt for ${PROMPT_SLOT}.`)) return;
+    activate.mutate();
+  };
+  const handleDelete = () => {
+    if (!window.confirm(`Delete candidate "${prompt.name}" (v${prompt.version})?`)) return;
+    remove.mutate();
+  };
+
+  const candAvg = benchQuery.data?.candidate?.avg ?? null;
+  const actAvg = benchQuery.data?.active?.avg ?? null;
+  const delta = benchQuery.data?.delta ?? null;
+
+  return (
+    <div className="rounded-lg border border-border/60 p-3 space-y-2">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-medium truncate">{prompt.name}</span>
+            <Badge variant="outline" className="text-[10px] font-mono">v{prompt.version}</Badge>
+          </div>
+          <div className="flex items-center gap-3 mt-0.5 text-[11px] font-mono text-muted-foreground">
+            <span>{prompt.created_at ? fmtTime(prompt.created_at) : "—"}</span>
+            {prompt.notes && <span className="italic truncate">{prompt.notes}</span>}
+          </div>
+        </div>
+        <div className="flex items-center gap-1.5 shrink-0">
+          <Button size="sm" variant="outline" disabled={running || startBench.isPending}
+            onClick={() => startBench.mutate()}>
+            {running || startBench.isPending
+              ? <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Benchmarking</>
+              : <><FlaskConical className="w-3.5 h-3.5 mr-1.5" /> Benchmark vs active</>}
+          </Button>
+          <Button size="sm" disabled={activate.isPending} onClick={handleActivate}>
+            {activate.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5 mr-1.5" />}
+            Activate
+          </Button>
+          <Button size="sm" variant="ghost" disabled={remove.isPending} onClick={handleDelete}
+            className="text-muted-foreground hover:text-red-600">
+            {remove.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+          </Button>
+        </div>
+      </div>
+
+      {done && (
+        <div className="rounded border border-border/50 bg-muted/20 p-2.5 space-y-2">
+          <div className="flex items-center gap-4 text-xs font-mono">
+            <span>candidate <span className={scoreColor(candAvg)}>{scorePct(candAvg)}</span></span>
+            <span className="text-muted-foreground">vs</span>
+            <span>active <span className={scoreColor(actAvg)}>{scorePct(actAvg)}</span></span>
+            {delta != null && (
+              <Badge variant="outline" className={`text-[10px] ${
+                delta >= 0
+                  ? "text-emerald-600 border-emerald-300 dark:text-emerald-400 dark:border-emerald-900"
+                  : "text-red-600 border-red-300 dark:text-red-400 dark:border-red-900"
+              }`}>
+                {delta >= 0 ? "+" : ""}{Math.round(delta * 100)} pts
+              </Badge>
+            )}
+          </div>
+          {(benchQuery.data?.candidate?.per_suite?.length ?? 0) > 0 && (
+            <Collapsible open={showSuites} onOpenChange={setShowSuites}>
+              <CollapsibleTrigger asChild>
+                <button className="flex items-center gap-1 text-[11px] font-mono text-muted-foreground hover:text-foreground">
+                  {showSuites ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                  Per-suite breakdown
+                </button>
+              </CollapsibleTrigger>
+              <CollapsibleContent>
+                <div className="mt-2 space-y-1">
+                  {benchQuery.data!.candidate!.per_suite.map((s) => {
+                    const actSuite = benchQuery.data?.active?.per_suite?.find((a) => a.benchmark_id === s.benchmark_id);
+                    return (
+                      <div key={s.benchmark_id} className="flex items-center justify-between text-[11px] font-mono">
+                        <span className="text-muted-foreground truncate">{s.benchmark_id}</span>
+                        <span className="flex items-center gap-3">
+                          <span className={scoreColor(s.avg_score)}>{scorePct(s.avg_score)}</span>
+                          <span className="text-muted-foreground/60">vs {scorePct(actSuite?.avg_score ?? null)}</span>
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </CollapsibleContent>
+            </Collapsible>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PromptLabCard() {
+  const qc = useQueryClient();
+
+  const { data, isLoading, isError, refetch } = useQuery<{ prompts: Prompt[] }>({
+    queryKey: ["mcos", "prompts", PROMPT_SLOT],
+    queryFn: () => apiFetch(`${BASE}/mcos/prompts?slot=${PROMPT_SLOT}`).then((r) => {
+      if (!r.ok) throw new Error("Failed to load prompts");
+      return r.json();
+    }),
+    staleTime: 10_000,
+    retry: false,
+  });
+
+  const prompts = data?.prompts ?? [];
+  const active = prompts.find((p) => p.active) ?? null;
+  const candidates = prompts.filter((p) => !p.active);
+
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ["mcos", "prompts", PROMPT_SLOT] });
+  };
+
+  const create = useMutation<{ prompt: Prompt }, Error, { name: string; content: string; notes: string }>({
+    mutationFn: (body) => apiFetch(`${BASE}/mcos/prompts`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ slot: PROMPT_SLOT, ...body }),
+    }).then((r) => {
+      if (!r.ok) throw new Error("Create failed");
+      return r.json();
+    }),
+    onSuccess: () => {
+      toast.success("Candidate created");
+      invalidate();
+    },
+    onError: () => toast.error("Could not create candidate"),
+  });
+
+  return (
+    <Card>
+      <CardContent className="p-6">
+        <div className="flex items-center justify-between gap-2 mb-4">
+          <div className="flex items-center gap-2">
+            <FlaskConical className="w-4 h-4 text-primary" />
+            <h2 className="font-mono text-sm uppercase tracking-wider">Prompt Lab</h2>
+            <Badge variant="outline" className="text-[10px] font-mono">{PROMPT_SLOT}</Badge>
+          </div>
+          {!isLoading && !isError && (
+            <NewCandidateDialog
+              activeContent={active?.content ?? ""}
+              onCreate={async (body) => { await create.mutateAsync(body); }}
+              pending={create.isPending}
+            />
+          )}
+        </div>
+
+        {isLoading ? (
+          <div className="space-y-2">
+            <Skeleton className="h-14 w-full" />
+            <Skeleton className="h-14 w-full" />
+          </div>
+        ) : isError ? (
+          <div className="rounded-lg border border-dashed border-border/60 p-4 flex items-center justify-between gap-3">
+            <p className="text-xs text-muted-foreground">Prompt registry not available yet.</p>
+            <Button size="sm" variant="outline" className="h-7 text-[11px] gap-1" onClick={() => refetch()}>
+              <RefreshCw className="w-3 h-3" /> Retry
+            </Button>
+          </div>
+        ) : prompts.length === 0 ? (
+          <p className="text-sm text-muted-foreground py-6 text-center">No prompts registered for this slot yet.</p>
+        ) : (
+          <div className="space-y-3">
+            {active && (
+              <div className="rounded-lg border border-emerald-200/70 bg-emerald-50/30 dark:border-emerald-900/60 dark:bg-emerald-950/20 p-3">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="font-medium truncate">{active.name}</span>
+                  <Badge variant="outline" className="text-[10px] font-mono">v{active.version}</Badge>
+                  <Badge className="text-[10px] bg-emerald-600 hover:bg-emerald-600">Active</Badge>
+                </div>
+                <div className="flex items-center gap-3 mt-0.5 text-[11px] font-mono text-muted-foreground">
+                  <span>{active.created_at ? fmtTime(active.created_at) : "—"}</span>
+                  {active.notes && <span className="italic truncate">{active.notes}</span>}
+                </div>
+              </div>
+            )}
+            {candidates.map((p) => (
+              <CandidatePrompt key={p.id} prompt={p} onChanged={invalidate} />
+            ))}
+            {candidates.length === 0 && (
+              <p className="text-xs text-muted-foreground text-center py-2">No candidates. Create one to benchmark against the active prompt.</p>
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ── RAG Calibration (Phase 5) ────────────────────────────────────────────────
+
+interface RagConfig {
+  target_words: number;
+  overlap_words: number;
+  defaults: { target_words: number; overlap_words: number };
+}
+
+interface SweepResult {
+  target_words: number;
+  overlap_words: number;
+  score: number | null;
+  chunk_count: number | null;
+}
+
+interface Sweep {
+  id: string;
+  started_at: string | null;
+  finished_at: string | null;
+  status: string;
+  results: SweepResult[];
+  best: { target_words: number; overlap_words: number; score: number | null } | null;
+  docs_sampled: number | null;
+}
+
+function RagCalibrationCard() {
+  const qc = useQueryClient();
+  const [showPast, setShowPast] = useState(false);
+
+  const configQuery = useQuery<RagConfig>({
+    queryKey: ["mcos", "rag", "config"],
+    queryFn: () => apiFetch(`${BASE}/mcos/rag/config`).then((r) => {
+      if (!r.ok) throw new Error("Failed to load RAG config");
+      return r.json();
+    }),
+    staleTime: 10_000,
+    retry: false,
+  });
+
+  const sweepsQuery = useQuery<{ sweeps: Sweep[] }>({
+    queryKey: ["mcos", "rag", "sweeps"],
+    queryFn: () => apiFetch(`${BASE}/mcos/rag/sweeps?limit=5`).then((r) => {
+      if (!r.ok) throw new Error("Failed to load sweeps");
+      return r.json();
+    }),
+    staleTime: 5_000,
+    retry: false,
+    refetchInterval: (query) =>
+      query.state.data?.sweeps?.some((s) => s.status === "running") ? 3_000 : false,
+  });
+
+  const sweeps = sweepsQuery.data?.sweeps ?? [];
+  const latest = sweeps[0] ?? null;
+  const pastSweeps = sweeps.slice(1);
+  const anyRunning = sweeps.some((s) => s.status === "running");
+
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ["mcos", "rag", "sweeps"] });
+    qc.invalidateQueries({ queryKey: ["mcos", "rag", "config"] });
+  };
+
+  const runSweep = useMutation<{ sweep_id: string }, Error, void>({
+    mutationFn: () => apiFetch(`${BASE}/mcos/rag/sweep`, { method: "POST" }).then((r) => {
+      if (!r.ok) throw new Error("Sweep failed");
+      return r.json();
+    }),
+    onSuccess: () => {
+      toast.success("Sweep started");
+      sweepsQuery.refetch();
+    },
+    onError: () => toast.error("Could not start sweep"),
+  });
+
+  const applyBest = useMutation<RagConfig, Error, { target_words: number; overlap_words: number }>({
+    mutationFn: (body) => apiFetch(`${BASE}/mcos/rag/apply`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }).then((r) => {
+      if (!r.ok) throw new Error("Apply failed");
+      return r.json();
+    }),
+    onSuccess: () => {
+      toast.success("Chunk config updated");
+      invalidate();
+    },
+    onError: () => toast.error("Could not apply chunk config"),
+  });
+
+  const cfg = configQuery.data;
+  const best = latest?.best ?? null;
+  const bestDiffers = !!(best && cfg && (best.target_words !== cfg.target_words || best.overlap_words !== cfg.overlap_words));
+
+  return (
+    <Card>
+      <CardContent className="p-6">
+        <div className="flex items-center justify-between gap-2 mb-4">
+          <div className="flex items-center gap-2">
+            <SlidersHorizontal className="w-4 h-4 text-primary" />
+            <h2 className="font-mono text-sm uppercase tracking-wider">RAG Calibration</h2>
+          </div>
+          <Button size="sm" variant="outline" disabled={anyRunning || runSweep.isPending}
+            onClick={() => runSweep.mutate()}>
+            {anyRunning || runSweep.isPending
+              ? <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Sweeping</>
+              : <><Play className="w-3.5 h-3.5 mr-1.5" /> Run sweep</>}
+          </Button>
+        </div>
+
+        {/* Current config */}
+        {configQuery.isLoading ? (
+          <Skeleton className="h-6 w-64 mb-4" />
+        ) : configQuery.isError || !cfg ? (
+          <p className="text-xs text-muted-foreground mb-4">Chunk config not available yet.</p>
+        ) : (
+          <p className="text-sm font-mono mb-4">
+            Chunk size: <span className="font-semibold">{cfg.target_words} words</span>
+            {" · "}Overlap: <span className="font-semibold">{cfg.overlap_words} words</span>
+          </p>
+        )}
+
+        {/* Sweeps */}
+        {sweepsQuery.isLoading ? (
+          <div className="space-y-2">
+            <Skeleton className="h-8 w-full" />
+            <Skeleton className="h-8 w-full" />
+          </div>
+        ) : sweepsQuery.isError ? (
+          <div className="rounded-lg border border-dashed border-border/60 p-4 flex items-center justify-between gap-3">
+            <p className="text-xs text-muted-foreground">Sweep history not available yet.</p>
+            <Button size="sm" variant="outline" className="h-7 text-[11px] gap-1" onClick={() => sweepsQuery.refetch()}>
+              <RefreshCw className="w-3 h-3" /> Retry
+            </Button>
+          </div>
+        ) : !latest ? (
+          <p className="text-sm text-muted-foreground py-6 text-center">No sweeps yet. Run one to find the best chunk configuration.</p>
+        ) : (
+          <div className="space-y-3">
+            <div className="flex items-center gap-2 text-[11px] font-mono text-muted-foreground">
+              <StatusBadge status={latest.status} />
+              <span>{fmtTime(latest.started_at)}</span>
+              {latest.docs_sampled != null && <span>· {latest.docs_sampled} docs sampled</span>}
+            </div>
+
+            {latest.results.length > 0 && (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="text-right">Target</TableHead>
+                    <TableHead className="text-right">Overlap</TableHead>
+                    <TableHead className="text-right">Score</TableHead>
+                    <TableHead className="text-right">Chunks</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {latest.results.map((res) => {
+                    const isBest = !!(best && res.target_words === best.target_words && res.overlap_words === best.overlap_words);
+                    return (
+                      <TableRow key={`${res.target_words}-${res.overlap_words}`}
+                        className={isBest ? "bg-emerald-50/60 dark:bg-emerald-950/20" : undefined}>
+                        <TableCell className="text-right font-mono">
+                          {res.target_words}
+                          {isBest && <Badge className="ml-2 text-[9px] bg-emerald-600 hover:bg-emerald-600">best</Badge>}
+                        </TableCell>
+                        <TableCell className="text-right font-mono">{res.overlap_words}</TableCell>
+                        <TableCell className={`text-right font-mono ${scoreColor(res.score)}`}>{scorePct(res.score)}</TableCell>
+                        <TableCell className="text-right font-mono">{res.chunk_count ?? "—"}</TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            )}
+
+            {bestDiffers && best && (
+              <div className="space-y-1">
+                <Button size="sm" disabled={applyBest.isPending}
+                  onClick={() => applyBest.mutate({ target_words: best.target_words, overlap_words: best.overlap_words })}>
+                  {applyBest.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5 mr-1.5" />}
+                  Apply best ({best.target_words}/{best.overlap_words})
+                </Button>
+                <p className="text-[11px] text-muted-foreground">Applies to new imports and reprocessed documents.</p>
+              </div>
+            )}
+
+            {pastSweeps.length > 0 && (
+              <Collapsible open={showPast} onOpenChange={setShowPast}>
+                <CollapsibleTrigger asChild>
+                  <button className="flex items-center gap-1 text-[11px] font-mono text-muted-foreground hover:text-foreground">
+                    {showPast ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                    Past sweeps ({pastSweeps.length})
+                  </button>
+                </CollapsibleTrigger>
+                <CollapsibleContent>
+                  <div className="mt-2 space-y-1">
+                    {pastSweeps.map((s) => (
+                      <div key={s.id} className="flex items-center justify-between text-[11px] font-mono text-muted-foreground">
+                        <span className="flex items-center gap-2">
+                          <StatusBadge status={s.status} />
+                          {fmtTime(s.started_at)}
+                        </span>
+                        <span>
+                          {s.best ? `best ${s.best.target_words}/${s.best.overlap_words} · ${scorePct(s.best.score)}` : "—"}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </CollapsibleContent>
+              </Collapsible>
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function Mcos() {
@@ -649,6 +1235,14 @@ export default function Mcos() {
 
       {/* Telemetry */}
       <TelemetryCard />
+
+      <Separator />
+
+      {/* Prompt Lab (Phase 4) */}
+      <PromptLabCard />
+
+      {/* RAG Calibration (Phase 5) */}
+      <RagCalibrationCard />
     </div>
   );
 }
