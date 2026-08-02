@@ -103,6 +103,12 @@ function MaintenanceCard() {
   const lastRun = status?.last_run;
   const busy = running || runNow.isPending;
 
+  // Pull extra summary facts out of the last report's markdown so the status
+  // line covers recovery and space savings, not just harvest counts.
+  const md = report?.report_markdown ?? "";
+  const mbSaved = md.match(/VACUUM saved ([\d.]+) MB/)?.[1] ?? null;
+  const docsRecovered = md.match(/re-queued (\d+) stuck document/)?.[1] ?? null;
+
   return (
     <Card>
       <CardContent className="p-6 space-y-5">
@@ -135,6 +141,18 @@ function MaintenanceCard() {
             <Badge variant="secondary" className="mx-0.5">{lastRun.docs_processed}</Badge> docs processed
             {" · "}
             <Badge variant="secondary" className="mx-0.5">{lastRun.items_added}</Badge> items added
+            {docsRecovered && (
+              <>
+                {" · "}
+                <Badge variant="secondary" className="mx-0.5">{docsRecovered}</Badge> docs recovered
+              </>
+            )}
+            {mbSaved && (
+              <>
+                {" · "}
+                <Badge variant="secondary" className="mx-0.5">{mbSaved} MB</Badge> saved
+              </>
+            )}
           </div>
         ) : (
           <p className="text-sm text-muted-foreground">
