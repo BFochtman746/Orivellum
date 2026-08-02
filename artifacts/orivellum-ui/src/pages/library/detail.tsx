@@ -860,13 +860,19 @@ export default function DocumentDetail() {
     if (!docId || ttsLoading) return;
     setTtsLoading(true);
     resetTts();
+    // Capture the session BEFORE any await — if the player is closed or the
+    // user navigates away while the text/chunks fetch is pending, this run
+    // must not touch state belonging to a newer session.
+    const session = ttsSessionRef.current;
     try {
       // Prefer the already-extracted text on the doc object; fall back to chunks.
       let text: string = (doc?.extracted_text as string) || "";
       if (!text.trim()) {
         const resp = await apiFetch(`${BASE}/library/${docId}/chunks`);
+        if (ttsSessionRef.current !== session) return; // closed/superseded meanwhile
         if (resp.ok) {
           const data = await resp.json();
+          if (ttsSessionRef.current !== session) return;
           text = (data.chunks ?? [])
             .map((c: any) => c.text ?? "")
             .filter(Boolean)
@@ -880,7 +886,6 @@ export default function DocumentDetail() {
       }
 
       const parts = splitTextForTts(text);
-      const session = ttsSessionRef.current;
       setTtsChunks(parts);
       setTtsIndex(0);
       const url = await synthesizePart(parts, 0);
@@ -890,7 +895,7 @@ export default function DocumentDetail() {
       // Do NOT autoplay the first part — iOS Safari blocks audio from async
       // code. The playback bar below appears; the user taps play.
     } catch (e: any) {
-      if (e?.message !== TTS_STALE) {
+      if (e?.message !== TTS_STALE && ttsSessionRef.current === session) {
         toast.error(`Read aloud failed: ${e.message ?? "unknown error"}`, { duration: 8000 });
         resetTts();
       }
@@ -913,7 +918,7 @@ export default function DocumentDetail() {
       prefetchPart(ttsChunks, i + 1);
       evictOldParts(i);
     } catch (e: any) {
-      if (e?.message !== TTS_STALE) {
+      if (e?.message !== TTS_STALE && ttsSessionRef.current === session) {
         setTtsPlaying(false);
         toast.error(`Could not synthesize part ${i + 1}: ${e.message ?? "unknown error"}`);
       }

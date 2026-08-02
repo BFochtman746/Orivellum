@@ -1,11 +1,16 @@
 ---
-name: Read Aloud chunked TTS
-description: Durable race/lifecycle lessons for client-side chunked TTS playback.
+name: Chunked client TTS playback
+description: Durable lifecycle principles for chunked text-to-speech playback in the browser.
 ---
 
-# Read Aloud chunked TTS — lessons
+# Chunked client TTS playback
 
-- Session-guard every async TTS result: bump a monotonic session id on close, new read, doc navigation, and unmount, and discard stale results **before** creating a blob URL. **Why:** without it, in-flight fetches resurrect stale audio (wrong doc after navigation, player reopening after close) and leak object URLs — an architect review caught exactly these races.
-- Single-flight via a promise map, never a Set + poll-wait (double-fetches after timeout; overwritten URLs never revoked).
-- Never autoplay the FIRST part — iOS Safari blocks audio started from async code; auto-advance of later parts is fine.
-- Read the WHOLE document lazily (synthesize current + prefetch next, evict far-behind blob URLs) — a fixed part cap was rejected in completion review as not "full-document".
+**Rule:** every async step of a TTS playback session (text fetch, synthesis, blob creation) must be guarded by a monotonic session id captured *before the first await* and re-checked after *every* await; stale results are discarded before any blob URL is created.
+
+**Why:** without it, in-flight requests resurrect stale audio (wrong document after navigation, player reopening after close) and leak object URLs.
+
+**How to apply:**
+- Bump the session id on close, new read, document navigation, and unmount.
+- Deduplicate concurrent synthesis with a promise map (a flag/Set + poll-wait double-fetches and leaks overwritten URLs).
+- Never autoplay the first part — iOS Safari blocks audio started from async code.
+- Cover the entire document lazily (synthesize on demand, evict far-behind blobs); a fixed part cap is not "full-document" playback.
