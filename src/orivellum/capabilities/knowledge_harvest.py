@@ -145,7 +145,8 @@ def harvest(result: "ExtractionResult", doc_id: str,
         # Skip if same as doc title or very short
         if phrase.lower() == doc_title.lower() or len(phrase) < 4:
             continue
-        db.create_knowledge_item(
+        # create_knowledge_item() returns a str (the item ID), not a dict.
+        kid = db.create_knowledge_item(
             work_id=work_id,
             kind="entity",
             text=phrase,
@@ -157,6 +158,12 @@ def harvest(result: "ExtractionResult", doc_id: str,
         )
         entities_saved += 1
         created += 1
+        # Also persist to the entities table so the graph layer has real rows
+        try:
+            eid = db.upsert_entity(phrase, "concept")
+            db.create_entity_mention(eid, doc_id, work_id, knowledge_id=kid)
+        except Exception as _e:
+            logger.debug("entity graph write non-fatal: %s", _e)
 
     logger.info(
         "Harvested %d knowledge items for doc %s (work=%s)", created, doc_id, work_id
@@ -306,7 +313,8 @@ def llm_harvest(result: "ExtractionResult", doc_id: str,
             if not name:
                 continue
             text = f"{name}: {desc}" if desc else name
-            db.create_knowledge_item(
+            # create_knowledge_item() returns a str (the item ID), not a dict.
+            kid = db.create_knowledge_item(
                 work_id=work_id,
                 kind="entity",
                 text=text,
@@ -319,6 +327,13 @@ def llm_harvest(result: "ExtractionResult", doc_id: str,
                 meta=_llm_meta,
             )
             created += 1
+            # Persist to entities table so the graph layer has real rows
+            try:
+                eid = db.upsert_entity(name, "concept",
+                                       meta={"description": desc} if desc else None)
+                db.create_entity_mention(eid, doc_id, work_id, knowledge_id=kid)
+            except Exception as _e:
+                logger.debug("llm entity graph write non-fatal: %s", _e)
 
         # --- Claims ---
         for claim in (extraction.get("claims") or [])[:5]:
@@ -364,6 +379,15 @@ def llm_harvest(result: "ExtractionResult", doc_id: str,
                 meta=_llm_meta,
             )
             created += 1
+            # Persist both subject and object as entities with an edge
+            try:
+                sid = db.upsert_entity(subject, "concept")
+                oid = db.upsert_entity(obj, "concept")
+                db.create_entity_mention(sid, doc_id, work_id)
+                db.create_entity_mention(oid, doc_id, work_id)
+                db.create_entity_edge(sid, oid, predicate)
+            except Exception as _e:
+                logger.debug("llm relationship graph write non-fatal: %s", _e)
 
     logger.info(
         "LLM-harvested %d knowledge items for doc %s (work=%s, chunks=%d)",

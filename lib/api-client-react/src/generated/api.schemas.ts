@@ -352,6 +352,55 @@ export interface DuplicatePair {
   created_at?: string;
 }
 
+export type EntityMeta = { [key: string]: unknown };
+
+export interface Entity {
+  id?: string;
+  name?: string;
+  kind?: string;
+  canonical?: number;
+  aliases?: string;
+  meta?: EntityMeta;
+  created_at?: string;
+  mention_count?: number;
+}
+
+export type EntityDetailMentionsItem = {
+  id?: string;
+  title?: string;
+  kind?: string;
+  /** @nullable */
+  work_id?: string | null;
+};
+
+export type EntityDetail = Entity & {
+  mentions?: EntityDetailMentionsItem[];
+};
+
+export interface GraphNode {
+  id?: string;
+  label?: string;
+  /** entity | document */
+  type?: string;
+  /** person | place | concept | theme | document | etc. */
+  kind?: string;
+}
+
+export interface GraphEdge {
+  source?: string;
+  target?: string;
+  label?: string;
+  type?: string;
+}
+
+export interface WorkGraph {
+  work_id?: string;
+  nodes?: GraphNode[];
+  edges?: GraphEdge[];
+  node_count?: number;
+  edge_count?: number;
+}
+
 export interface OkResponse {
   ok?: boolean;
 }
@@ -379,6 +428,16 @@ export type ListWorks200 = {
 
 export type CreateWork200 = {
   work?: Work;
+};
+
+export type ListEntitiesParams = {
+kind?: string;
+limit?: number;
+};
+
+export type ListEntities200 = {
+  entities?: Entity[];
+  count?: number;
 };
 
 export type GetWork200 = {
@@ -418,6 +477,10 @@ export type GetWorkTasks200 = {
 
 export type CreateWorkTask200 = {
   task?: Task;
+};
+
+export type GetWorkGraphParams = {
+limit?: number;
 };
 
 export type GetWorkConversations200 = {

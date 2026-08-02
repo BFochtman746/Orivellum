@@ -690,6 +690,327 @@ class OrivellumDB:
         return [dict(r) for r in rows]
 
     # -------------------------------------------------------------------------
+    # Entity graph
+    # -------------------------------------------------------------------------
+
+    def upsert_entity(self, name: str, kind: str,
+                      meta: dict | None = None) -> str:
+        """Find or create an entity by normalised name + kind.
+
+        Returns the entity ID. Thread-safe; deduplicates on (name, kind).
+        """
+        norm = name.strip()
+        if not norm:
+            raise ValueError("entity name cannot be empty")
+        now = _now()
+        with self._lock:
+            existing = self._conn.execute(
+                "SELECT id FROM entities WHERE name=? AND kind=?",
+                (norm, kind),
+            ).fetchone()
+            if existing:
+                return existing["id"]
+            eid = _uuid()
+            self._conn.execute(
+                """INSERT INTO entities(id, name, kind, canonical, aliases, meta, created_at)
+                   VALUES(?,?,?,1,'{}',?,?)""",
+                (eid, norm, kind, _jdump(meta or {}), now),
+            )
+            self._conn.commit()
+        return eid
+
+    def create_entity_mention(
+        self,
+        entity_id: str,
+        doc_id: str,
+        work_id: str | None = None,
+        knowledge_id: str | None = None,
+    ) -> None:
+        """Record a MENTIONS edge from entity to document in the relationships table.
+
+        Idempotent — silently skips if the pair already exists.
+        Non-fatal on any DB error so it never breaks the pipeline.
+        """
+        try:
+            with self._lock:
+                existing = self._conn.execute(
+                    """SELECT id FROM relationships
+                       WHERE source_id=? AND target_id=? AND kind='MENTIONS'""",
+                    (entity_id, doc_id),
+                ).fetchone()
+                if existing:
+                    return
+            # relationships.id is FK → objects, so we must create the object row first.
+            rel_oid = self._create_object("relationship")
+            meta_val: dict[str, Any] = {}
+            if work_id:
+                meta_val["work_id"] = work_id
+            if knowledge_id:
+                meta_val["knowledge_id"] = knowledge_id
+            now = _now()
+            with self._lock:
+                self._conn.execute(
+                    """INSERT OR IGNORE INTO relationships
+                       (id, source_id, target_id, kind, weight, meta, created_at)
+                       VALUES(?,?,?,'MENTIONS',1.0,?,?)""",
+                    (rel_oid, entity_id, doc_id, _jdump(meta_val), now),
+                )
+                self._conn.commit()
+        except Exception as exc:
+            logger.debug("create_entity_mention failed: %s", exc)
+
+    def create_entity_edge(
+        self,
+        source_id: str,
+        target_id: str,
+        relation: str,
+        weight: float = 1.0,
+    ) -> None:
+        """Create a typed edge between two entities (entity-to-entity).
+
+        Idempotent — skips if the (source, target, relation) triple already exists.
+        Non-fatal on any DB error.
+        """
+        try:
+            with self._lock:
+                existing = self._conn.execute(
+                    "SELECT id FROM edges WHERE source_id=? AND target_id=? AND relation=?",
+                    (source_id, target_id, relation),
+                ).fetchone()
+                if existing:
+                    return
+                eid = _uuid()
+                now = _now()
+                self._conn.execute(
+                    """INSERT INTO edges(id, source_id, target_id, relation, weight, meta, created_at)
+                       VALUES(?,?,?,?,?,'{}',?)""",
+                    (eid, source_id, target_id, relation, weight, now),
+                )
+                self._conn.commit()
+        except Exception as exc:
+            logger.debug("create_entity_edge failed: %s", exc)
+
+    def get_work_graph(self, work_id: str, limit: int = 100) -> dict:
+        """Build a graph payload for a Work.
+
+        Budget allocation:
+        - Up to DOC_CAP document nodes (capped so entity nodes always have room).
+        - Up to (limit - len(doc_nodes)) entity nodes.
+        - Edges are filtered to only include nodes that made it into the output set.
+
+        Falls back to a knowledge-item projection when no entities have been
+        written yet (works imported before this feature was activated).
+        """
+        nodes: list[dict] = []
+        edges: list[dict] = []
+        seen: set[str] = set()
+
+        # Reserve at most 20% of the budget for document nodes so entities dominate.
+        DOC_CAP = max(10, limit // 5)
+
+        with self._lock:
+            doc_rows = self._conn.execute(
+                "SELECT id, title, kind FROM documents WHERE work_id=? LIMIT ?",
+                (work_id, DOC_CAP),
+            ).fetchall()
+
+        if not doc_rows:
+            return {"nodes": [], "edges": [], "node_count": 0, "edge_count": 0}
+
+        doc_ids = [r["id"] for r in doc_rows]
+
+        # Add document nodes (capped)
+        for r in doc_rows:
+            nid = r["id"]
+            if nid not in seen:
+                seen.add(nid)
+                nodes.append({
+                    "id": nid,
+                    "label": r["title"] or "Untitled",
+                    "type": "document",
+                    "kind": r["kind"] or "file",
+                })
+
+        # Reserve slots for supplementary doc nodes (entities outside the initial
+        # DOC_CAP window may mention docs not yet in `seen`; we need room to add them).
+        SUPP_DOC_RESERVE = max(5, limit // 10)
+        # Entity budget = remaining capacity minus the reserved supplement slots
+        entity_limit = max(0, limit - len(nodes) - SUPP_DOC_RESERVE)
+
+        # Use ALL doc ids from the work (not just the capped set) to find entities
+        # so that highly-mentioned entities aren't missed due to the doc cap.
+        with self._lock:
+            all_doc_ids_rows = self._conn.execute(
+                "SELECT id FROM documents WHERE work_id=?", (work_id,)
+            ).fetchall()
+        all_doc_ids = [r["id"] for r in all_doc_ids_rows]
+
+        # Find entities mentioned across all the work's documents
+        all_ph = ",".join("?" * len(all_doc_ids))
+        with self._lock:
+            entity_rows = self._conn.execute(
+                f"""SELECT DISTINCT e.id, e.name, e.kind,
+                           COUNT(r.id) AS mention_count
+                    FROM entities e
+                    JOIN relationships r ON r.source_id = e.id
+                    WHERE r.target_id IN ({all_ph}) AND r.kind='MENTIONS'
+                    GROUP BY e.id
+                    ORDER BY mention_count DESC
+                    LIMIT ?""",
+                (*all_doc_ids, entity_limit),
+            ).fetchall()
+
+        entity_ids: list[str] = []
+        for r in entity_rows:
+            nid = r["id"]
+            if nid not in seen:
+                seen.add(nid)
+                nodes.append({
+                    "id": nid,
+                    "label": r["name"],
+                    "type": "entity",
+                    "kind": r["kind"],
+                })
+            entity_ids.append(nid)
+
+        if not entity_ids:
+            # Fall back to knowledge-item projection
+            with self._lock:
+                kn_rows = self._conn.execute(
+                    """SELECT id, kind, text, subject, predicate, object, confidence
+                       FROM knowledge
+                       WHERE work_id=? AND kind IN ('entity','relationship')
+                       LIMIT ?""",
+                    (work_id, limit * 2),
+                ).fetchall()
+            for row in kn_rows:
+                r = dict(row)
+                if r["kind"] == "entity" and r["text"]:
+                    key = r["id"]
+                    if key not in seen:
+                        seen.add(key)
+                        nodes.append({"id": key, "label": r["text"],
+                                      "type": "entity", "kind": "concept"})
+                elif r["kind"] == "relationship" and r["subject"] and r["object"]:
+                    for label in (r["subject"], r["object"]):
+                        nk = f"kn-{label.lower()[:32]}"
+                        if nk not in seen:
+                            seen.add(nk)
+                            nodes.append({"id": nk, "label": label,
+                                          "type": "entity", "kind": "concept"})
+                    edges.append({
+                        "source": f"kn-{r['subject'].lower()[:32]}",
+                        "target": f"kn-{r['object'].lower()[:32]}",
+                        "label": r["predicate"] or "relates to",
+                        "type": "RELATES",
+                    })
+            return {"nodes": nodes[:limit], "edges": edges[:limit],
+                    "node_count": len(nodes), "edge_count": len(edges)}
+
+        # Supplement doc nodes: for each entity that mentions a doc not yet in
+        # `seen`, add that doc so the entity always has at least one visible edge.
+        # This handles the case where an entity's mention target lies outside the
+        # initial DOC_CAP window.
+        if entity_ids:
+            ent_ph_supp = ",".join("?" * len(entity_ids))
+            remaining_doc_budget = max(0, limit - len(nodes))
+            if remaining_doc_budget > 0:
+                with self._lock:
+                    supp_rows = self._conn.execute(
+                        f"""SELECT DISTINCT d.id, d.title, d.kind
+                            FROM relationships r
+                            JOIN documents d ON d.id = r.target_id
+                            WHERE r.source_id IN ({ent_ph_supp}) AND r.kind='MENTIONS'
+                            LIMIT ?""",
+                        (*entity_ids, remaining_doc_budget + len(seen)),
+                    ).fetchall()
+                added = 0
+                for r in supp_rows:
+                    if added >= remaining_doc_budget:
+                        break
+                    nid = r["id"]
+                    if nid not in seen:
+                        seen.add(nid)
+                        nodes.append({
+                            "id": nid,
+                            "label": r["title"] or "Untitled",
+                            "type": "document",
+                            "kind": r["kind"] or "file",
+                        })
+                        added += 1
+
+        # MENTIONS edges: query against all the work's docs so entities found
+        # via uncapped docs get connected to whichever doc nodes ARE now in `seen`.
+        with self._lock:
+            mention_rows = self._conn.execute(
+                f"""SELECT source_id, target_id
+                    FROM relationships
+                    WHERE target_id IN ({all_ph}) AND kind='MENTIONS'""",
+                (*all_doc_ids,),
+            ).fetchall()
+        for r in mention_rows:
+            # Both endpoints must be in the returned node set
+            if r["source_id"] in seen and r["target_id"] in seen:
+                edges.append({
+                    "source": r["source_id"],
+                    "target": r["target_id"],
+                    "label": "mentions",
+                    "type": "MENTIONS",
+                })
+
+        # Entity-entity edges from the edges table
+        if entity_ids:
+            ent_ph = ",".join("?" * len(entity_ids))
+            with self._lock:
+                edge_rows = self._conn.execute(
+                    f"""SELECT source_id, target_id, relation FROM edges
+                        WHERE source_id IN ({ent_ph}) OR target_id IN ({ent_ph})
+                        LIMIT ?""",
+                    (*entity_ids, *entity_ids, limit),
+                ).fetchall()
+            for r in edge_rows:
+                if r["source_id"] in seen and r["target_id"] in seen:
+                    edges.append({
+                        "source": r["source_id"],
+                        "target": r["target_id"],
+                        "label": r["relation"],
+                        "type": r["relation"],
+                    })
+
+        return {
+            "nodes": nodes[:limit],
+            "edges": edges[:limit],
+            "node_count": len(nodes),
+            "edge_count": len(edges),
+        }
+
+    def list_entities(
+        self,
+        kind: str | None = None,
+        limit: int = 200,
+    ) -> list[dict]:
+        """Return all entities with mention counts, most-mentioned first."""
+        q = """SELECT e.*,
+                      COUNT(r.id) AS mention_count
+               FROM entities e
+               LEFT JOIN relationships r ON r.source_id = e.id AND r.kind='MENTIONS'
+               WHERE 1=1"""
+        args: list = []
+        if kind:
+            q += " AND e.kind=?"
+            args.append(kind)
+        q += " GROUP BY e.id ORDER BY mention_count DESC LIMIT ?"
+        args.append(min(limit, 1000))
+        with self._lock:
+            rows = self._conn.execute(q, args).fetchall()
+        result = []
+        for row in rows:
+            d = dict(row)
+            d["meta"] = _jload(d.get("meta"), {})
+            result.append(d)
+        return result
+
+    # -------------------------------------------------------------------------
     # Knowledge
     # -------------------------------------------------------------------------
 

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useParams, Link, useLocation } from "wouter";
 import { ErrorBoundary } from "@/components/error-boundary";
 import {
@@ -76,6 +76,7 @@ import {
   Brain,
   Star,
   GitBranch,
+  Share2,
 } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -353,6 +354,7 @@ export default function WorkDetail() {
             {[
               { value: "documents",    icon: FileText,      label: "Documents",    badge: null },
               { value: "knowledge",    icon: Network,       label: "Knowledge",    badge: null },
+              { value: "graph",        icon: Share2,        label: "Graph",        badge: null },
               { value: "completeness", icon: BarChart2,     label: "Completeness", badge: null },
               { value: "gaps",         icon: AlertTriangle, label: "Gaps",         badge: null },
               { value: "tasks",        icon: CheckSquare,   label: "Tasks",        badge: pendingTaskCount ?? null },
@@ -379,6 +381,7 @@ export default function WorkDetail() {
           <div className="mt-8">
             <TabsContent value="documents"><ErrorBoundary label="documents tab"><DocumentsTab workId={workId!} /></ErrorBoundary></TabsContent>
             <TabsContent value="knowledge"><ErrorBoundary label="knowledge tab"><KnowledgeTab workId={workId!} /></ErrorBoundary></TabsContent>
+            <TabsContent value="graph"><ErrorBoundary label="graph tab"><GraphTab workId={workId!} /></ErrorBoundary></TabsContent>
             <TabsContent value="completeness"><ErrorBoundary label="completeness tab"><CompletenessTab workId={workId!} /></ErrorBoundary></TabsContent>
             <TabsContent value="gaps"><ErrorBoundary label="gaps tab"><GapsTab workId={workId!} /></ErrorBoundary></TabsContent>
             <TabsContent value="tasks"><ErrorBoundary label="tasks tab"><TasksTab workId={workId!} /></ErrorBoundary></TabsContent>
@@ -2042,6 +2045,345 @@ function LearnTab({ workId }: { workId: string }) {
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── Graph tab ────────────────────────────────────────────────────────────────
+
+const API_BASE_GRAPH = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
+
+interface GNode {
+  id: string;
+  label: string;
+  type: string;
+  kind: string;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+}
+interface GEdge { source: string; target: string; label: string; type: string }
+
+const NODE_COLORS: Record<string, string> = {
+  person:    "#6366f1",
+  place:     "#10b981",
+  concept:   "#8b5cf6",
+  theme:     "#f59e0b",
+  scripture: "#ef4444",
+  document:  "#64748b",
+  file:      "#64748b",
+  pdf:       "#94a3b8",
+  default:   "#a855f7",
+};
+
+function gNodeColor(n: GNode): string {
+  if (n.type === "document") return NODE_COLORS.document;
+  return NODE_COLORS[n.kind] ?? NODE_COLORS.default;
+}
+
+function GraphTab({ workId }: { workId: string }) {
+  const svgRef = useRef<SVGSVGElement>(null);
+  const nodesRef = useRef<GNode[]>([]);
+  const frameRef = useRef<number>(0);
+  const panRef = useRef<{ px: number; py: number; tx: number; ty: number } | null>(null);
+  const [dims, setDims] = useState({ w: 900, h: 480 });
+  const [simNodes, setSimNodes] = useState<GNode[]>([]);
+  const [selected, setSelected] = useState<GNode | null>(null);
+  const [transform, setTransform] = useState({ x: 0, y: 0, scale: 1 });
+  const [dragging, setDragging] = useState<string | null>(null);
+
+  const { data: graphData, isLoading, error } = useQuery({
+    queryKey: ["workGraph", workId],
+    queryFn: async () => {
+      const r = await apiFetch(`${API_BASE_GRAPH}/works/${workId}/graph?limit=150`);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return r.json() as Promise<{ nodes: any[]; edges: any[]; node_count: number; edge_count: number }>;
+    },
+    staleTime: 30_000,
+  });
+
+  // Measure container width
+  useEffect(() => {
+    const parent = svgRef.current?.parentElement;
+    if (!parent) return;
+    const ro = new ResizeObserver(([e]) => {
+      setDims({ w: e.contentRect.width || 900, h: 480 });
+    });
+    ro.observe(parent);
+    return () => ro.disconnect();
+  }, []);
+
+  // Initialise simulation nodes when graph data arrives
+  useEffect(() => {
+    if (!graphData?.nodes?.length) return;
+    const cx = dims.w / 2, cy = dims.h / 2;
+    const count = graphData.nodes.length;
+    const init: GNode[] = graphData.nodes.map((n: any, i: number) => ({
+      id: n.id,
+      label: n.label,
+      type: n.type ?? "entity",
+      kind: n.kind ?? "concept",
+      x: cx + Math.cos((i / count) * Math.PI * 2) * 180,
+      y: cy + Math.sin((i / count) * Math.PI * 2) * 180,
+      vx: (Math.random() - 0.5) * 2,
+      vy: (Math.random() - 0.5) * 2,
+    }));
+    nodesRef.current = init;
+    setSimNodes([...init]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [graphData?.nodes?.length, dims.w]);
+
+  // Physics loop
+  useEffect(() => {
+    if (!nodesRef.current.length) return;
+    const edges: GEdge[] = (graphData?.edges ?? []) as GEdge[];
+    const REPULSE = 4000, SPRING = 0.035, SPRING_LEN = 130, DAMP = 0.80, GRAVITY = 0.007;
+    let active = true;
+
+    const tick = () => {
+      if (!active) return;
+      const ns = nodesRef.current;
+      const cx = dims.w / 2, cy = dims.h / 2;
+
+      for (let i = 0; i < ns.length; i++) {
+        const a = ns[i];
+        // Gravity to center
+        a.vx += (cx - a.x) * GRAVITY;
+        a.vy += (cy - a.y) * GRAVITY;
+        // Repulsion
+        for (let j = i + 1; j < ns.length; j++) {
+          const b = ns[j];
+          const dx = a.x - b.x, dy = a.y - b.y;
+          const d2 = dx * dx + dy * dy + 1;
+          const d = Math.sqrt(d2);
+          const f = REPULSE / d2;
+          a.vx += (dx / d) * f; a.vy += (dy / d) * f;
+          b.vx -= (dx / d) * f; b.vy -= (dy / d) * f;
+        }
+      }
+
+      // Spring forces for edges
+      for (const e of edges) {
+        const s = ns.find(n => n.id === e.source);
+        const t = ns.find(n => n.id === e.target);
+        if (!s || !t) continue;
+        const dx = t.x - s.x, dy = t.y - s.y;
+        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+        const f = (dist - SPRING_LEN) * SPRING;
+        s.vx += (dx / dist) * f; s.vy += (dy / dist) * f;
+        t.vx -= (dx / dist) * f; t.vy -= (dy / dist) * f;
+      }
+
+      // Integrate positions
+      for (const n of ns) {
+        n.vx *= DAMP; n.vy *= DAMP;
+        n.x += n.vx; n.y += n.vy;
+        n.x = Math.max(18, Math.min(dims.w - 18, n.x));
+        n.y = Math.max(18, Math.min(dims.h - 18, n.y));
+      }
+
+      setSimNodes([...ns]);
+      frameRef.current = requestAnimationFrame(tick);
+    };
+
+    frameRef.current = requestAnimationFrame(tick);
+    return () => { active = false; cancelAnimationFrame(frameRef.current); };
+  }, [graphData?.edges, nodesRef.current.length, dims.w, dims.h]);
+
+  const edges: GEdge[] = (graphData?.edges ?? []) as GEdge[];
+
+  const handleMouseDown = (e: React.MouseEvent<SVGSVGElement>) => {
+    if ((e.target as Element).closest(".gn")) return;
+    panRef.current = { px: e.clientX, py: e.clientY, tx: transform.x, ty: transform.y };
+  };
+  const handleMouseMove = (e: React.MouseEvent<SVGSVGElement>) => {
+    if (panRef.current) {
+      setTransform(t => ({ ...t, x: panRef.current!.tx + (e.clientX - panRef.current!.px), y: panRef.current!.ty + (e.clientY - panRef.current!.py) }));
+    }
+    if (dragging) {
+      const rect = svgRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const x = (e.clientX - rect.left - transform.x) / transform.scale;
+      const y = (e.clientY - rect.top - transform.y) / transform.scale;
+      const n = nodesRef.current.find(n => n.id === dragging);
+      if (n) { n.x = x; n.y = y; n.vx = 0; n.vy = 0; }
+    }
+  };
+  const handleMouseUp = () => { panRef.current = null; setDragging(null); };
+  const handleWheel = (e: React.WheelEvent<SVGSVGElement>) => {
+    e.preventDefault();
+    setTransform(t => ({ ...t, scale: Math.max(0.2, Math.min(4, t.scale * (e.deltaY > 0 ? 0.9 : 1.1))) }));
+  };
+
+  if (isLoading) return (
+    <div className="flex items-center justify-center py-32 gap-3 text-muted-foreground">
+      <Loader2 className="w-5 h-5 animate-spin" /> Building graph…
+    </div>
+  );
+  if (error) return (
+    <div className="flex items-center justify-center py-32 text-destructive text-sm">
+      Failed to load graph — {String(error)}
+    </div>
+  );
+  if (!graphData?.nodes?.length) return (
+    <div className="flex flex-col items-center justify-center py-24 gap-4">
+      <div className="w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center">
+        <Share2 className="w-8 h-8 text-primary" />
+      </div>
+      <div className="text-center space-y-1 max-w-sm">
+        <h3 className="font-serif text-xl font-medium">No entities yet</h3>
+        <p className="text-sm text-muted-foreground">
+          Import and process documents — entities and their connections will
+          appear here as the knowledge pipeline extracts them.
+        </p>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="space-y-4">
+      <div className="flex gap-6 text-xs text-muted-foreground font-mono">
+        <span><strong className="text-foreground">{graphData.node_count}</strong> nodes</span>
+        <span><strong className="text-foreground">{graphData.edge_count}</strong> edges</span>
+        <span className="ml-auto hidden sm:block">Scroll to zoom · drag canvas to pan · click node for details</span>
+      </div>
+
+      <div className="flex gap-4">
+        {/* Canvas */}
+        <div className="flex-1 border border-border/50 rounded-lg overflow-hidden bg-background/30" style={{ height: 480 }}>
+          <svg
+            ref={svgRef}
+            width="100%" height="100%"
+            className="select-none cursor-grab active:cursor-grabbing"
+            onMouseDown={handleMouseDown}
+            onMouseMove={handleMouseMove}
+            onMouseUp={handleMouseUp}
+            onMouseLeave={handleMouseUp}
+            onWheel={handleWheel}
+          >
+            <defs>
+              <marker id="gr-arrow" viewBox="0 0 10 10" refX="20" refY="5"
+                markerWidth="5" markerHeight="5" orient="auto">
+                <path d="M0 0 L10 5 L0 10z" fill="#6366f1" opacity="0.6" />
+              </marker>
+            </defs>
+            <g transform={`translate(${transform.x},${transform.y}) scale(${transform.scale})`}>
+              {/* Edges */}
+              {edges.map((e, i) => {
+                const s = simNodes.find(n => n.id === e.source);
+                const t = simNodes.find(n => n.id === e.target);
+                if (!s || !t) return null;
+                const isMention = e.type === "MENTIONS";
+                return (
+                  <g key={i}>
+                    <line x1={s.x} y1={s.y} x2={t.x} y2={t.y}
+                      stroke={isMention ? "#94a3b8" : "#6366f1"}
+                      strokeWidth={isMention ? 0.7 : 1.4}
+                      strokeOpacity={isMention ? 0.4 : 0.65}
+                      strokeDasharray={isMention ? "4 3" : undefined}
+                      markerEnd={!isMention ? "url(#gr-arrow)" : undefined}
+                    />
+                    {!isMention && (
+                      <text x={(s.x + t.x) / 2} y={(s.y + t.y) / 2 - 5}
+                        fontSize="8" fill="#94a3b8" textAnchor="middle"
+                        style={{ pointerEvents: "none" }}>
+                        {e.label?.length > 22 ? e.label.slice(0, 20) + "…" : e.label}
+                      </text>
+                    )}
+                  </g>
+                );
+              })}
+
+              {/* Nodes */}
+              {simNodes.map(n => {
+                const isDoc = n.type === "document";
+                const r = isDoc ? 10 : 8;
+                const col = gNodeColor(n);
+                const isSel = selected?.id === n.id;
+                return (
+                  <g key={n.id} className="gn"
+                    style={{ cursor: "pointer" }}
+                    transform={`translate(${n.x},${n.y})`}
+                    onClick={() => setSelected(prev => prev?.id === n.id ? null : n)}
+                    onMouseDown={ev => { ev.stopPropagation(); setDragging(n.id); }}
+                  >
+                    {isDoc
+                      ? <rect x={-r} y={-r} width={r * 2} height={r * 2} rx={2}
+                          fill={col} fillOpacity={isSel ? 1 : 0.8}
+                          stroke={isSel ? "#fff" : "none"} strokeWidth={2} />
+                      : <circle r={r} fill={col} fillOpacity={isSel ? 1 : 0.8}
+                          stroke={isSel ? "#fff" : "none"} strokeWidth={2} />
+                    }
+                    <text dy="1.9em" fontSize="9" fill="#94a3b8"
+                      textAnchor="middle" style={{ pointerEvents: "none" }}>
+                      {n.label.length > 16 ? n.label.slice(0, 14) + "…" : n.label}
+                    </text>
+                  </g>
+                );
+              })}
+            </g>
+          </svg>
+        </div>
+
+        {/* Detail panel */}
+        {selected && (
+          <div className="w-52 border border-border/50 rounded-lg p-4 space-y-3 text-sm shrink-0">
+            <div className="flex items-start justify-between gap-1">
+              <span className="font-medium text-foreground break-words leading-snug">{selected.label}</span>
+              <button onClick={() => setSelected(null)} className="text-muted-foreground hover:text-foreground shrink-0 mt-0.5">
+                <X className="w-3 h-3" />
+              </button>
+            </div>
+            <div className="flex gap-1.5 flex-wrap">
+              <Badge variant="outline" className="text-[10px] font-mono uppercase">{selected.type}</Badge>
+              {selected.kind && selected.kind !== selected.type && (
+                <Badge variant="outline" className="text-[10px] font-mono">{selected.kind}</Badge>
+              )}
+            </div>
+            <div className="space-y-1">
+              <p className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Connections</p>
+              {edges
+                .filter(e => e.source === selected.id || e.target === selected.id)
+                .slice(0, 8)
+                .map((e, i) => {
+                  const otherId = e.source === selected.id ? e.target : e.source;
+                  const other = simNodes.find(n => n.id === otherId);
+                  return (
+                    <button key={i}
+                      className="flex items-center gap-1.5 text-left text-xs text-muted-foreground hover:text-foreground w-full"
+                      onClick={() => setSelected(other ?? null)}
+                    >
+                      <ChevronRight className="w-3 h-3 shrink-0" />
+                      <span className="truncate">{other?.label ?? otherId}</span>
+                    </button>
+                  );
+              })}
+              {edges.filter(e => e.source === selected.id || e.target === selected.id).length === 0 && (
+                <p className="text-xs text-muted-foreground italic">No connections</p>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Legend */}
+      <div className="flex gap-4 flex-wrap text-xs text-muted-foreground">
+        {([
+          { kind: "concept",   label: "Concept" },
+          { kind: "person",    label: "Person" },
+          { kind: "place",     label: "Place" },
+          { kind: "theme",     label: "Theme" },
+          { kind: "scripture", label: "Scripture" },
+          { kind: "document",  label: "Document" },
+        ] as const).map(({ kind, label }) => (
+          <span key={kind} className="flex items-center gap-1">
+            <span className="w-2.5 h-2.5 rounded-full inline-block shrink-0"
+              style={{ background: NODE_COLORS[kind] }} />
+            {label}
+          </span>
+        ))}
+      </div>
     </div>
   );
 }

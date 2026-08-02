@@ -108,6 +108,49 @@ paths:
                 properties:
                   work: { $ref: "#/components/schemas/Work" }
 
+  # ─── Entities ─────────────────────────────────────────────────────────────
+  /entities:
+    get:
+      operationId: listEntities
+      summary: List all entities with mention counts
+      tags: [entities]
+      parameters:
+        - name: kind
+          in: query
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 200 }
+      responses:
+        "200":
+          description: Entity list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  entities: { type: array, items: { $ref: "#/components/schemas/Entity" } }
+                  count: { type: integer }
+
+  /entities/{entityId}:
+    get:
+      operationId: getEntity
+      summary: Get a single entity with its mention list
+      tags: [entities]
+      parameters:
+        - name: entityId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Entity with mentions
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EntityDetail" }
+        "404":
+          description: Not found
+
   /works/{workId}:
     get:
       operationId: getWork
@@ -286,6 +329,28 @@ paths:
                 type: object
                 properties:
                   task: { $ref: "#/components/schemas/Task" }
+
+  /works/{workId}/graph:
+    get:
+      operationId: getWorkGraph
+      summary: Entity graph nodes and edges for a Work
+      tags: [works]
+      parameters:
+        - name: workId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 100 }
+      responses:
+        "200":
+          description: Work entity graph
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkGraph" }
+        "404":
+          description: Work not found
 
   /works/{workId}/stats:
     get:
@@ -1342,6 +1407,58 @@ components:
         resolved: { type: integer }
         resolution: { type: string, nullable: true }
         created_at: { type: string }
+
+    Entity:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        kind: { type: string }
+        canonical: { type: integer }
+        aliases: { type: string }
+        meta: { type: object }
+        created_at: { type: string }
+        mention_count: { type: integer }
+
+    EntityDetail:
+      allOf:
+        - $ref: "#/components/schemas/Entity"
+        - type: object
+          properties:
+            mentions:
+              type: array
+              items:
+                type: object
+                properties:
+                  id: { type: string }
+                  title: { type: string }
+                  kind: { type: string }
+                  work_id: { type: string, nullable: true }
+
+    GraphNode:
+      type: object
+      properties:
+        id: { type: string }
+        label: { type: string }
+        type: { type: string, description: "entity | document" }
+        kind: { type: string, description: "person | place | concept | theme | document | etc." }
+
+    GraphEdge:
+      type: object
+      properties:
+        source: { type: string }
+        target: { type: string }
+        label: { type: string }
+        type: { type: string }
+
+    WorkGraph:
+      type: object
+      properties:
+        work_id: { type: string }
+        nodes: { type: array, items: { $ref: "#/components/schemas/GraphNode" } }
+        edges: { type: array, items: { $ref: "#/components/schemas/GraphEdge" } }
+        node_count: { type: integer }
+        edge_count: { type: integer }
 
     OkResponse:
       type: object

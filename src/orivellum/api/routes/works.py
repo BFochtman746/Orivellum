@@ -317,57 +317,56 @@ def get_compass(work_id: str):
     return {"work_id": work_id, "compass": compass}
 
 
+@router.get("/entities")
+def list_entities(kind: str | None = None, limit: int = 200):
+    """Return all entities across the workspace with mention counts."""
+    db = get_db()
+    entities = db.list_entities(kind=kind, limit=min(limit, 1000))
+    return {"entities": entities, "count": len(entities)}
+
+
+@router.get("/entities/{entity_id}")
+def get_entity(entity_id: str):
+    """Return a single entity with its document mention list."""
+    db = get_db()
+    with db._lock:
+        row = db._conn.execute(
+            "SELECT * FROM entities WHERE id=?", (entity_id,)
+        ).fetchone()
+    if not row:
+        raise HTTPException(404, f"Entity {entity_id!r} not found")
+    import json as _json
+    entity = dict(row)
+    try:
+        entity["meta"] = _json.loads(entity.get("meta") or "{}")
+    except Exception:
+        entity["meta"] = {}
+    with db._lock:
+        mention_rows = db._conn.execute(
+            """SELECT d.id, d.title, d.kind, d.work_id
+               FROM relationships r
+               JOIN documents d ON d.id = r.target_id
+               WHERE r.source_id=? AND r.kind='MENTIONS'
+               LIMIT 50""",
+            (entity_id,),
+        ).fetchall()
+    entity["mentions"] = [dict(r) for r in mention_rows]
+    entity["mention_count"] = len(entity["mentions"])
+    return entity
+
+
 @router.get("/works/{work_id}/graph")
-def works_graph(work_id: str, limit: int = 50):
+def works_graph(work_id: str, limit: int = 100):
     """Return entity graph nodes and edges for a Work.
 
-    Entities are sourced from knowledge items (kind=entity or relationship).
-    This is a lightweight projection — not a full knowledge graph extraction.
+    Uses real entity/edge tables when populated, falls back to a
+    knowledge-item projection for works processed before graph support.
     """
     db = get_db()
     if not db.get_work(work_id):
         raise HTTPException(404, f"Work {work_id!r} not found")
-
-    with db._lock:
-        # Source entities from knowledge items
-        kn_rows = db._conn.execute(
-            """SELECT id, kind, text, subject, predicate, object, confidence
-               FROM knowledge WHERE work_id=? AND kind IN ('entity','relationship') LIMIT ?""",
-            (work_id, limit * 2),
-        ).fetchall()
-
-    nodes: list[dict] = []
-    edges: list[dict] = []
-    seen_nodes: set[str] = set()
-
-    for row in kn_rows:
-        r = dict(row)
-        if r["kind"] == "entity" and r["text"]:
-            key = r["text"].lower()
-            if key not in seen_nodes:
-                seen_nodes.add(key)
-                nodes.append({"id": r["id"], "label": r["text"], "type": "entity"})
-        elif r["kind"] == "relationship" and r["subject"] and r["object"]:
-            # Create nodes for subject and object if not already present
-            for label in (r["subject"], r["object"]):
-                key = label.lower()
-                if key not in seen_nodes:
-                    seen_nodes.add(key)
-                    nodes.append({"id": f"auto-{key}", "label": label, "type": "concept"})
-            edges.append({
-                "source": f"auto-{r['subject'].lower()}",
-                "target": f"auto-{r['object'].lower()}",
-                "label": r["predicate"] or "relates to",
-                "confidence": r["confidence"],
-            })
-
-    return {
-        "work_id": work_id,
-        "nodes": nodes[:limit],
-        "edges": edges[:limit],
-        "node_count": len(nodes),
-        "edge_count": len(edges),
-    }
+    graph = db.get_work_graph(work_id, limit=min(limit, 200))
+    return {"work_id": work_id, **graph}
 
 
 @router.get("/works/{work_id}/gaps")

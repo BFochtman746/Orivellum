@@ -151,6 +151,61 @@ export const CreateWorkResponse = zod.object({
 
 
 /**
+ * @summary List all entities with mention counts
+ */
+export const listEntitiesQueryLimitDefault = 200;
+
+export const ListEntitiesQueryParams = zod.object({
+  "kind": zod.coerce.string().optional(),
+  "limit": zod.coerce.number().int().default(listEntitiesQueryLimitDefault)
+})
+
+export const ListEntitiesResponse = zod.object({
+  "entities": zod.array(zod.object({
+  "id": zod.string().optional(),
+  "name": zod.string().optional(),
+  "kind": zod.string().optional(),
+  "canonical": zod.int().optional(),
+  "aliases": zod.string().optional(),
+  "meta": zod.looseObject({
+
+}).optional(),
+  "created_at": zod.string().optional(),
+  "mention_count": zod.int().optional()
+})).optional(),
+  "count": zod.int().optional()
+})
+
+
+/**
+ * @summary Get a single entity with its mention list
+ */
+export const GetEntityParams = zod.object({
+  "entityId": zod.coerce.string()
+})
+
+export const GetEntityResponse = zod.object({
+  "id": zod.string().optional(),
+  "name": zod.string().optional(),
+  "kind": zod.string().optional(),
+  "canonical": zod.int().optional(),
+  "aliases": zod.string().optional(),
+  "meta": zod.looseObject({
+
+}).optional(),
+  "created_at": zod.string().optional(),
+  "mention_count": zod.int().optional()
+}).and(zod.object({
+  "mentions": zod.array(zod.object({
+  "id": zod.string().optional(),
+  "title": zod.string().optional(),
+  "kind": zod.string().optional(),
+  "work_id": zod.string().nullish()
+})).optional()
+}))
+
+
+/**
  * @summary Get a Work by ID
  */
 export const GetWorkParams = zod.object({
@@ -352,6 +407,38 @@ export const CreateWorkTaskResponse = zod.object({
   "priority": zod.int().optional(),
   "created_at": zod.string().optional()
 }).optional()
+})
+
+
+/**
+ * @summary Entity graph nodes and edges for a Work
+ */
+export const GetWorkGraphParams = zod.object({
+  "workId": zod.coerce.string()
+})
+
+export const getWorkGraphQueryLimitDefault = 100;
+
+export const GetWorkGraphQueryParams = zod.object({
+  "limit": zod.coerce.number().int().default(getWorkGraphQueryLimitDefault)
+})
+
+export const GetWorkGraphResponse = zod.object({
+  "work_id": zod.string().optional(),
+  "nodes": zod.array(zod.object({
+  "id": zod.string().optional(),
+  "label": zod.string().optional(),
+  "type": zod.string().optional().describe('entity | document'),
+  "kind": zod.string().optional().describe('person | place | concept | theme | document | etc.')
+})).optional(),
+  "edges": zod.array(zod.object({
+  "source": zod.string().optional(),
+  "target": zod.string().optional(),
+  "label": zod.string().optional(),
+  "type": zod.string().optional()
+})).optional(),
+  "node_count": zod.int().optional(),
+  "edge_count": zod.int().optional()
 })
 
 

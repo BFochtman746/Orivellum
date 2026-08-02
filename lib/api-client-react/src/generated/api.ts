@@ -31,6 +31,7 @@ import type {
   DashboardSummary,
   DeleteDocument200,
   DeleteKnowledgeItem200,
+  EntityDetail,
   FileList,
   GetConversation200,
   GetDashboardActivity200,
@@ -40,6 +41,7 @@ import type {
   GetWork200,
   GetWorkConversations200,
   GetWorkDocuments200,
+  GetWorkGraphParams,
   GetWorkKnowledge200,
   GetWorkKnowledgeParams,
   GetWorkTasks200,
@@ -54,6 +56,8 @@ import type {
   ListConversationsParams,
   ListDuplicates200,
   ListDuplicatesParams,
+  ListEntities200,
+  ListEntitiesParams,
   ListFilesParams,
   ListKnowledge200,
   ListKnowledgeParams,
@@ -91,6 +95,7 @@ import type {
   UploadResponse,
   VerifyBackup200,
   WorkCreate,
+  WorkGraph,
   WorkStats,
   WorkUpdate
 } from './api.schemas';
@@ -591,6 +596,167 @@ export const useCreateWork = <TError = ErrorType<unknown>,
       > => {
       return useMutation(getCreateWorkMutationOptions(options));
     }
+
+export const getListEntitiesUrl = (params?: ListEntitiesParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/entities?${stringifiedParams}` : `/api/entities`
+}
+
+/**
+ * @summary List all entities with mention counts
+ */
+export const listEntities = async (params?: ListEntitiesParams, options?: Parameters<typeof customFetch>[1]): Promise<ListEntities200> => {
+
+  return customFetch<ListEntities200>(getListEntitiesUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListEntitiesQueryKey = (params?: ListEntitiesParams,) => {
+    return [
+    `/api/entities`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getListEntitiesQueryOptions = <TData = Awaited<ReturnType<typeof listEntities>>, TError = ErrorType<unknown>>(params?: ListEntitiesParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listEntities>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListEntitiesQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listEntities>>> = ({ signal }) => listEntities(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listEntities>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListEntitiesQueryResult = NonNullable<Awaited<ReturnType<typeof listEntities>>>
+export type ListEntitiesQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary List all entities with mention counts
+ */
+
+export function useListEntities<TData = Awaited<ReturnType<typeof listEntities>>, TError = ErrorType<unknown>>(
+ params?: ListEntitiesParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listEntities>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListEntitiesQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetEntityUrl = (entityId: string,) => {
+
+
+
+
+  return `/api/entities/${entityId}`
+}
+
+/**
+ * @summary Get a single entity with its mention list
+ */
+export const getEntity = async (entityId: string, options?: Parameters<typeof customFetch>[1]): Promise<EntityDetail> => {
+
+  return customFetch<EntityDetail>(getGetEntityUrl(entityId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetEntityQueryKey = (entityId: string,) => {
+    return [
+    `/api/entities/${entityId}`
+    ] as const;
+    }
+
+
+export const getGetEntityQueryOptions = <TData = Awaited<ReturnType<typeof getEntity>>, TError = ErrorType<void>>(entityId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getEntity>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetEntityQueryKey(entityId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getEntity>>> = ({ signal }) => getEntity(entityId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: entityId !== null && entityId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getEntity>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetEntityQueryResult = NonNullable<Awaited<ReturnType<typeof getEntity>>>
+export type GetEntityQueryError = ErrorType<void>
+
+
+/**
+ * @summary Get a single entity with its mention list
+ */
+
+export function useGetEntity<TData = Awaited<ReturnType<typeof getEntity>>, TError = ErrorType<void>>(
+ entityId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getEntity>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetEntityQueryOptions(entityId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
 
 export const getGetWorkUrl = (workId: string,) => {
 
@@ -1212,6 +1378,95 @@ export const useCreateWorkTask = <TError = ErrorType<unknown>,
       > => {
       return useMutation(getCreateWorkTaskMutationOptions(options));
     }
+
+export const getGetWorkGraphUrl = (workId: string,
+    params?: GetWorkGraphParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/works/${workId}/graph?${stringifiedParams}` : `/api/works/${workId}/graph`
+}
+
+/**
+ * @summary Entity graph nodes and edges for a Work
+ */
+export const getWorkGraph = async (workId: string,
+    params?: GetWorkGraphParams, options?: Parameters<typeof customFetch>[1]): Promise<WorkGraph> => {
+
+  return customFetch<WorkGraph>(getGetWorkGraphUrl(workId,params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetWorkGraphQueryKey = (workId: string,
+    params?: GetWorkGraphParams,) => {
+    return [
+    `/api/works/${workId}/graph`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetWorkGraphQueryOptions = <TData = Awaited<ReturnType<typeof getWorkGraph>>, TError = ErrorType<void>>(workId: string,
+    params?: GetWorkGraphParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getWorkGraph>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetWorkGraphQueryKey(workId,params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getWorkGraph>>> = ({ signal }) => getWorkGraph(workId,params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: workId !== null && workId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getWorkGraph>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetWorkGraphQueryResult = NonNullable<Awaited<ReturnType<typeof getWorkGraph>>>
+export type GetWorkGraphQueryError = ErrorType<void>
+
+
+/**
+ * @summary Entity graph nodes and edges for a Work
+ */
+
+export function useGetWorkGraph<TData = Awaited<ReturnType<typeof getWorkGraph>>, TError = ErrorType<void>>(
+ workId: string,
+    params?: GetWorkGraphParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getWorkGraph>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetWorkGraphQueryOptions(workId,params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
 
 export const getGetWorkStatsUrl = (workId: string,) => {
 
