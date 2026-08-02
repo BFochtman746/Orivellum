@@ -42,4 +42,5 @@
 - [Nightshift maintenance](orivellum-nightshift-maint.md) — 10-pass nightly runner; vectors table holds chunk AND knowledge types — orphan cleanup must be type-aware; VACUUM under db._lock; sequential recovery worker.
 - [MCOS calibration system](orivellum-mcos.md) — LLM gateway rule (all calls via llm_call/record_llm_call), benchmark suites, run-lifecycle guarantees; Phases 2-5 planned.
 - [Governance review queue](orivellum-review-queue.md) — unified /api/review inbox; namespaced item keys; resolvers must atomically claim (conditional UPDATE/DELETE) before side effects; v54 deferrals.
+- [Read Aloud chunked TTS](orivellum-read-aloud.md) — client chunked TTS needs a session-id guard on every async result, promise-map single-flight, and no autoplay of the first part (iOS Safari).
 - [Bulk reprocess pipeline](orivellum-reprocess-all.md) — POST /library/reprocess-all handles stuck (imported/error/no_text) + ZIP docs in one call; nightshift recovery pass retries stuck non-ZIP docs (max 5/run, >10 min old); stripMarkdown utility at artifacts/mobile/lib/stripMarkdown.ts.
