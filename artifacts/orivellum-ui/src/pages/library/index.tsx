@@ -4,7 +4,6 @@ import { apiFetch } from "@/lib/auth";
 import {
   useListLibrary,
   useSearchLibrary,
-  useImportDocument,
   useDeleteDocument,
   useListWorks,
   getListLibraryQueryKey,
@@ -235,7 +234,6 @@ function ImportDialog({ onSuccess, defaultOpen = false }: ImportDialogProps) {
   const [dragging, setDragging] = useState(false);
   const [uploadPct, setUploadPct] = useState<number | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const importDoc = useImportDocument();
   const [, navigateTo] = useLocation();
   const { data: worksResp } = useListWorks();
 
@@ -248,48 +246,61 @@ function ImportDialog({ onSuccess, defaultOpen = false }: ImportDialogProps) {
     if (f) handleFile(f);
   };
 
-  const handleImport = async () => {
-    if (!file) return;
+  const [uploading, setUploading] = useState(false);
+
+  const handleImport = () => {
+    if (!file || uploading) return;
+    setUploading(true);
     setUploadPct(0);
-    const bytes = await file.arrayBuffer();
-    // Spread-into-String.fromCharCode crashes for large files (stack overflow).
-    // Process in 8 KB chunks instead and report progress.
-    const u8 = new Uint8Array(bytes);
-    const chunkSize = 8192;
-    let binary = "";
-    const total = u8.length;
-    for (let i = 0; i < total; i += chunkSize) {
-      binary += String.fromCharCode(...u8.subarray(i, i + chunkSize));
-      // Yield to the browser every 512 chunks to keep UI responsive
-      if ((i / chunkSize) % 512 === 0 && i > 0) {
-        setUploadPct(Math.round((i / total) * 90));
-        await new Promise((r) => setTimeout(r, 0));
+
+    // Multipart streaming upload — no base64, real upload progress via XHR.
+    const form = new FormData();
+    form.append("file", file, file.name);
+    if (workId) form.append("work_id", workId);
+
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${BASE}/library/upload`);
+    xhr.withCredentials = true; // session-cookie auth
+
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) {
+        setUploadPct(Math.min(99, Math.round((e.loaded / e.total) * 100)));
       }
-    }
-    setUploadPct(92);
-    const b64 = btoa(binary);
-    setUploadPct(95);
-    importDoc.mutate(
-      { data: { filename: file.name, content_b64: b64, work_id: workId || undefined } },
-      {
-        onSuccess: (res) => {
-          setUploadPct(100);
-          onSuccess();
-          setOpen(false);
-          setFile(null);
-          setWorkId("");
-          setUploadPct(null);
-          if ((res as any).duplicate) {
-            toast.info(`${file.name} already exists — opening existing document`);
-            const existingId = (res as any).document?.id;
-            if (existingId) navigateTo(`/library/${existingId}`);
-          } else {
-            toast.success(`${file.name} imported — extraction running`);
-          }
-        },
-        onError: () => { setUploadPct(null); toast.error("Import failed"); },
+    };
+
+    xhr.onload = () => {
+      setUploading(false);
+      if (xhr.status < 200 || xhr.status >= 300) {
+        setUploadPct(null);
+        let detail = `HTTP ${xhr.status}`;
+        try { detail = JSON.parse(xhr.responseText)?.detail ?? detail; } catch {}
+        toast.error(`Import failed: ${detail}`);
+        return;
       }
-    );
+      let res: any = {};
+      try { res = JSON.parse(xhr.responseText); } catch {}
+      setUploadPct(100);
+      onSuccess();
+      setOpen(false);
+      setFile(null);
+      setWorkId("");
+      setUploadPct(null);
+      if (res.duplicate) {
+        toast.info(`${file.name} already exists — opening existing document`);
+        const existingId = res.document?.id;
+        if (existingId) navigateTo(`/library/${existingId}`);
+      } else {
+        toast.success(`${file.name} imported — extraction running`);
+      }
+    };
+
+    xhr.onerror = () => {
+      setUploading(false);
+      setUploadPct(null);
+      toast.error("Import failed — network error");
+    };
+
+    xhr.send(form);
   };
 
   return (
@@ -377,7 +388,7 @@ function ImportDialog({ onSuccess, defaultOpen = false }: ImportDialogProps) {
         {uploadPct !== null && (
           <div className="space-y-1.5">
             <div className="flex items-center justify-between text-xs font-mono text-muted-foreground">
-              <span>{uploadPct < 95 ? "Preparing file…" : uploadPct < 100 ? "Uploading…" : "Done"}</span>
+              <span>{uploadPct < 100 ? "Uploading…" : "Done"}</span>
               <span>{uploadPct}%</span>
             </div>
             <div className="h-1.5 w-full rounded-full bg-secondary overflow-hidden">
@@ -390,12 +401,12 @@ function ImportDialog({ onSuccess, defaultOpen = false }: ImportDialogProps) {
         )}
 
         <DialogFooter>
-          <Button variant="outline" onClick={() => setOpen(false)} disabled={importDoc.isPending}>Cancel</Button>
+          <Button variant="outline" onClick={() => setOpen(false)} disabled={uploading}>Cancel</Button>
           <Button
             onClick={handleImport}
-            disabled={!file || importDoc.isPending}
+            disabled={!file || uploading}
           >
-            {importDoc.isPending ? "Importing…" : "Import"}
+            {uploading ? "Importing…" : "Import"}
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -222,9 +222,14 @@ def create_app() -> FastAPI:
         return await call_next(request)
 
     # ── Request size limit ────────────────────────────────────────────────────
+    # Routes that stream the body to disk (multipart upload) are exempt from the
+    # in-RAM body limit — their practical ceiling is disk space, not memory.
+    _BODY_LIMIT_EXEMPT = frozenset({"/api/library/upload"})
+
     @app.middleware("http")
     async def limit_body_size(request: Request, call_next):
-        if request.headers.get("content-length"):
+        if (request.headers.get("content-length")
+                and request.url.path not in _BODY_LIMIT_EXEMPT):
             try:
                 cfg = _deps.get_config()
                 size = int(request.headers["content-length"])

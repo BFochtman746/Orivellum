@@ -11,7 +11,7 @@ from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, Body, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Body, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 
 from orivellum.api._deps import get_db, get_config
@@ -376,25 +376,23 @@ def library_chunks(doc_id: str):
     return {"chunks": [dict(r) for r in rows], "count": len(rows)}
 
 
-@router.post("/library/import")
-def library_import(body: LibraryImport, background_tasks: BackgroundTasks):
-    db = get_db()
-    # Validate and decode
-    try:
-        data = base64.b64decode(body.content_b64, validate=True)
-    except Exception:
-        raise HTTPException(400, "content_b64 is not valid base64")
+def _ingest_file(
+    db,
+    background_tasks: BackgroundTasks,
+    *,
+    tmp_path: Path,
+    name: str,
+    sha256: str,
+    work_id: str | None,
+    meta: dict[str, Any],
+    force: bool,
+) -> dict:
+    """Shared ingestion for both the base64 and multipart import paths.
 
-    name = Path(body.filename).name
-    if not name or name.startswith("."):
-        raise HTTPException(400, f"Bad filename: {body.filename!r}")
-
-    if body.work_id:
-        if not db.get_work(body.work_id):
-            raise HTTPException(404, f"Work {body.work_id!r} not found")
-
-    # SHA-256 dedup
-    sha256 = hashlib.sha256(data).hexdigest()
+    ``tmp_path`` holds the uploaded bytes on disk. On the duplicate path the
+    temp file is deleted; otherwise it is moved into the library tree.
+    Returns the JSON-serialisable response body.
+    """
     with db._lock:
         existing = db._conn.execute(
             "SELECT id FROM documents WHERE sha256=?", (sha256,)
@@ -406,7 +404,10 @@ def library_import(body: LibraryImport, background_tasks: BackgroundTasks):
 
         # If force=True, re-queue regardless of current readiness (including ready).
         # If NOT forced, only re-queue when the doc is in a failed state.
-        should_requeue = body.force or (readiness in _FAILED)
+        # Temp file no longer needed — the stored copy is used.
+        tmp_path.unlink(missing_ok=True)
+
+        should_requeue = force or (readiness in _FAILED)
         if should_requeue:
             content_path = doc.get("content_path")
             lib_root = _library_root()
@@ -423,14 +424,14 @@ def library_import(body: LibraryImport, background_tasks: BackgroundTasks):
                 if kind in _EXTRACTABLE:
                     logger.info(
                         "Re-queuing extraction for duplicate doc=%s kind=%s (force=%s readiness_was=%s)",
-                        doc["id"], kind, body.force, readiness,
+                        doc["id"], kind, force, readiness,
                     )
                     background_tasks.add_task(
                         process_document,
                         doc_id=doc["id"],
                         file_path=str(file_path_existing),
                         kind=kind,
-                        work_id=doc.get("work_id") or body.work_id,
+                        work_id=doc.get("work_id") or work_id,
                         title=doc.get("title", name),
                         db=db,
                     )
@@ -458,17 +459,48 @@ def library_import(body: LibraryImport, background_tasks: BackgroundTasks):
     dest = lib_root / sha256[:2] / sha256[2:4]
     dest.mkdir(parents=True, exist_ok=True)
     file_path = dest / name
-    file_path.write_bytes(data)
+    # Different-content files can share a shard dir + filename; never overwrite
+    # another document's stored bytes — disambiguate with a sha prefix.
+    if file_path.exists():
+        file_path = dest / f"{sha256[:12]}_{name}"
+    # Move (rename when possible) instead of rewriting — the bytes are already
+    # on disk in the temp file, so no second copy is held in RAM.
+    import shutil as _shutil
+    _shutil.move(str(tmp_path), str(file_path))
 
-    doc = db.create_document(
-        title=name,
-        source=str(file_path),
-        sha256=sha256,
-        kind=kind,
-        work_id=body.work_id,
-        content_path=str(file_path.relative_to(lib_root)),
-        meta=body.meta,
-    )
+    import sqlite3 as _sqlite3
+    try:
+        doc = db.create_document(
+            title=name,
+            source=str(file_path),
+            sha256=sha256,
+            kind=kind,
+            work_id=work_id,
+            content_path=str(file_path.relative_to(lib_root)),
+            meta=meta,
+        )
+    except _sqlite3.IntegrityError:
+        # A concurrent identical upload won the race on the unique sha256
+        # constraint. Keep the winner's record; drop our copy if it is a
+        # different file on disk, then respond as a duplicate.
+        with db._lock:
+            row = db._conn.execute(
+                "SELECT id, content_path FROM documents WHERE sha256=?", (sha256,)
+            ).fetchone()
+        if not row:
+            file_path.unlink(missing_ok=True)
+            raise
+        winner_path = (lib_root / row["content_path"]) if row["content_path"] else None
+        if winner_path is None or file_path.resolve() != winner_path.resolve():
+            file_path.unlink(missing_ok=True)
+        doc = db.get_document(row["id"])
+        doc["warnings"] = []
+        return {
+            "document": doc,
+            "duplicate": True,
+            "readiness": doc.get("readiness"),
+            "warnings": [],
+        }
 
     # Fire extraction + chunking + knowledge harvest in the background.
     # BackgroundTasks runs after the response is sent — safe with SQLite WAL mode.
@@ -481,16 +513,121 @@ def library_import(body: LibraryImport, background_tasks: BackgroundTasks):
             doc_id=doc["id"],
             file_path=str(file_path),
             kind=kind,
-            work_id=body.work_id,
+            work_id=work_id,
             title=name,
             db=db,
         )
 
     # Version suggestion: check for similar-named docs in the same Work
-    if body.work_id:
-        _maybe_suggest_version(db, doc["id"], body.work_id, name)
+    if work_id:
+        _maybe_suggest_version(db, doc["id"], work_id, name)
 
     return {"document": doc, "duplicate": False}
+
+
+def _cleanup_stale_parts(lib_root: Path, max_age_s: int = 3600) -> None:
+    """Remove orphaned .part temp files left by a crash mid-upload."""
+    import time as _time
+    now = _time.time()
+    try:
+        for p in lib_root.glob("*.part"):
+            try:
+                if now - p.stat().st_mtime > max_age_s:
+                    p.unlink(missing_ok=True)
+            except OSError:
+                continue
+    except OSError:
+        pass
+
+
+def _validate_import_target(db, filename: str, work_id: str | None) -> str:
+    """Validate filename + work_id; returns the sanitised basename."""
+    name = Path(filename).name
+    if not name or name.startswith("."):
+        raise HTTPException(400, f"Bad filename: {filename!r}")
+    if work_id and not db.get_work(work_id):
+        raise HTTPException(404, f"Work {work_id!r} not found")
+    return name
+
+
+@router.post("/library/import")
+def library_import(body: LibraryImport, background_tasks: BackgroundTasks):
+    """Legacy JSON/base64 import path — kept for backward compatibility.
+
+    Prefer POST /api/library/upload (multipart) which streams to disk without
+    the base64 2× RAM overhead.
+    """
+    db = get_db()
+    try:
+        data = base64.b64decode(body.content_b64, validate=True)
+    except Exception:
+        raise HTTPException(400, "content_b64 is not valid base64")
+
+    name = _validate_import_target(db, body.filename, body.work_id)
+    sha256 = hashlib.sha256(data).hexdigest()
+
+    import tempfile as _tempfile
+    lib_root = _library_root()
+    _cleanup_stale_parts(lib_root)
+    tmp = _tempfile.NamedTemporaryFile(delete=False, dir=lib_root, suffix=".part")
+    try:
+        try:
+            tmp.write(data)
+        finally:
+            tmp.close()
+        return _ingest_file(
+            db, background_tasks,
+            tmp_path=Path(tmp.name), name=name, sha256=sha256,
+            work_id=body.work_id, meta=body.meta, force=body.force,
+        )
+    except BaseException:
+        Path(tmp.name).unlink(missing_ok=True)
+        raise
+
+
+@router.post("/library/upload")
+async def library_upload(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    work_id: str | None = Form(None),
+    force: bool = Form(False),
+):
+    """Streaming multipart import — no base64, constant memory.
+
+    The file is streamed to a temp file in 1 MB chunks while the SHA-256 is
+    computed incrementally, then ingested exactly like /library/import.
+    """
+    db = get_db()
+    name = _validate_import_target(db, file.filename or "", work_id or None)
+
+    import tempfile as _tempfile
+    lib_root = _library_root()
+    _cleanup_stale_parts(lib_root)
+    tmp = _tempfile.NamedTemporaryFile(delete=False, dir=lib_root, suffix=".part")
+    hasher = hashlib.sha256()
+    size = 0
+    try:
+        try:
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                hasher.update(chunk)
+                size += len(chunk)
+                tmp.write(chunk)
+        finally:
+            tmp.close()
+        if size == 0:
+            Path(tmp.name).unlink(missing_ok=True)
+            raise HTTPException(400, "Uploaded file is empty")
+        return _ingest_file(
+            db, background_tasks,
+            tmp_path=Path(tmp.name), name=name, sha256=hasher.hexdigest(),
+            work_id=work_id or None, meta={}, force=force,
+        )
+    except BaseException:
+        Path(tmp.name).unlink(missing_ok=True)
+        raise
 
 
 @router.post("/library/{doc_id}/extract")
