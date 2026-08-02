@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import tempfile
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -29,6 +29,49 @@ def _make_db(tmp: str):
     db = OrivellumDB(str(Path(tmp) / "test.db"))
     _deps.init(db=db, cfg=cfg)
     return db
+
+
+def _seed_knowledge(db):
+    """Seed a work + document + trusted knowledge item and return
+    (conv, hit) where ``hit`` is the deterministic search result to patch in."""
+    work = db.create_work(title="Rocketry")
+    doc = db.create_document(title="Thrust Notes", work_id=work["id"])
+    kid = db.create_knowledge_item(
+        work_id=work["id"], kind="fact",
+        text="Specific impulse measures rocket engine efficiency.",
+        source_doc_id=doc["id"], review_status="approved",
+    )
+    conv = db.create_conversation(title="Chat", work_id=work["id"])
+    hit = {
+        "id": kid,
+        "text": "Specific impulse measures rocket engine efficiency.",
+        "kind": "fact",
+        "work_id": work["id"],
+        "source_doc_id": doc["id"],
+        "review_status": "approved",
+    }
+    return conv, hit
+
+
+def _make_httpx_mock(sse_lines: list[str]):
+    """Return a mock AsyncClient that yields the given SSE lines then stops."""
+
+    async def _aiter_lines():
+        for line in sse_lines:
+            yield line
+
+    mock_resp = MagicMock()
+    mock_resp.raise_for_status = MagicMock()
+    mock_resp.aiter_lines = _aiter_lines
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+    mock_client = MagicMock()
+    mock_client.stream = MagicMock(return_value=mock_resp)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+
+    return mock_client
 
 
 # ---------------------------------------------------------------------------
@@ -102,4 +145,83 @@ def test_sources_persist_in_message_meta():
         meta = assistant[0]["meta"]
         assert meta.get("model") == "test-model"
         assert meta.get("sources") == sources
+        db.close()
+
+
+@pytest.mark.anyio
+async def test_sources_persisted_on_disconnect():
+    """The truncation/disconnect path must persist injected sources in meta."""
+    with tempfile.TemporaryDirectory() as tmp:
+        db = _make_db(tmp)
+        conv, hit = _seed_knowledge(db)
+
+        sse_lines = [
+            'data: {"choices":[{"delta":{"content":"Isp is "}}]}',
+            'data: {"choices":[{"delta":{"content":"efficiency."}}]}',
+            "data: [DONE]",
+        ]
+        mock_client = _make_httpx_mock(sse_lines)
+
+        from orivellum.api.routes.conversations import _stream_response
+
+        with patch(
+            "orivellum.api.routes.conversations._maybe_dispatch_intent",
+            new_callable=AsyncMock, return_value=None,
+        ), patch(
+            "orivellum.capabilities.embeddings.hybrid_search_knowledge",
+            return_value=[hit],
+        ), patch.object(db, "search_chunks", return_value=[]), \
+                patch("httpx.AsyncClient", return_value=mock_client):
+            gen = _stream_response(db, conv, "How efficient are rockets?")
+            # Consume the first token so partial reply is buffered, then disconnect
+            await gen.__anext__()
+            await gen.aclose()
+
+        messages = db.get_messages(conv["id"])
+        assistant = [m for m in messages if m["role"] == "assistant"]
+        assert len(assistant) == 1
+        meta = assistant[0]["meta"]
+        assert meta.get("cut_short") is True
+        srcs = meta.get("sources")
+        assert srcs and len(srcs) == 1
+        assert srcs[0]["source_doc_id"] == hit["source_doc_id"]
+        assert srcs[0]["work_title"] == "Rocketry"
+        db.close()
+
+
+@pytest.mark.anyio
+async def test_sources_persisted_and_emitted_on_intent_branch():
+    """The streaming intent branch must persist sources in meta AND emit a
+    terminal `sources` SSE event."""
+    with tempfile.TemporaryDirectory() as tmp:
+        db = _make_db(tmp)
+        conv, hit = _seed_knowledge(db)
+
+        from orivellum.api.routes import conversations as C
+
+        # Intent dispatch returns a tool reply (no sources of its own)
+        async def _fake_intent(*_a, **_k):
+            return ("🌐 Web result text", {"intent": "web_search", "query": "q"})
+
+        events: list[str] = []
+        with patch.object(C, "_maybe_dispatch_intent", _fake_intent), \
+                patch("orivellum.capabilities.embeddings.hybrid_search_knowledge",
+                      return_value=[hit]), \
+                patch.object(db, "search_chunks", return_value=[]):
+            async for ev in C._stream_response(db, conv, "search for rockets"):
+                events.append(ev)
+
+        # Persistence: assistant message meta carries both intent and sources
+        messages = db.get_messages(conv["id"])
+        assistant = [m for m in messages if m["role"] == "assistant"]
+        assert len(assistant) == 1
+        meta = assistant[0]["meta"]
+        assert meta.get("intent") == "web_search"
+        srcs = meta.get("sources")
+        assert srcs and srcs[0]["source_doc_id"] == hit["source_doc_id"]
+
+        # SSE: a terminal sources event was emitted before [DONE]
+        assert any('"sources"' in e for e in events), \
+            "streaming intent branch must emit a sources SSE event"
+        assert any("[DONE]" in e for e in events)
         db.close()

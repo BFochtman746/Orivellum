@@ -411,7 +411,16 @@ class TestIntentDispatch(unittest.TestCase):
 
     def _run(self, coro):
         import asyncio
-        return asyncio.get_event_loop().run_until_complete(coro)
+        # Use a fresh event loop rather than get_event_loop(): other test
+        # modules (e.g. anyio-marked async tests) may have closed the global
+        # loop, which would otherwise make run_until_complete fail here.
+        loop = asyncio.new_event_loop()
+        try:
+            asyncio.set_event_loop(loop)
+            return loop.run_until_complete(coro)
+        finally:
+            loop.close()
+            asyncio.set_event_loop(None)
 
     def test_chat_intent_returns_none(self):
         from orivellum.api.routes.conversations import _maybe_dispatch_intent

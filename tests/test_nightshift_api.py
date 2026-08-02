@@ -11,6 +11,7 @@ run_nightshift is monkeypatched to a no-op so the tests stay fast.
 from __future__ import annotations
 
 import tempfile
+import threading
 import time
 import unittest
 import uuid
@@ -80,6 +81,65 @@ class TestNightshiftRunNow(unittest.TestCase):
             finally:
                 with ns._status_lock:
                     ns._status["running"] = False
+
+
+class TestNightshiftConcurrency(unittest.TestCase):
+
+    def test_two_run_now_requests_yield_one_200_one_409(self):
+        """Two near-simultaneous run-now requests: exactly one wins, one 409s."""
+        with tempfile.TemporaryDirectory() as tmp:
+            app, _db = _make_app(tmp)
+            client = TestClient(app, raise_server_exceptions=True, headers=AUTH_HEADERS)
+
+            from orivellum.capabilities import nightshift as ns
+
+            # Slow no-op pass body — holds the run open until we release it, so
+            # the two requests genuinely overlap.
+            release = threading.Event()
+
+            def _slow(db, cfg):
+                release.wait(timeout=5)
+
+            statuses: list[int] = []
+            lock = threading.Lock()
+
+            def _fire():
+                r = client.post("/api/system/nightshift/run-now")
+                with lock:
+                    statuses.append(r.status_code)
+
+            with patch.object(ns, "_run_nightshift_passes", _slow):
+                t1 = threading.Thread(target=_fire)
+                t2 = threading.Thread(target=_fire)
+                t1.start()
+                t2.start()
+                t1.join(timeout=5)
+                t2.join(timeout=5)
+
+                self.assertEqual(sorted(statuses), [200, 409],
+                                 f"Expected exactly one 200 and one 409, got {statuses}")
+
+                # While the winning run is still in flight, a daemon-style entry
+                # (run_nightshift without _preacquired) must skip, not overlap.
+                self.assertTrue(ns.is_running())
+                daemon_ran = {"passes": False}
+
+                def _daemon_pass(db, cfg):
+                    daemon_ran["passes"] = True
+
+                with patch.object(ns, "_run_nightshift_passes", _daemon_pass):
+                    ns.run_nightshift(_db, None)  # daemon-style call, no reservation
+                self.assertFalse(daemon_ran["passes"],
+                                 "Daemon run must be skipped while a run is in flight")
+
+                # Release the winner and let its worker thread finish.
+                release.set()
+            # Wait for the running flag to clear.
+            for _ in range(50):
+                if not ns.is_running():
+                    break
+                time.sleep(0.05)
+            self.assertFalse(ns.is_running())
 
 
 class TestNightshiftLastReport(unittest.TestCase):

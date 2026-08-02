@@ -180,6 +180,8 @@ async def send_message(conv_id: str, body: MessageSend):
     tool_result = await _maybe_dispatch_intent(db, body.text, cfg.serving.base_url, model)
     if tool_result is not None:
         tool_text, tool_meta = tool_result
+        if ns_sources:
+            tool_meta = {**tool_meta, "sources": ns_sources}
         msg = db.add_message(conv_id, "assistant", tool_text, meta=tool_meta)
         _maybe_auto_title(db, conv, body.text)
         return {"message": msg}
@@ -198,8 +200,10 @@ async def send_message(conv_id: str, body: MessageSend):
             question = await asyncio.to_thread(
                 get_clarifying_question, body.text, cfg.serving.base_url, model
             )
-            msg = db.add_message(conv_id, "assistant", question,
-                                 meta={"model": model, "isClarification": True})
+            clarify_meta: dict = {"model": model, "isClarification": True}
+            if ns_sources:
+                clarify_meta["sources"] = ns_sources
+            msg = db.add_message(conv_id, "assistant", question, meta=clarify_meta)
             _maybe_auto_title(db, conv, body.text)
             return {"message": msg}
 
@@ -215,8 +219,11 @@ async def send_message(conv_id: str, body: MessageSend):
                         focus=body.text[:200],
                         reasoning=council_reply[:500],
                     )
+                council_meta: dict = {"model": model, "council": True}
+                if ns_sources:
+                    council_meta["sources"] = ns_sources
                 msg = db.add_message(conv_id, "assistant", council_reply,
-                                     meta={"model": model, "council": True})
+                                     meta=council_meta)
                 _maybe_auto_title(db, conv, body.text)
                 return {"message": msg}
             # Council failed → fall through to direct single call
@@ -544,12 +551,16 @@ async def _stream_response(
     tool_result = await _maybe_dispatch_intent(db, user_text, cfg.serving.base_url, model)
     if tool_result is not None:
         tool_text, tool_meta = tool_result
+        if sources:
+            tool_meta = {**tool_meta, "sources": sources}
         # Persist before streaming (disconnect-safe)
         db.add_message(conv_id, "assistant", tool_text, meta=tool_meta)
         _maybe_auto_title(db, conv, user_text)
         _CHUNK = 40
         for i in range(0, len(tool_text), _CHUNK):
             yield f"data: {json.dumps({'token': tool_text[i:i+_CHUNK], 'intent': tool_meta.get('intent')})}\n\n"
+        if sources:
+            yield f"data: {json.dumps({'sources': sources})}\n\n"
         yield "data: [DONE]\n\n"
         return
 
@@ -570,11 +581,16 @@ async def _stream_response(
             )
             # Persist the clarifying question so it survives refetch/reload.
             # The isClarification flag lets the frontend render it with the amber bubble style.
-            db.add_message(conv_id, "assistant", question, meta={"model": model, "isClarification": True})
+            clarify_meta: dict = {"model": model, "isClarification": True}
+            if sources:
+                clarify_meta["sources"] = sources
+            db.add_message(conv_id, "assistant", question, meta=clarify_meta)
             _maybe_auto_title(db, conv, user_text)
             # Also emit a typed SSE event so the frontend can display immediately
             # without waiting for the query invalidation round-trip.
             yield f"data: {json.dumps({'event': 'clarify', 'question': question})}\n\n"
+            if sources:
+                yield f"data: {json.dumps({'sources': sources})}\n\n"
             yield "data: [DONE]\n\n"
             return
 
@@ -587,8 +603,11 @@ async def _stream_response(
                 # Save the full reply BEFORE yielding any chunks.  This way a
                 # GeneratorExit raised during the chunk loop still results in a
                 # saved assistant turn — the client just misses the streaming UX.
+                council_meta: dict = {"model": model, "council": True}
+                if sources:
+                    council_meta["sources"] = sources
                 db.add_message(conv_id, "assistant", council_reply,
-                               meta={"model": model, "council": True})
+                               meta=council_meta)
                 _maybe_auto_title(db, conv, user_text)
                 # Update Project Compass (merge — preserves next_step if already set)
                 work_id = conv.get("work_id")
@@ -602,6 +621,8 @@ async def _stream_response(
                 _CHUNK = 30
                 for i in range(0, len(council_reply), _CHUNK):
                     yield f"data: {json.dumps({'token': council_reply[i:i+_CHUNK]})}\n\n"
+                if sources:
+                    yield f"data: {json.dumps({'sources': sources})}\n\n"
                 yield "data: [DONE]\n\n"
                 return
             # Council failed → fall through to the direct streaming path
@@ -713,6 +734,8 @@ async def _stream_response(
                 _meta: dict = {"model": model, "cut_short": True}
                 if thinking_text:
                     _meta["thinking"] = thinking_text
+                if sources:
+                    _meta["sources"] = sources
                 db.add_message(conv_id, "assistant", truncated, meta=_meta)
                 _maybe_auto_title(db, conv, user_text)
             except Exception as save_exc:

@@ -55,6 +55,23 @@ def is_running() -> bool:
         return bool(_status.get("running"))
 
 
+def try_start() -> bool:
+    """Atomically reserve the run slot.
+
+    Under ``_status_lock``: if a run is already in flight, return False;
+    otherwise mark it running (set started_at, clear finished_at) and return
+    True.  The caller that receives True MUST eventually run ``run_nightshift``
+    (which clears the flag in its ``finally``) so the reservation is released.
+    """
+    with _status_lock:
+        if _status.get("running"):
+            return False
+        _status["running"] = True
+        _status["started_at"] = datetime.now(timezone.utc).isoformat()
+        _status["finished_at"] = None
+        return True
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _get_docs_needing_work(db: "OrivellumDB") -> list[dict]:
@@ -462,12 +479,19 @@ def _pass_work_stats(db: "OrivellumDB", report: list[str]) -> None:
 
 # ── Main runner ───────────────────────────────────────────────────────────────
 
-def run_nightshift(db: "OrivellumDB", cfg: "OrivellumConfig") -> None:
-    """Execute one complete nightshift pass synchronously."""
-    with _status_lock:
-        _status["running"] = True
-        _status["started_at"] = datetime.now(timezone.utc).isoformat()
-        _status["finished_at"] = None
+def run_nightshift(db: "OrivellumDB", cfg: "OrivellumConfig",
+                   _preacquired: bool = False) -> None:
+    """Execute one complete nightshift pass synchronously.
+
+    Reservation is atomic: unless ``_preacquired`` is True (meaning the caller
+    already won the slot via ``try_start()``), this acquires the slot itself and
+    silently no-ops if a run is already in flight — so two concurrent callers
+    can never overlap.  Either way, the ``finally`` clears the flag exactly once.
+    """
+    if not _preacquired:
+        if not try_start():
+            logger.info("Nightshift already running — skipping overlapping run")
+            return
     try:
         _run_nightshift_passes(db, cfg)
     finally:

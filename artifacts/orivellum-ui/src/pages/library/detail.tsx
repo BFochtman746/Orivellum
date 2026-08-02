@@ -4,7 +4,7 @@
  * Shows metadata, full extracted text, and all knowledge items
  * harvested from this specific document.
  */
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useParams, useLocation } from "wouter";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { useGetDocument, useDeleteDocument, useGetWork, useListWorks, getGetDocumentQueryKey, getGetWorkQueryKey } from "@workspace/api-client-react";
@@ -587,6 +587,15 @@ export default function DocumentDetail() {
   const [ttsAudioUrl, setTtsAudioUrl] = useState<string | null>(null);
   const [ttsPlaying, setTtsPlaying] = useState(false);
   const ttsAudioRef = useRef<HTMLAudioElement | null>(null);
+  // Keep the latest object URL in a ref so the unmount cleanup never sees a stale value
+  const ttsUrlRef = useRef<string | null>(null);
+  ttsUrlRef.current = ttsAudioUrl;
+  useEffect(() => {
+    return () => {
+      ttsAudioRef.current?.pause();
+      if (ttsUrlRef.current) URL.revokeObjectURL(ttsUrlRef.current);
+    };
+  }, []);
   const queryClient = useQueryClient();
 
   const { data, isLoading, error, refetch } = useGetDocument(docId ?? "", {

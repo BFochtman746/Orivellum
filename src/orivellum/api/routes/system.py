@@ -337,18 +337,29 @@ def _last_nightshift_run(db) -> dict | None:
 
 @router.post("/system/nightshift/run-now")
 def nightshift_run_now():
-    """Trigger a nightshift pass on a daemon thread. 409 if one is running."""
-    import threading
-    from orivellum.capabilities.nightshift import run_nightshift, is_running
+    """Trigger a nightshift pass on a daemon thread. 409 if one is running.
 
-    if is_running():
+    The run slot is reserved atomically via ``try_start()`` BEFORE returning 200
+    and before the worker thread is scheduled, so two near-simultaneous requests
+    (or a request racing the 3AM daemon) can never both start a run.
+    """
+    import threading
+    from orivellum.capabilities.nightshift import run_nightshift, try_start
+
+    if not try_start():
         raise HTTPException(409, "Nightshift is already running")
 
     db = get_db()
     cfg = get_config()
+
+    def _worker():
+        try:
+            run_nightshift(db, cfg, _preacquired=True)
+        except Exception:
+            logger.exception("Nightshift run-now worker crashed")
+
     threading.Thread(
-        target=run_nightshift, args=(db, cfg),
-        name="nightshift-run-now", daemon=True,
+        target=_worker, name="nightshift-run-now", daemon=True,
     ).start()
     return {"started": True}
 
