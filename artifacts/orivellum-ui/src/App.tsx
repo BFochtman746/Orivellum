@@ -24,6 +24,7 @@ import WriteDeskPage from '@/pages/write/index';
 import Backups from '@/pages/backups/index';
 import System from '@/pages/system/index';
 import GovernancePage from '@/pages/governance/index';
+import Mcos from '@/pages/mcos/index';
 import NotFound from '@/pages/not-found';
 
 const queryClient = new QueryClient({
@@ -63,6 +64,7 @@ function Router() {
         <Route path="/write">{() => <RouteWithBoundary component={WriteDeskPage} />}</Route>
         <Route path="/backups">{() => <RouteWithBoundary component={Backups} />}</Route>
         <Route path="/system">{() => <RouteWithBoundary component={System} />}</Route>
+        <Route path="/mcos">{() => <RouteWithBoundary component={Mcos} />}</Route>
         <Route path="/governance">{() => <RouteWithBoundary component={GovernancePage} />}</Route>
         <Route component={NotFound} />
       </Switch>

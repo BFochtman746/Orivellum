@@ -38,20 +38,18 @@ def _uuid() -> str:
     return str(uuid.uuid4())
 
 
-def _call(messages: list[dict], base_url: str, model: str, timeout: int = 30) -> str | None:
-    """Call the local LLM synchronously. Returns None on any failure."""
-    try:
-        import httpx
-        with httpx.Client(timeout=timeout) as client:
-            resp = client.post(
-                f"{base_url}/chat/completions",
-                json={"model": model, "messages": messages, "stream": False},
-            )
-            resp.raise_for_status()
-            return resp.json()["choices"][0]["message"]["content"]
-    except Exception as exc:
-        logger.warning("Learning LLM call failed: %s", exc)
-        return None
+def _call(messages: list[dict], base_url: str, model: str, timeout: int = 30,
+          purpose: str = "learning", db: Any = None) -> str | None:
+    """Call the local LLM synchronously via the central gateway.
+
+    Returns the reply text, or None on any failure (the gateway never raises).
+    """
+    from orivellum.capabilities.llm import llm_call
+    result = llm_call(
+        messages, base_url=base_url, model=model,
+        timeout=timeout, purpose=purpose, db=db,
+    )
+    return result.text
 
 
 def _strip_fences(text: str) -> str:
@@ -174,7 +172,8 @@ def seed_concepts(db: Any, work_id: str, base_url: str, model: str) -> list[dict
             "Respond ONLY with valid JSON, no markdown fences:\n"
             '[{"subject":"...","description":"...","prereq":"<subject or null>"}]'
         )
-        raw = _call([{"role": "user", "content": prompt}], base_url, model, timeout=25)
+        raw = _call([{"role": "user", "content": prompt}], base_url, model,
+                    timeout=25, purpose="learning.seed", db=db)
         if raw:
             try:
                 ordered = json.loads(_strip_fences(raw))
@@ -299,7 +298,8 @@ def get_question(db: Any, concept_id: str, base_url: str, model: str) -> dict:
         "Respond ONLY with valid JSON, no fences:\n"
         '{"question":"...","context_snippet":"<1-sentence excerpt from notes that inspired the question>"}'
     )
-    raw = _call([{"role": "user", "content": prompt}], base_url, model, timeout=20)
+    raw = _call([{"role": "user", "content": prompt}], base_url, model,
+                timeout=20, purpose="learning.question", db=db)
     if raw:
         try:
             parsed = json.loads(_strip_fences(raw))
@@ -358,7 +358,8 @@ def assess_answer(
         "Respond ONLY with valid JSON, no markdown fences:\n"
         '{"score":0.0,"feedback":"brief constructive feedback in 1-2 sentences"}'
     )
-    raw = _call([{"role": "user", "content": critic_prompt}], base_url, model, timeout=25)
+    raw = _call([{"role": "user", "content": critic_prompt}], base_url, model,
+                timeout=25, purpose="learning.assess", db=db)
     if not raw:
         _record_mastery(db, concept_id, 0.5, "STAY_HERE", "AI unavailable")
         return offline_result

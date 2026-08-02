@@ -156,24 +156,29 @@ async def generate_quiz(work_id: str, count: int = 5):
     )
 
     from orivellum.config import get_config
+    from starlette.concurrency import run_in_threadpool
+    from orivellum.capabilities.llm import llm_call
     cfg = get_config()
     try:
-        import httpx
-        async with httpx.AsyncClient(timeout=60) as client:
-            resp = await client.post(
-                f"{cfg.serving.base_url}/chat/completions",
-                json={"model": cfg.serving.model, "messages": [{"role": "user", "content": prompt}], "stream": False},
-            )
-            resp.raise_for_status()
-            content = resp.json()["choices"][0]["message"]["content"]
-            # Strip markdown fences if the model added them
-            content = content.strip()
-            if content.startswith("```"):
-                content = content.split("```")[1]
-                if content.startswith("json"):
-                    content = content[4:]
-            parsed = json.loads(content)
-            return {"questions": parsed["questions"][:count], "work_id": work_id}
+        result = await run_in_threadpool(
+            llm_call,
+            [{"role": "user", "content": prompt}],
+            base_url=cfg.serving.base_url, model=cfg.serving.model,
+            timeout=60, purpose="works", db=db,
+        )
+        if not result.ok or result.text is None:
+            raise HTTPException(503, "AI is unavailable. Start Lemonade or Ollama to generate quizzes.")
+        content = result.text
+        # Strip markdown fences if the model added them
+        content = content.strip()
+        if content.startswith("```"):
+            content = content.split("```")[1]
+            if content.startswith("json"):
+                content = content[4:]
+        parsed = json.loads(content)
+        return {"questions": parsed["questions"][:count], "work_id": work_id}
+    except HTTPException:
+        raise
     except json.JSONDecodeError as exc:
         raise HTTPException(502, f"AI returned invalid JSON: {exc}")
     except Exception as exc:

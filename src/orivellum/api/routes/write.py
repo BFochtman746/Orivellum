@@ -280,9 +280,17 @@ def ai_assist(doc_id: str, body: AIAssistRequest):
             prompt += f"\n\nAdditional instruction: {body.instruction}"
 
     # ── Stream the LLM response ───────────────────────────────────────────────
+    # This endpoint forwards SSE chunks to the editor, so it keeps its own
+    # streaming request loop (llm_call is non-streaming). Telemetry is recorded
+    # via record_llm_call() when the stream ends, mirroring the chat stream path.
     import httpx
+    import time as _time
+    from orivellum.capabilities.llm import record_llm_call
 
     def _stream():
+        _started = _time.monotonic()
+        _ok = True
+        _err: str | None = None
         try:
             with httpx.stream(
                 "POST",
@@ -303,10 +311,24 @@ def ai_assist(doc_id: str, body: AIAssistRequest):
                 for line in resp.iter_lines():
                     if line:
                         yield f"data: {line}\n\n"
+        except GeneratorExit:
+            # Client aborted the SSE stream — classify as a failed call.
+            _ok = False
+            _err = "client_disconnected"
+            raise  # Re-raise so the generator closes properly
         except Exception as exc:
             logger.error("Write AI assist stream error: %s", exc)
+            _ok = False
+            _err = f"{type(exc).__name__}: {exc}"[:500]
             import json as _j
             yield f"data: {_j.dumps({'choices':[{'delta':{'content':f'AI error: {exc}'}}]})}\n\ndata: [DONE]\n\n"
+        finally:
+            record_llm_call(
+                db, purpose="write", model=cfg.serving.model,
+                latency_ms=int((_time.monotonic() - _started) * 1000),
+                prompt_tokens=None, completion_tokens=None,
+                ok=_ok, error=_err,
+            )
 
     return StreamingResponse(_stream(), media_type="text/event-stream")
 

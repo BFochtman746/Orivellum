@@ -347,7 +347,7 @@ def _probe_tesseract() -> None:
             return
 
 
-def _extract_image_vision(path: Path) -> "ExtractionResult | None":
+def _extract_image_vision(path: Path, db=None) -> "ExtractionResult | None":
     """Use the configured vision LLM to describe image content.
 
     Returns an ExtractionResult when the vision model is configured and
@@ -361,8 +361,9 @@ def _extract_image_vision(path: Path) -> "ExtractionResult | None":
 
         import base64
         import io
-        import httpx
         from PIL import Image as _PIL
+
+        from orivellum.capabilities.llm import llm_call
 
         img = _PIL.open(path)
         if img.mode not in ("RGB", "L"):
@@ -371,36 +372,33 @@ def _extract_image_vision(path: Path) -> "ExtractionResult | None":
         img.save(buf, format="JPEG", quality=85)
         b64 = base64.b64encode(buf.getvalue()).decode()
 
-        resp = httpx.post(
-            f"{cfg.serving.base_url}/chat/completions",
-            json={
-                "model": cfg.serving.vision_model,
-                "messages": [{
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": (
-                                "Describe everything in this image in detail. "
-                                "Include all visible text, numbers, labels, "
-                                "diagrams, charts, tables, and visual elements. "
-                                "Be thorough — this description will be used for "
-                                "search and knowledge extraction."
-                            ),
-                        },
-                        {
-                            "type": "image_url",
-                            "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
-                        },
-                    ],
-                }],
-                "stream": False,
-            },
+        result = llm_call(
+            [{
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": (
+                            "Describe everything in this image in detail. "
+                            "Include all visible text, numbers, labels, "
+                            "diagrams, charts, tables, and visual elements. "
+                            "Be thorough — this description will be used for "
+                            "search and knowledge extraction."
+                        ),
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
+                    },
+                ],
+            }],
+            base_url=cfg.serving.base_url,
+            model=cfg.serving.vision_model,
             timeout=cfg.serving.extraction_timeout_sec,
+            purpose="extraction.llm", db=db,
         )
-        resp.raise_for_status()
-        text = resp.json()["choices"][0]["message"]["content"]
-        if text.strip():
+        text = result.text
+        if text and text.strip():
             logger.info("Vision model described %s (%d words)", path.name, len(text.split()))
             return ExtractionResult(
                 kind="image",
@@ -413,9 +411,9 @@ def _extract_image_vision(path: Path) -> "ExtractionResult | None":
     return None
 
 
-def _extract_image(path: Path) -> ExtractionResult:
+def _extract_image(path: Path, db=None) -> ExtractionResult:
     # --- vision LLM (primary when configured) ---
-    vision_result = _extract_image_vision(path)
+    vision_result = _extract_image_vision(path, db=db)
     if vision_result is not None:
         return vision_result
 
@@ -689,15 +687,20 @@ _DISPATCH: dict[str, object] = {
 }
 
 
-def extract(path: str | Path, kind: str) -> ExtractionResult:
+def extract(path: str | Path, kind: str, db=None) -> ExtractionResult:
     """Extract text from *path* using the handler for *kind*.
 
-    Falls back to markitdown for unknown kinds.
+    Falls back to markitdown for unknown kinds.  ``db`` (when supplied) is
+    threaded to handlers that make LLM calls (image vision) so telemetry is
+    recorded.
     """
     path = Path(path)
     handler = _DISPATCH.get(kind, lambda p: _extract_fallback(p, kind))
     try:
-        result = handler(path)  # type: ignore[call-arg]
+        if kind == "image":
+            result = _extract_image(path, db=db)
+        else:
+            result = handler(path)  # type: ignore[call-arg]
     except Exception as exc:
         logger.error("Extraction error on %s (%s): %s", path.name, kind, exc)
         result = ExtractionResult(kind=kind, full_text="", word_count=0)

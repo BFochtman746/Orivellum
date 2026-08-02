@@ -227,7 +227,7 @@ def process_document(doc_id: str, file_path: str, kind: str,
             return
 
         # Step 1: extract text
-        result = extract(path, kind)
+        result = extract(path, kind, db=db)
         if not result.ok:
             # Use the extractor's own diagnostic when available (e.g. ZIP manifest)
             # Guard against test mocks: ensure meta is a real dict before calling .get()

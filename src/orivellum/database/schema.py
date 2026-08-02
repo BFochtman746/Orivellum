@@ -782,4 +782,78 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         );
         CREATE INDEX IF NOT EXISTS wgc_evaluated ON work_gap_cache(evaluated_at)
     """),
+
+    # v51 — LLM call telemetry (MCOS Phase 0)
+    # Every non-streaming chat-completion call routed through the central
+    # gateway (capabilities/llm.py) records one row here: purpose label,
+    # model, latency and token usage.  Powers the MCOS telemetry dashboard
+    # and cost/latency trend analysis.
+    (51, "Add llm_calls telemetry table", """
+        CREATE TABLE IF NOT EXISTS llm_calls (
+            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts                TEXT    NOT NULL DEFAULT (datetime('now')),
+            purpose           TEXT    NOT NULL DEFAULT '',
+            model             TEXT    NOT NULL DEFAULT '',
+            latency_ms        INTEGER,
+            prompt_tokens     INTEGER,
+            completion_tokens INTEGER,
+            ok                INTEGER NOT NULL DEFAULT 1,
+            error             TEXT
+        );
+        CREATE INDEX IF NOT EXISTS llmc_ts ON llm_calls(ts);
+        CREATE INDEX IF NOT EXISTS llmc_purpose ON llm_calls(purpose)
+    """),
+
+    # v52 — MCOS benchmark repository + evaluation runs (MCOS Phase 1)
+    # benchmarks: versioned suites; benchmark_cases: golden cases with
+    # expected concepts + scoring rules; eval_runs/eval_results: every
+    # execution with per-case scores so regressions are detectable.
+    (52, "Add MCOS benchmark and evaluation tables", """
+        CREATE TABLE IF NOT EXISTS benchmarks (
+            id          TEXT PRIMARY KEY,
+            name        TEXT NOT NULL,
+            description TEXT NOT NULL DEFAULT '',
+            category    TEXT NOT NULL DEFAULT 'general',
+            kind        TEXT NOT NULL DEFAULT 'llm',
+            version     INTEGER NOT NULL DEFAULT 1,
+            enabled     INTEGER NOT NULL DEFAULT 1,
+            created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE TABLE IF NOT EXISTS benchmark_cases (
+            id           TEXT PRIMARY KEY,
+            benchmark_id TEXT NOT NULL REFERENCES benchmarks(id) ON DELETE CASCADE,
+            question     TEXT NOT NULL,
+            context      TEXT NOT NULL DEFAULT '',
+            expected_output   TEXT NOT NULL DEFAULT '',
+            expected_concepts TEXT NOT NULL DEFAULT '[]',
+            scoring      TEXT NOT NULL DEFAULT '{}',
+            difficulty   TEXT NOT NULL DEFAULT 'medium',
+            tags         TEXT NOT NULL DEFAULT '[]',
+            created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS bc_benchmark ON benchmark_cases(benchmark_id);
+        CREATE TABLE IF NOT EXISTS eval_runs (
+            id           TEXT PRIMARY KEY,
+            benchmark_id TEXT NOT NULL REFERENCES benchmarks(id) ON DELETE CASCADE,
+            started_at   TEXT NOT NULL DEFAULT (datetime('now')),
+            finished_at  TEXT,
+            model        TEXT NOT NULL DEFAULT '',
+            status       TEXT NOT NULL DEFAULT 'running',
+            total_cases  INTEGER NOT NULL DEFAULT 0,
+            avg_score    REAL,
+            meta         TEXT NOT NULL DEFAULT '{}'
+        );
+        CREATE INDEX IF NOT EXISTS er_benchmark ON eval_runs(benchmark_id, started_at);
+        CREATE TABLE IF NOT EXISTS eval_results (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id     TEXT NOT NULL REFERENCES eval_runs(id) ON DELETE CASCADE,
+            case_id    TEXT NOT NULL,
+            score      REAL,
+            judge_scores TEXT NOT NULL DEFAULT '{}',
+            response   TEXT NOT NULL DEFAULT '',
+            latency_ms INTEGER,
+            error      TEXT
+        );
+        CREATE INDEX IF NOT EXISTS evr_run ON eval_results(run_id)
+    """),
 ]

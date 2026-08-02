@@ -20,7 +20,7 @@ import {
   Settings, HardDrive, Activity, Mic, Wifi, WifiOff,
   ChevronRight, Plus, Search, Archive, RotateCcw,
   Pencil, Check, X, Menu, DownloadCloud, Feather,
-  ALargeSmall, Loader2, CheckCircle2, ExternalLink,
+  ALargeSmall, Loader2, CheckCircle2, ExternalLink, Gauge,
 } from "lucide-react";
 import { useConnectivity } from "@/lib/useConnectivity";
 import { useQuery } from "@tanstack/react-query";
@@ -73,12 +73,13 @@ const PHASES = [
     id: "review",
     label: "Review",
     icon: Target,
-    routes: ["/projects", "/backups", "/system", "/governance"],
+    routes: ["/projects", "/backups", "/system", "/mcos", "/governance"],
     items: [
-      { name: "Projects",   href: "/projects",   icon: Target },
-      { name: "Governance", href: "/governance", icon: CheckCircle2 },
-      { name: "Backups",    href: "/backups",    icon: HardDrive },
-      { name: "System",     href: "/system",     icon: Settings },
+      { name: "Projects",    href: "/projects",   icon: Target },
+      { name: "Governance",  href: "/governance", icon: CheckCircle2 },
+      { name: "Backups",     href: "/backups",    icon: HardDrive },
+      { name: "System",      href: "/system",     icon: Settings },
+      { name: "Calibration", href: "/mcos",       icon: Gauge },
     ],
   },
 ] as const;

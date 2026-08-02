@@ -209,42 +209,40 @@ def generate_suggestions(work_id: str | None = Body(None), limit: int = Body(6))
     llm_suggestions: list[dict] | None = None
     try:
         import httpx
+        from orivellum.capabilities.llm import llm_call
         probe = httpx.get(f"{cfg.serving.base_url}/models", timeout=2.0)
         if probe.status_code == 200:
-            payload = {
-                "model": cfg.serving.workhorse_model,
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": (
-                            "You are a research advisor. Given a user's knowledge base, "
-                            "suggest specific topics they should study or research next. "
-                            "Return ONLY valid JSON — a list of objects with keys: "
-                            "title (short, ≤60 chars), rationale (1-2 sentences citing their existing "
-                            "knowledge), effort (e.g. '1 hour', '2-3 hours'), kind (one of: "
-                            "explore, deep_dive, practice, connect, gap). No markdown, no prose."
-                        ),
-                    },
-                    {
-                        "role": "user",
-                        "content": (
-                            f"My active works: {works_list}\n\n"
-                            f"Sample of my knowledge base ({len(k_rows)} items):\n"
-                            f"{knowledge_block}\n\n"
-                            f"Suggest {limit} specific things I should study or explore next. "
-                            "Focus on gaps, connections between topics, and logical next steps."
-                        ),
-                    },
-                ],
-                "temperature": 0.7,
-                "max_tokens": 1200,
-            }
-            r = httpx.post(
-                f"{cfg.serving.base_url}/chat/completions",
-                json=payload, timeout=30,
+            messages = [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a research advisor. Given a user's knowledge base, "
+                        "suggest specific topics they should study or research next. "
+                        "Return ONLY valid JSON — a list of objects with keys: "
+                        "title (short, ≤60 chars), rationale (1-2 sentences citing their existing "
+                        "knowledge), effort (e.g. '1 hour', '2-3 hours'), kind (one of: "
+                        "explore, deep_dive, practice, connect, gap). No markdown, no prose."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        f"My active works: {works_list}\n\n"
+                        f"Sample of my knowledge base ({len(k_rows)} items):\n"
+                        f"{knowledge_block}\n\n"
+                        f"Suggest {limit} specific things I should study or explore next. "
+                        "Focus on gaps, connections between topics, and logical next steps."
+                    ),
+                },
+            ]
+            result = llm_call(
+                messages,
+                base_url=cfg.serving.base_url, model=cfg.serving.workhorse_model,
+                temperature=0.7, max_tokens=1200,
+                timeout=30, purpose="system", db=db,
             )
-            if r.status_code == 200:
-                raw = r.json()["choices"][0]["message"]["content"].strip()
+            if result.ok and result.text is not None:
+                raw = result.text.strip()
                 # Strip markdown code fences if present
                 raw = raw.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
                 llm_suggestions = json.loads(raw)

@@ -477,6 +477,63 @@ def _pass_work_stats(db: "OrivellumDB", report: list[str]) -> None:
         logger.warning("Work stats pass failed: %s", exc)
 
 
+def _pass_mcos(db: "OrivellumDB", cfg: "OrivellumConfig", report: list[str]) -> None:
+    """Seed benchmarks and run MCOS evaluations.
+
+    Gated by the ``mcos_nightly_enabled`` setting (default on).  Retrieval-kind
+    suites always run (no LLM needed); LLM-kind suites run only when the model
+    endpoint is reachable.  Appends per-benchmark average scores and flags any
+    regressions.
+    """
+    try:
+        if db.get_setting("mcos_nightly_enabled", "true").lower() != "true":
+            return
+        from orivellum.capabilities.mcos import (
+            seed_default_benchmarks, run_benchmark, is_ai_reachable,
+        )
+        seed_default_benchmarks(db)
+
+        with db._lock:
+            benches = [dict(r) for r in db._conn.execute(
+                "SELECT id, name, kind FROM benchmarks WHERE enabled=1 ORDER BY name"
+            ).fetchall()]
+
+        ai_ok = is_ai_reachable(cfg)
+        ran_lines: list[str] = []
+        regressions: list[str] = []
+        for b in benches:
+            if b["kind"] != "retrieval" and not ai_ok:
+                continue
+            try:
+                run_id = run_benchmark(db, cfg, b["id"])
+                with db._lock:
+                    row = db._conn.execute(
+                        "SELECT avg_score, meta FROM eval_runs WHERE id=?", (run_id,)
+                    ).fetchone()
+                avg = row["avg_score"] if row else None
+                meta = {}
+                try:
+                    import json as _json
+                    meta = _json.loads(row["meta"]) if row and row["meta"] else {}
+                except Exception:
+                    meta = {}
+                avg_str = f"{avg:.2f}" if avg is not None else "n/a"
+                ran_lines.append(f"  {b['name']}: {avg_str}")
+                if meta.get("regressed"):
+                    regressions.append(f"{b['name']} (Δ{meta.get('delta')})")
+            except Exception as exc:
+                logger.warning("MCOS benchmark %s failed: %s", b.get("id"), exc)
+
+        if ran_lines:
+            report.append(f"MCOS benchmarks — {len(ran_lines)} run"
+                          f"{'' if ai_ok else ' (retrieval only — AI unreachable)'}:")
+            report.extend(ran_lines)
+        if regressions:
+            report.append("⚠ MCOS regressions: " + "; ".join(regressions))
+    except Exception as exc:
+        logger.warning("MCOS pass failed: %s", exc)
+
+
 # ── Main runner ───────────────────────────────────────────────────────────────
 
 def run_nightshift(db: "OrivellumDB", cfg: "OrivellumConfig",
@@ -507,44 +564,48 @@ def _run_nightshift_passes(db: "OrivellumDB", cfg: "OrivellumConfig") -> None:
     report: list[str] = []
 
     # 1 — Database maintenance
-    logger.info("Nightshift pass 1/10: database optimisation")
+    logger.info("Nightshift pass 1/11: database optimisation")
     _pass_db_optimise(db, report)
 
     # 2 — Zero-byte temp file cleanup
-    logger.info("Nightshift pass 2/10: output temp-file cleanup")
+    logger.info("Nightshift pass 2/11: output temp-file cleanup")
     _pass_cleanup_outputs(cfg, report)
 
     # 3 — Prune old night reports
-    logger.info("Nightshift pass 3/10: prune old reports")
+    logger.info("Nightshift pass 3/11: prune old reports")
     _pass_prune_old_reports(cfg)
 
     # 4 — Orphaned knowledge / chunks / vectors
-    logger.info("Nightshift pass 4/10: orphan cleanup")
+    logger.info("Nightshift pass 4/11: orphan cleanup")
     _pass_orphan_cleanup(db, report)
 
     # 5 — Retry stuck documents
-    logger.info("Nightshift pass 5/10: stuck document recovery")
+    logger.info("Nightshift pass 5/11: stuck document recovery")
     _pass_stuck_docs(db, cfg, report)
 
     # 6 — Harvest sparse documents
-    logger.info("Nightshift pass 6/10: sparse document harvest")
+    logger.info("Nightshift pass 6/11: sparse document harvest")
     items_added = _pass_sparse_harvest(db, report)
 
     # 7 — Gap analysis
-    logger.info("Nightshift pass 7/10: gap analysis")
+    logger.info("Nightshift pass 7/11: gap analysis")
     _pass_gap_analysis(db, report)
 
     # 8 — Evidence rescoring + contradiction detection
-    logger.info("Nightshift pass 8/10: evidence rescoring")
+    logger.info("Nightshift pass 8/11: evidence rescoring")
     _pass_evidence(db, report)
 
     # 9 — Semantic embedding backfill
-    logger.info("Nightshift pass 9/10: embedding backfill")
+    logger.info("Nightshift pass 9/11: embedding backfill")
     _pass_embeddings(db, report)
 
     # 10 — Work stats refresh
-    logger.info("Nightshift pass 10/10: work stats refresh")
+    logger.info("Nightshift pass 10/11: work stats refresh")
     _pass_work_stats(db, report)
+
+    # 11 — MCOS benchmark evaluations
+    logger.info("Nightshift pass 11/11: MCOS benchmark evaluations")
+    _pass_mcos(db, cfg, report)
 
     elapsed = time.time() - start_ts
     report.append(f"Completed in {elapsed:.0f}s")

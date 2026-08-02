@@ -105,7 +105,7 @@ def web_search(query: str) -> str:
     return f"🌐 **Web Search: {query}**\n\n{block}"
 
 
-def web_search_synthesize(query: str, base_url: str, model: str) -> str:
+def web_search_synthesize(query: str, base_url: str, model: str, db=None) -> str:
     """Search with Tavily, then have the local LLM synthesise a cited answer.
 
     Tavily returns the full extracted content of each page — far more than snippets —
@@ -153,40 +153,26 @@ def web_search_synthesize(query: str, base_url: str, model: str) -> str:
         "Write a well-structured answer to the query, citing sources inline."
     )
 
-    try:
-        import httpx
-        resp = httpx.post(
-            f"{base_url}/chat/completions",
-            json={
-                "model":       model,
-                "messages":    [{"role": "user", "content": synthesis_prompt}],
-                "max_tokens":  900,
-                "temperature": 0.2,
-            },
-            timeout=45,
-        )
-        if resp.status_code == 200:
-            synthesis = (
-                resp.json()
-                .get("choices", [{}])[0]
-                .get("message", {})
-                .get("content", "")
-                .strip()
-            )
-            if synthesis:
-                sources: list[str] = []
-                for i, r in enumerate(results, 1):
-                    title = (r.get("title") or "").strip()[:120]
-                    url   = (r.get("url")   or "").strip()
-                    sources.append(f"**[{i}]** [{title}]({url})")
+    from orivellum.capabilities.llm import llm_call
+    result = llm_call(
+        [{"role": "user", "content": synthesis_prompt}],
+        base_url=base_url, model=model,
+        max_tokens=900, temperature=0.2,
+        timeout=45, purpose="websearch.synthesize", db=db,
+    )
+    synthesis = (result.text or "").strip()
+    if synthesis:
+        sources: list[str] = []
+        for i, r in enumerate(results, 1):
+            title = (r.get("title") or "").strip()[:120]
+            url   = (r.get("url")   or "").strip()
+            sources.append(f"**[{i}]** [{title}]({url})")
 
-                return (
-                    f"🌐 **{query}**\n\n"
-                    f"{synthesis}\n\n"
-                    "---\n**Sources**\n" + "\n".join(sources)
-                )
-    except Exception as exc:
-        logger.warning("LLM synthesis failed (%s) — returning raw results", exc)
+        return (
+            f"🌐 **{query}**\n\n"
+            f"{synthesis}\n\n"
+            "---\n**Sources**\n" + "\n".join(sources)
+        )
 
     # Fallback: plain formatted results
     block = _format_results_block(query, results)

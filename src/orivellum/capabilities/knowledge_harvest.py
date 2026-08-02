@@ -212,29 +212,20 @@ _MAX_CHUNK_CHARS = 2_000
 _EXTRACTION_TIMEOUT_SEC = 30
 
 
-def _call_llm_sync(prompt: str, base_url: str, model: str, timeout: int) -> str | None:
+def _call_llm_sync(prompt: str, base_url: str, model: str, timeout: int,
+                   db: "OrivellumDB | None" = None) -> str | None:
     """Make a synchronous (blocking) call to the LLM endpoint.
 
-    Returns the raw text response, or None on any failure.
-    Safe to call from a background thread.
+    Routes through the central ``llm_call`` gateway.  Returns the raw text
+    response, or None on any failure.  Safe to call from a background thread.
     """
-    try:
-        import httpx  # noqa: PLC0415 — deferred to avoid startup cost
-        with httpx.Client(timeout=timeout) as client:
-            resp = client.post(
-                f"{base_url}/chat/completions",
-                json={
-                    "model": model,
-                    "messages": [{"role": "user", "content": prompt}],
-                    "stream": False,
-                },
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            return data["choices"][0]["message"]["content"]
-    except Exception as exc:
-        logger.warning("LLM call failed during knowledge extraction: %s", exc)
-        return None
+    from orivellum.capabilities.llm import llm_call
+    result = llm_call(
+        [{"role": "user", "content": prompt}],
+        base_url=base_url, model=model,
+        timeout=timeout, purpose="harvest.llm", db=db,
+    )
+    return result.text
 
 
 def _parse_extraction(raw: str) -> dict:
@@ -293,7 +284,7 @@ def llm_harvest(result: "ExtractionResult", doc_id: str,
             chunk=chunk_text,
         )
 
-        raw = _call_llm_sync(prompt, base_url, model, timeout)
+        raw = _call_llm_sync(prompt, base_url, model, timeout, db=db)
         if not raw:
             continue
 

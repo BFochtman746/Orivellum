@@ -192,13 +192,13 @@ async def send_message(conv_id: str, body: MessageSend):
             classify, get_clarifying_question, deliberate, update_compass,
         )
         route = await asyncio.to_thread(
-            classify, body.text, messages[:-1], cfg.serving.base_url, model
+            classify, body.text, messages[:-1], cfg.serving.base_url, model, db
         )
         logger.debug("Cognition gate (non-stream) for conv %s: %s", conv_id, route)
 
         if route == "clarify":
             question = await asyncio.to_thread(
-                get_clarifying_question, body.text, cfg.serving.base_url, model
+                get_clarifying_question, body.text, cfg.serving.base_url, model, db
             )
             clarify_meta: dict = {"model": model, "isClarification": True}
             if ns_sources:
@@ -209,7 +209,7 @@ async def send_message(conv_id: str, body: MessageSend):
 
         if route == "complex":
             council_reply = await asyncio.to_thread(
-                deliberate, messages, cfg.serving.base_url, model
+                deliberate, messages, cfg.serving.base_url, model, db
             )
             if council_reply:
                 work_id = conv.get("work_id")
@@ -229,9 +229,9 @@ async def send_message(conv_id: str, body: MessageSend):
             # Council failed → fall through to direct single call
 
         # "direct" or council/classify fallback
-        reply = await _call_ai(messages, model=model)
+        reply = await _call_ai(messages, model=model, db=db)
     else:
-        reply = await _call_ai(messages, model=model)
+        reply = await _call_ai(messages, model=model, db=db)
 
     ns_meta: dict = {"model": model}
     if ns_sources:
@@ -485,26 +485,25 @@ _UNAVAILABLE = (
 )
 
 
-async def _call_ai(messages: list[dict], model: str) -> str:
-    """Call the AI endpoint (Lemonade / Ollama / any OpenAI-compat server)."""
+async def _call_ai(messages: list[dict], model: str, db: Any = None) -> str:
+    """Call the AI endpoint (Lemonade / Ollama / any OpenAI-compat server).
+
+    Routes through the central ``llm_call`` gateway (run in a threadpool so
+    this async call site keeps its non-blocking character).  Returns the
+    reply text, or the unavailable message on any failure.
+    """
+    from starlette.concurrency import run_in_threadpool
+    from orivellum.capabilities.llm import llm_call
+
     cfg = get_config()
-    try:
-        import httpx
-        async with httpx.AsyncClient(timeout=cfg.serving.timeout_sec) as client:
-            resp = await client.post(
-                f"{cfg.serving.base_url}/chat/completions",
-                json={
-                    "model": model,
-                    "messages": messages,
-                    "stream": False,
-                },
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            return data["choices"][0]["message"]["content"]
-    except Exception as exc:
-        logger.warning("AI call failed: %s", exc)
+    result = await run_in_threadpool(
+        llm_call, messages,
+        base_url=cfg.serving.base_url, model=model,
+        timeout=cfg.serving.timeout_sec, purpose="chat", db=db,
+    )
+    if not result.ok or result.text is None:
         return _UNAVAILABLE
+    return result.text
 
 
 async def _stream_response(
@@ -524,6 +523,8 @@ async def _stream_response(
     with a missing assistant turn.
     """
     import asyncio
+    import time as _time
+    from orivellum.capabilities.llm import record_llm_call
 
     cfg = get_config()
     conv_id = conv["id"]
@@ -547,187 +548,224 @@ async def _stream_response(
     _tag_buf = ""        # partial-tag detection buffer (handles cross-token tags)
     model = _model_for_vision(conv) if image_b64 else _model_for(conv)
 
-    # ── Intent routing — runs before deep mode and normal AI ──────────────────
-    tool_result = await _maybe_dispatch_intent(db, user_text, cfg.serving.base_url, model)
-    if tool_result is not None:
-        tool_text, tool_meta = tool_result
-        if sources:
-            tool_meta = {**tool_meta, "sources": sources}
-        # Persist before streaming (disconnect-safe)
-        db.add_message(conv_id, "assistant", tool_text, meta=tool_meta)
-        _maybe_auto_title(db, conv, user_text)
-        _CHUNK = 40
-        for i in range(0, len(tool_text), _CHUNK):
-            yield f"data: {json.dumps({'token': tool_text[i:i+_CHUNK], 'intent': tool_meta.get('intent')})}\n\n"
-        if sources:
-            yield f"data: {json.dumps({'sources': sources})}\n\n"
-        yield "data: [DONE]\n\n"
-        return
-
-    # ── Deep mode: run the meta-prompt gate ──────────────────────────────────
-    if deep:
-        from orivellum.capabilities.cognition import (
-            classify, get_clarifying_question, deliberate, update_compass,
-        )
-
-        route = await asyncio.to_thread(
-            classify, user_text, messages[:-1], cfg.serving.base_url, model
-        )
-        logger.debug("Cognition gate for conv %s: %s", conv_id, route)
-
-        if route == "clarify":
-            question = await asyncio.to_thread(
-                get_clarifying_question, user_text, cfg.serving.base_url, model
-            )
-            # Persist the clarifying question so it survives refetch/reload.
-            # The isClarification flag lets the frontend render it with the amber bubble style.
-            clarify_meta: dict = {"model": model, "isClarification": True}
+    # ── Telemetry: time the whole generator and record ONCE in the finally ────
+    # This covers every terminal path — intent/tool short-circuit, clarify,
+    # council success, direct stream, timeout, error, and client disconnect
+    # (GeneratorExit). purpose reflects which branch produced the reply.
+    _stream_started = _time.monotonic()
+    _stream_ok = True
+    _stream_err: str | None = None
+    _stream_purpose = "chat.stream"
+    try:
+        # ── Intent routing — runs before deep mode and normal AI ──────────────
+        tool_result = await _maybe_dispatch_intent(db, user_text, cfg.serving.base_url, model)
+        if tool_result is not None:
+            tool_text, tool_meta = tool_result
             if sources:
-                clarify_meta["sources"] = sources
-            db.add_message(conv_id, "assistant", question, meta=clarify_meta)
+                tool_meta = {**tool_meta, "sources": sources}
+            # Persist before streaming (disconnect-safe)
+            db.add_message(conv_id, "assistant", tool_text, meta=tool_meta)
             _maybe_auto_title(db, conv, user_text)
-            # Also emit a typed SSE event so the frontend can display immediately
-            # without waiting for the query invalidation round-trip.
-            yield f"data: {json.dumps({'event': 'clarify', 'question': question})}\n\n"
+            _stream_purpose = "chat.intent"
+            _CHUNK = 40
+            for i in range(0, len(tool_text), _CHUNK):
+                yield f"data: {json.dumps({'token': tool_text[i:i+_CHUNK], 'intent': tool_meta.get('intent')})}\n\n"
             if sources:
                 yield f"data: {json.dumps({'sources': sources})}\n\n"
             yield "data: [DONE]\n\n"
             return
 
-        if route == "complex":
-            council_reply = await asyncio.to_thread(
-                deliberate, messages, cfg.serving.base_url, model
+        # ── Deep mode: run the meta-prompt gate ────────────────────────────────
+        if deep:
+            from orivellum.capabilities.cognition import (
+                classify, get_clarifying_question, deliberate, update_compass,
             )
-            if council_reply:
-                # ── Disconnect-safe persistence ──────────────────────────────
-                # Save the full reply BEFORE yielding any chunks.  This way a
-                # GeneratorExit raised during the chunk loop still results in a
-                # saved assistant turn — the client just misses the streaming UX.
-                council_meta: dict = {"model": model, "council": True}
+
+            route = await asyncio.to_thread(
+                classify, user_text, messages[:-1], cfg.serving.base_url, model, db
+            )
+            logger.debug("Cognition gate for conv %s: %s", conv_id, route)
+
+            if route == "clarify":
+                question = await asyncio.to_thread(
+                    get_clarifying_question, user_text, cfg.serving.base_url, model, db
+                )
+                # Persist the clarifying question so it survives refetch/reload.
+                # The isClarification flag lets the frontend render it with the amber bubble style.
+                clarify_meta: dict = {"model": model, "isClarification": True}
                 if sources:
-                    council_meta["sources"] = sources
-                db.add_message(conv_id, "assistant", council_reply,
-                               meta=council_meta)
+                    clarify_meta["sources"] = sources
+                db.add_message(conv_id, "assistant", question, meta=clarify_meta)
                 _maybe_auto_title(db, conv, user_text)
-                # Update Project Compass (merge — preserves next_step if already set)
-                work_id = conv.get("work_id")
-                if work_id:
-                    await asyncio.to_thread(
-                        update_compass, db, work_id,
-                        focus=user_text[:200],
-                        reasoning=council_reply[:500],
-                    )
-                # Stream chunks for UI responsiveness (persistence already done above)
-                _CHUNK = 30
-                for i in range(0, len(council_reply), _CHUNK):
-                    yield f"data: {json.dumps({'token': council_reply[i:i+_CHUNK]})}\n\n"
+                _stream_purpose = "chat.clarify"
+                # Also emit a typed SSE event so the frontend can display immediately
+                # without waiting for the query invalidation round-trip.
+                yield f"data: {json.dumps({'event': 'clarify', 'question': question})}\n\n"
                 if sources:
                     yield f"data: {json.dumps({'sources': sources})}\n\n"
                 yield "data: [DONE]\n\n"
                 return
-            # Council failed → fall through to the direct streaming path
 
-    # ── Per-chunk silence timeout ─────────────────────────────────────────────
-    # If the AI server sends no new token for this long, treat the stream as
-    # stalled and close it cleanly. The timeout is enforced per-chunk (not just
-    # for the initial connection) using asyncio.wait_for on each __anext__ call.
-    _CHUNK_TIMEOUT_SEC = 30
-
-    try:
-        import httpx
-        async with httpx.AsyncClient(timeout=cfg.serving.timeout_sec) as client:
-            async with client.stream(
-                "POST",
-                f"{cfg.serving.base_url}/chat/completions",
-                json={
-                    "model": model,
-                    "messages": messages,
-                    "stream": True,
-                },
-            ) as resp:
-                resp.raise_for_status()
-                _line_iter = resp.aiter_lines().__aiter__()
-                while True:
-                    try:
-                        line = await asyncio.wait_for(
-                            _line_iter.__anext__(), timeout=_CHUNK_TIMEOUT_SEC
+            if route == "complex":
+                council_reply = await asyncio.to_thread(
+                    deliberate, messages, cfg.serving.base_url, model, db
+                )
+                if council_reply:
+                    # ── Disconnect-safe persistence ──────────────────────────
+                    # Save the full reply BEFORE yielding any chunks.  This way a
+                    # GeneratorExit raised during the chunk loop still results in
+                    # a saved assistant turn — the client just misses the UX.
+                    council_meta: dict = {"model": model, "council": True}
+                    if sources:
+                        council_meta["sources"] = sources
+                    db.add_message(conv_id, "assistant", council_reply,
+                                   meta=council_meta)
+                    _maybe_auto_title(db, conv, user_text)
+                    _stream_purpose = "chat.council"
+                    # Update Project Compass (merge — preserves next_step if set)
+                    work_id = conv.get("work_id")
+                    if work_id:
+                        await asyncio.to_thread(
+                            update_compass, db, work_id,
+                            focus=user_text[:200],
+                            reasoning=council_reply[:500],
                         )
-                    except StopAsyncIteration:
-                        break
-                    if not line.startswith("data: "):
-                        continue
-                    chunk = line[6:]
-                    if chunk.strip() == "[DONE]":
-                        break
-                    try:
-                        d = json.loads(chunk)
-                        delta = d["choices"][0]["delta"]
-                        # Some providers (e.g. DeepSeek via OpenRouter) emit
-                        # reasoning in a separate field rather than inside content.
-                        reasoning = delta.get("reasoning_content") or ""
-                        if reasoning:
-                            thinking_text += reasoning
-                            yield f"data: {json.dumps({'thinking': reasoning})}\n\n"
-                        raw = delta.get("content") or ""
-                        if raw:
-                            _tag_buf += raw
-                            # Process buffer, splitting on <think> / </think> tags.
-                            # The while-loop drains _tag_buf until a partial tag
-                            # (or empty buffer) remains.
-                            while _tag_buf:
-                                if not _in_think:
-                                    idx = _tag_buf.find("<think>")
-                                    if idx == -1:
-                                        # No complete open tag — flush everything
-                                        # except a possible partial suffix.
-                                        partial = 0
-                                        for l in range(min(7, len(_tag_buf)), 0, -1):
-                                            if _tag_buf[-l:] == "<think>"[:l]:
-                                                partial = l
-                                                break
-                                        flush = _tag_buf[: len(_tag_buf) - partial]
-                                        _tag_buf = _tag_buf[len(_tag_buf) - partial :]
-                                        if flush:
-                                            full_reply += flush
-                                            yield f"data: {json.dumps({'token': flush})}\n\n"
-                                        break
-                                    before = _tag_buf[:idx]
-                                    if before:
-                                        full_reply += before
-                                        yield f"data: {json.dumps({'token': before})}\n\n"
-                                    _in_think = True
-                                    _tag_buf = _tag_buf[idx + 7 :]
-                                else:
-                                    idx = _tag_buf.find("</think>")
-                                    if idx == -1:
-                                        partial = 0
-                                        for l in range(min(8, len(_tag_buf)), 0, -1):
-                                            if _tag_buf[-l:] == "</think>"[:l]:
-                                                partial = l
-                                                break
-                                        flush = _tag_buf[: len(_tag_buf) - partial]
-                                        _tag_buf = _tag_buf[len(_tag_buf) - partial :]
-                                        if flush:
-                                            thinking_text += flush
-                                            yield f"data: {json.dumps({'thinking': flush})}\n\n"
-                                        break
-                                    think_chunk = _tag_buf[:idx]
-                                    if think_chunk:
-                                        thinking_text += think_chunk
-                                        yield f"data: {json.dumps({'thinking': think_chunk})}\n\n"
-                                    _in_think = False
-                                    _tag_buf = _tag_buf[idx + 8 :]
-                    except Exception:
-                        pass
-    except asyncio.TimeoutError:
-        logger.warning("AI stream timed out after %ss of silence", _CHUNK_TIMEOUT_SEC)
-        if not full_reply:
+                    # Stream chunks for UI responsiveness (persistence done above)
+                    _CHUNK = 30
+                    for i in range(0, len(council_reply), _CHUNK):
+                        yield f"data: {json.dumps({'token': council_reply[i:i+_CHUNK]})}\n\n"
+                    if sources:
+                        yield f"data: {json.dumps({'sources': sources})}\n\n"
+                    yield "data: [DONE]\n\n"
+                    return
+                # Council failed → fall through to the direct streaming path
+
+        # ── Per-chunk silence timeout ─────────────────────────────────────────
+        # If the AI server sends no new token for this long, treat the stream as
+        # stalled and close it cleanly. The timeout is enforced per-chunk (not
+        # just for the initial connection) using asyncio.wait_for per __anext__.
+        _CHUNK_TIMEOUT_SEC = 30
+
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=cfg.serving.timeout_sec) as client:
+                async with client.stream(
+                    "POST",
+                    f"{cfg.serving.base_url}/chat/completions",
+                    json={
+                        "model": model,
+                        "messages": messages,
+                        "stream": True,
+                    },
+                ) as resp:
+                    resp.raise_for_status()
+                    _line_iter = resp.aiter_lines().__aiter__()
+                    while True:
+                        try:
+                            line = await asyncio.wait_for(
+                                _line_iter.__anext__(), timeout=_CHUNK_TIMEOUT_SEC
+                            )
+                        except StopAsyncIteration:
+                            break
+                        if not line.startswith("data: "):
+                            continue
+                        chunk = line[6:]
+                        if chunk.strip() == "[DONE]":
+                            break
+                        try:
+                            d = json.loads(chunk)
+                            delta = d["choices"][0]["delta"]
+                            # Some providers (e.g. DeepSeek via OpenRouter) emit
+                            # reasoning in a separate field rather than inside content.
+                            reasoning = delta.get("reasoning_content") or ""
+                            if reasoning:
+                                thinking_text += reasoning
+                                yield f"data: {json.dumps({'thinking': reasoning})}\n\n"
+                            raw = delta.get("content") or ""
+                            if raw:
+                                _tag_buf += raw
+                                # Process buffer, splitting on <think> / </think> tags.
+                                # The while-loop drains _tag_buf until a partial tag
+                                # (or empty buffer) remains.
+                                while _tag_buf:
+                                    if not _in_think:
+                                        idx = _tag_buf.find("<think>")
+                                        if idx == -1:
+                                            # No complete open tag — flush everything
+                                            # except a possible partial suffix.
+                                            partial = 0
+                                            for l in range(min(7, len(_tag_buf)), 0, -1):
+                                                if _tag_buf[-l:] == "<think>"[:l]:
+                                                    partial = l
+                                                    break
+                                            flush = _tag_buf[: len(_tag_buf) - partial]
+                                            _tag_buf = _tag_buf[len(_tag_buf) - partial :]
+                                            if flush:
+                                                full_reply += flush
+                                                yield f"data: {json.dumps({'token': flush})}\n\n"
+                                            break
+                                        before = _tag_buf[:idx]
+                                        if before:
+                                            full_reply += before
+                                            yield f"data: {json.dumps({'token': before})}\n\n"
+                                        _in_think = True
+                                        _tag_buf = _tag_buf[idx + 7 :]
+                                    else:
+                                        idx = _tag_buf.find("</think>")
+                                        if idx == -1:
+                                            partial = 0
+                                            for l in range(min(8, len(_tag_buf)), 0, -1):
+                                                if _tag_buf[-l:] == "</think>"[:l]:
+                                                    partial = l
+                                                    break
+                                            flush = _tag_buf[: len(_tag_buf) - partial]
+                                            _tag_buf = _tag_buf[len(_tag_buf) - partial :]
+                                            if flush:
+                                                thinking_text += flush
+                                                yield f"data: {json.dumps({'thinking': flush})}\n\n"
+                                            break
+                                        think_chunk = _tag_buf[:idx]
+                                        if think_chunk:
+                                            thinking_text += think_chunk
+                                            yield f"data: {json.dumps({'thinking': think_chunk})}\n\n"
+                                        _in_think = False
+                                        _tag_buf = _tag_buf[idx + 8 :]
+                        except Exception:
+                            pass
+        except asyncio.TimeoutError:
+            logger.warning("AI stream timed out after %ss of silence", _CHUNK_TIMEOUT_SEC)
+            _stream_ok = False
+            _stream_err = f"stream silent for {_CHUNK_TIMEOUT_SEC}s"
+            if not full_reply:
+                full_reply = _UNAVAILABLE
+                yield f"data: {json.dumps({'token': full_reply})}\n\n"
+
+        except Exception as exc:
+            logger.warning("AI stream failed: %s", exc)
+            _stream_ok = False
+            _stream_err = f"{type(exc).__name__}: {exc}"[:500]
             full_reply = _UNAVAILABLE
             yield f"data: {json.dumps({'token': full_reply})}\n\n"
+
+        # Normal completion path (also reached after AI failure fallback)
+        if full_reply:
+            meta: dict = {"model": model}
+            if thinking_text:
+                meta["thinking"] = thinking_text
+            if sources:
+                meta["sources"] = sources
+            db.add_message(conv_id, "assistant", full_reply, meta=meta)
+        _maybe_auto_title(db, conv, user_text)
+        if sources:
+            import json as _json
+            yield f"data: {_json.dumps({'sources': sources})}\n\n"
+        yield "data: [DONE]\n\n"
 
     except GeneratorExit:
         # Client disconnected mid-stream — save whatever tokens arrived so the
         # conversation isn't left with only the user turn and no reply.
+        _stream_ok = False
+        _stream_err = "client_disconnected"
         if full_reply:
             try:
                 truncated = full_reply + "\n\n*(Response was cut short — re-send to continue.)*"
@@ -742,24 +780,16 @@ async def _stream_response(
                 logger.warning("Could not persist partial reply: %s", save_exc)
         raise  # Re-raise so the async generator closes properly
 
-    except Exception as exc:
-        logger.warning("AI stream failed: %s", exc)
-        full_reply = _UNAVAILABLE
-        yield f"data: {json.dumps({'token': full_reply})}\n\n"
-
-    # Normal completion path (also reached after AI failure fallback)
-    if full_reply:
-        meta: dict = {"model": model}
-        if thinking_text:
-            meta["thinking"] = thinking_text
-        if sources:
-            meta["sources"] = sources
-        db.add_message(conv_id, "assistant", full_reply, meta=meta)
-    _maybe_auto_title(db, conv, user_text)
-    if sources:
-        import json as _json
-        yield f"data: {_json.dumps({'sources': sources})}\n\n"
-    yield "data: [DONE]\n\n"
+    finally:
+        # Single telemetry record covering EVERY terminal path — early returns
+        # (intent/clarify/council), normal completion, timeout, error, and
+        # client disconnect. Tokens are unavailable in the streaming path.
+        record_llm_call(
+            db, purpose=_stream_purpose, model=model,
+            latency_ms=int((_time.monotonic() - _stream_started) * 1000),
+            prompt_tokens=None, completion_tokens=None,
+            ok=_stream_ok, error=_stream_err,
+        )
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -797,7 +827,7 @@ async def _maybe_dispatch_intent(
         try:
             from orivellum.capabilities.websearch import web_search_synthesize
             text = await asyncio.to_thread(
-                web_search_synthesize, query, base_url, model
+                web_search_synthesize, query, base_url, model, db
             )
         except Exception as exc:
             logger.warning("Web search failed: %s", exc)

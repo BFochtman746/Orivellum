@@ -38,4 +38,5 @@
 - [Learning loop](orivellum-learning-loop.md) — evidence scoring always persists meta.evidence; conflicts batch-inserted; semantic hits must carry full knowledge shape; embeddings fail → silent FTS fallback.
 - [GitHub main sync](github-main-sync.md) — user's Windows clone pulls origin/main; ALWAYS push HEAD:main too (shell push with token), or their git pull gets nothing.
 - [Nightshift maintenance](orivellum-nightshift-maint.md) — 10-pass nightly runner; vectors table holds chunk AND knowledge types — orphan cleanup must be type-aware; VACUUM under db._lock; sequential recovery worker.
+- [MCOS calibration system](orivellum-mcos.md) — LLM gateway rule (all calls via llm_call/record_llm_call), benchmark suites, run-lifecycle guarantees; Phases 2-5 planned.
 - [Bulk reprocess pipeline](orivellum-reprocess-all.md) — POST /library/reprocess-all handles stuck (imported/error/no_text) + ZIP docs in one call; nightshift recovery pass retries stuck non-ZIP docs (max 5/run, >10 min old); stripMarkdown utility at artifacts/mobile/lib/stripMarkdown.ts.
