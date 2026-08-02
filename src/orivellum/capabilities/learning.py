@@ -88,6 +88,13 @@ def reset_mastery(db: Any, work_id: str, concept_id: str | None = None) -> int:
                 (work_id,),
             )
         db._conn.commit()
+    if cur.rowcount > 0:
+        try:
+            db.audit("learning.mastery_reset", object_id=concept_id or work_id,
+                     object_type="work", actor="system",
+                     detail=f"{cur.rowcount} rows")
+        except Exception:
+            pass
     return cur.rowcount
 
 
@@ -211,6 +218,11 @@ def seed_concepts(db: Any, work_id: str, base_url: str, model: str) -> list[dict
                 (cid, work_id, subj, desc, prereq_id, now),
             )
             db._conn.commit()
+        try:
+            db.audit("learning.concept_added", object_id=cid, object_type="learning_concept",
+                     actor="system", detail=subj[:80])
+        except Exception:
+            pass
         subject_to_id[subj.lower()] = cid
 
     return list_concepts(db, work_id)
@@ -425,6 +437,11 @@ def _record_mastery(db: Any, concept_id: str, score: float, route: str, feedback
             (mid, concept_id, score, cons, feedback, route, now),
         )
         db._conn.commit()
+    try:
+        db.audit("learning.mastery_recorded", object_id=concept_id,
+                 object_type="learning_concept", actor="system", detail=f"score={score:.2f}")
+    except Exception:
+        pass
 
 
 def _get_work_title(db: Any, work_id: str) -> str:

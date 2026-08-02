@@ -215,6 +215,12 @@ def process_document(doc_id: str, file_path: str, kind: str,
                         }), doc_id),
                     )
                     db._conn.commit()
+                try:
+                    db.audit("document.meta_updated", object_id=doc_id,
+                             object_type="document", actor="system",
+                             detail=f"zip meta {len(children)} children")
+                except Exception:
+                    pass
             except Exception:
                 pass
             logger.info("ZIP %s exploded → %d child docs", doc_id, len(children))
@@ -224,8 +230,10 @@ def process_document(doc_id: str, file_path: str, kind: str,
         result = extract(path, kind)
         if not result.ok:
             # Use the extractor's own diagnostic when available (e.g. ZIP manifest)
-            meta_msg = (result.meta or {}).get("user_message", "")
-            msg = meta_msg or f"Extraction produced no readable text (kind={kind})"
+            # Guard against test mocks: ensure meta is a real dict before calling .get()
+            _meta = result.meta if isinstance(result.meta, dict) else {}
+            meta_msg = _meta.get("user_message") or ""
+            msg = str(meta_msg) if meta_msg else f"Extraction produced no readable text (kind={kind})"
             logger.warning("Doc %s — %s", doc_id, msg)
             db.add_extraction_warning(doc_id, kind="no_readable_text", detail=msg)
             db.update_document_extracted(doc_id, "", 0,
@@ -243,6 +251,8 @@ def process_document(doc_id: str, file_path: str, kind: str,
                         (_json.dumps(result.meta), doc_id),
                     )
                     db._conn.commit()
+                db.audit("document.meta_updated", object_id=doc_id, object_type="document",
+                         actor="system", detail="extraction meta")
             except Exception as meta_exc:
                 logger.debug("Could not persist extraction meta for %s: %s", doc_id, meta_exc)
 

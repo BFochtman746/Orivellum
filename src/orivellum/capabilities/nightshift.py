@@ -58,6 +58,12 @@ def _record_run(db: "OrivellumDB", docs_processed: int, items_added: int, report
             db._conn.commit()
         except Exception as exc:
             logger.warning("Could not record nightshift run: %s", exc)
+    try:
+        db.audit("system.nightshift_run", object_id=run_id, object_type="nightshift_run",
+                 actor="system",
+                 detail=f"docs={docs_processed} items={items_added}")
+    except Exception:
+        pass
 
 
 def _write_report(data_dir: Path, date_str: str, items: list[str]) -> str:

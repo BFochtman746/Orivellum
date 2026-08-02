@@ -201,5 +201,11 @@ def update_compass(db: Any, work_id: str,
                 vals,
             )
             db._conn.commit()
+        try:
+            db.audit("compass.updated", object_id=work_id, object_type="work",
+                     actor="system",
+                     detail=",".join(p.split(" = ")[0] for p in parts if p != "updated_at = ?") or "tick")
+        except Exception:
+            pass
     except Exception as exc:
         logger.warning("Could not update project compass: %s", exc)

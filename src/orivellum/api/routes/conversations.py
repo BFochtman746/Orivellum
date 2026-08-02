@@ -843,6 +843,8 @@ def _handle_remember(db: Any, user_text: str, base_url: str, model: str) -> str:
                 (str(uuid.uuid4()), key, value, now),
             )
             db._conn.commit()
+        db.audit("user_memory.upserted", object_id=None, object_type="user_memory",
+                 actor="user", detail=key[:80])
 
         return (
             f"📌 **Remembered**\n\n"
@@ -942,6 +944,7 @@ def _maybe_capture_memory(db: Any, conv_id: str, user_text: str) -> None:
         import uuid
         from datetime import datetime, timezone
         now = datetime.now(timezone.utc).isoformat()
+        _captured_keys: list[str] = []
         with db._lock:
             for fact in facts[:5]:
                 key   = str(fact.get("key", ""))[:80]
@@ -956,7 +959,11 @@ def _maybe_capture_memory(db: Any, conv_id: str, user_text: str) -> None:
                          created_at=excluded.created_at""",
                     (str(uuid.uuid4()), key, value, conv_id, now),
                 )
+                _captured_keys.append(key)
             db._conn.commit()
+        if _captured_keys:
+            db.audit("user_memory.automemory", object_id=None, object_type="user_memory",
+                     actor="system", detail=f"{len(_captured_keys)} facts")
         logger.info("Automemory: captured %d fact(s) from conversation %s", len(facts), conv_id)
     except Exception as exc:
         logger.debug("Automemory extraction skipped: %s", exc)

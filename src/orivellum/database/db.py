@@ -134,10 +134,17 @@ class OrivellumDB:
         with self._lock:
             return self._get_setting(key, default)
 
-    def set_setting(self, key: str, value: str) -> None:
+    # Keys whose values must never appear in audit detail (secrets/tokens)
+    _AUDIT_SECRET_KEYS: frozenset[str] = frozenset({"api_key", "session_secret", "token"})
+
+    def set_setting(self, key: str, value: str, actor: str = "system") -> None:
         with self._lock:
             self._set_setting(key, value)
             self._conn.commit()
+        # Never include the value for secret keys
+        safe_detail = None if key in self._AUDIT_SECRET_KEYS else f"{key}={value[:40]}"
+        self.audit("setting.updated", object_id=key, object_type="setting",
+                   actor=actor, detail=safe_detail)
 
     # -------------------------------------------------------------------------
     # Audit log
@@ -177,23 +184,34 @@ class OrivellumDB:
         self,
         limit: int = 100,
         object_id: str | None = None,
+        object_type: str | None = None,
         actor: str | None = None,
         operation: str | None = None,
+        since: str | None = None,
     ) -> list[dict]:
-        """Return recent audit-log entries, newest first."""
+        """Return recent audit-log entries, newest first.
+
+        since: ISO-8601 timestamp lower bound (inclusive).
+        """
         q = "SELECT * FROM audit_log WHERE 1=1"
         args: list = []
         if object_id:
             q += " AND object_id=?"
             args.append(object_id)
+        if object_type:
+            q += " AND object_type=?"
+            args.append(object_type)
         if actor:
             q += " AND actor=?"
             args.append(actor)
         if operation:
             q += " AND operation LIKE ?"
             args.append(f"%{operation}%")
+        if since:
+            q += " AND timestamp>=?"
+            args.append(since)
         q += " ORDER BY timestamp DESC LIMIT ?"
-        args.append(min(limit, 500))
+        args.append(min(limit, 1000))
         with self._lock:
             rows = self._conn.execute(q, args).fetchall()
         return [dict(r) for r in rows]
@@ -217,7 +235,7 @@ class OrivellumDB:
     # Object creation helper
     # -------------------------------------------------------------------------
 
-    def create_object(self, obj_type: str, extra: dict | None = None) -> str:
+    def _create_object(self, obj_type: str, extra: dict | None = None) -> str:
         oid = _uuid()
         now = _now()
         with self._lock:
@@ -284,6 +302,9 @@ class OrivellumDB:
                 (oid, title, work_type, description, "active", _jdump(meta or {})),
             )
             self._conn.commit()
+        self.audit("work.created", object_id=oid, object_type="work",
+                   after_hash=hashlib.sha256(f"{title}:{work_type}".encode()).hexdigest(),
+                   detail=title[:120] if title else None)
         return self.get_work(oid)  # type: ignore[return-value]
 
     def update_work(self, work_id: str, **kwargs: Any) -> dict | None:
@@ -296,10 +317,32 @@ class OrivellumDB:
             updates["meta"] = _jdump(updates["meta"])
         set_clause = ", ".join(f"{k}=?" for k in updates)
         vals = list(updates.values()) + [work_id]
+        _before_row: dict | None = None
+        _rowcount = 0
         with self._lock:
-            self._conn.execute(f"UPDATE works SET {set_clause} WHERE id=?", vals)
+            _br = self._conn.execute(
+                "SELECT title, status, description, meta FROM works WHERE id=?", (work_id,)
+            ).fetchone()
+            if _br:
+                _before_row = {"title": _br["title"], "status": _br["status"],
+                               "description": _br["description"], "meta": _br["meta"]}
+            cur = self._conn.execute(f"UPDATE works SET {set_clause} WHERE id=?", vals)
+            _rowcount = cur.rowcount
             self._conn.execute("UPDATE objects SET updated_at=? WHERE id=?", (now, work_id))
             self._conn.commit()
+        if _rowcount > 0 and _before_row is not None:
+            _bh = hashlib.sha256(json.dumps(_before_row, sort_keys=True).encode()).hexdigest()
+            # Fetch the same canonical fields AFTER the update for a comparable after-hash
+            with self._lock:
+                _ar = self._conn.execute(
+                    "SELECT title, status, description, meta FROM works WHERE id=?", (work_id,)
+                ).fetchone()
+            _after_row = {"title": _ar["title"], "status": _ar["status"],
+                          "description": _ar["description"], "meta": _ar["meta"]} if _ar else {}
+            _ah = hashlib.sha256(json.dumps(_after_row, sort_keys=True).encode()).hexdigest()
+            self.audit("work.updated", object_id=work_id, object_type="work",
+                       before_hash=_bh, after_hash=_ah,
+                       detail=",".join(updates.keys()))
         return self.get_work(work_id)
 
     def delete_work(self, work_id: str) -> bool:
@@ -310,6 +353,8 @@ class OrivellumDB:
                 (now, work_id),
             )
             self._conn.commit()
+        if cur.rowcount > 0:
+            self.audit("work.deleted", object_id=work_id, object_type="work")
         return cur.rowcount > 0
 
     @staticmethod
@@ -368,6 +413,8 @@ class OrivellumDB:
                 (cid, work_id, title, model, now, now),
             )
             self._conn.commit()
+        self.audit("conversation.created", object_id=cid, object_type="conversation",
+                   detail=title[:120] if title else work_id)
         return self.get_conversation(cid)  # type: ignore[return-value]
 
     def add_message(self, conv_id: str, role: str, text: str,
@@ -383,6 +430,9 @@ class OrivellumDB:
                 "UPDATE conversations SET updated_at=? WHERE id=?", (now, conv_id)
             )
             self._conn.commit()
+        _wc = len(text.split()) if text else 0
+        self.audit("message.created", object_id=mid, object_type="message",
+                   detail=f"{role} {_wc}w")
         return {"id": mid, "conversation_id": conv_id, "role": role, "text": text,
                 "meta": meta or {}, "created_at": now}
 
@@ -399,15 +449,24 @@ class OrivellumDB:
             updates["model"] = model
         set_clause = ", ".join(f"{k}=?" for k in updates)
         vals = list(updates.values()) + [conv_id]
+        _rowcount = 0
         with self._lock:
-            self._conn.execute(f"UPDATE conversations SET {set_clause} WHERE id=?", vals)
+            cur = self._conn.execute(f"UPDATE conversations SET {set_clause} WHERE id=?", vals)
+            _rowcount = cur.rowcount
             self._conn.commit()
+        if _rowcount > 0:
+            meaningful = {k: v for k, v in updates.items() if k != "updated_at"}
+            if meaningful:
+                self.audit("conversation.updated", object_id=conv_id, object_type="conversation",
+                           detail=",".join(meaningful.keys()))
         return self.get_conversation(conv_id)
 
     def delete_conversation(self, conv_id: str) -> bool:
         with self._lock:
             cur = self._conn.execute("DELETE FROM conversations WHERE id=?", (conv_id,))
             self._conn.commit()
+        if cur.rowcount > 0:
+            self.audit("conversation.deleted", object_id=conv_id, object_type="conversation")
         return cur.rowcount > 0
 
     # -------------------------------------------------------------------------
@@ -441,7 +500,7 @@ class OrivellumDB:
     def create_document(self, title: str, source: str | None = None, sha256: str | None = None,
                         kind: str | None = None, work_id: str | None = None,
                         content_path: str | None = None, meta: dict | None = None) -> dict:
-        oid = self.create_object("document")
+        oid = self._create_object("document")
         now = _now()
         with self._lock:
             self._conn.execute(
@@ -450,6 +509,9 @@ class OrivellumDB:
                 (oid, work_id, title, source, sha256, kind, content_path, _jdump(meta or {}), now),
             )
             self._conn.commit()
+        self.audit("document.imported", object_id=oid, object_type="document",
+                   after_hash=sha256,
+                   detail=title[:120] if title else source)
         return self.get_document(oid)  # type: ignore[return-value]
 
     def update_document_work(self, doc_id: str, work_id: str | None) -> bool:
@@ -459,16 +521,27 @@ class OrivellumDB:
                 "UPDATE documents SET work_id=? WHERE id=?", (work_id, doc_id)
             )
             self._conn.commit()
+        if cur.rowcount > 0:
+            op = "document.work_assigned" if work_id else "document.work_unlinked"
+            self.audit(op, object_id=doc_id, object_type="document", detail=work_id)
         return cur.rowcount > 0
 
     def delete_document(self, doc_id: str) -> bool:
         with self._lock:
+            # Capture title before deletion for audit detail
+            _row = self._conn.execute(
+                "SELECT title FROM documents WHERE id=?", (doc_id,)
+            ).fetchone()
+            _title = _row["title"] if _row else None
             cur = self._conn.execute("DELETE FROM documents WHERE id=?", (doc_id,))
-            cur2 = self._conn.execute(
+            self._conn.execute(
                 "UPDATE objects SET lifecycle='deleted', updated_at=? WHERE id=?",
                 (_now(), doc_id),
             )
             self._conn.commit()
+        if cur.rowcount > 0:
+            self.audit("document.deleted", object_id=doc_id, object_type="document",
+                       detail=_title)
         return cur.rowcount > 0
 
     @staticmethod
@@ -560,7 +633,7 @@ class OrivellumDB:
         return [dict(r) for r in rows]
 
     def create_task(self, work_id: str, text: str, priority: int = 0) -> dict:
-        oid = self.create_object("task")
+        oid = self._create_object("task")
         now = _now()
         with self._lock:
             self._conn.execute(
@@ -568,6 +641,8 @@ class OrivellumDB:
                 (oid, work_id, text, priority, "{}", now),
             )
             self._conn.commit()
+        self.audit("task.created", object_id=oid, object_type="task",
+                   detail=text[:120] if text else None)
         with self._lock:
             row = self._conn.execute("SELECT * FROM tasks WHERE id=?", (oid,)).fetchone()
         return dict(row) if row else {}
@@ -589,10 +664,15 @@ class OrivellumDB:
             return dict(row) if row else None
         set_clause = ", ".join(f"{k}=?" for k in updates)
         vals = list(updates.values()) + [task_id]
+        _rowcount = 0
         with self._lock:
-            self._conn.execute(f"UPDATE tasks SET {set_clause} WHERE id=?", vals)
+            cur = self._conn.execute(f"UPDATE tasks SET {set_clause} WHERE id=?", vals)
+            _rowcount = cur.rowcount
             self._conn.commit()
             row = self._conn.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
+        if _rowcount > 0:
+            self.audit("task.updated", object_id=task_id, object_type="task",
+                       detail=",".join(k for k in updates if k != "completed_at"))
         return dict(row) if row else None
 
     # -------------------------------------------------------------------------
@@ -604,7 +684,7 @@ class OrivellumDB:
 
         chunks.id is a FK to objects(id), so we must register it there first.
         """
-        cid = self.create_object("chunk")
+        cid = self._create_object("chunk")
         now = _now()
         with self._lock:
             self._conn.execute(
@@ -616,14 +696,24 @@ class OrivellumDB:
                 (cid, doc_id, text),
             )
             self._conn.commit()
+        self.audit("document.chunk_added", object_id=doc_id, object_type="document",
+                   detail=f"page={page}")
         return cid
 
     def delete_chunks(self, doc_id: str) -> None:
         """Remove all chunks for a document (e.g. before re-extracting)."""
+        _count = 0
         with self._lock:
+            _row = self._conn.execute(
+                "SELECT COUNT(*) FROM chunks WHERE doc_id=?", (doc_id,)
+            ).fetchone()
+            _count = _row[0] if _row else 0
             self._conn.execute("DELETE FROM chunks_fts WHERE doc_id=?", (doc_id,))
             self._conn.execute("DELETE FROM chunks WHERE doc_id=?", (doc_id,))
             self._conn.commit()
+        if _count > 0:
+            self.audit("document.chunks_cleared", object_id=doc_id, object_type="document",
+                       detail=f"{_count} chunks")
 
     def get_extraction_warnings(self, doc_id: str) -> list[dict]:
         """Return all extraction warnings for a document, ordered oldest-first."""
@@ -637,11 +727,19 @@ class OrivellumDB:
 
     def delete_extraction_warnings(self, doc_id: str) -> None:
         """Remove all prior warnings for a document (call before re-queuing extraction)."""
+        _count = 0
         with self._lock:
+            _row = self._conn.execute(
+                "SELECT COUNT(*) FROM extraction_warnings WHERE doc_id=?", (doc_id,)
+            ).fetchone()
+            _count = _row[0] if _row else 0
             self._conn.execute(
                 "DELETE FROM extraction_warnings WHERE doc_id=?", (doc_id,)
             )
             self._conn.commit()
+        if _count > 0:
+            self.audit("document.warnings_cleared", object_id=doc_id, object_type="document",
+                       detail=f"{_count} warnings")
 
     def add_extraction_warning(self, doc_id: str, kind: str,
                                detail: str | None = None) -> str:
@@ -655,18 +753,27 @@ class OrivellumDB:
                 (wid, doc_id, kind, detail, now),
             )
             self._conn.commit()
+        self.audit("document.warning_added", object_id=doc_id, object_type="document",
+                   detail=f"{kind}: {(detail or '')[:80]}")
         return wid
 
     def update_document_extracted(self, doc_id: str, extracted_text: str,
                                   word_count: int, readiness: str = "ready",
                                   error_message: str | None = None) -> None:
         """Persist extraction results back on the document row."""
+        _rowcount = 0
         with self._lock:
-            self._conn.execute(
+            cur = self._conn.execute(
                 "UPDATE documents SET extracted_text=?, word_count=?, readiness=?, error_message=? WHERE id=?",
                 (extracted_text, word_count, readiness, error_message, doc_id),
             )
+            _rowcount = cur.rowcount
             self._conn.commit()
+        if _rowcount > 0:
+            _op = "document.extraction_failed" if readiness in ("error", "no_text") else "document.extracted"
+            self.audit(_op, object_id=doc_id, object_type="document",
+                       result="error" if readiness in ("error", "no_text") else "ok",
+                       detail=error_message or f"{word_count}w {readiness}")
 
     def upsert_book_chapters(self, doc_id: str, work_id: str | None,
                              chapters: list[dict]) -> int:
@@ -706,7 +813,10 @@ class OrivellumDB:
                      ch.get("text", ""), doc_id, now, now),
                 )
             self._conn.commit()
-        return len(chapters)
+        n = len(chapters)
+        self.audit("document.chapters_updated", object_id=doc_id, object_type="document",
+                   detail=f"{n} chapters")
+        return n
 
     def get_book_chapters(self, doc_id: str) -> list[dict]:
         """Return all chapter rows for a document, ordered by seq."""
@@ -748,31 +858,40 @@ class OrivellumDB:
           {"source": "llm"} to durably mark LLM-extracted items so grouping
           survives after review_status changes to 'approved'/'rejected'.
         """
-        kid = self.create_object("knowledge")
+        kid = self._create_object("knowledge")
         now = _now()
         # Dedup by text_hash within same work
         text_hash = hashlib.sha256(f"{work_id}:{text}".encode()).hexdigest()
         meta_json = _jdump(meta or {})
+        _inserted = False
+        _existing_id: str | None = None
         with self._lock:
             existing = self._conn.execute(
                 "SELECT id FROM knowledge WHERE text_hash=? AND work_id IS ?",
                 (text_hash, work_id),
             ).fetchone()
             if existing:
-                return existing["id"]
-            self._conn.execute(
-                """INSERT INTO knowledge(id,work_id,kind,text,subject,predicate,object,
-                   confidence,source_doc_id,source_chunk_id,review_status,meta,
-                   created_at,text_hash)
-                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                (kid, work_id, kind, text, subject, predicate, obj, confidence,
-                 source_doc_id, source_chunk_id, review_status, meta_json, now, text_hash),
-            )
-            self._conn.execute(
-                "INSERT INTO knowledge_fts(knowledge_id,work_id,text,subject,object) VALUES(?,?,?,?,?)",
-                (kid, work_id, text, subject or "", obj or ""),
-            )
-            self._conn.commit()
+                _existing_id = existing["id"]
+            else:
+                self._conn.execute(
+                    """INSERT INTO knowledge(id,work_id,kind,text,subject,predicate,object,
+                       confidence,source_doc_id,source_chunk_id,review_status,meta,
+                       created_at,text_hash)
+                       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (kid, work_id, kind, text, subject, predicate, obj, confidence,
+                     source_doc_id, source_chunk_id, review_status, meta_json, now, text_hash),
+                )
+                self._conn.execute(
+                    "INSERT INTO knowledge_fts(knowledge_id,work_id,text,subject,object) VALUES(?,?,?,?,?)",
+                    (kid, work_id, text, subject or "", obj or ""),
+                )
+                self._conn.commit()
+                _inserted = True
+        if _existing_id:
+            return _existing_id
+        if _inserted:
+            self.audit("knowledge.created", object_id=kid, object_type="knowledge",
+                       detail=f"{kind}: {text[:80]}")
         return kid
 
     def update_knowledge_review_status(self, item_id: str, status: str) -> bool:
@@ -780,12 +899,23 @@ class OrivellumDB:
         valid = {"auto", "ai_auto", "approved", "rejected"}
         if status not in valid:
             raise ValueError(f"review_status must be one of {valid}")
+        _before_status: str | None = None
         with self._lock:
+            _row = self._conn.execute(
+                "SELECT review_status FROM knowledge WHERE id=?", (item_id,)
+            ).fetchone()
+            _before_status = _row["review_status"] if _row else None
             cur = self._conn.execute(
                 "UPDATE knowledge SET review_status=? WHERE id=?",
                 (status, item_id),
             )
             self._conn.commit()
+        if cur.rowcount > 0:
+            _bh = hashlib.sha256(json.dumps({"review_status": _before_status}).encode()).hexdigest() if _before_status else None
+            _ah = hashlib.sha256(json.dumps({"review_status": status}).encode()).hexdigest()
+            self.audit("knowledge.review_updated", object_id=item_id, object_type="knowledge",
+                       before_hash=_bh, after_hash=_ah,
+                       detail=f"{_before_status}→{status}")
         return cur.rowcount > 0
 
     # -------------------------------------------------------------------------
@@ -819,6 +949,10 @@ class OrivellumDB:
                  notes, 1 if is_canonical else 0, now, created_by),
             )
             self._conn.commit()
+        _canonical_flag = " canonical" if is_canonical else ""
+        self.audit("document.version_created", object_id=doc_id, object_type="document",
+                   after_hash=sha256,
+                   detail=f"v{version_num}{_canonical_flag}")
         return {"id": vid, "doc_id": doc_id, "version_num": version_num,
                 "sha256": sha256, "word_count": word_count, "notes": notes,
                 "is_canonical": is_canonical, "created_at": now}
@@ -839,6 +973,9 @@ class OrivellumDB:
                 (version_id, doc_id),
             )
             self._conn.commit()
+        if cur.rowcount > 0:
+            self.audit("document.version_canonical", object_id=doc_id, object_type="document",
+                       detail=version_id[:36])
         return cur.rowcount > 0
 
     # -------------------------------------------------------------------------

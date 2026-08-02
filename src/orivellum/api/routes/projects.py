@@ -44,6 +44,8 @@ def create_project(body: ProjectCreate):
             (pid, body.work_id, body.name, body.description, now),
         )
         db._conn.commit()
+    db.audit("learning.concept_created", object_id=pid, object_type="learning_concept",
+             actor="user", detail=body.name[:120] if body.name else None)
     return {"project": {"id": pid, "name": body.name, "description": body.description,
                         "work_id": body.work_id, "mastery": 0.0, "created_at": now}}
 

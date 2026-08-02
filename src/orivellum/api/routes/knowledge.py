@@ -52,6 +52,7 @@ def delete_knowledge(item_id: str):
             raise HTTPException(404, f"Knowledge item {item_id!r} not found")
         db._conn.execute("DELETE FROM knowledge WHERE id=?", (item_id,))
         db._conn.commit()
+    db.audit("knowledge.deleted", object_id=item_id, object_type="knowledge", actor="user")
     return {"ok": True, "id": item_id}
 
 

@@ -87,6 +87,8 @@ def create_document(body: CreateDocRequest):
              body.content_text, wc, body.work_id, now, now),
         )
         db._conn.commit()
+    db.audit("write_document.created", object_id=doc_id, object_type="write_document",
+             actor="user", detail=body.title[:120] if body.title else None)
     return get_document(doc_id)
 
 
@@ -135,19 +137,27 @@ def update_document(doc_id: str, body: UpdateDocRequest):
 
     args.append(doc_id)
     with db._lock:
-        db._conn.execute(
+        cur = db._conn.execute(
             f"UPDATE write_documents SET {', '.join(sets)} WHERE id=?", args
         )
         db._conn.commit()
+    if cur.rowcount > 0:
+        db.audit("write_document.updated", object_id=doc_id, object_type="write_document",
+                 actor="user", detail=",".join(s.split("=")[0] for s in sets if s != "updated_at=?"))
     return get_document(doc_id)
 
 
 @router.delete("/documents/{doc_id}")
 def delete_document(doc_id: str):
     db = get_db()
+    _existed = False
     with db._lock:
+        _row = db._conn.execute("SELECT id FROM write_documents WHERE id=?", (doc_id,)).fetchone()
+        _existed = _row is not None
         db._conn.execute("DELETE FROM write_documents WHERE id=?", (doc_id,))
         db._conn.commit()
+    if _existed:
+        db.audit("write_document.deleted", object_id=doc_id, object_type="write_document", actor="user")
     return {"ok": True}
 
 

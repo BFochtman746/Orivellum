@@ -278,10 +278,14 @@ def generate_suggestions(work_id: str | None = Body(None), limit: int = Body(6))
 
     # ── Prune stale suggestions ───────────────────────────────────────────────
     with db._lock:
-        db._conn.execute(
+        _prune_cur = db._conn.execute(
             "DELETE FROM suggestions WHERE created_at < datetime('now','-7 days')"
         )
+        _pruned = _prune_cur.rowcount
         db._conn.commit()
+    if _pruned > 0:
+        db.audit("system.suggestions_pruned", object_id=None, object_type="suggestion",
+                 actor="system", detail=f"{_pruned} stale suggestions removed")
 
     # ── Persist new suggestions ───────────────────────────────────────────────
     new_rows: list[dict] = []
@@ -302,6 +306,9 @@ def generate_suggestions(work_id: str | None = Body(None), limit: int = Body(6))
                 "text": item.get("title",""), "meta": json.loads(meta), "created_at": now,
             })
         db._conn.commit()
+    if new_rows:
+        db.audit("system.suggestions_generated", object_id=None, object_type="suggestion",
+                 actor="system", detail=f"{len(new_rows)} suggestions")
 
     return {"suggestions": new_rows, "generated": len(new_rows)}
 
@@ -378,9 +385,14 @@ def list_user_memory():
 def delete_user_memory(memory_id: str):
     db = get_db()
     try:
+        _existed = False
         with db._lock:
+            _row = db._conn.execute("SELECT id FROM user_memory WHERE id=?", (memory_id,)).fetchone()
+            _existed = _row is not None
             db._conn.execute("DELETE FROM user_memory WHERE id=?", (memory_id,))
             db._conn.commit()
+        if _existed:
+            db.audit("user_memory.deleted", object_id=memory_id, object_type="user_memory", actor="user")
         return {"deleted": memory_id}
     except Exception as exc:
         raise HTTPException(500, f"Could not delete memory: {exc}")
@@ -402,7 +414,7 @@ class AiExtractionUpdate(BaseModel):
 def set_ai_extraction_setting(body: AiExtractionUpdate):
     """Enable or disable LLM-powered knowledge extraction for future document imports."""
     db = get_db()
-    db.set_setting("ai_extraction_enabled", "true" if body.enabled else "false")
+    db.set_setting("ai_extraction_enabled", "true" if body.enabled else "false", actor="user")
     return {"enabled": body.enabled, "ok": True}
 
 
@@ -545,19 +557,29 @@ def global_search(q: str, limit: int = 20, work_id: str | None = None):
 def get_audit_log(
     limit: int = 100,
     object_id: str | None = None,
+    object_type: str | None = None,
     actor: str | None = None,
     operation: str | None = None,
+    since: str | None = None,
 ):
     """Return recent audit-log entries, newest first.
 
-    Query params: limit (max 500), object_id, actor, operation (substring match).
+    Query params:
+      limit       — max rows (default 100, max 1000)
+      object_id   — filter to a specific object UUID
+      object_type — filter by type (document, work, knowledge, conversation)
+      actor       — filter by actor (system, pipeline, user)
+      operation   — substring match against operation name
+      since       — ISO-8601 lower-bound timestamp (inclusive)
     """
     db = get_db()
     entries = db.list_audit_log(
         limit=limit,
         object_id=object_id,
+        object_type=object_type,
         actor=actor,
         operation=operation,
+        since=since,
     )
     return {"entries": entries, "count": len(entries)}
 

@@ -174,8 +174,7 @@ def library_create_version(doc_id: str, body: dict = Body(default={})):
         notes=body.get("notes"),
         is_canonical=bool(body.get("is_canonical", False)),
     )
-    db.audit("document.version.created", object_id=doc_id, object_type="document",
-             actor="user", detail=f"v{version['version_num']}")
+    # audit is emitted inside db.create_document_version
     return {"version": version}
 
 
@@ -186,8 +185,7 @@ def library_set_canonical(doc_id: str, version_id: str):
     ok = db.set_canonical_version(doc_id, version_id)
     if not ok:
         raise HTTPException(404, "Version not found")
-    db.audit("document.version.canonical", object_id=doc_id, object_type="document",
-             actor="user", detail=version_id[:8])
+    # audit is emitted inside db.set_canonical_version
     return {"ok": True}
 
 
@@ -396,7 +394,7 @@ def library_set_active_work(body: LibraryActiveWork):
     db = get_db()
     if body.work_id and not db.get_work(body.work_id):
         raise HTTPException(404, f"Work {body.work_id!r} not found")
-    db.set_setting("active_work_id", body.work_id or "")
+    db.set_setting("active_work_id", body.work_id or "", actor="user")
     return {"ok": True, "work_id": body.work_id}
 
 

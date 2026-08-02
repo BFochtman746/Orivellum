@@ -144,6 +144,12 @@ def find_and_record_near_duplicates(
                         (dupe_id, doc_id, other_id, round(sim, 4), kind),
                     )
                     db._conn.commit()
+                    try:
+                        db.audit("document.near_duplicate_found", object_id=doc_id,
+                                 object_type="document", actor="system",
+                                 detail=f"dup={other_id[:8]} sim={round(sim, 4)}")
+                    except Exception:
+                        pass
                     logger.info(
                         "Near-dup detected: %s ↔ %s  similarity=%.2f  kind=%s",
                         doc_id[:8], other_id[:8], sim, kind,
