@@ -245,6 +245,34 @@ def run_nightshift(db: "OrivellumDB", cfg: "OrivellumConfig") -> None:
     except Exception as exc:
         logger.warning("Nightshift gap analysis failed: %s", exc)
 
+    # ── Learning loop: evidence re-scoring + contradiction detection ─────────
+    try:
+        from orivellum.capabilities.evidence import rescore_work, detect_contradictions
+        rescored = conflicts_found = 0
+        for work in db.list_works(status="active")[:20]:
+            try:
+                rescored += rescore_work(work["id"], db)
+                conflicts_found += detect_contradictions(work["id"], db)
+            except Exception as exc:
+                logger.warning("Evidence pass failed for work %s: %s",
+                               work.get("id", "?")[:8], exc)
+        if rescored:
+            report_lines.append(f"Evidence: re-scored confidence on {rescored} knowledge item(s)")
+        if conflicts_found:
+            report_lines.append(
+                f"⚠ Contradictions: {conflicts_found} new conflict(s) detected — review in Governance")
+    except Exception as exc:
+        logger.warning("Nightshift evidence pass failed: %s", exc)
+
+    # ── Semantic embeddings backfill (skips silently when AI endpoint is down) ─
+    try:
+        from orivellum.capabilities.embeddings import backfill_embeddings
+        embedded = backfill_embeddings(db, max_items=300)
+        if embedded:
+            report_lines.append(f"Semantic index: embedded {embedded} new item(s)")
+    except Exception as exc:
+        logger.warning("Nightshift embedding pass failed: %s", exc)
+
     report_path = _write_report(Path(cfg.data_dir), date_str, report_lines)
     _record_run(db, len(docs), items_added, report_path)
     logger.info("Nightshift complete — processed %d docs, added %d items", len(docs), items_added)

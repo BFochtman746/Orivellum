@@ -457,6 +457,45 @@ def governance_stats():
     }
 
 
+@router.get("/governance/conflicts")
+def governance_conflicts(resolved: bool = False, limit: int = 100):
+    """Return detected knowledge conflicts (contradiction pairs) for adjudication."""
+    db = get_db()
+    conflicts = db.list_conflicts(resolved=resolved, limit=limit)
+    return {"conflicts": conflicts, "count": len(conflicts)}
+
+
+class ConflictResolveBody(BaseModel):
+    resolution: str  # "keep_a" | "keep_b" | "keep_both"
+
+
+@router.post("/governance/conflicts/{conflict_id}/resolve")
+def governance_resolve_conflict(conflict_id: str, body: ConflictResolveBody):
+    """Resolve a conflict. keep_a/keep_b rejects the losing claim; keep_both dismisses."""
+    if body.resolution not in ("keep_a", "keep_b", "keep_both"):
+        raise HTTPException(400, "resolution must be keep_a, keep_b, or keep_both")
+    db = get_db()
+    ok = db.resolve_conflict(conflict_id, body.resolution)
+    if not ok:
+        raise HTTPException(404, f"Conflict {conflict_id!r} not found or already resolved")
+    return {"ok": True, "id": conflict_id, "resolution": body.resolution}
+
+
+@router.post("/governance/rescore")
+def governance_rescore():
+    """Manually trigger evidence re-scoring + contradiction detection across all active Works."""
+    from orivellum.capabilities.evidence import rescore_work, detect_contradictions
+    db = get_db()
+    rescored = conflicts = 0
+    for work in db.list_works(status="active")[:50]:
+        try:
+            rescored += rescore_work(work["id"], db)
+            conflicts += detect_contradictions(work["id"], db)
+        except Exception:
+            pass
+    return {"rescored": rescored, "new_conflicts": conflicts}
+
+
 class BatchReviewBody(BaseModel):
     item_ids: list[str]
     status: str  # "approved" | "rejected"

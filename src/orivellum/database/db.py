@@ -1410,6 +1410,168 @@ class OrivellumDB:
                        detail=f"{_before_status}→{status}")
         return cur.rowcount > 0
 
+    def update_knowledge_confidence(self, item_id: str, confidence: float,
+                                    evidence: dict | None = None) -> bool:
+        """Set confidence (and optional meta.evidence components) on a knowledge item."""
+        confidence = max(0.0, min(1.0, float(confidence)))
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT meta FROM knowledge WHERE id=?", (item_id,)).fetchone()
+            if not row:
+                return False
+            if evidence is not None:
+                try:
+                    meta = json.loads(row["meta"] or "{}")
+                except Exception:
+                    meta = {}
+                meta["evidence"] = evidence
+                self._conn.execute(
+                    "UPDATE knowledge SET confidence=?, meta=? WHERE id=?",
+                    (confidence, json.dumps(meta), item_id))
+            else:
+                self._conn.execute(
+                    "UPDATE knowledge SET confidence=? WHERE id=?",
+                    (confidence, item_id))
+            self._conn.commit()
+        return True
+
+    # -------------------------------------------------------------------------
+    # Conflicts (contradiction detection)
+    # -------------------------------------------------------------------------
+
+    def create_conflict(self, claim_a_id: str, claim_b_id: str,
+                        conflict_type: str) -> str | None:
+        """Record a conflict between two knowledge items.
+
+        Returns the new conflict id, or None when this pair (either order)
+        is already recorded.
+        """
+        with self._lock:
+            existing = self._conn.execute(
+                """SELECT id FROM conflicts
+                   WHERE (claim_a_id=? AND claim_b_id=?)
+                      OR (claim_a_id=? AND claim_b_id=?)""",
+                (claim_a_id, claim_b_id, claim_b_id, claim_a_id),
+            ).fetchone()
+            if existing:
+                return None
+            cid = str(uuid.uuid4())
+            self._conn.execute(
+                """INSERT INTO conflicts(id, claim_a_id, claim_b_id,
+                   conflict_type, resolution, created_at)
+                   VALUES(?,?,?,?,NULL,?)""",
+                (cid, claim_a_id, claim_b_id, conflict_type, _now()),
+            )
+            self._conn.commit()
+        self.audit("conflict.detected", object_id=cid, object_type="conflict",
+                   actor="system", detail=f"{conflict_type}: {claim_a_id[:8]} vs {claim_b_id[:8]}")
+        return cid
+
+    def create_conflicts_batch(self, pairs: list[tuple[str, str, str]]) -> int:
+        """Batch-insert conflicts [(claim_a_id, claim_b_id, conflict_type), ...].
+
+        Skips pairs already recorded (either order). Single commit + single
+        audit entry for the whole batch. Returns number inserted.
+        """
+        if not pairs:
+            return 0
+        inserted = 0
+        with self._lock:
+            for a_id, b_id, ctype in pairs:
+                exists = self._conn.execute(
+                    """SELECT 1 FROM conflicts
+                       WHERE (claim_a_id=? AND claim_b_id=?)
+                          OR (claim_a_id=? AND claim_b_id=?)""",
+                    (a_id, b_id, b_id, a_id)).fetchone()
+                if exists:
+                    continue
+                self._conn.execute(
+                    """INSERT INTO conflicts(id, claim_a_id, claim_b_id,
+                       conflict_type, resolution, created_at)
+                       VALUES(?,?,?,?,NULL,?)""",
+                    (str(uuid.uuid4()), a_id, b_id, ctype, _now()))
+                inserted += 1
+            self._conn.commit()
+        if inserted:
+            self.audit("conflict.detected", object_id="batch", object_type="conflict",
+                       actor="system", detail=f"batch: {inserted} new conflict(s)")
+        return inserted
+
+    def list_conflicts(self, resolved: bool = False, limit: int = 100) -> list[dict]:
+        """Return conflicts with both claims joined for display."""
+        cond = "c.resolution IS NOT NULL" if resolved else "c.resolution IS NULL"
+        with self._lock:
+            rows = self._conn.execute(
+                f"""SELECT c.id, c.conflict_type, c.resolution, c.created_at,
+                           ka.id AS a_id, ka.text AS a_text, ka.subject AS a_subject,
+                           ka.confidence AS a_confidence, ka.review_status AS a_status,
+                           kb.id AS b_id, kb.text AS b_text, kb.subject AS b_subject,
+                           kb.confidence AS b_confidence, kb.review_status AS b_status,
+                           w.id AS work_id, w.title AS work_title
+                    FROM conflicts c
+                    JOIN knowledge ka ON ka.id = c.claim_a_id
+                    JOIN knowledge kb ON kb.id = c.claim_b_id
+                    LEFT JOIN works w ON w.id = ka.work_id
+                    WHERE {cond}
+                    ORDER BY c.created_at DESC LIMIT ?""",
+                (min(limit, 500),),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def resolve_conflict(self, conflict_id: str, resolution: str,
+                         keep_id: str | None = None) -> bool:
+        """Resolve a conflict: 'keep_a' | 'keep_b' | 'keep_both'.
+
+        The losing claim (if any) is marked review_status='rejected'.
+        """
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT claim_a_id, claim_b_id FROM conflicts WHERE id=? AND resolution IS NULL",
+                (conflict_id,)).fetchone()
+            if not row:
+                return False
+            self._conn.execute(
+                "UPDATE conflicts SET resolution=? WHERE id=?",
+                (resolution, conflict_id))
+            self._conn.commit()
+        loser = None
+        if resolution == "keep_a":
+            loser = row["claim_b_id"]
+        elif resolution == "keep_b":
+            loser = row["claim_a_id"]
+        if loser:
+            self.update_knowledge_review_status(loser, "rejected")
+        self.audit("conflict.resolved", object_id=conflict_id, object_type="conflict",
+                   actor="user", detail=resolution)
+        return True
+
+    # -------------------------------------------------------------------------
+    # Vectors (semantic embeddings)
+    # -------------------------------------------------------------------------
+
+    def store_vector(self, object_id: str, object_type: str,
+                     embedding: bytes, dim: int) -> None:
+        """Insert or replace the embedding for an object."""
+        with self._lock:
+            self._conn.execute(
+                "DELETE FROM vectors WHERE object_id=? AND object_type=?",
+                (object_id, object_type))
+            self._conn.execute(
+                """INSERT INTO vectors(id, object_id, object_type, embedding, dim, created_at)
+                   VALUES(?,?,?,?,?,?)""",
+                (str(uuid.uuid4()), object_id, object_type, embedding, dim, _now()))
+            self._conn.commit()
+
+    def count_vectors(self, object_type: str | None = None) -> int:
+        with self._lock:
+            if object_type:
+                row = self._conn.execute(
+                    "SELECT COUNT(*) AS n FROM vectors WHERE object_type=?",
+                    (object_type,)).fetchone()
+            else:
+                row = self._conn.execute("SELECT COUNT(*) AS n FROM vectors").fetchone()
+        return row["n"] if row else 0
+
     # -------------------------------------------------------------------------
     # Document versions (#146)
     # -------------------------------------------------------------------------

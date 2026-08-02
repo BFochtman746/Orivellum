@@ -306,9 +306,12 @@ def _build_system_prompt(db: Any, conv: dict, scope: str = "work",
     # ── 1. Query-matched global search (primary path) ──────────────────────────
     if user_query and user_query.strip():
         try:
-            # Search knowledge items and raw document chunks across ALL works
-            knowledge_hits = db.search_knowledge(user_query, work_id=None,
-                                                 limit=_CONTEXT_KNOWLEDGE * 2)
+            # Search knowledge items and raw document chunks across ALL works.
+            # Hybrid = keyword FTS + semantic vectors (falls back to FTS-only
+            # automatically when the embeddings endpoint is unavailable).
+            from orivellum.capabilities.embeddings import hybrid_search_knowledge
+            knowledge_hits = hybrid_search_knowledge(user_query, db,
+                                                     limit=_CONTEXT_KNOWLEDGE * 2)
             trusted_k = [k for k in knowledge_hits
                          if k.get("review_status") in _TRUSTED][:_CONTEXT_KNOWLEDGE]
 

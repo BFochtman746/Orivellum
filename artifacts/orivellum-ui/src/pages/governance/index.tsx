@@ -20,7 +20,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
 import {
   Shield, ThumbsUp, ThumbsDown, RefreshCw, CheckCircle2,
-  Sparkles, Link, Keyboard,
+  Sparkles, Link, Keyboard, AlertTriangle,
 } from "lucide-react";
 import { useLocation } from "wouter";
 
@@ -130,6 +130,100 @@ function FilterBar<K extends string>({
           )}
         </button>
       ))}
+    </div>
+  );
+}
+
+// ── Conflicts section ─────────────────────────────────────────────────────────
+
+interface Conflict {
+  id: string; conflict_type: string; created_at: string;
+  a_id: string; a_text: string; a_subject: string | null; a_confidence: number | null;
+  b_id: string; b_text: string; b_subject: string | null; b_confidence: number | null;
+  work_id: string | null; work_title: string | null;
+}
+
+function ConflictsSection() {
+  const qc = useQueryClient();
+  const [resolving, setResolving] = useState<Set<string>>(new Set());
+
+  const { data } = useQuery<{ conflicts: Conflict[]; count: number }>({
+    queryKey: ["governance", "conflicts"],
+    queryFn: () => apiFetch(`${BASE}/governance/conflicts`).then((r) => r.json()),
+    staleTime: 30_000,
+  });
+
+  const conflicts = data?.conflicts ?? [];
+  if (conflicts.length === 0) return null;
+
+  const resolve = async (id: string, resolution: "keep_a" | "keep_b" | "keep_both") => {
+    setResolving((s) => new Set([...s, id]));
+    try {
+      const r = await apiFetch(`${BASE}/governance/conflicts/${id}/resolve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ resolution }),
+      });
+      if (!r.ok) throw new Error();
+      toast.success(resolution === "keep_both" ? "Kept both claims" : "Conflict resolved");
+      qc.invalidateQueries({ queryKey: ["governance"] });
+    } catch {
+      toast.error("Could not resolve conflict");
+    } finally {
+      setResolving((s) => { const n = new Set(s); n.delete(id); return n; });
+    }
+  };
+
+  return (
+    <div className="space-y-2.5">
+      <div className="flex items-center gap-2">
+        <AlertTriangle className="w-4 h-4 text-amber-600" />
+        <h2 className="text-sm font-mono font-semibold text-amber-700">
+          Contradicting claims ({conflicts.length})
+        </h2>
+      </div>
+      <div className="space-y-2">
+        {conflicts.map((c) => {
+          const busy = resolving.has(c.id);
+          return (
+            <div key={c.id} className="rounded-lg border border-amber-200/70 bg-amber-50/30 p-3 space-y-2">
+              <div className="flex items-center gap-2 text-[11px] font-mono text-muted-foreground">
+                <Badge variant="outline" className="border-amber-300 text-amber-700 text-[10px]">
+                  {c.conflict_type === "negation" ? "Negation" : "Conflicting values"}
+                </Badge>
+                {c.work_title && <span>{c.work_title}</span>}
+              </div>
+              <div className="grid sm:grid-cols-2 gap-2">
+                {[
+                  { label: "A", text: c.a_text, conf: c.a_confidence, res: "keep_a" as const },
+                  { label: "B", text: c.b_text, conf: c.b_confidence, res: "keep_b" as const },
+                ].map(({ label, text, conf, res }) => (
+                  <div key={label} className="rounded border border-border/50 bg-background p-2.5 flex flex-col gap-2">
+                    <p className="text-xs font-serif leading-relaxed flex-1">{text}</p>
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-mono text-muted-foreground">
+                        {conf != null ? `${Math.round(conf * 100)}% conf` : "—"}
+                      </span>
+                      <Button size="sm" variant="outline" disabled={busy}
+                        onClick={() => resolve(c.id, res)}
+                        className="h-6 text-[11px] gap-1 border-emerald-200 text-emerald-700 hover:bg-emerald-50">
+                        {busy ? <Spin /> : <ThumbsUp className="w-3 h-3" />} Keep {label}
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="flex justify-end">
+                <Button size="sm" variant="ghost" disabled={busy}
+                  onClick={() => resolve(c.id, "keep_both")}
+                  className="h-6 text-[11px] text-muted-foreground">
+                  Keep both (not a real conflict)
+                </Button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -309,6 +403,9 @@ export default function GovernancePage() {
           ))}
         </div>
       )}
+
+      {/* Contradicting claims */}
+      <ConflictsSection />
 
       {/* Filters + bulk approve */}
       {allItems.length > 0 && (

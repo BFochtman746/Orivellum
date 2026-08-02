@@ -21,11 +21,22 @@ def list_knowledge(work_id: str | None = None, kind: str | None = None, limit: i
 
 
 @router.get("/knowledge/search")
-def search_knowledge(q: str, work_id: str | None = None, limit: int = 20):
+def search_knowledge(q: str, work_id: str | None = None, limit: int = 20,
+                     semantic: bool = True):
+    """Hybrid keyword + semantic search over knowledge items.
+
+    Falls back to pure keyword (FTS) search automatically when the embeddings
+    endpoint is unavailable, or when ``semantic=false`` is passed.
+    """
     if not q:
         raise HTTPException(400, "q parameter required")
     db = get_db()
-    items = db.search_knowledge(q.strip(), work_id=work_id, limit=min(limit, 50))
+    if semantic:
+        from orivellum.capabilities.embeddings import hybrid_search_knowledge
+        items = hybrid_search_knowledge(q.strip(), db, limit=min(limit, 50),
+                                        work_id=work_id)
+    else:
+        items = db.search_knowledge(q.strip(), work_id=work_id, limit=min(limit, 50))
     return {"query": q, "knowledge": items, "count": len(items)}
 
 
