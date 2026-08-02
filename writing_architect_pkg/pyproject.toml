@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "writing-architect"
+version = "0.2.0"
+description = "A governed Book Production Operating System (WR-00 forensics + WR-01 foundation + WR-02 research & evidence)"
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [{ name = "Brian Fochtman" }]
+# Zero third-party runtime dependencies — sovereign, offline-capable, stdlib only.
+dependencies = []
+
+[project.scripts]
+wa = "writing_architect.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["writing_architect*"]
+
+[tool.setuptools.package-data]
+"writing_architect.domain" = ["schema.sql"]

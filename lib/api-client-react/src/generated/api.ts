@@ -21,6 +21,7 @@ import type {
 
 import type {
   Briefing,
+  CompletenessReport,
   ConversationCreate,
   ConversationUpdate,
   CreateBackup200,
@@ -1456,6 +1457,83 @@ export function useGetWorkGraph<TData = Awaited<ReturnType<typeof getWorkGraph>>
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getGetWorkGraphQueryOptions(workId,params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetWorkCompletenessUrl = (workId: string,) => {
+
+
+
+
+  return `/api/works/${workId}/completeness`
+}
+
+/**
+ * @summary Multi-dimensional completeness scoring for a Work
+ */
+export const getWorkCompleteness = async (workId: string, options?: Parameters<typeof customFetch>[1]): Promise<CompletenessReport> => {
+
+  return customFetch<CompletenessReport>(getGetWorkCompletenessUrl(workId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetWorkCompletenessQueryKey = (workId: string,) => {
+    return [
+    `/api/works/${workId}/completeness`
+    ] as const;
+    }
+
+
+export const getGetWorkCompletenessQueryOptions = <TData = Awaited<ReturnType<typeof getWorkCompleteness>>, TError = ErrorType<void>>(workId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getWorkCompleteness>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetWorkCompletenessQueryKey(workId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getWorkCompleteness>>> = ({ signal }) => getWorkCompleteness(workId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: workId !== null && workId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getWorkCompleteness>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetWorkCompletenessQueryResult = NonNullable<Awaited<ReturnType<typeof getWorkCompleteness>>>
+export type GetWorkCompletenessQueryError = ErrorType<void>
+
+
+/**
+ * @summary Multi-dimensional completeness scoring for a Work
+ */
+
+export function useGetWorkCompleteness<TData = Awaited<ReturnType<typeof getWorkCompleteness>>, TError = ErrorType<void>>(
+ workId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getWorkCompleteness>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetWorkCompletenessQueryOptions(workId,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

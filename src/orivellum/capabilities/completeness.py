@@ -223,5 +223,5 @@ def calculate_work_completeness(work_id: str, db: "OrivellumDB") -> Completeness
         overall=overall,
         readiness=readiness,
         summary=summary,
-        evaluated_at=datetime.datetime.utcnow().isoformat() + "Z",
+        evaluated_at=datetime.datetime.now(datetime.timezone.utc).isoformat(),
     )

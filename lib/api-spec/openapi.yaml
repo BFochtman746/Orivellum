@@ -352,6 +352,25 @@ paths:
         "404":
           description: Work not found
 
+  /works/{workId}/completeness:
+    get:
+      operationId: getWorkCompleteness
+      summary: Multi-dimensional completeness scoring for a Work
+      tags: [works]
+      parameters:
+        - name: workId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Completeness report
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CompletenessReport" }
+        "404":
+          description: Work not found
+
   /works/{workId}/stats:
     get:
       operationId: getWorkStats
@@ -1459,6 +1478,31 @@ components:
         edges: { type: array, items: { $ref: "#/components/schemas/GraphEdge" } }
         node_count: { type: integer }
         edge_count: { type: integer }
+
+    CompletenessDimension:
+      type: object
+      properties:
+        name: { type: string, description: "structural | content | research | editorial | source" }
+        label: { type: string }
+        score: { type: integer, description: "0-100" }
+        current: { type: number }
+        target: { type: number }
+        unit: { type: string }
+        rule: { type: string }
+        evidence: { type: array, items: { type: string } }
+
+    CompletenessReport:
+      type: object
+      properties:
+        work_id: { type: string }
+        work_title: { type: string }
+        overall: { type: integer, description: "Weighted overall score 0-100" }
+        readiness: { type: string, description: "Draft | Developing | Substantial | Near-Complete | Ready" }
+        summary: { type: string }
+        evaluated_at: { type: string }
+        dimensions:
+          type: array
+          items: { $ref: "#/components/schemas/CompletenessDimension" }
 
     OkResponse:
       type: object

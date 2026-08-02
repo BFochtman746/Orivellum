@@ -443,6 +443,33 @@ export const GetWorkGraphResponse = zod.object({
 
 
 /**
+ * @summary Multi-dimensional completeness scoring for a Work
+ */
+export const GetWorkCompletenessParams = zod.object({
+  "workId": zod.coerce.string()
+})
+
+export const GetWorkCompletenessResponse = zod.object({
+  "work_id": zod.string().optional(),
+  "work_title": zod.string().optional(),
+  "overall": zod.int().optional().describe('Weighted overall score 0-100'),
+  "readiness": zod.string().optional().describe('Draft | Developing | Substantial | Near-Complete | Ready'),
+  "summary": zod.string().optional(),
+  "evaluated_at": zod.string().optional(),
+  "dimensions": zod.array(zod.object({
+  "name": zod.string().optional().describe('structural | content | research | editorial | source'),
+  "label": zod.string().optional(),
+  "score": zod.int().optional().describe('0-100'),
+  "current": zod.number().optional(),
+  "target": zod.number().optional(),
+  "unit": zod.string().optional(),
+  "rule": zod.string().optional(),
+  "evidence": zod.array(zod.string()).optional()
+})).optional()
+})
+
+
+/**
  * @summary Get aggregated stats for a Work
  */
 export const GetWorkStatsParams = zod.object({

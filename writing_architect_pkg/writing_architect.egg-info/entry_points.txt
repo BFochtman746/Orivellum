@@ -1,0 +1,2 @@
+[console_scripts]
+wa = writing_architect.cli:main

@@ -401,6 +401,31 @@ export interface WorkGraph {
   edge_count?: number;
 }
 
+export interface CompletenessDimension {
+  /** structural | content | research | editorial | source */
+  name?: string;
+  label?: string;
+  /** 0-100 */
+  score?: number;
+  current?: number;
+  target?: number;
+  unit?: string;
+  rule?: string;
+  evidence?: string[];
+}
+
+export interface CompletenessReport {
+  work_id?: string;
+  work_title?: string;
+  /** Weighted overall score 0-100 */
+  overall?: number;
+  /** Draft | Developing | Substantial | Near-Complete | Ready */
+  readiness?: string;
+  summary?: string;
+  evaluated_at?: string;
+  dimensions?: CompletenessDimension[];
+}
+
 export interface OkResponse {
   ok?: boolean;
 }

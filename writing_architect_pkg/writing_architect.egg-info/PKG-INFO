@@ -1,0 +1,83 @@
+Metadata-Version: 2.4
+Name: writing-architect
+Version: 0.2.0
+Summary: A governed Book Production Operating System (WR-00 forensics + WR-01 foundation + WR-02 research & evidence)
+Author: Brian Fochtman
+Requires-Python: >=3.9
+Description-Content-Type: text/markdown
+
+# WRITING_ARCHITECT
+
+A governed **Book Production Operating System** — the executable answer to the
+forensic specification's verdict: *stop making master prompts; build a stateful,
+testable system where the rules are enforced by software.*
+
+- **WR-00 forensics** — read-only recursive fingerprinting, duplicate analysis,
+  authority proposal, capability map, and disposition of an archive.
+- **WR-01 foundation** — the canonical data model, the B0–B13 lifecycle with
+  hard gates, a policy engine, and a tamper-evident audit ledger.
+
+**Zero third-party dependencies. Offline. Stdlib-only Python 3.9+.**
+
+## Quick start
+
+```bash
+# 1. install
+bash install.sh                 # macOS/Linux   (Windows: install.ps1)
+
+# 2. audit your archive (read-only)
+wa forensics WRITING_ARCHITECT.zip --out wr00_baseline
+#    -> open wr00_baseline/WR00_REPORT.md
+
+# 3. watch the governance rules enforce themselves
+wa demo demo.sqlite
+
+# 4. start a governed book
+wa init mybook.sqlite
+wa book-new mybook.sqlite --title "Ash and Silence" --author "Brian Fochtman" \
+    --audience "Adult literary readers" \
+    --reader-promise "A grief-soaked account of exile and return"
+wa status mybook.sqlite <book_id>
+```
+
+## What to read
+
+| Document | Purpose |
+|---|---|
+| `docs/GUIDE.md` | Plain-language, start-to-finish operator guide |
+| `DIRECTIVE.md` | The governing build directive + live forensic audit findings |
+| `wr00_baseline/WR00_REPORT.md` | Generated forensic report on your archive |
+
+## Verify it yourself
+
+```bash
+python3 tests/test_system.py      # 12 governance/forensics tests, expect 12 passed
+wa doctor                         # installation self-check
+```
+
+## Layout
+
+```
+writing_architect/
+  forensics/    inventory, duplicates, authority, capability_map, baseline  (WR-00)
+  domain/       schema.sql, db, lifecycle, policy                           (WR-01)
+  cli.py        the `wa` command
+  demo.py       spec 14.1 first vertical slice
+tests/          test_system.py
+docs/GUIDE.md   plain-language guide
+DIRECTIVE.md    build directive + audit
+install.sh / install.ps1
+```
+
+## The rules that are always on (spec 11.3)
+
+1. No draft without an approved chapter contract.
+2. No factual claim accepted without supporting evidence.
+3. No quotation without an exact location reference.
+4. No reviewer closes their own blocker.
+5. No overwrite of a released artifact.
+6. No lifecycle move without a named actor and a recorded reason.
+7. Audit log is append-only and hash-chained.
+8. No canonical authority without a supersession rationale.
+
+Enforced by the database and policy engine — not by a prompt.
