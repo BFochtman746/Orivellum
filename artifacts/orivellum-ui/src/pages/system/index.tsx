@@ -3,10 +3,11 @@ import { apiFetch } from "@/lib/auth";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
-import { Activity, Database, Cpu, CheckCircle2, XCircle, AlertCircle, Terminal, Sparkles, Moon, Brain, Trash2, ScrollText, User, Settings } from "lucide-react";
+import { Activity, Database, Cpu, CheckCircle2, XCircle, AlertCircle, Terminal, Sparkles, Moon, Brain, Trash2, ScrollText, User, Settings, Image as ImageIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
 import { toast } from "sonner";
 
 const API_BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") || "";
@@ -218,6 +219,88 @@ function useSetAiExtractionSetting() {
   });
 }
 
+function ImageGenUrlCard() {
+  const qc = useQueryClient();
+  const { data } = useQuery({
+    queryKey: ["system", "image-gen-url"],
+    queryFn: async () => {
+      const r = await apiFetch(`${API_BASE}/api/system/settings/image-gen`);
+      if (!r.ok) throw new Error();
+      return r.json() as Promise<{ url: string }>;
+    },
+    staleTime: 60_000,
+  });
+  const [editing, setEditing] = useState(false);
+  const [val, setVal] = useState("");
+
+  function startEdit() { setVal(data?.url ?? ""); setEditing(true); }
+
+  async function save() {
+    try {
+      const r = await apiFetch(`${API_BASE}/api/system/settings/image-gen`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: val.trim() }),
+      });
+      if (!r.ok) throw new Error();
+      qc.invalidateQueries({ queryKey: ["system", "image-gen-url"] });
+      qc.invalidateQueries({ queryKey: ["studio", "image-status"] });
+      toast.success(val.trim() ? "Image generation URL saved" : "Reverted to auto-detect");
+      setEditing(false);
+    } catch {
+      toast.error("Could not save image generation URL");
+    }
+  }
+
+  return (
+    <Card>
+      <CardContent className="p-6">
+        <div className="flex items-start gap-3">
+          <ImageIcon className="w-5 h-5 text-primary mt-0.5 shrink-0" />
+          <div className="flex-1 space-y-2">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="font-medium text-sm">Image Generation Backend</h3>
+                <p className="text-sm text-muted-foreground mt-0.5">
+                  Orivellum auto-detects Automatic1111 (port 7860) and ComfyUI (port 8188).
+                  Set a custom URL here to override — e.g. a remote SD server or any
+                  OpenAI-compatible <code className="bg-muted px-1 rounded">/images/generations</code> endpoint.
+                  Leave blank to use auto-detection.
+                </p>
+              </div>
+              {!editing && (
+                <Button size="sm" variant="outline" className="ml-4 shrink-0 text-xs" onClick={startEdit}>
+                  {data?.url ? "Edit" : "Set URL"}
+                </Button>
+              )}
+            </div>
+            {!editing && data?.url && (
+              <p className="text-xs font-mono bg-muted/40 rounded px-2 py-1 truncate">{data.url}</p>
+            )}
+            {!editing && !data?.url && (
+              <p className="text-xs text-muted-foreground/60 font-mono">Auto-detect (Automatic1111 · ComfyUI)</p>
+            )}
+            {editing && (
+              <div className="flex gap-2">
+                <input
+                  autoFocus
+                  value={val}
+                  onChange={e => setVal(e.target.value)}
+                  placeholder="http://localhost:7860 or leave blank for auto-detect"
+                  className="flex-1 text-sm font-mono border border-border rounded px-2 py-1 bg-background focus:outline-none focus:ring-1 focus:ring-primary"
+                  onKeyDown={e => { if (e.key === "Enter") save(); if (e.key === "Escape") setEditing(false); }}
+                />
+                <Button size="sm" onClick={save}>Save</Button>
+                <Button size="sm" variant="ghost" onClick={() => setEditing(false)}>Cancel</Button>
+              </div>
+            )}
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function System() {
   const { data: health, isLoading: loadingHealth } = useGetSystemHealth({ query: { queryKey: getGetSystemHealthQueryKey(), refetchInterval: 10_000, staleTime: 8_000 } });
   const { data: capsResp, isLoading: loadingCaps } = useListCapabilities();
@@ -316,6 +399,9 @@ export default function System() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Image Generation URL Setting */}
+      <ImageGenUrlCard />
 
       {/* AI Extraction Setting */}
       <Card>

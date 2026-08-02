@@ -418,6 +418,25 @@ def set_ai_extraction_setting(body: AiExtractionUpdate):
     return {"enabled": body.enabled, "ok": True}
 
 
+@router.get("/system/settings/image-gen")
+def get_image_gen_setting():
+    """Return the configured image generation URL (empty = use auto-detection)."""
+    db = get_db()
+    return {"url": db.get_setting("image_gen_url", "")}
+
+
+class ImageGenUrlUpdate(BaseModel):
+    url: str  # empty string = auto-detect
+
+
+@router.put("/system/settings/image-gen")
+def set_image_gen_setting(body: ImageGenUrlUpdate):
+    """Set a custom image generation endpoint URL.  Empty string restores auto-detect."""
+    db = get_db()
+    db.set_setting("image_gen_url", body.url.strip(), actor="user")
+    return {"url": body.url.strip(), "ok": True}
+
+
 @router.get("/governance/pending")
 def governance_pending(limit: int = 100):
     """Return AI-auto knowledge items awaiting human review, across all Works."""

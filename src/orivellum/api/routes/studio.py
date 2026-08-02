@@ -498,29 +498,180 @@ def list_outputs():
 
 
 # ── Image generation ──────────────────────────────────────────────────────────
+# Tries backends in order:
+#   1. User-configured URL (DB setting: image_gen_url)
+#   2. Automatic1111 / SD WebUI   http://localhost:7860
+#   3. ComfyUI                    http://localhost:8188
+#   4. OpenAI-compatible endpoint (same base_url as chat, /images/generations)
+# Each strategy is tried; first 200 wins. Errors are logged at DEBUG level.
 
 class ImageGenRequest(BaseModel):
     prompt: str
     width: int = 512
     height: int = 512
+    negative_prompt: str = ""
+    steps: int = 20
+
+
+async def _try_openai_compat(client, base_url: str, body: ImageGenRequest) -> dict | None:
+    """OpenAI /images/generations — returns b64_json or url."""
+    try:
+        r = await client.post(
+            f"{base_url.rstrip('/')}/images/generations",
+            json={"prompt": body.prompt, "n": 1,
+                  "size": f"{body.width}x{body.height}",
+                  "response_format": "b64_json"},
+            timeout=90,
+        )
+        if r.status_code == 200:
+            return r.json()
+    except Exception as exc:
+        logger.debug("openai-compat image gen failed (%s): %s", base_url, exc)
+    return None
+
+
+async def _try_a1111(client, body: ImageGenRequest) -> dict | None:
+    """Automatic1111 / SD WebUI txt2img API."""
+    try:
+        r = await client.post(
+            "http://localhost:7860/sdapi/v1/txt2img",
+            json={"prompt": body.prompt,
+                  "negative_prompt": body.negative_prompt or "",
+                  "width": body.width, "height": body.height,
+                  "steps": body.steps, "sampler_name": "Euler a"},
+            timeout=120,
+        )
+        if r.status_code == 200:
+            data = r.json()
+            images = data.get("images", [])
+            if images:
+                return {"data": [{"b64_json": images[0]}]}
+    except Exception as exc:
+        logger.debug("A1111 image gen failed: %s", exc)
+    return None
+
+
+async def _try_comfyui(client, body: ImageGenRequest) -> dict | None:
+    """ComfyUI — basic txt2img via the prompt API."""
+    try:
+        # Minimal workflow: KSampler → VAE decode → save
+        import json as _json, uuid as _uuid
+        client_id = str(_uuid.uuid4())
+        workflow = {
+            "3": {"class_type": "KSampler", "inputs": {
+                "seed": 0, "steps": body.steps, "cfg": 7,
+                "sampler_name": "euler", "scheduler": "normal",
+                "denoise": 1, "model": ["4", 0],
+                "positive": ["6", 0], "negative": ["7", 0], "latent_image": ["5", 0]}},
+            "4": {"class_type": "CheckpointLoaderSimple",
+                  "inputs": {"ckpt_name": "v1-5-pruned-emaonly.ckpt"}},
+            "5": {"class_type": "EmptyLatentImage",
+                  "inputs": {"width": body.width, "height": body.height, "batch_size": 1}},
+            "6": {"class_type": "CLIPTextEncode",
+                  "inputs": {"text": body.prompt, "clip": ["4", 1]}},
+            "7": {"class_type": "CLIPTextEncode",
+                  "inputs": {"text": body.negative_prompt or "", "clip": ["4", 1]}},
+            "8": {"class_type": "VAEDecode",
+                  "inputs": {"samples": ["3", 0], "vae": ["4", 2]}},
+            "9": {"class_type": "SaveImage",
+                  "inputs": {"filename_prefix": "orivellum", "images": ["8", 0]}},
+        }
+        r = await client.post(
+            "http://localhost:8188/prompt",
+            json={"prompt": workflow, "client_id": client_id},
+            timeout=5,
+        )
+        if r.status_code != 200:
+            return None
+        prompt_id = r.json().get("prompt_id")
+        # Poll for result (max 90s)
+        import asyncio
+        for _ in range(30):
+            await asyncio.sleep(3)
+            hr = await client.get(f"http://localhost:8188/history/{prompt_id}", timeout=5)
+            if hr.status_code == 200:
+                hist = hr.json().get(prompt_id, {})
+                outputs = hist.get("outputs", {})
+                for node_out in outputs.values():
+                    for img in node_out.get("images", []):
+                        ir = await client.get(
+                            f"http://localhost:8188/view?filename={img['filename']}"
+                            f"&subfolder={img.get('subfolder','')}&type={img.get('type','output')}",
+                            timeout=10)
+                        if ir.status_code == 200:
+                            import base64 as _b64
+                            b64 = _b64.b64encode(ir.content).decode()
+                            return {"data": [{"b64_json": b64}]}
+    except Exception as exc:
+        logger.debug("ComfyUI image gen failed: %s", exc)
+    return None
 
 
 @router.post("/studio/image")
 async def generate_image(body: ImageGenRequest):
+    db = get_db()
     cfg = get_config()
-    try:
-        import httpx
-        async with httpx.AsyncClient(timeout=60) as client:
-            resp = await client.post(
-                f"{cfg.serving.base_url}/images/generations",
-                json={"prompt": body.prompt, "n": 1,
-                      "size": f"{body.width}x{body.height}"},
-            )
-            if resp.status_code == 200:
-                return resp.json()
-    except Exception as exc:
-        raise HTTPException(503, f"Image generation unavailable: {exc}")
-    raise HTTPException(503, "Image generation unavailable")
+    import httpx
+
+    async with httpx.AsyncClient() as client:
+        # 1. User-configured URL
+        custom_url = db.get_setting("image_gen_url", "").strip()
+        if custom_url:
+            result = await _try_openai_compat(client, custom_url, body)
+            if result:
+                return result
+
+        # 2. Automatic1111 (SD WebUI) — most common local image gen setup
+        result = await _try_a1111(client, body)
+        if result:
+            return result
+
+        # 3. ComfyUI
+        result = await _try_comfyui(client, body)
+        if result:
+            return result
+
+        # 4. OpenAI-compatible endpoint on the chat AI server
+        result = await _try_openai_compat(client, cfg.serving.base_url, body)
+        if result:
+            return result
+
+    raise HTTPException(
+        503,
+        "Image generation unavailable. Install Automatic1111 (SD WebUI) at "
+        "http://localhost:7860, ComfyUI at http://localhost:8188, or configure "
+        "a custom image_gen_url in System Settings.",
+    )
+
+
+@router.get("/studio/image-status")
+def image_gen_status():
+    """Quick probe to tell the UI which image backend (if any) is reachable."""
+    import urllib.request as _ur
+    db = get_db()
+    cfg = get_config()
+
+    def _probe(url: str) -> bool:
+        try:
+            _ur.urlopen(url, timeout=2).close()
+            return True
+        except Exception:
+            return False
+
+    custom = db.get_setting("image_gen_url", "").strip()
+    backends = []
+    if custom and _probe(custom):
+        backends.append({"name": "Custom", "url": custom, "online": True})
+    if _probe("http://localhost:7860"):
+        backends.append({"name": "Automatic1111", "url": "http://localhost:7860", "online": True})
+    if _probe("http://localhost:8188"):
+        backends.append({"name": "ComfyUI", "url": "http://localhost:8188", "online": True})
+    ai_url = f"{cfg.serving.base_url}/images/generations"
+    backends.append({
+        "name": "AI Server", "url": cfg.serving.base_url,
+        "online": _probe(cfg.serving.base_url.replace("/api/v1", "")),
+    })
+    return {"backends": backends, "any_online": any(b["online"] for b in backends)}
 
 
 # ── OCR ───────────────────────────────────────────────────────────────────────

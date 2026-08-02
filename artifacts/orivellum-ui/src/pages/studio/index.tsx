@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useListVoices, useListStudioOutputs, useGetSystemHealth, useListLibrary } from "@workspace/api-client-react";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -24,7 +25,7 @@ const BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/
 // ── TTS panel ─────────────────────────────────────────────────────────────────
 
 function TTSPanel() {
-  const { data: voicesResp, isLoading: loadingVoices } = useListVoices();
+  const { data: voicesResp, isLoading: loadingVoices, isError: voicesError, refetch: refetchVoices } = useListVoices();
   const voices = voicesResp?.voices ?? [];
 
   const [text, setText] = useState("");
@@ -371,13 +372,21 @@ function AudiobookPanel() {
 
 function ImageGenPanel() {
   const [prompt, setPrompt] = useState("");
+  const [negPrompt, setNegPrompt] = useState("");
   const [width, setWidth] = useState(512);
   const [height, setHeight] = useState(512);
+  const [steps, setSteps] = useState(20);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<string | null>(null);
 
-  const { data: health } = useGetSystemHealth({ query: { staleTime: 15_000 } } as any);
-  const aiOnline = (health as any)?.status === "ok";
+  // Poll which image backends are reachable
+  const { data: imgStatus } = useQuery({
+    queryKey: ["studio", "image-status"],
+    queryFn: () => apiFetch(`${BASE}/studio/image-status`).then(r => r.json()),
+    staleTime: 15_000, refetchInterval: 30_000,
+  });
+  const backends: { name: string; online: boolean }[] = imgStatus?.backends ?? [];
+  const anyOnline = imgStatus?.any_online ?? false;
 
   async function handleGenerate() {
     if (!prompt.trim()) return;
@@ -387,20 +396,24 @@ function ImageGenPanel() {
       const resp = await apiFetch(`${BASE}/studio/image`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: prompt.trim(), width, height }),
+        body: JSON.stringify({
+          prompt: prompt.trim(),
+          negative_prompt: negPrompt.trim(),
+          width, height, steps,
+        }),
       });
       if (!resp.ok) {
         const err = await resp.json().catch(() => ({}));
         throw new Error((err as any).detail ?? `HTTP ${resp.status}`);
       }
       const data = await resp.json();
-      const url = data?.data?.[0]?.url ?? data?.data?.[0]?.b64_json
-        ? `data:image/png;base64,${data.data[0].b64_json}`
-        : null;
+      const item = data?.data?.[0];
+      const url = item?.url ?? (item?.b64_json
+        ? `data:image/png;base64,${item.b64_json}` : null);
       if (!url) throw new Error("No image in response");
       setResult(url);
     } catch (e: any) {
-      toast.error(`Image generation failed: ${e.message}`);
+      toast.error(`Image generation failed: ${e.message}`, { duration: 10000 });
     } finally {
       setLoading(false);
     }
@@ -412,12 +425,26 @@ function ImageGenPanel() {
         <CardTitle className="flex items-center gap-2 font-serif text-lg">
           <ImageIcon className="w-5 h-5 text-muted-foreground" />
           Image Generation
-          {!aiOnline && (
-            <Badge variant="outline" className="text-[9px] font-mono uppercase text-amber-600 border-amber-300 ml-1">
-              AI offline
-            </Badge>
-          )}
         </CardTitle>
+        {/* Backend status pills */}
+        <div className="flex flex-wrap gap-1.5 pt-1">
+          {backends.map((b) => (
+            <span key={b.name}
+              className={`inline-flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-full border ${
+                b.online
+                  ? "border-emerald-200 text-emerald-700 bg-emerald-50/60"
+                  : "border-border/40 text-muted-foreground/50"
+              }`}>
+              <span className={`w-1.5 h-1.5 rounded-full ${b.online ? "bg-emerald-500" : "bg-muted-foreground/30"}`} />
+              {b.name}
+            </span>
+          ))}
+          {!anyOnline && backends.length > 0 && (
+            <span className="text-[10px] font-mono text-amber-600">
+              No image backend online — install Automatic1111 or ComfyUI, or set a custom URL in System Settings
+            </span>
+          )}
+        </div>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="space-y-1">
@@ -430,7 +457,17 @@ function ImageGenPanel() {
           />
         </div>
 
-        <div className="grid grid-cols-2 gap-4">
+        <div className="space-y-1">
+          <label className="text-xs font-mono uppercase text-muted-foreground">Negative Prompt <span className="text-muted-foreground/50">(optional)</span></label>
+          <Textarea
+            value={negPrompt}
+            onChange={(e) => setNegPrompt(e.target.value)}
+            placeholder="What to avoid…"
+            className="min-h-12 resize-y font-serif text-sm"
+          />
+        </div>
+
+        <div className="grid grid-cols-3 gap-3">
           <div className="space-y-1">
             <label className="text-xs font-mono uppercase text-muted-foreground">Width</label>
             <Select value={String(width)} onValueChange={(v) => setWidth(Number(v))}>
@@ -453,6 +490,17 @@ function ImageGenPanel() {
               </SelectContent>
             </Select>
           </div>
+          <div className="space-y-1">
+            <label className="text-xs font-mono uppercase text-muted-foreground">Steps</label>
+            <Select value={String(steps)} onValueChange={(v) => setSteps(Number(v))}>
+              <SelectTrigger className="text-sm"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {[10, 20, 30, 50].map(s => (
+                  <SelectItem key={s} value={String(s)}>{s}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
         </div>
 
         <Button
@@ -469,7 +517,7 @@ function ImageGenPanel() {
 
         {result && (
           <div className="rounded-lg overflow-hidden border border-border/50">
-            <img src={result} alt="Generated" className="w-full object-contain max-h-64" />
+            <img src={result} alt="Generated" className="w-full object-contain max-h-96" />
             <div className="flex justify-end p-2 border-t border-border/50">
               <Button size="sm" variant="ghost" className="gap-2 text-xs"
                 onClick={() => {
