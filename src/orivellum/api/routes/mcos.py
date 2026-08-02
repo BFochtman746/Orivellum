@@ -313,3 +313,67 @@ def telemetry(days: int = Query(7, ge=1, le=365)):
             "avg_latency_ms": r["avg_latency_ms"],
         } for r in daily],
     }
+
+
+@router.get("/regressions")
+def list_regressions(limit: int = Query(20, ge=1, le=200)):
+    """List finished runs flagged as regressions (meta.regressed === true)."""
+    db = get_db()
+    with db._lock:
+        rows = db._conn.execute(
+            "SELECT r.id, r.benchmark_id, r.finished_at, r.avg_score, r.meta, "
+            "b.name AS benchmark_name FROM eval_runs r "
+            "JOIN benchmarks b ON b.id = r.benchmark_id "
+            "WHERE r.status='done' "
+            "AND json_valid(r.meta) AND json_extract(r.meta, '$.regressed')=1 "
+            "ORDER BY r.finished_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    out = []
+    for r in rows:
+        meta = _jload(r["meta"], {}) or {}
+        out.append({
+            "run_id": r["id"],
+            "benchmark_id": r["benchmark_id"],
+            "benchmark_name": r["benchmark_name"],
+            "finished_at": r["finished_at"],
+            "avg_score": r["avg_score"],
+            "delta": meta.get("delta"),
+            "acknowledged": meta.get("ack") is True,
+        })
+    return {"regressions": out}
+
+
+@router.post("/regressions/{run_id}/ack")
+def ack_regression(run_id: str):
+    """Acknowledge a regression by setting meta.ack=true.
+
+    404 if the run does not exist or is not flagged as a regression.
+    """
+    db = get_db()
+    # Atomic read-modify-write: a single UPDATE using json_set adds meta.ack
+    # without touching any other keys, so a concurrent _finalize_run write can
+    # neither be lost nor erase meta.regressed/delta. The WHERE clause enforces
+    # the "must be a regression" predicate; rowcount distinguishes 404s.
+    with db._lock:
+        cur = db._conn.execute(
+            "UPDATE eval_runs "
+            "SET meta = json_set("
+            "  CASE WHEN json_valid(meta) THEN meta ELSE '{}' END, '$.ack', json('true')"
+            ") "
+            "WHERE id=? AND json_valid(meta) "
+            "AND json_extract(meta, '$.regressed')=1",
+            (run_id,),
+        )
+        updated = cur.rowcount
+        db._conn.commit()
+        if updated == 0:
+            # Disambiguate: does the run exist at all?
+            exists = db._conn.execute(
+                "SELECT 1 FROM eval_runs WHERE id=?", (run_id,)
+            ).fetchone()
+    if updated == 0:
+        if exists is None:
+            raise HTTPException(status_code=404, detail="Run not found")
+        raise HTTPException(status_code=404, detail="Run is not a regression")
+    return {"run_id": run_id, "acknowledged": True}

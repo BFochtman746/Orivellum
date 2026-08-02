@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 import uuid
 from datetime import datetime, timezone
@@ -509,6 +510,163 @@ def _score_retrieval(db: Any, case: dict) -> float:
     return 0.0
 
 
+# ── Judge consensus (Phase 2) ────────────────────────────────────────────────
+#
+# For llm-kind cases we combine up to three judges into a weighted consensus:
+#   * rule      — the deterministic score_response rule engine (weight 0.5)
+#   * llm       — an LLM grader over a strict JSON rubric      (weight 0.3)
+#   * grounding — deterministic context-overlap heuristic      (weight 0.2)
+# Absent judges (e.g. no context → no grounding judge, or AI unreachable → no
+# llm judge) are dropped and the remaining weights renormalized.
+
+_JUDGE_WEIGHTS = {"rule": 0.5, "llm": 0.3, "grounding": 0.2}
+
+
+def _meaningful_words(text: str) -> set[str]:
+    """Lowercased tokens with len>4 that are not stopwords."""
+    out: set[str] = set()
+    for tok in re.findall(r"[A-Za-z]+", text or ""):
+        w = tok.lower()
+        if len(w) > 4 and w not in _STOPWORDS:
+            out.add(w)
+    return out
+
+
+def _grounding_judge(case: dict, response: str) -> float | None:
+    """Deterministic grounding score for cases that carry context.
+
+    Splits the response into sentences and returns the fraction of sentences
+    that share >= 2 meaningful words with the context.  Returns ``None`` when
+    the case has no context (judge absent).
+    """
+    context = (case.get("context") or "").strip()
+    if not context:
+        return None
+    ctx_words = _meaningful_words(context)
+    if not ctx_words:
+        return 0.0
+    sentences = [s for s in re.split(r"(?<=[.!?])\s+", response or "") if s.strip()]
+    if not sentences:
+        return 0.0
+    grounded = 0
+    for sent in sentences:
+        overlap = _meaningful_words(sent) & ctx_words
+        if len(overlap) >= 2:
+            grounded += 1
+    return grounded / len(sentences)
+
+
+def _llm_judge(case: dict, response: str, cfg: Any, db: Any) -> tuple[float | None, str | None]:
+    """LLM grader over a strict JSON rubric.
+
+    Returns ``(score, reason)``.  On any failure — call error, unparseable
+    JSON, or a missing score — returns ``(None, None)`` so the judge is simply
+    absent and never fails the case.
+    """
+    expected_concepts = case.get("expected_concepts")
+    if isinstance(expected_concepts, str):
+        expected_concepts = _jload(expected_concepts, [])
+    expected_output = case.get("expected_output") or ""
+    expectation_lines = []
+    if expected_concepts:
+        expectation_lines.append(
+            "Expected concepts: " + ", ".join(str(c) for c in expected_concepts))
+    if expected_output:
+        expectation_lines.append("Expected output: " + str(expected_output))
+    expectation = "\n".join(expectation_lines) or "(no explicit expectation)"
+
+    rubric = (
+        "You are a strict evaluation judge. Given a question, the expected "
+        "answer criteria, and a candidate response, rate how well the response "
+        "satisfies the criteria.\n"
+        "Reply with ONLY a JSON object of the form "
+        '{\"score\": <number 0.0-1.0>, \"reason\": \"<one sentence>\"}. '
+        "Do not include any other text."
+    )
+    user = (
+        f"Question:\n{case.get('question', '')}\n\n"
+        f"{expectation}\n\n"
+        f"Candidate response:\n{response}"
+    )
+    try:
+        result = llm_call(
+            messages=[{"role": "system", "content": rubric},
+                      {"role": "user", "content": user}],
+            cfg=cfg, db=db, purpose="mcos.judge", timeout=45,
+        )
+    except Exception as exc:
+        logger.debug("llm judge call raised: %s", exc)
+        return None, None
+    if not result.ok or not result.text:
+        return None, None
+    parsed = _extract_json(result.text)
+    if not isinstance(parsed, dict) or "score" not in parsed:
+        return None, None
+    try:
+        score = float(parsed["score"])
+    except (TypeError, ValueError):
+        return None, None
+    # Reject NaN / +-inf BEFORE clamping — min/max let NaN through, which would
+    # then poison consensus, avg_score, delta and JSON serialization.
+    if not math.isfinite(score):
+        return None, None
+    score = max(0.0, min(1.0, score))
+    reason = parsed.get("reason")
+    reason = str(reason)[:500] if reason is not None else None
+    return score, reason
+
+
+def _consensus(judges: dict[str, float]) -> float:
+    """Weighted average over present judges, renormalized to their weights.
+
+    Defensively skips any non-finite judge value (NaN/inf) so a single bad
+    judge can never poison the consensus, avg_score or JSON serialization.
+    """
+    clean = {name: val for name, val in judges.items()
+             if isinstance(val, (int, float)) and math.isfinite(val)}
+    if not clean:
+        return 0.0
+    total_w = sum(_JUDGE_WEIGHTS.get(name, 0.0) for name in clean)
+    if total_w <= 0:
+        # Fallback: plain mean if none of the names carry a weight.
+        return sum(clean.values()) / len(clean)
+    return sum(_JUDGE_WEIGHTS.get(name, 0.0) * val
+               for name, val in clean.items()) / total_w
+
+
+def _judge_case(case: dict, response: str, cfg: Any, db: Any,
+                *, ai_reachable: bool) -> dict:
+    """Run all applicable judges and build the judge_scores blob.
+
+    Always includes ``rule``; adds ``grounding`` when the case has context and
+    ``llm`` when AI is reachable and the grader returns a usable score.  Sets
+    ``consensus`` (the eval_results.score) and optional ``llm_reason``.
+    """
+    judges: dict[str, float] = {}
+    blob: dict[str, Any] = {}
+
+    rule_score = score_response(case, response)
+    judges["rule"] = rule_score
+    blob["rule"] = rule_score
+
+    grounding = _grounding_judge(case, response)
+    if grounding is not None:
+        judges["grounding"] = grounding
+        blob["grounding"] = grounding
+
+    if ai_reachable:
+        llm_score, llm_reason = _llm_judge(case, response, cfg, db)
+        if llm_score is not None:
+            judges["llm"] = llm_score
+            blob["llm"] = llm_score
+            if llm_reason:
+                blob["llm_reason"] = llm_reason
+
+    consensus = _consensus(judges)
+    blob["consensus"] = consensus
+    return blob
+
+
 # ── Run execution ────────────────────────────────────────────────────────────
 
 def _prev_finished_avg(db: Any, benchmark_id: str, exclude_run_id: str) -> float | None:
@@ -606,6 +764,12 @@ def _execute_run(db: Any, cfg: Any, benchmark_id: str, run_id: str) -> str:
                 (benchmark_id,),
             ).fetchall()]
 
+        # AI-reachability is learned from the eval calls themselves — no
+        # per-case probe.  Once an eval call succeeds we know the LLM judge is
+        # worth attempting; if the first eval call fails we treat AI as
+        # unreachable for judging.
+        ai_reachable = False
+
         for case in cases:
             case_id = case["id"]
             score: float | None = None
@@ -633,12 +797,15 @@ def _execute_run(db: Any, cfg: Any, benchmark_id: str, run_id: str) -> str:
                     latency_ms = result.latency_ms
                     if not result.ok:
                         err = result.error or "llm call failed"
+                        # No response to grade; rule-only zero.
+                        judge_scores = {"rule": 0.0, "consensus": 0.0}
                         score = 0.0
-                        judge_scores = {"rule": 0.0}
                     else:
+                        ai_reachable = True
                         response = result.text or ""
-                        score = score_response(case, response)
-                        judge_scores = {"rule": score}
+                        judge_scores = _judge_case(
+                            case, response, cfg, db, ai_reachable=ai_reachable)
+                        score = judge_scores["consensus"]
             except Exception as exc:  # per-case guard
                 err = f"{type(exc).__name__}: {exc}"[:500]
                 score = 0.0
@@ -675,6 +842,22 @@ def _execute_run(db: Any, cfg: Any, benchmark_id: str, run_id: str) -> str:
         meta["error"] = run_error
 
     _finalize_run(db, run_id, status=run_status, avg_score=avg_score, meta=meta)
+
+    # Phase 3 — surface regressions to governance via the audit log.
+    if regressed:
+        try:
+            db.audit(
+                "benchmark_regression",
+                object_id=run_id,
+                object_type="eval_run",
+                actor="mcos",
+                result="warn",
+                detail=(f"benchmark={benchmark_id} avg={avg_score} delta={delta} "
+                        f"(dropped > 0.15 vs previous run)"),
+            )
+        except Exception as exc:  # never let governance logging strand the run
+            logger.warning("regression audit for run %s failed: %s", run_id[:8], exc)
+
     logger.info("benchmark %s run %s: status=%s avg=%s delta=%s",
                 benchmark_id, run_id[:8], run_status, avg_score, delta)
     return run_id

@@ -15,9 +15,11 @@ Scaled-down build of the user's 14-layer MCOS spec (attached_assets/Pasted-Proje
 - **API**: `/api/mcos/*` routes (benchmarks, seed, run/{id}, run-all, runs, runs/{id}, telemetry). Web dashboard at `/mcos` ("Calibration" in sidebar), direct fetch (no orval codegen), 3s conditional polling while a run is running.
 - **Nightshift**: pass 11 `_pass_mcos`, gated by setting `mcos_nightly_enabled` (default "true"); retrieval suites always run, llm suites only if `is_ai_reachable(cfg)` probe passes.
 
+## Built (Phases 2-3)
+- **Judges**: rule (0.5) + LLM judge (0.3, purpose "mcos.judge", strict JSON rubric, absent on failure, scores must pass math.isfinite BEFORE clamping — NaN survives min/max) + grounding (0.2, sentence/context word-overlap, absent w/o context). Consensus renormalizes over present finite judges. Retrieval cases use judge key "retrieval".
+- **Regression → governance**: regressed finalize writes audit_log (actor 'mcos'); /api/mcos/regressions + /regressions/{run_id}/ack; ack MUST be a single atomic json_set UPDATE with regressed predicate (read-then-write raced with finalize and could erase meta). Governance page has a Benchmark Regressions section.
+
 ## Planned next phases
-- Phase 2: judge consensus (rule + LLM judge + grounding via evidence scoring), per-judge scores in judge_scores JSON.
-- Phase 3: regression → governance queue entries (delta already computed in run meta: regressed when delta < -0.15).
 - Phase 4: prompt registry table + candidate-vs-active benchmarking; dashboard exists already.
 - Phase 5: RAG calibration — chunk size/overlap currently hardcoded (500/50 words in chunking.py); make settings + sweep harness.
 

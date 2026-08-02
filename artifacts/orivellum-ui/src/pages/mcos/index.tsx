@@ -68,15 +68,32 @@ interface Run {
   meta: RunMeta | null;
 }
 
+interface JudgeScores {
+  rule?: number;
+  llm?: number;
+  grounding?: number;
+  consensus?: number;
+  llm_reason?: string;
+  [k: string]: number | string | undefined;
+}
+
 interface CaseResult {
   case_id: string;
   question: string;
   score: number | null;
-  judge_scores: Record<string, number> | null;
+  judge_scores: JudgeScores | null;
   response: string | null;
   latency_ms: number | null;
   error: string | null;
 }
+
+// Per-judge badges rendered next to the main case score (llm-kind cases only).
+const JUDGE_BADGES: Array<{ key: "rule" | "llm" | "grounding" | "retrieval"; label: string }> = [
+  { key: "rule",      label: "Rule" },
+  { key: "llm",       label: "LLM" },
+  { key: "grounding", label: "Grounding" },
+  { key: "retrieval", label: "Retrieval" },
+];
 
 interface TelemetryPurpose {
   purpose: string;
@@ -162,6 +179,11 @@ function ErrorState({ message, onRetry }: { message: string; onRetry: () => void
 
 function CaseRow({ result }: { result: CaseResult }) {
   const [open, setOpen] = useState(false);
+  const js = result.judge_scores;
+  const judgeBadges = js
+    ? JUDGE_BADGES.filter((b) => typeof js[b.key] === "number")
+    : [];
+  const llmReason = js && typeof js.llm_reason === "string" ? js.llm_reason : null;
   return (
     <div className="border border-border/60 rounded-md">
       <Collapsible open={open} onOpenChange={setOpen}>
@@ -170,11 +192,19 @@ function CaseRow({ result }: { result: CaseResult }) {
             {open ? <ChevronDown className="w-4 h-4 mt-0.5 shrink-0 text-muted-foreground" /> : <ChevronRight className="w-4 h-4 mt-0.5 shrink-0 text-muted-foreground" />}
             <div className="flex-1 min-w-0">
               <p className="text-sm line-clamp-2">{result.question || "(no question)"}</p>
-              <div className="flex items-center gap-3 mt-1 text-[11px] font-mono text-muted-foreground">
+              <div className="flex flex-wrap items-center gap-2 mt-1 text-[11px] font-mono text-muted-foreground">
                 <span className={scoreColor(result.score)}>{scorePct(result.score)}</span>
+                {judgeBadges.map((b) => (
+                  <span key={b.key} className="px-1.5 py-0.5 rounded border text-[10px] text-muted-foreground bg-muted/30">
+                    {b.label} {Math.round((js![b.key] as number) * 100)}%
+                  </span>
+                ))}
                 <span>{result.latency_ms != null ? `${result.latency_ms} ms` : "—"}</span>
                 {result.error && <span className="text-red-500">error</span>}
               </div>
+              {llmReason && (
+                <p className="text-[11px] text-muted-foreground/80 italic mt-1 line-clamp-2">{llmReason}</p>
+              )}
             </div>
           </button>
         </CollapsibleTrigger>
@@ -183,15 +213,6 @@ function CaseRow({ result }: { result: CaseResult }) {
             {result.error && (
               <div className="text-xs font-mono text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900 rounded p-2">
                 {result.error}
-              </div>
-            )}
-            {result.judge_scores && Object.keys(result.judge_scores).length > 0 && (
-              <div className="flex flex-wrap gap-1.5">
-                {Object.entries(result.judge_scores).map(([k, v]) => (
-                  <span key={k} className="text-[10px] font-mono px-1.5 py-0.5 rounded border text-muted-foreground">
-                    {k}: {typeof v === "number" ? v.toFixed(2) : String(v)}
-                  </span>
-                ))}
               </div>
             )}
             <div>
