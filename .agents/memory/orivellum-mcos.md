@@ -24,4 +24,10 @@ Scaled-down build of the user's 14-layer MCOS spec (attached_assets/Pasted-Proje
 - **Candidate-vs-active benchmarking**: paired eval_runs carry meta `prompt_id/prompt_version/prompt_role`; ALL paired run rows must be reserved inside one lock before scheduling (409 for losers). Prompt runs are excluded from regression baselines/listing AND from `_run_row_to_dict` delta recomputation — three separate leak paths.
 - **RAG calibration** (v53 `rag_sweeps`): chunk_target_words/chunk_overlap_words settings (clamp target 100-2000, overlap 0..target//2) read by chunk_and_store; sweep is purely in-memory (rebuild doc text from chunks, word-overlap ranking, no LLM, no chunk writes); same never-stuck-running rules as eval_runs incl. stale reaping in both POST and GET sweep routes.
 
+## Built (follow-ups)
+- **Multi-slot prompts**: chat.base (benchmarkable) + harvest.extract + mcos.judge (version/activate only). Harvest template is `.format()`-based — DB-sourced text must be applied with a per-call guard falling back to the constant on bad braces/placeholders.
+- **Apply+re-chunk**: bulk reprocess must atomically reserve rows (transient 'reprocessing' readiness set in the same lock as the SELECT) or concurrent calls double-enqueue; nightshift stuck-doc recovery must include the marker. Reserved state counts as in-flight for /rag/reprocess-status.
+- **Nightly prompt health** (nightshift, session-grouped prompt_health runs): the regression flag must land on the most recent DONE run of the session — /regressions filters status='done', so flagging a failed final run makes the regression invisible/unackable.
+- **UI polling gotcha**: any "poll until processing==0" UI must ignore cached pre-start observations (react-query dataUpdatedAt > start timestamp + removeQueries on kick-off), or a stale {processing:0} instantly fake-completes the second job.
+
 **Why scaled down:** single-user, single local OpenAI-compatible endpoint — multi-model benchmark center, speech/vision suites, and 8-judge board deliberately cut.
