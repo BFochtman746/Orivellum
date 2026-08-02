@@ -666,6 +666,26 @@ async def _try_comfyui(client, body: ImageGenRequest) -> dict | None:
     return None
 
 
+def _persist_generated_image(result: dict, cfg) -> dict:
+    """Save a generated image (b64_json) into the outputs dir so it appears in
+    Recent Outputs. Best-effort — the response is returned unchanged on failure."""
+    try:
+        item = (result.get("data") or [{}])[0]
+        b64 = item.get("b64_json")
+        if not b64:
+            return result
+        import base64 as _b64
+        out_dir = Path(cfg.data_dir) / "outputs"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        name = f"image_{uuid.uuid4().hex[:8]}.png"
+        (out_dir / name).write_bytes(_b64.b64decode(b64))
+        _rotate_outputs(out_dir)
+        item["output_path"] = name
+    except Exception as exc:
+        logger.warning("Could not persist generated image to outputs: %s", exc)
+    return result
+
+
 @router.post("/studio/image")
 async def generate_image(body: ImageGenRequest):
     db = get_db()
@@ -678,22 +698,22 @@ async def generate_image(body: ImageGenRequest):
         if custom_url:
             result = await _try_openai_compat(client, custom_url, body)
             if result:
-                return result
+                return _persist_generated_image(result, cfg)
 
         # 2. Automatic1111 (SD WebUI) — most common local image gen setup
         result = await _try_a1111(client, body)
         if result:
-            return result
+            return _persist_generated_image(result, cfg)
 
         # 3. ComfyUI
         result = await _try_comfyui(client, body)
         if result:
-            return result
+            return _persist_generated_image(result, cfg)
 
         # 4. OpenAI-compatible endpoint on the chat AI server
         result = await _try_openai_compat(client, cfg.serving.base_url, body)
         if result:
-            return result
+            return _persist_generated_image(result, cfg)
 
     raise HTTPException(
         503,

@@ -14,7 +14,10 @@
       "backgroundColor": "#F5F0E8"
     },
     "ios": {
-      "supportsTablet": false
+      "supportsTablet": false,
+      "infoPlist": {
+        "NSPhotoLibraryAddUsageDescription": "Orivellum saves generated images to your photo library when you tap Save to Photos."
+      }
     },
     "android": {},
     "web": {
@@ -28,7 +31,14 @@
         }
       ],
       "expo-font",
-      "expo-web-browser"
+      "expo-web-browser",
+      [
+        "expo-media-library",
+        {
+          "savePhotosPermission": "Orivellum saves generated images to your photo library when you tap Save to Photos.",
+          "photosPermission": "Orivellum saves generated images to your photo library when you tap Save to Photos."
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,

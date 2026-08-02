@@ -18,10 +18,37 @@
  * On logout:
  *   1. Call `clearToken()`.
  */
+import { Platform } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 import { setAuthTokenGetter } from '@workspace/api-client-react';
 
 const SECURE_STORE_KEY = 'orivellum_api_key';
+
+// SecureStore has no web implementation — fall back to localStorage there.
+const _isWeb = Platform.OS === 'web';
+
+async function _storageGet(): Promise<string | null> {
+  if (_isWeb) {
+    try { return window.localStorage.getItem(SECURE_STORE_KEY); } catch { return null; }
+  }
+  return SecureStore.getItemAsync(SECURE_STORE_KEY);
+}
+
+async function _storageSet(value: string): Promise<void> {
+  if (_isWeb) {
+    window.localStorage.setItem(SECURE_STORE_KEY, value);
+    return;
+  }
+  await SecureStore.setItemAsync(SECURE_STORE_KEY, value);
+}
+
+async function _storageDelete(): Promise<void> {
+  if (_isWeb) {
+    window.localStorage.removeItem(SECURE_STORE_KEY);
+    return;
+  }
+  await SecureStore.deleteItemAsync(SECURE_STORE_KEY);
+}
 
 let _token: string | null = null;
 
@@ -37,7 +64,7 @@ function _wireHooks(): void {
  */
 export async function loadToken(): Promise<string | null> {
   try {
-    const stored = await SecureStore.getItemAsync(SECURE_STORE_KEY);
+    const stored = await _storageGet();
     _token = stored || null;
   } catch {
     _token = null;
@@ -67,7 +94,7 @@ export async function validateKey(key: string, baseUrl: string): Promise<boolean
  * Persist a validated API key to SecureStore and update the current token.
  */
 export async function saveToken(key: string): Promise<void> {
-  await SecureStore.setItemAsync(SECURE_STORE_KEY, key);
+  await _storageSet(key);
   _token = key;
   _wireHooks();
 }
@@ -77,7 +104,7 @@ export async function saveToken(key: string): Promise<void> {
  */
 export async function clearToken(): Promise<void> {
   try {
-    await SecureStore.deleteItemAsync(SECURE_STORE_KEY);
+    await _storageDelete();
   } catch {
     // Ignore — key may not exist
   }

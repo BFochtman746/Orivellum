@@ -59,6 +59,8 @@
     "expo-audio": "^57.0.3",
     "expo-clipboard": "^57.0.1",
     "expo-document-picker": "^57.0.1",
+    "expo-file-system": "~19.0.23",
+    "expo-media-library": "~18.2.1",
     "expo-secure-store": "^57.0.1",
     "react-native-markdown-display": "^7.0.2"
   }

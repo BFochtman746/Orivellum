@@ -114,12 +114,14 @@ def create_app() -> FastAPI:
         "http://localhost:5173,http://localhost:3000,http://localhost:80",
     ).split(",")
 
-    # Also allow this repl's exact Replit dev domain (https only).
-    _replit_domain = os.environ.get("REPLIT_DEV_DOMAIN", "").strip()
-    if _replit_domain:
-        replit_origin = f"https://{_replit_domain}"
-        if replit_origin not in allowed_origins:
-            allowed_origins.append(replit_origin)
+    # Also allow this repl's exact Replit dev domains (https only) — the web
+    # preview domain and the Expo web preview domain (mobile app in a browser).
+    for _env in ("REPLIT_DEV_DOMAIN", "REPLIT_EXPO_DEV_DOMAIN"):
+        _domain = os.environ.get(_env, "").strip()
+        if _domain:
+            _origin = f"https://{_domain}"
+            if _origin not in allowed_origins:
+                allowed_origins.append(_origin)
 
     app.add_middleware(
         CORSMiddleware,

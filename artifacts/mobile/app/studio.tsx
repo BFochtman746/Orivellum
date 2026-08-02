@@ -50,6 +50,105 @@ function serveUrl(path: string) {
   return `${API}/studio/outputs/serve?path=${encodeURIComponent(path)}`;
 }
 
+/**
+ * Save an image (data URI or authenticated http(s) URL) to the device photo
+ * library. On web, falls back to a browser download.
+ */
+async function saveImageToPhotos(uri: string, name = `orivellum_${Date.now()}.png`) {
+  if (Platform.OS === 'web') {
+    // Browser: trigger a normal download.
+    let href = uri;
+    if (!uri.startsWith('data:')) {
+      const resp = await mobileFetch(uri);
+      if (!resp.ok) throw new Error(`Download failed (HTTP ${resp.status})`);
+      href = URL.createObjectURL(await resp.blob());
+    }
+    const a = document.createElement('a');
+    a.href = href;
+    a.download = name;
+    a.click();
+    if (href !== uri) setTimeout(() => URL.revokeObjectURL(href), 10_000);
+    return;
+  }
+
+  const MediaLibrary = await import('expo-media-library');
+  const FileSystem = await import('expo-file-system/legacy');
+
+  const perm = await MediaLibrary.requestPermissionsAsync(true);
+  if (!perm.granted) {
+    throw new Error('Photos permission denied — allow access in Settings to save images.');
+  }
+
+  const dest = `${FileSystem.cacheDirectory}${name}`;
+  if (uri.startsWith('data:')) {
+    const base64 = uri.split(',')[1] ?? '';
+    if (!base64) throw new Error('Invalid image data');
+    await FileSystem.writeAsStringAsync(dest, base64, {
+      encoding: FileSystem.EncodingType.Base64,
+    });
+  } else {
+    const token = getApiToken();
+    const dl = await FileSystem.downloadAsync(uri, dest, {
+      headers: token ? { authorization: `Bearer ${token}` } : undefined,
+    });
+    if (dl.status !== 200) throw new Error(`Download failed (HTTP ${dl.status})`);
+  }
+
+  await MediaLibrary.saveToLibraryAsync(dest);
+  FileSystem.deleteAsync(dest, { idempotent: true }).catch(() => {});
+}
+
+/** Small "save to Photos" icon button with busy/done states. */
+function SavePhotoButton({ uri, name, compact }: { uri: string; name?: string; compact?: boolean }) {
+  const colors = useColors();
+  const [state, setState] = useState<'idle' | 'saving' | 'done'>('idle');
+
+  const handleSave = async () => {
+    if (state === 'saving') return;
+    setState('saving');
+    try {
+      await saveImageToPhotos(uri, name);
+      setState('done');
+      setTimeout(() => setState('idle'), 2500);
+    } catch (e: any) {
+      setState('idle');
+      Alert.alert('Could not save image', e?.message ?? 'Saving to Photos failed');
+    }
+  };
+
+  if (compact) {
+    return (
+      <Pressable onPress={handleSave} hitSlop={8} style={styles.iconBtn} disabled={state === 'saving'}>
+        {state === 'saving' ? (
+          <ActivityIndicator size="small" color={colors.primary} />
+        ) : (
+          <Feather name={state === 'done' ? 'check' : 'download'} size={16} color={state === 'done' ? '#22c55e' : colors.primary} />
+        )}
+      </Pressable>
+    );
+  }
+
+  return (
+    <Pressable
+      onPress={handleSave}
+      disabled={state === 'saving'}
+      style={({ pressed }) => [
+        styles.saveButton,
+        { borderColor: colors.border, opacity: pressed ? 0.7 : 1 },
+      ]}
+    >
+      {state === 'saving' ? (
+        <ActivityIndicator size="small" color={colors.primary} />
+      ) : (
+        <Feather name={state === 'done' ? 'check' : 'download'} size={15} color={state === 'done' ? '#22c55e' : colors.primary} />
+      )}
+      <Text style={[styles.saveButtonText, { color: state === 'done' ? '#22c55e' : colors.primary }]}>
+        {state === 'saving' ? 'Saving…' : state === 'done' ? 'Saved to Photos' : Platform.OS === 'web' ? 'Download image' : 'Save to Photos'}
+      </Text>
+    </Pressable>
+  );
+}
+
 // ── Shared UI bits ─────────────────────────────────────────────────────────────
 
 function SectionCard({
@@ -440,9 +539,7 @@ function ImagePanel({ onGenerated }: { onGenerated: () => void }) {
       {resultUri && (
         <View style={[styles.imageResult, { borderColor: colors.border }]}>
           <Image source={authSource(resultUri)} style={styles.resultImage} contentFit="contain" />
-          <Text style={[styles.saveNote, { color: colors.mutedForeground }]}>
-            Saved to Recent Outputs below. On-device saving to Photos isn't available in this build.
-          </Text>
+          <SavePhotoButton uri={resultUri} />
         </View>
       )}
     </SectionCard>
@@ -522,6 +619,7 @@ function OutputsPanel({
                     <Feather name={isPlaying ? 'pause' : 'play'} size={16} color={colors.primary} />
                   </Pressable>
                 )}
+                {isImage && <SavePhotoButton uri={serveUrl(out.path)} name={out.name} compact />}
                 <Pressable onPress={() => handleDelete(out)} hitSlop={8} style={styles.iconBtn}>
                   <Feather name="trash-2" size={16} color={colors.destructive} />
                 </Pressable>
@@ -673,7 +771,17 @@ const styles = StyleSheet.create({
   },
   imageResult: { borderRadius: 8, borderWidth: 1, overflow: 'hidden' },
   resultImage: { width: '100%', height: 280, backgroundColor: '#00000010' },
-  saveNote: { fontSize: 11, fontFamily: 'Inter_400Regular', padding: 10 },
+  saveButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    margin: 8,
+    paddingVertical: 9,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  saveButtonText: { fontSize: 13, fontFamily: 'Inter_500Medium' },
   emptyText: { fontSize: 13, fontFamily: 'Inter_400Regular', textAlign: 'center', paddingVertical: 20, lineHeight: 19 },
   outputRow: {
     flexDirection: 'row',

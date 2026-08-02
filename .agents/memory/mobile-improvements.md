@@ -38,6 +38,12 @@ Known missing hooks (as of this session):
 - `newChatBtn` / `newChatBtnText` — green action button in conversations tab list header
 - `chatBtn` / `chatBtnText` — small chat shortcut in WorkCard footer
 
+## Web preview auth & platform gaps
+
+- `expo-secure-store` has NO web implementation — `lib/token.ts` falls back to localStorage when `Platform.OS === 'web'` (acceptable for this local-first app; not a secure-store equivalent).
+- The Expo web preview origin (`https://$REPLIT_EXPO_DEV_DOMAIN`) is distinct from `REPLIT_DEV_DOMAIN` and must be in the API CORS allowlist or web-preview login fails with CORS + "Invalid key".
+- Saving images to Photos: dynamic-import `expo-media-library` + `expo-file-system/legacy` (SDK 54 new FS API differs); data URIs → writeAsStringAsync Base64; http URLs → downloadAsync with bearer header; web → anchor download. iOS permission strings live in app.json (media-library plugin + NSPhotoLibraryAddUsageDescription).
+
 ## What NOT to do
 
 - Do not call `isLiquidGlassAvailable` inside `NativeTabLayout` — it is only used as the top-level router switch
