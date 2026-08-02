@@ -71,6 +71,11 @@ export default defineConfig({
     fs: {
       strict: true,
     },
+    // Windows NTFS doesn't support inotify — use polling so HMR works reliably
+    watch: {
+      usePolling: process.platform === "win32",
+      interval: 300,
+    },
   },
   preview: {
     port,

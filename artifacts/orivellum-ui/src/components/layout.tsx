@@ -769,8 +769,8 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
                 )}
               </button>
             </div>
-            {/* Progress badge — desktop only, floats top-right of content area */}
-            <div className="sticky top-0 z-10 pointer-events-none hidden lg:flex justify-end px-8 pt-6">
+            {/* Progress badge — fixed in top-right, never overlaps page content */}
+            <div className="fixed top-4 right-6 z-20 pointer-events-none hidden lg:flex">
               <button
                 onClick={() => setProgressOpen(true)}
                 className={`pointer-events-auto flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-mono border shadow-sm transition-all
@@ -786,7 +786,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
                 )}
               </button>
             </div>
-            <div className="h-full w-full max-w-[1400px] mx-auto px-6 lg:px-8 pb-6 lg:pb-8 lg:-mt-10">
+            <div className="h-full w-full max-w-[1400px] mx-auto px-6 lg:px-8 py-6 lg:py-8">
               {children}
             </div>
           </main>
