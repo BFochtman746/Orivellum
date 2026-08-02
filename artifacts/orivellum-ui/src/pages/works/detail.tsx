@@ -1426,11 +1426,19 @@ function SearchTab({ workId }: { workId: string }) {
   const [results, setResults] = useState<{ knowledge: any[]; chunks: any[] } | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  // Monotonic counter so a slow earlier response can't clobber a newer one.
+  const searchSeq = useRef(0);
 
-  const handleSearch = async (e?: React.FormEvent) => {
-    e?.preventDefault();
-    const q = query.trim();
-    if (!q) return;
+  // Focus the input when the tab is first activated (mount). Deferred so it
+  // runs after Radix Tabs' own focus management (which focuses the trigger).
+  useEffect(() => {
+    const t = setTimeout(() => inputRef.current?.focus(), 50);
+    return () => clearTimeout(t);
+  }, []);
+
+  const runSearch = async (q: string) => {
+    const seq = ++searchSeq.current;
     setSubmitted(q);
     setLoading(true);
     setError(null);
@@ -1439,12 +1447,37 @@ function SearchTab({ workId }: { workId: string }) {
       const res = await apiFetch(`${base}/works/${workId}/search?q=${encodeURIComponent(q)}&limit=20`);
       if (!res.ok) throw new Error(`Search failed: ${res.status}`);
       const data = await res.json();
-      setResults(data);
+      if (seq === searchSeq.current) setResults(data);
     } catch (err: any) {
-      setError(err.message ?? "Search failed");
+      if (seq === searchSeq.current) setError(err.message ?? "Search failed");
     } finally {
-      setLoading(false);
+      if (seq === searchSeq.current) setLoading(false);
     }
+  };
+
+  // Search-as-you-type with a 350 ms debounce.
+  useEffect(() => {
+    const q = query.trim();
+    if (!q) {
+      // Cleared input → drop results and invalidate any in-flight request.
+      searchSeq.current++;
+      setResults(null);
+      setSubmitted("");
+      setError(null);
+      setLoading(false);
+      return;
+    }
+    if (q === submitted) return; // already showing results for this query
+    const t = setTimeout(() => runSearch(q), 350);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [query]);
+
+  const handleSearch = (e?: React.FormEvent) => {
+    e?.preventDefault();
+    const q = query.trim();
+    if (!q) return;
+    runSearch(q); // explicit re-submission bypasses the debounce
   };
 
   const total = (results?.knowledge.length ?? 0) + (results?.chunks.length ?? 0);
@@ -1455,6 +1488,7 @@ function SearchTab({ workId }: { workId: string }) {
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input
+            ref={inputRef}
             className="pl-9 font-mono text-sm"
             placeholder="Search knowledge and documents…"
             value={query}
