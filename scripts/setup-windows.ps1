@@ -206,13 +206,23 @@ if (Test-Cmd ffmpeg) {
 # ---- espeak-ng (optional TTS) -----------------------------------------------
 Write-Host ""
 Write-Host "Checking espeak-ng (optional TTS) ..." -ForegroundColor Yellow
-if (Test-Cmd espeak-ng) {
+$espeakExe = "C:\Program Files\eSpeak NG\espeak-ng.exe"
+if ((Test-Cmd espeak-ng) -or (Test-Path $espeakExe)) {
   Write-Ok "espeak-ng found"
-} elseif (Test-Cmd winget) {
-  try { Winget-Install "eSpeak.eSpeakNG" "espeak-ng"; Refresh-Path }
-  catch { Write-Warn "espeak-ng unavailable. Text-to-speech will be disabled." }
+  Add-UserPath "C:\Program Files\eSpeak NG"
 } else {
-  Write-Warn "espeak-ng not found. Install from https://github.com/espeak-ng/espeak-ng/releases if you want TTS."
+  # Not on winget — download the MSI directly from GitHub releases
+  try {
+    $espeakMsi = "$env:TEMP\espeak-ng-setup.msi"
+    Download-File "https://github.com/espeak-ng/espeak-ng/releases/download/1.51.1/espeak-ng-20240117-win64.msi" $espeakMsi
+    Write-Step "Installing espeak-ng (silent) ..."
+    Start-Process -FilePath "msiexec.exe" -ArgumentList "/i `"$espeakMsi`" /quiet /norestart" -Wait
+    Add-UserPath "C:\Program Files\eSpeak NG"
+    Refresh-Path
+    Write-Ok "espeak-ng installed — Text-to-speech enabled"
+  } catch {
+    Write-Warn "espeak-ng install failed. TTS will be disabled. Manual install: https://github.com/espeak-ng/espeak-ng/releases"
+  }
 }
 
 # ---- Final PATH refresh before dependency installs --------------------------

@@ -593,19 +593,17 @@ export default function Library() {
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             {/* Reprocess All — always visible, handles ZIPs + stuck docs in one shot */}
-            {rawDocs.some((d: any) => d.readiness === "imported" || d.readiness === "error" || d.readiness === "no_text" || d.kind === "zip") && (
-              <Button
-                variant="outline"
-                size="sm"
-                className="gap-1.5 text-xs border-primary/40 text-primary hover:bg-primary/5"
-                onClick={handleReprocessAll}
-                disabled={reprocessingAll}
-                title="Re-extract all stuck, errored, or ZIP documents"
-              >
-                <RefreshCw className={`w-3.5 h-3.5 ${reprocessingAll ? "animate-spin" : ""}`} />
-                {reprocessingAll ? "Processing…" : "Reprocess All"}
-              </Button>
-            )}
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1.5 text-xs border-primary/40 text-primary hover:bg-primary/5"
+              onClick={handleReprocessAll}
+              disabled={reprocessingAll}
+              title="Re-extract all stuck, errored, or ZIP documents"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${reprocessingAll ? "animate-spin" : ""}`} />
+              {reprocessingAll ? "Processing…" : "Reprocess All"}
+            </Button>
             {zipCount > 0 && (
               <Button
                 variant="outline"
