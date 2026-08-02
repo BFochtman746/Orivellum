@@ -329,23 +329,32 @@ def telemetry(days: int = Query(7, ge=1, le=365)):
 
 @router.get("/regressions")
 def list_regressions(limit: int = Query(20, ge=1, le=200)):
-    """List finished runs flagged as regressions (meta.regressed === true)."""
+    """List finished runs flagged as regressions.
+
+    Two kinds: normal benchmark regressions (meta.regressed=true, non-prompt
+    runs) and nightly prompt-health regressions
+    (meta.prompt_health_regressed=true).  Prompt rows carry a ``kind='prompt'``
+    plus the prompt's name/version.
+    """
     db = get_db()
     with db._lock:
         rows = db._conn.execute(
             "SELECT r.id, r.benchmark_id, r.finished_at, r.avg_score, r.meta, "
             "b.name AS benchmark_name FROM eval_runs r "
             "JOIN benchmarks b ON b.id = r.benchmark_id "
-            "WHERE r.status='done' "
-            "AND json_valid(r.meta) AND json_extract(r.meta, '$.regressed')=1 "
-            "AND json_extract(r.meta, '$.prompt_id') IS NULL "
+            "WHERE r.status='done' AND json_valid(r.meta) AND ("
+            "  (json_extract(r.meta, '$.regressed')=1 "
+            "     AND json_extract(r.meta, '$.prompt_id') IS NULL) "
+            "  OR json_extract(r.meta, '$.prompt_health_regressed')=1) "
             "ORDER BY r.finished_at DESC LIMIT ?",
             (limit,),
         ).fetchall()
     out = []
+    prompt_name_cache: dict[str, dict] = {}
     for r in rows:
         meta = _jload(r["meta"], {}) or {}
-        out.append({
+        is_prompt = meta.get("prompt_health_regressed") is True
+        entry = {
             "run_id": r["id"],
             "benchmark_id": r["benchmark_id"],
             "benchmark_name": r["benchmark_name"],
@@ -353,7 +362,23 @@ def list_regressions(limit: int = Query(20, ge=1, le=200)):
             "avg_score": r["avg_score"],
             "delta": meta.get("delta"),
             "acknowledged": meta.get("ack") is True,
-        })
+            "kind": "prompt" if is_prompt else "benchmark",
+        }
+        if is_prompt:
+            pid = meta.get("prompt_id")
+            pinfo = prompt_name_cache.get(pid)
+            if pinfo is None and pid:
+                with db._lock:
+                    prow = db._conn.execute(
+                        "SELECT name, version FROM prompts WHERE id=?", (pid,)
+                    ).fetchone()
+                pinfo = dict(prow) if prow else {}
+                prompt_name_cache[pid] = pinfo
+            entry["prompt_name"] = (pinfo or {}).get("name")
+            # Prefer the version recorded on the run (may differ from current).
+            entry["prompt_version"] = meta.get("prompt_version") or \
+                (pinfo or {}).get("version")
+        out.append(entry)
     return {"regressions": out}
 
 
@@ -375,7 +400,8 @@ def ack_regression(run_id: str):
             "  CASE WHEN json_valid(meta) THEN meta ELSE '{}' END, '$.ack', json('true')"
             ") "
             "WHERE id=? AND json_valid(meta) "
-            "AND json_extract(meta, '$.regressed')=1",
+            "AND (json_extract(meta, '$.regressed')=1 "
+            "     OR json_extract(meta, '$.prompt_health_regressed')=1)",
             (run_id,),
         )
         updated = cur.rowcount
@@ -404,6 +430,7 @@ class PromptCreate(BaseModel):
 class RagApply(BaseModel):
     target_words: int
     overlap_words: int
+    reprocess_library: bool = False
 
 
 def _prompt_dict(db, row) -> dict:
@@ -436,16 +463,46 @@ def list_prompts(slot: str | None = None):
     return {"prompts": [_prompt_dict(db, r) for r in rows]}
 
 
+@router.get("/prompts/slots")
+def list_prompt_slots():
+    """Enumerate the known prompt slots with label + benchmarkability + the
+    active prompt's name/version and total prompt count per slot."""
+    from orivellum.capabilities.mcos import PROMPT_SLOTS
+    db = get_db()
+    out = []
+    for slot, meta in PROMPT_SLOTS.items():
+        with db._lock:
+            count = db._conn.execute(
+                "SELECT COUNT(*) FROM prompts WHERE slot=?", (slot,)
+            ).fetchone()[0]
+            active = db._conn.execute(
+                "SELECT name, version FROM prompts WHERE slot=? AND active=1 LIMIT 1",
+                (slot,),
+            ).fetchone()
+        out.append({
+            "slot": slot,
+            "label": meta["label"],
+            "benchmarkable": meta["benchmarkable"],
+            "active_name": active["name"] if active else None,
+            "active_version": active["version"] if active else None,
+            "prompt_count": int(count),
+        })
+    return {"slots": out}
+
+
 @router.post("/prompts")
 def create_prompt(body: PromptCreate):
     import uuid
     from datetime import datetime, timezone
+    from orivellum.capabilities.mcos import PROMPT_SLOTS
     db = get_db()
     slot = body.slot.strip()
     name = body.name.strip()
     content = body.content
     if not slot or not name or not content:
         raise HTTPException(status_code=400, detail="slot, name and content are required")
+    if slot not in PROMPT_SLOTS:
+        raise HTTPException(status_code=400, detail=f"Unknown slot: {slot}")
     with db._lock:
         row = db._conn.execute(
             "SELECT COALESCE(MAX(version),0) AS mv FROM prompts WHERE slot=?", (slot,)
@@ -480,6 +537,9 @@ def benchmark_prompt(prompt_id: str, background_tasks: BackgroundTasks):
     if prompt is None:
         raise HTTPException(status_code=404, detail="Prompt not found")
     slot = prompt["slot"]
+    # Only the chat persona can be benchmarked as a system preamble.
+    if not mcos.PROMPT_SLOTS.get(slot, {}).get("benchmarkable"):
+        raise HTTPException(status_code=400, detail="This slot cannot be benchmarked")
     # Reap stale prompt runs (>30 min) before the 409 check so a crashed worker
     # doesn't wrongly 409 a fresh request.
     _reap_stale_prompt_runs(db, slot)
@@ -780,7 +840,7 @@ def rag_sweeps(limit: int = Query(5, ge=1, le=50)):
 
 
 @router.post("/rag/apply")
-def rag_apply(body: RagApply):
+def rag_apply(body: RagApply, background_tasks: BackgroundTasks):
     db = get_db()
     target = body.target_words
     overlap = body.overlap_words
@@ -792,6 +852,36 @@ def rag_apply(body: RagApply):
                             detail="overlap_words must be 0..target_words/2")
     db.set_setting("chunk_target_words", str(target), actor="mcos")
     db.set_setting("chunk_overlap_words", str(overlap), actor="mcos")
+
+    resp = {"target_words": target, "overlap_words": overlap}
+    detail = f"target={target} overlap={overlap}"
+    if body.reprocess_library:
+        # Reuse the shared library reprocess machinery — do NOT duplicate the
+        # pipeline.  Runs in the background after this response is sent.
+        from orivellum.api.routes.library import queue_library_reprocess
+        summary = queue_library_reprocess(db, background_tasks, force=True)
+        reprocess_started = int(summary.get("queued", 0))
+        resp["reprocess_started"] = reprocess_started
+        detail += f" reprocess_started={reprocess_started}"
+
     db.audit("rag_config_changed", object_id="chunking", object_type="setting",
-             actor="mcos", detail=f"target={target} overlap={overlap}")
-    return {"target_words": target, "overlap_words": overlap}
+             actor="mcos", detail=detail)
+    return resp
+
+
+@router.get("/rag/reprocess-status")
+def rag_reprocess_status():
+    """Docs currently mid-pipeline (non-terminal readiness) vs total docs.
+
+    The UI polls this every 3s while ``processing > 0`` after a reprocess.
+    """
+    from orivellum.api.routes.library import REPROCESS_INFLIGHT_STATES
+    db = get_db()
+    placeholders = ",".join("?" * len(REPROCESS_INFLIGHT_STATES))
+    with db._lock:
+        processing = db._conn.execute(
+            f"SELECT COUNT(*) FROM documents WHERE readiness IN ({placeholders})",
+            REPROCESS_INFLIGHT_STATES,
+        ).fetchone()[0]
+        total = db._conn.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
+    return {"processing": int(processing), "total": int(total)}

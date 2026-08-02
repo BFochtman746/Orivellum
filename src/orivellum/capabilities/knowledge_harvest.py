@@ -274,15 +274,31 @@ def llm_harvest(result: "ExtractionResult", doc_id: str,
     created = 0
     segments = result.pages[:_MAX_LLM_CHUNKS]
 
+    # Prefer the active MCOS prompt-registry template (slot 'harvest.extract');
+    # fall back to the hardcoded constant on any failure — same never-break rule
+    # as chat.base.  The template MUST keep the {title}/{chunk} placeholders and
+    # its literal JSON braces doubled ({{ }}); if a DB-sourced template can't be
+    # formatted, we fall back rather than crash the harvest.
+    template = _EXTRACT_PROMPT
+    try:
+        active = db.get_active_prompt("harvest.extract")
+        if active:
+            template = active
+    except Exception:
+        template = _EXTRACT_PROMPT
+
     for seg in segments:
         chunk_text = seg.text[:_MAX_CHUNK_CHARS].strip()
         if not chunk_text:
             continue
 
-        prompt = _EXTRACT_PROMPT.format(
-            title=doc_title,
-            chunk=chunk_text,
-        )
+        try:
+            prompt = template.format(title=doc_title, chunk=chunk_text)
+        except Exception as exc:
+            # Bad DB template (e.g. stray unescaped brace) — never break harvest.
+            logger.warning("harvest.extract template format failed (%s) — "
+                           "falling back to default", exc)
+            prompt = _EXTRACT_PROMPT.format(title=doc_title, chunk=chunk_text)
 
         raw = _call_llm_sync(prompt, base_url, model, timeout, db=db)
         if not raw:

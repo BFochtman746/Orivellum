@@ -1150,5 +1150,370 @@ def _ok_llm():
     return LLMResult(text="42", ok=True, model="fake", latency_ms=1)
 
 
+class TestMultiSlotPrompts(unittest.TestCase):
+    """#189 — harvest.extract + mcos.judge slots."""
+
+    def test_seed_all_three_slots(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _app, db, _cfg = _make_app(tmp)
+            from orivellum.capabilities.mcos import seed_default_prompts
+            seed_default_prompts(db)
+            seed_default_prompts(db)  # idempotent
+            with db._lock:
+                rows = db._conn.execute(
+                    "SELECT slot, COUNT(*) n, SUM(active) a FROM prompts GROUP BY slot"
+                ).fetchall()
+            counts = {r["slot"]: (r["n"], r["a"]) for r in rows}
+            for slot in ("chat.base", "harvest.extract", "mcos.judge"):
+                self.assertEqual(counts[slot], (1, 1))
+
+    def test_harvest_active_prompt_keeps_placeholders(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _app, db, _cfg = _make_app(tmp)
+            from orivellum.capabilities.mcos import seed_default_prompts
+            from orivellum.capabilities import knowledge_harvest as kh
+            seed_default_prompts(db)
+            active = db.get_active_prompt("harvest.extract")
+            self.assertIsNotNone(active)
+            # The seeded template equals the constant and must still .format().
+            self.assertEqual(active, kh._EXTRACT_PROMPT)
+            out = active.format(title="T", chunk="C")
+            self.assertIn("T", out)
+            self.assertIn("C", out)
+            self.assertIn('"entities"', out)  # literal braces survived
+
+    def test_judge_uses_active_prompt(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _app, db, cfg = _make_app(tmp)
+            from orivellum.capabilities import mcos
+            from orivellum.capabilities.llm import LLMResult
+            mcos.seed_default_prompts(db)
+            # Override the judge rubric via the registry.
+            import uuid
+            from datetime import datetime, timezone
+            with db._lock:
+                db._conn.execute("UPDATE prompts SET active=0 WHERE slot='mcos.judge'")
+                db._conn.execute(
+                    "INSERT INTO prompts(id,slot,name,content,version,active,created_at)"
+                    " VALUES(?,?,?,?,2,1,?)",
+                    (str(uuid.uuid4()), "mcos.judge", "custom",
+                     "CUSTOM RUBRIC MARKER", datetime.now(timezone.utc).isoformat()))
+                db._conn.commit()
+            seen = {}
+
+            def _fake(messages, **kwargs):
+                seen["system"] = messages[0]["content"]
+                return LLMResult(text='{"score":0.9,"reason":"ok"}', ok=True,
+                                 model="fake", latency_ms=1)
+
+            with patch.object(mcos, "llm_call", _fake):
+                mcos._llm_judge({"question": "q", "expected_output": "42"},
+                                "42", cfg, db)
+            self.assertEqual(seen["system"], "CUSTOM RUBRIC MARKER")
+
+    def test_judge_falls_back_when_no_registry(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _app, db, cfg = _make_app(tmp)
+            from orivellum.capabilities import mcos
+            from orivellum.capabilities.llm import LLMResult
+            seen = {}
+
+            def _fake(messages, **kwargs):
+                seen["system"] = messages[0]["content"]
+                return LLMResult(text='{"score":0.5,"reason":"x"}', ok=True,
+                                 model="fake", latency_ms=1)
+
+            # No prompts seeded → hardcoded rubric used.
+            with patch.object(mcos, "llm_call", _fake):
+                mcos._llm_judge({"question": "q"}, "r", cfg, db)
+            self.assertEqual(seen["system"], mcos._JUDGE_RUBRIC)
+
+    def test_slots_endpoint(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            app, db, _cfg = _make_app(tmp)
+            client = TestClient(app, raise_server_exceptions=True, headers=AUTH_HEADERS)
+            client.post("/api/mcos/seed")
+            resp = client.get("/api/mcos/prompts/slots")
+            self.assertEqual(resp.status_code, 200)
+            slots = {s["slot"]: s for s in resp.json()["slots"]}
+            self.assertEqual(set(slots), {"chat.base", "harvest.extract", "mcos.judge"})
+            self.assertTrue(slots["chat.base"]["benchmarkable"])
+            self.assertFalse(slots["harvest.extract"]["benchmarkable"])
+            self.assertEqual(slots["mcos.judge"]["prompt_count"], 1)
+            self.assertIsNotNone(slots["chat.base"]["active_name"])
+            self.assertEqual(slots["chat.base"]["active_version"], 1)
+
+    def test_create_unknown_slot_400(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            app, _db, _cfg = _make_app(tmp)
+            client = TestClient(app, raise_server_exceptions=True, headers=AUTH_HEADERS)
+            resp = client.post("/api/mcos/prompts", json={
+                "slot": "bogus.slot", "name": "x", "content": "y"})
+            self.assertEqual(resp.status_code, 400)
+
+    def test_benchmark_non_benchmarkable_slot_400(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            app, db, _cfg = _make_app(tmp)
+            client = TestClient(app, raise_server_exceptions=True, headers=AUTH_HEADERS)
+            client.post("/api/mcos/seed")
+            pid = client.post("/api/mcos/prompts", json={
+                "slot": "harvest.extract", "name": "h",
+                "content": "extract {title} {chunk}"}).json()["prompt"]["id"]
+            resp = client.post(f"/api/mcos/prompts/{pid}/benchmark")
+            self.assertEqual(resp.status_code, 400)
+            self.assertEqual(resp.json()["detail"], "This slot cannot be benchmarked")
+
+
+class TestRagReprocess(unittest.TestCase):
+    """#190 — apply + re-chunk library."""
+
+    def test_apply_triggers_reprocess(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            app, db, _cfg = _make_app(tmp)
+            client = TestClient(app, raise_server_exceptions=True, headers=AUTH_HEADERS)
+            # Two error docs → reprocess candidates; stub the pipeline so no
+            # real extraction runs.
+            import orivellum.api.routes.library as lib
+            for i in range(2):
+                # A real source file on disk so the reprocess helper queues it
+                # (it skips docs whose source is missing).
+                src = Path(tmp) / f"src{i}.txt"
+                src.write_text("hello world")
+                d = db.create_document(title=f"D{i}", kind="note", source=str(src))
+                db.update_document_extracted(d["id"], "x", 1, readiness="error")
+            with patch.object(lib, "process_document", lambda **kw: None):
+                resp = client.post("/api/mcos/rag/apply", json={
+                    "target_words": 600, "overlap_words": 60,
+                    "reprocess_library": True})
+            self.assertEqual(resp.status_code, 200)
+            self.assertIn("reprocess_started", resp.json())
+            self.assertGreaterEqual(resp.json()["reprocess_started"], 2)
+            self.assertEqual(db.get_setting("chunk_target_words"), "600")
+
+    def test_apply_without_reprocess_has_no_field(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            app, db, _cfg = _make_app(tmp)
+            client = TestClient(app, raise_server_exceptions=True, headers=AUTH_HEADERS)
+            resp = client.post("/api/mcos/rag/apply", json={
+                "target_words": 500, "overlap_words": 50})
+            self.assertEqual(resp.status_code, 200)
+            self.assertNotIn("reprocess_started", resp.json())
+
+    def test_concurrent_reprocess_no_double_enqueue(self):
+        """Two back-to-back queue_library_reprocess calls (e.g. double rag/apply
+        force=True) must never enqueue the same doc twice — the atomic
+        select+reserve guarantees the second call grabs nothing already reserved."""
+        with tempfile.TemporaryDirectory() as tmp:
+            _app, db, _cfg = _make_app(tmp)
+            import orivellum.api.routes.library as lib
+            from fastapi import BackgroundTasks
+
+            # Three ready docs with real source files → all candidates on force.
+            doc_ids = []
+            for i in range(3):
+                src = Path(tmp) / f"c{i}.txt"
+                src.write_text("data")
+                d = db.create_document(title=f"C{i}", kind="note", source=str(src))
+                db.update_document_extracted(d["id"], "x", 1, readiness="ready")
+                doc_ids.append(d["id"])
+
+            enqueued: list[str] = []
+
+            def _capture(**kw):
+                enqueued.append(kw["doc_id"])
+
+            with patch.object(lib, "process_document", _capture):
+                bg1 = BackgroundTasks()
+                r1 = lib.queue_library_reprocess(db, bg1, force=True)
+                # Second call BEFORE the first's background tasks run.
+                bg2 = BackgroundTasks()
+                r2 = lib.queue_library_reprocess(db, bg2, force=True)
+                # Execute both task sets (order doesn't matter for the assertion).
+                for t in list(bg1.tasks) + list(bg2.tasks):
+                    t.func(*t.args, **t.kwargs)
+
+            # No doc enqueued more than once across both calls.
+            self.assertEqual(len(enqueued), len(set(enqueued)))
+            # All three docs handled exactly once, total.
+            self.assertEqual(set(enqueued), set(doc_ids))
+            self.assertEqual(r1["queued"] + r2["queued"], 3)
+            self.assertEqual(r2["queued"], 0)  # first call reserved everything
+
+    def test_reprocess_status_counts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            app, db, _cfg = _make_app(tmp)
+            client = TestClient(app, raise_server_exceptions=True, headers=AUTH_HEADERS)
+            d1 = db.create_document(title="a", kind="note")  # default 'imported'
+            d2 = db.create_document(title="b", kind="note")
+            db.update_document_extracted(d2["id"], "x", 1, readiness="ready")
+            resp = client.get("/api/mcos/rag/reprocess-status")
+            self.assertEqual(resp.status_code, 200)
+            body = resp.json()
+            self.assertEqual(body["total"], 2)
+            self.assertEqual(body["processing"], 1)  # only d1 is 'imported'
+
+
+class TestPromptHealth(unittest.TestCase):
+    """#191 — nightly prompt health."""
+
+    def _seed_llm_bench(self, db):
+        return _seed_bench_with_case(db, bid="ph_bench", kind="llm")
+
+    def test_health_runs_tagged_and_excluded(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _app, db, cfg = _make_app(tmp)
+            from orivellum.capabilities import mcos
+            mcos.seed_default_prompts(db)
+            self._seed_llm_bench(db)
+            _seed_prev_run(db, "ph_bench", avg=0.95)  # strong NORMAL baseline
+
+            with patch.object(mcos, "llm_call", lambda messages, **kw: _ok_llm()):
+                hr = mcos.run_prompt_health(db, cfg)
+            self.assertTrue(hr["ok"])
+            self.assertTrue(hr["runs"])
+            import json as _json
+            with db._lock:
+                metas = [_json.loads(db._conn.execute(
+                    "SELECT meta FROM eval_runs WHERE id=?", (rid,)).fetchone()["meta"])
+                    for rid in hr["runs"]]
+            for m in metas:
+                self.assertTrue(m["prompt_health"])
+                self.assertEqual(m["prompt_slot"], "chat.base")
+                self.assertIsNotNone(m.get("prompt_id"))
+            # Excluded from normal baselines: prev-finished-avg still returns
+            # the 0.95 normal run, never a health run.
+            self.assertAlmostEqual(
+                mcos._prev_finished_avg(db, "ph_bench", "nope"), 0.95)
+
+    def test_health_regression_flag_and_audit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _app, db, cfg = _make_app(tmp)
+            from orivellum.capabilities import mcos
+            mcos.seed_default_prompts(db)
+            self._seed_llm_bench(db)
+
+            # Session 1: high scores (llm returns "42" → rule regex match ~1.0).
+            with patch.object(mcos, "llm_call", lambda messages, **kw: _ok_llm()):
+                hr1 = mcos.run_prompt_health(db, cfg)
+            self.assertFalse(hr1["regressed"])  # no prior session
+
+            # Session 2: low scores (wrong answer → ~0.0), triggers regression.
+            from orivellum.capabilities.llm import LLMResult
+
+            def _bad(messages, **kw):
+                return LLMResult(text="wrong", ok=True, model="fake", latency_ms=1)
+
+            with patch.object(mcos, "llm_call", _bad):
+                hr2 = mcos.run_prompt_health(db, cfg)
+            self.assertTrue(hr2["regressed"])
+            # Final run flagged.
+            import json as _json
+            with db._lock:
+                final_meta = _json.loads(db._conn.execute(
+                    "SELECT meta FROM eval_runs WHERE id=?",
+                    (hr2["runs"][-1],)).fetchone()["meta"])
+            self.assertTrue(final_meta.get("prompt_health_regressed"))
+            # Audit written.
+            with db._lock:
+                n = db._conn.execute(
+                    "SELECT COUNT(*) FROM audit_log WHERE operation='prompt_regression'"
+                ).fetchone()[0]
+            self.assertGreaterEqual(n, 1)
+
+    def test_regression_flags_last_DONE_run_when_final_fails(self):
+        """If the LAST suite run fails but earlier done runs establish a >0.15
+        drop, the flag must land on the most recent DONE run so /regressions
+        still surfaces it and it stays ackable."""
+        with tempfile.TemporaryDirectory() as tmp:
+            app, db, cfg = _make_app(tmp)
+            client = TestClient(app, raise_server_exceptions=True, headers=AUTH_HEADERS)
+            from orivellum.capabilities import mcos
+            from orivellum.capabilities.llm import LLMResult
+            mcos.seed_default_prompts(db)
+            # Two enabled llm suites so we have an earlier + a final run.
+            _seed_bench_with_case(db, bid="ph_a", kind="llm")
+            _seed_bench_with_case(db, bid="ph_b", kind="llm")
+
+            # Session 1: high baseline.
+            with patch.object(mcos, "llm_call", lambda messages, **kw: _ok_llm()):
+                hr1 = mcos.run_prompt_health(db, cfg)
+            self.assertGreaterEqual(len(hr1["runs"]), 2)
+
+            # Session 2: low scores (drop), and force the FINAL suite run to end
+            # up 'failed' by making its _execute_run raise at the run level.
+            real_exec = mcos._execute_run
+            calls = {"n": 0}
+
+            def _bad(messages, **kw):
+                return LLMResult(text="wrong", ok=True, model="fake", latency_ms=1)
+
+            def _exec_wrapper(db_, cfg_, bid, rid, **kw):
+                calls["n"] += 1
+                # The last suite of the session: mark the row failed instead of
+                # running it (simulates a crash on the final suite).
+                if calls["n"] == len(mcos._enabled_llm_benchmarks(db_)):
+                    mcos._finalize_run(db_, rid, status="failed", avg_score=None,
+                                       meta={**kw.get("run_meta", {}),
+                                             "error": "boom"})
+                    return rid
+                return real_exec(db_, cfg_, bid, rid, **kw)
+
+            with patch.object(mcos, "llm_call", _bad), \
+                    patch.object(mcos, "_execute_run", _exec_wrapper):
+                hr2 = mcos.run_prompt_health(db, cfg)
+
+            self.assertTrue(hr2["regressed"])
+            flagged = hr2["flagged_run_id"]
+            self.assertIsNotNone(flagged)
+            # Flagged run is DONE, and is NOT the last-created (failed) run.
+            with db._lock:
+                st = db._conn.execute(
+                    "SELECT status FROM eval_runs WHERE id=?", (flagged,)
+                ).fetchone()["status"]
+            self.assertEqual(st, "done")
+            self.assertNotEqual(flagged, hr2["runs"][-1])
+
+            # Visible in /regressions (status='done' filter) and ackable.
+            resp = client.get("/api/mcos/regressions")
+            regs = {r["run_id"]: r for r in resp.json()["regressions"]}
+            self.assertIn(flagged, regs)
+            self.assertEqual(regs[flagged]["kind"], "prompt")
+            resp = client.post(f"/api/mcos/regressions/{flagged}/ack")
+            self.assertEqual(resp.status_code, 200)
+            self.assertTrue(resp.json()["acknowledged"])
+
+    def test_regressions_endpoint_kind_and_ack(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            app, db, cfg = _make_app(tmp)
+            client = TestClient(app, raise_server_exceptions=True, headers=AUTH_HEADERS)
+            from orivellum.capabilities import mcos
+            mcos.seed_default_prompts(db)
+            self._seed_llm_bench(db)
+            from orivellum.capabilities.llm import LLMResult
+            with patch.object(mcos, "llm_call", lambda messages, **kw: _ok_llm()):
+                mcos.run_prompt_health(db, cfg)
+
+            def _bad(messages, **kw):
+                return LLMResult(text="wrong", ok=True, model="fake", latency_ms=1)
+
+            with patch.object(mcos, "llm_call", _bad):
+                hr2 = mcos.run_prompt_health(db, cfg)
+            self.assertTrue(hr2["regressed"])
+            final_id = hr2["runs"][-1]
+
+            resp = client.get("/api/mcos/regressions")
+            self.assertEqual(resp.status_code, 200)
+            regs = {r["run_id"]: r for r in resp.json()["regressions"]}
+            self.assertIn(final_id, regs)
+            self.assertEqual(regs[final_id]["kind"], "prompt")
+            self.assertIsNotNone(regs[final_id]["prompt_name"])
+            self.assertEqual(regs[final_id]["prompt_version"], 1)
+
+            # Ack works through the shared endpoint for a prompt regression.
+            resp = client.post(f"/api/mcos/regressions/{final_id}/ack")
+            self.assertEqual(resp.status_code, 200)
+            self.assertTrue(resp.json()["acknowledged"])
+
+
 if __name__ == "__main__":
     unittest.main()

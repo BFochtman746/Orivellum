@@ -5,7 +5,7 @@
  * Data fetching mirrors the direct-fetch pattern used by the document
  * detail page's knowledge tab (apiFetch + BASE, react-query wrappers).
  */
-import { Fragment, useState } from "react";
+import { Fragment, useState, useRef, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { apiFetch } from "@/lib/auth";
@@ -27,6 +27,9 @@ import {
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select";
 import {
   Gauge, Play, Loader2, RefreshCw, AlertCircle, Sparkles,
   ArrowUp, ArrowDown, ChevronDown, ChevronRight, Activity,
@@ -486,9 +489,18 @@ function BenchmarkCard({ bench, running, onRun }: {
   );
 }
 
-// ── Prompt Lab (Phase 4) ──────────────────────────────────────────────────────
+// ── Prompt Lab (Phase 4, multi-slot Phase 189) ─────────────────────────────────
 
-const PROMPT_SLOT = "chat.base";
+const DEFAULT_SLOT = "chat.base";
+
+interface SlotInfo {
+  slot: string;
+  label: string;
+  benchmarkable: boolean;
+  active_name: string | null;
+  active_version: number | null;
+  prompt_count: number;
+}
 
 interface Prompt {
   id: string;
@@ -521,7 +533,9 @@ interface PromptBenchmark {
 }
 
 // Dialog for creating a new candidate prompt.
-function NewCandidateDialog({ activeContent, onCreate, pending }: {
+function NewCandidateDialog({ slot, benchmarkable, activeContent, onCreate, pending }: {
+  slot: string;
+  benchmarkable: boolean;
   activeContent: string;
   onCreate: (body: { name: string; content: string; notes: string }) => Promise<void>;
   pending: boolean;
@@ -559,7 +573,10 @@ function NewCandidateDialog({ activeContent, onCreate, pending }: {
         <DialogHeader>
           <DialogTitle>New prompt candidate</DialogTitle>
           <DialogDescription>
-            Create an inactive candidate for <span className="font-mono">{PROMPT_SLOT}</span>. Benchmark it against the active prompt before activating.
+            Create an inactive candidate for <span className="font-mono">{slot}</span>.{" "}
+            {benchmarkable
+              ? "Benchmark it against the active prompt before activating."
+              : "Review and activate directly — this slot cannot be benchmarked."}
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
@@ -597,7 +614,12 @@ function NewCandidateDialog({ activeContent, onCreate, pending }: {
 }
 
 // A single candidate row with its benchmark-vs-active controls.
-function CandidatePrompt({ prompt, onChanged }: { prompt: Prompt; onChanged: () => void }) {
+function CandidatePrompt({ prompt, slot, benchmarkable, onChanged }: {
+  prompt: Prompt;
+  slot: string;
+  benchmarkable: boolean;
+  onChanged: () => void;
+}) {
   const [showSuites, setShowSuites] = useState(false);
 
   const benchQuery = useQuery<PromptBenchmark>({
@@ -609,6 +631,7 @@ function CandidatePrompt({ prompt, onChanged }: { prompt: Prompt; onChanged: () 
     staleTime: 2_000,
     refetchInterval: (query) => (query.state.data?.status === "running" ? 3_000 : false),
     retry: false,
+    enabled: benchmarkable,
   });
 
   const status = benchQuery.data?.status ?? "none";
@@ -659,7 +682,7 @@ function CandidatePrompt({ prompt, onChanged }: { prompt: Prompt; onChanged: () 
   });
 
   const handleActivate = () => {
-    if (!window.confirm(`Activate "${prompt.name}" (v${prompt.version})? This deactivates the current active prompt for ${PROMPT_SLOT}.`)) return;
+    if (!window.confirm(`Activate "${prompt.name}" (v${prompt.version})? This deactivates the current active prompt for ${slot}.`)) return;
     activate.mutate();
   };
   const handleDelete = () => {
@@ -685,12 +708,14 @@ function CandidatePrompt({ prompt, onChanged }: { prompt: Prompt; onChanged: () 
           </div>
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
-          <Button size="sm" variant="outline" disabled={running || startBench.isPending}
-            onClick={() => startBench.mutate()}>
-            {running || startBench.isPending
-              ? <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Benchmarking</>
-              : <><FlaskConical className="w-3.5 h-3.5 mr-1.5" /> Benchmark vs active</>}
-          </Button>
+          {benchmarkable && (
+            <Button size="sm" variant="outline" disabled={running || startBench.isPending}
+              onClick={() => startBench.mutate()}>
+              {running || startBench.isPending
+                ? <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Benchmarking</>
+                : <><FlaskConical className="w-3.5 h-3.5 mr-1.5" /> Benchmark vs active</>}
+            </Button>
+          )}
           <Button size="sm" disabled={activate.isPending} onClick={handleActivate}>
             {activate.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5 mr-1.5" />}
             Activate
@@ -702,7 +727,13 @@ function CandidatePrompt({ prompt, onChanged }: { prompt: Prompt; onChanged: () 
         </div>
       </div>
 
-      {done && (
+      {!benchmarkable && (
+        <p className="text-[11px] text-muted-foreground italic">
+          Version and activate only — benchmarking applies to the chat persona.
+        </p>
+      )}
+
+      {benchmarkable && done && (
         <div className="rounded border border-border/50 bg-muted/20 p-2.5 space-y-2">
           <div className="flex items-center gap-4 text-xs font-mono">
             <span>candidate <span className={scoreColor(candAvg)}>{scorePct(candAvg)}</span></span>
@@ -752,10 +783,27 @@ function CandidatePrompt({ prompt, onChanged }: { prompt: Prompt; onChanged: () 
 
 function PromptLabCard() {
   const qc = useQueryClient();
+  const [slot, setSlot] = useState<string>(DEFAULT_SLOT);
+
+  // Slot registry (multi-slot). 404-tolerant: falls back to the chat.base slot.
+  const slotsQuery = useQuery<{ slots: SlotInfo[] }>({
+    queryKey: ["mcos", "prompt-slots"],
+    queryFn: () => apiFetch(`${BASE}/mcos/prompts/slots`).then((r) => {
+      if (!r.ok) throw new Error("Failed to load slots");
+      return r.json();
+    }),
+    staleTime: 30_000,
+    retry: false,
+  });
+
+  const slots = slotsQuery.data?.slots ?? [];
+  const currentSlot = slots.find((s) => s.slot === slot);
+  // If the slots endpoint is unavailable, assume the default chat.base slot is benchmarkable.
+  const benchmarkable = currentSlot?.benchmarkable ?? (slot === DEFAULT_SLOT);
 
   const { data, isLoading, isError, refetch } = useQuery<{ prompts: Prompt[] }>({
-    queryKey: ["mcos", "prompts", PROMPT_SLOT],
-    queryFn: () => apiFetch(`${BASE}/mcos/prompts?slot=${PROMPT_SLOT}`).then((r) => {
+    queryKey: ["mcos", "prompts", slot],
+    queryFn: () => apiFetch(`${BASE}/mcos/prompts?slot=${slot}`).then((r) => {
       if (!r.ok) throw new Error("Failed to load prompts");
       return r.json();
     }),
@@ -768,14 +816,15 @@ function PromptLabCard() {
   const candidates = prompts.filter((p) => !p.active);
 
   const invalidate = () => {
-    qc.invalidateQueries({ queryKey: ["mcos", "prompts", PROMPT_SLOT] });
+    qc.invalidateQueries({ queryKey: ["mcos", "prompts", slot] });
+    qc.invalidateQueries({ queryKey: ["mcos", "prompt-slots"] });
   };
 
   const create = useMutation<{ prompt: Prompt }, Error, { name: string; content: string; notes: string }>({
     mutationFn: (body) => apiFetch(`${BASE}/mcos/prompts`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ slot: PROMPT_SLOT, ...body }),
+      body: JSON.stringify({ slot, ...body }),
     }).then((r) => {
       if (!r.ok) throw new Error("Create failed");
       return r.json();
@@ -790,19 +839,38 @@ function PromptLabCard() {
   return (
     <Card>
       <CardContent className="p-6">
-        <div className="flex items-center justify-between gap-2 mb-4">
+        <div className="flex items-center justify-between gap-2 mb-4 flex-wrap">
           <div className="flex items-center gap-2">
             <FlaskConical className="w-4 h-4 text-primary" />
             <h2 className="font-mono text-sm uppercase tracking-wider">Prompt Lab</h2>
-            <Badge variant="outline" className="text-[10px] font-mono">{PROMPT_SLOT}</Badge>
           </div>
-          {!isLoading && !isError && (
-            <NewCandidateDialog
-              activeContent={active?.content ?? ""}
-              onCreate={async (body) => { await create.mutateAsync(body); }}
-              pending={create.isPending}
-            />
-          )}
+          <div className="flex items-center gap-2">
+            <Select value={slot} onValueChange={setSlot}>
+              <SelectTrigger className="h-8 w-[200px] text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {slots.length > 0 ? (
+                  slots.map((s) => (
+                    <SelectItem key={s.slot} value={s.slot} className="text-xs">
+                      {s.label}
+                    </SelectItem>
+                  ))
+                ) : (
+                  <SelectItem value={DEFAULT_SLOT} className="text-xs">Chat persona</SelectItem>
+                )}
+              </SelectContent>
+            </Select>
+            {!isLoading && !isError && (
+              <NewCandidateDialog
+                slot={slot}
+                benchmarkable={benchmarkable}
+                activeContent={active?.content ?? ""}
+                onCreate={async (body) => { await create.mutateAsync(body); }}
+                pending={create.isPending}
+              />
+            )}
+          </div>
         </div>
 
         {isLoading ? (
@@ -835,10 +903,14 @@ function PromptLabCard() {
               </div>
             )}
             {candidates.map((p) => (
-              <CandidatePrompt key={p.id} prompt={p} onChanged={invalidate} />
+              <CandidatePrompt key={p.id} prompt={p} slot={slot} benchmarkable={benchmarkable} onChanged={invalidate} />
             ))}
             {candidates.length === 0 && (
-              <p className="text-xs text-muted-foreground text-center py-2">No candidates. Create one to benchmark against the active prompt.</p>
+              <p className="text-xs text-muted-foreground text-center py-2">
+                {benchmarkable
+                  ? "No candidates. Create one to benchmark against the active prompt."
+                  : "No candidates. Create one to version and activate."}
+              </p>
             )}
           </div>
         )}
@@ -872,9 +944,22 @@ interface Sweep {
   docs_sampled: number | null;
 }
 
+interface ReprocessStatus {
+  processing: number;
+  total: number;
+}
+
 function RagCalibrationCard() {
   const qc = useQueryClient();
   const [showPast, setShowPast] = useState(false);
+  // Set true once a re-chunk is kicked off so we poll status until it drains.
+  const [reprocessActive, setReprocessActive] = useState(false);
+  const notifiedDoneRef = useRef(false);
+  // Timestamp (ms) recorded when a re-chunk is kicked off. Completion is only
+  // trusted from a status observation fetched strictly AFTER this moment, so a
+  // stale cached {processing:0} left over from a previous job can never trigger
+  // an instant (false) completion.
+  const reprocessStartedAtRef = useRef<number>(0);
 
   const configQuery = useQuery<RagConfig>({
     queryKey: ["mcos", "rag", "config"],
@@ -920,7 +1005,39 @@ function RagCalibrationCard() {
     onError: () => toast.error("Could not start sweep"),
   });
 
-  const applyBest = useMutation<RagConfig, Error, { target_words: number; overlap_words: number }>({
+  // Re-chunk progress — polled every 3s while a reprocess is in flight.
+  const reprocessQuery = useQuery<ReprocessStatus>({
+    queryKey: ["mcos", "rag", "reprocess-status"],
+    queryFn: () => apiFetch(`${BASE}/mcos/rag/reprocess-status`).then((r) => {
+      if (!r.ok) throw new Error("Failed to load reprocess status");
+      return r.json();
+    }),
+    enabled: reprocessActive,
+    retry: false,
+    refetchInterval: (query) => (query.state.data && query.state.data.processing > 0 ? 3_000 : false),
+  });
+
+  // A status observation is only trustworthy for completion once it was fetched
+  // AFTER the current re-chunk started (dataUpdatedAt > start timestamp). This
+  // discards the stale cached value from any previous job.
+  const reprocessFresh = reprocessQuery.dataUpdatedAt > reprocessStartedAtRef.current;
+
+  // Stop polling + toast when the library finishes re-chunking — but only when
+  // the zero-processing reading came from a fetch that happened after we started.
+  useEffect(() => {
+    if (!reprocessActive) return;
+    const st = reprocessQuery.data;
+    if (st && st.processing === 0 && reprocessFresh && !notifiedDoneRef.current) {
+      notifiedDoneRef.current = true;
+      setReprocessActive(false);
+      toast.success("Library re-chunk complete");
+    }
+  }, [reprocessActive, reprocessFresh, reprocessQuery.data, reprocessQuery.dataUpdatedAt]);
+
+  type ApplyBody = { target_words: number; overlap_words: number; reprocess_library?: boolean };
+  type ApplyResp = RagConfig & { reprocess_started?: number };
+
+  const applyBest = useMutation<ApplyResp, Error, ApplyBody>({
     mutationFn: (body) => apiFetch(`${BASE}/mcos/rag/apply`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -929,12 +1046,27 @@ function RagCalibrationCard() {
       if (!r.ok) throw new Error("Apply failed");
       return r.json();
     }),
-    onSuccess: () => {
-      toast.success("Chunk config updated");
+    onSuccess: (resp, vars) => {
       invalidate();
+      if (vars.reprocess_library && (resp.reprocess_started ?? 0) > 0) {
+        notifiedDoneRef.current = false;
+        // Mark the start moment and purge any stale cached status so the poll
+        // lifecycle only ever observes data fetched after this point.
+        reprocessStartedAtRef.current = Date.now();
+        qc.removeQueries({ queryKey: ["mcos", "rag", "reprocess-status"] });
+        setReprocessActive(true);
+        toast.success(`Chunk config updated — re-chunking ${resp.reprocess_started} document${resp.reprocess_started === 1 ? "" : "s"}`);
+        reprocessQuery.refetch();
+      } else {
+        toast.success("Chunk config updated");
+      }
     },
     onError: () => toast.error("Could not apply chunk config"),
   });
+
+  // Only surface status that was fetched after the current re-chunk started.
+  const reprocessStatus = reprocessFresh ? reprocessQuery.data : undefined;
+  const reprocessing = reprocessActive && (!reprocessFresh || (!!reprocessStatus && reprocessStatus.processing > 0));
 
   const cfg = configQuery.data;
   const best = latest?.best ?? null;
@@ -1022,13 +1154,29 @@ function RagCalibrationCard() {
             )}
 
             {bestDiffers && best && (
-              <div className="space-y-1">
-                <Button size="sm" disabled={applyBest.isPending}
-                  onClick={() => applyBest.mutate({ target_words: best.target_words, overlap_words: best.overlap_words })}>
-                  {applyBest.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5 mr-1.5" />}
-                  Apply best ({best.target_words}/{best.overlap_words})
-                </Button>
+              <div className="space-y-1.5">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Button size="sm" disabled={applyBest.isPending || reprocessing}
+                    onClick={() => applyBest.mutate({ target_words: best.target_words, overlap_words: best.overlap_words })}>
+                    {applyBest.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5 mr-1.5" />}
+                    Apply best ({best.target_words}/{best.overlap_words})
+                  </Button>
+                  <Button size="sm" variant="outline" disabled={applyBest.isPending || reprocessing}
+                    onClick={() => applyBest.mutate({ target_words: best.target_words, overlap_words: best.overlap_words, reprocess_library: true })}>
+                    {reprocessing ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5 mr-1.5" />}
+                    Apply &amp; re-chunk library
+                  </Button>
+                </div>
                 <p className="text-[11px] text-muted-foreground">Applies to new imports and reprocessed documents.</p>
+              </div>
+            )}
+
+            {reprocessing && reprocessStatus && (
+              <div className="flex items-center gap-2 text-[11px] font-mono text-muted-foreground">
+                <Loader2 className="w-3 h-3 animate-spin" />
+                <span>
+                  Re-chunking library — {reprocessStatus.processing} of {reprocessStatus.total} remaining
+                </span>
               </div>
             )}
 

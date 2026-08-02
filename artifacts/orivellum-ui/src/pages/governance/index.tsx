@@ -239,6 +239,9 @@ interface Regression {
   avg_score: number | null;
   delta: number | null;
   acknowledged: boolean;
+  kind?: "benchmark" | "prompt";
+  prompt_name?: string | null;
+  prompt_version?: number | null;
 }
 
 function fmtRegTime(iso: string | null): string {
@@ -336,10 +339,19 @@ function RegressionsSection() {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
                     {reg.acknowledged && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />}
+                    <Badge variant="outline" className={`text-[10px] shrink-0 ${
+                      reg.kind === "prompt"
+                        ? "border-violet-300 text-violet-700 dark:text-violet-400 dark:border-violet-900"
+                        : "border-border/60 text-muted-foreground"
+                    }`}>
+                      {reg.kind === "prompt" ? "Prompt" : "Benchmark"}
+                    </Badge>
                     <button
                       onClick={() => navigate("/mcos")}
                       className="text-sm font-medium truncate hover:underline text-left">
-                      {reg.benchmark_name}
+                      {reg.kind === "prompt" && reg.prompt_name
+                        ? `${reg.prompt_name}${reg.prompt_version != null ? ` v${reg.prompt_version}` : ""}`
+                        : reg.benchmark_name}
                     </button>
                   </div>
                   <div className="flex items-center gap-3 mt-1 text-[11px] font-mono text-muted-foreground">

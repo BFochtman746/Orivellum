@@ -97,7 +97,7 @@ def _get_stuck_docs(db: "OrivellumDB", max_docs: int = 20) -> list[dict]:
             """SELECT d.id, d.work_id, d.title, d.source, d.content_path,
                       d.kind, d.readiness
                FROM documents d
-               WHERE d.readiness IN ('imported', 'error', 'no_text')
+               WHERE d.readiness IN ('imported', 'error', 'no_text', 'reprocessing')
                  AND d.kind != 'zip'
                  AND datetime(d.created_at) < datetime('now', '-10 minutes')
                ORDER BY d.created_at ASC
@@ -530,6 +530,33 @@ def _pass_mcos(db: "OrivellumDB", cfg: "OrivellumConfig", report: list[str]) -> 
             report.extend(ran_lines)
         if regressions:
             report.append("⚠ MCOS regressions: " + "; ".join(regressions))
+
+        # ── Nightly prompt health (active chat.base) ────────────────────────
+        # Wrapped independently so a health-pass failure never breaks the rest
+        # of the MCOS pass or nightshift; a report line is appended either way.
+        try:
+            if ai_ok:
+                from orivellum.capabilities.mcos import run_prompt_health
+                hr = run_prompt_health(db, cfg)
+                if hr.get("ok") and hr.get("runs"):
+                    cur = hr.get("current_agg")
+                    cur_str = f"{cur:.2f}" if cur is not None else "n/a"
+                    report.append(
+                        f"Prompt health — '{hr.get('prompt_name')}' "
+                        f"v{hr.get('prompt_version')}: {cur_str} "
+                        f"({len(hr['runs'])} suite run(s))")
+                    if hr.get("regressed"):
+                        report.append(
+                            f"⚠ Prompt health regression: "
+                            f"'{hr.get('prompt_name')}' v{hr.get('prompt_version')} "
+                            f"Δ{hr.get('delta')}")
+                elif hr.get("reason"):
+                    report.append(f"Prompt health: skipped ({hr['reason']})")
+            else:
+                report.append("Prompt health: skipped (AI unreachable)")
+        except Exception as exc:
+            logger.warning("MCOS prompt-health pass failed: %s", exc)
+            report.append(f"⚠ Prompt health: {exc}")
     except Exception as exc:
         logger.warning("MCOS pass failed: %s", exc)
 

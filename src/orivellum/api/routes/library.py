@@ -651,30 +651,37 @@ def library_explode_zips(background_tasks: BackgroundTasks):
     }
 
 
-@router.post("/library/reprocess-all")
-def library_reprocess_all(
-    background_tasks: BackgroundTasks,
-    force: bool = False,
-):
-    """Bulk re-extract every document that hasn't finished processing.
+# Reservation marker: a doc selected for reprocessing is flipped to this state
+# *atomically* under the same lock as the candidate SELECT, so a second
+# concurrent call selects nothing (candidates exclude this state) and can never
+# double-enqueue the same doc.  The pipeline ignores the initial readiness and
+# drives the doc to a terminal state, so this marker is safe as a transient.
+_REPROCESS_RESERVED = "reprocessing"
 
-    Pass ``force=true`` to also re-run documents that are already ``ready``
-    (useful after an extraction engine upgrade).
+# In-flight (non-terminal) readiness states — a doc mid-pipeline sits in
+# 'imported' or the transient reservation marker until the extractor drives it
+# to a terminal state (ready / error / no_text).  Shared so other routes (e.g.
+# MCOS rag reprocess-status) agree on what "still processing" means.
+REPROCESS_INFLIGHT_STATES: tuple[str, ...] = ("imported", _REPROCESS_RESERVED)
 
-    Strategy per document kind:
-    - ``zip`` — always re-exploded into individual child documents.
-    - Any other kind stuck in ``imported`` / ``error`` / ``no_text`` — queued
-      for normal extraction using the stored ``content_path`` and ``kind``.
 
-    Already-exploded ZIPs are safe to re-run: SHA-256 dedup prevents duplicates.
-    Documents whose source file is no longer on disk are skipped with a warning.
+def queue_library_reprocess(db, background_tasks: BackgroundTasks,
+                            force: bool = False) -> dict:
+    """Shared bulk re-extraction machinery used by both the library
+    ``/reprocess-all`` route and the MCOS ``/rag/apply?reprocess_library`` path.
 
-    Returns a summary: total queued, breakdown by category, and any skipped.
+    Collects every not-finished document (and all ZIPs, which are idempotent to
+    re-explode), atomically reserves each (flips readiness to the transient
+    ``reprocessing`` marker so concurrent callers can't re-select it) and queues
+    ``process_document`` on ``background_tasks``.  Returns the same summary dict
+    the route exposes.
     """
-    db      = get_db()
     lib_root = _library_root()
 
-    # ── Collect candidates ─────────────────────────────────────────────────────
+    # ── Atomically select + reserve candidates ──────────────────────────────────
+    # force=True also re-runs 'ready' docs (e.g. after a chunk-settings change).
+    # The reservation marker itself is NEVER a candidate, so a concurrent call
+    # (double rag/apply) selects only docs the first call hasn't grabbed.
     readiness_filter: tuple[str, ...]
     if force:
         readiness_filter = ("imported", "error", "no_text", "ready")
@@ -682,31 +689,39 @@ def library_reprocess_all(
         readiness_filter = ("imported", "error", "no_text")
 
     placeholders = ",".join("?" * len(readiness_filter))
+    seen: set[str] = set()
+    candidates: list[Any] = []
     with db._lock:
         rows = db._conn.execute(
             f"""SELECT id, source, content_path, work_id, title, kind, readiness
                 FROM documents
                 WHERE readiness IN ({placeholders})
+                  AND readiness != ?
                 ORDER BY created_at DESC""",
-            readiness_filter,
+            (*readiness_filter, _REPROCESS_RESERVED),
         ).fetchall()
-
-    # Also always include ZIPs (even 'ready' ones — exploding is idempotent)
-    with db._lock:
+        # Also always include ZIPs (even 'ready' ones — exploding is idempotent),
+        # but skip any already reserved by a concurrent call.
         zip_rows = db._conn.execute(
             "SELECT id, source, content_path, work_id, title, kind, readiness "
-            "FROM documents WHERE kind='zip'",
+            "FROM documents WHERE kind='zip' AND readiness != ?",
+            (_REPROCESS_RESERVED,),
         ).fetchall()
+        # Merge; use doc id as dedup key so ZIPs only appear once.
+        for row in list(rows) + list(zip_rows):
+            if row["id"] not in seen:
+                seen.add(row["id"])
+                candidates.append(row)
+        # Reserve every candidate in the SAME transaction so a concurrent call's
+        # SELECT (which excludes _REPROCESS_RESERVED) finds nothing to re-grab.
+        if candidates:
+            db._conn.executemany(
+                "UPDATE documents SET readiness=? WHERE id=?",
+                [(_REPROCESS_RESERVED, row["id"]) for row in candidates],
+            )
+            db._conn.commit()
 
-    # Merge; use doc id as dedup key so ZIPs only appear once
-    seen: set[str] = set()
-    candidates: list[Any] = []
-    for row in list(rows) + list(zip_rows):
-        if row["id"] not in seen:
-            seen.add(row["id"])
-            candidates.append(row)
-
-    # ── Queue each candidate ───────────────────────────────────────────────────
+    # ── Queue each reserved candidate ───────────────────────────────────────────
     queued_zips    = 0
     queued_stuck   = 0
     skipped        = 0
@@ -729,12 +744,24 @@ def library_reprocess_all(
                 "reprocess-all: file missing for doc %s (kind=%s) — skipping",
                 doc_id, kind,
             )
+            # Un-reserve: restore the doc's prior readiness so a stranded
+            # 'reprocessing' marker never leaves it stuck / mis-counted.
+            prior = row["readiness"] or "error"
+            if prior == _REPROCESS_RESERVED:  # was already reserved somehow
+                prior = "error"
+            with db._lock:
+                db._conn.execute(
+                    "UPDATE documents SET readiness=? WHERE id=?", (prior, doc_id)
+                )
+                db._conn.commit()
             skipped += 1
             continue
 
+        # Clear stale warnings.  Do NOT flip readiness back to 'imported' here —
+        # the doc is already reserved at '_REPROCESS_RESERVED' (an in-flight
+        # state), which keeps a concurrent caller from re-selecting it.  The
+        # pipeline drives it to a terminal state when it finishes.
         db.delete_extraction_warnings(doc_id)
-        db.update_document_extracted(doc_id, "", 0,
-                                     readiness="imported", error_message=None)
 
         background_tasks.add_task(
             process_document,
@@ -772,6 +799,30 @@ def library_reprocess_all(
         "skipped":      skipped,
         "message":      ". ".join(parts) if parts else "Nothing to reprocess.",
     }
+
+
+@router.post("/library/reprocess-all")
+def library_reprocess_all(
+    background_tasks: BackgroundTasks,
+    force: bool = False,
+):
+    """Bulk re-extract every document that hasn't finished processing.
+
+    Pass ``force=true`` to also re-run documents that are already ``ready``
+    (useful after an extraction engine upgrade).
+
+    Strategy per document kind:
+    - ``zip`` — always re-exploded into individual child documents.
+    - Any other kind stuck in ``imported`` / ``error`` / ``no_text`` — queued
+      for normal extraction using the stored ``content_path`` and ``kind``.
+
+    Already-exploded ZIPs are safe to re-run: SHA-256 dedup prevents duplicates.
+    Documents whose source file is no longer on disk are skipped with a warning.
+
+    Returns a summary: total queued, breakdown by category, and any skipped.
+    """
+    db = get_db()
+    return queue_library_reprocess(db, background_tasks, force=force)
 
 
 @router.post("/library/smart-organize")

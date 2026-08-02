@@ -396,34 +396,68 @@ def seed_default_benchmarks(db: Any) -> dict:
     return {"benchmarks": int(n_bench), "cases": int(n_cases)}
 
 
-def seed_default_prompts(db: Any) -> None:
-    """Seed slot 'chat.base' v1 (active) from the chat base persona constant.
+# Slot registry: label + whether it can be benchmarked-as-system-preamble.
+# Only the chat persona is benchmarkable (that's the only slot where "run the
+# suites with this prompt as a system message" is meaningful).
+PROMPT_SLOTS: dict[str, dict] = {
+    "chat.base": {"label": "Chat persona", "benchmarkable": True},
+    "harvest.extract": {"label": "Knowledge extraction", "benchmarkable": False},
+    "mcos.judge": {"label": "Evaluation judge", "benchmarkable": False},
+}
 
-    Idempotent: skips entirely if the slot already has any rows.  The content
-    mirrors conversations._CHAT_BASE_PROMPT exactly so the registry starts as a
-    no-op override of the hardcoded default.
-    """
-    try:
-        with db._lock:
-            existing = db._conn.execute(
-                "SELECT 1 FROM prompts WHERE slot='chat.base' LIMIT 1"
-            ).fetchone()
+
+def _seed_prompt_slot(db: Any, slot: str, name: str, content: str,
+                      notes: str) -> None:
+    """Idempotently seed one slot with a v1 active prompt (skips if any rows)."""
+    with db._lock:
+        existing = db._conn.execute(
+            "SELECT 1 FROM prompts WHERE slot=? LIMIT 1", (slot,)
+        ).fetchone()
         if existing:
             return
+        db._conn.execute(
+            "INSERT INTO prompts(id,slot,name,content,version,active,notes,"
+            "created_at) VALUES(?,?,?,?,1,1,?,?)",
+            (_uuid(), slot, name, content, notes, _now()),
+        )
+        db._conn.commit()
+
+
+def seed_default_prompts(db: Any) -> None:
+    """Seed slots 'chat.base', 'harvest.extract' and 'mcos.judge' — each v1
+    active — from the exact hardcoded constants.
+
+    Idempotent per slot: a slot that already has any rows is left untouched.
+    Every content string mirrors its source constant so the registry starts as
+    a no-op override of the hardcoded defaults.  Seeding must never break.
+    """
+    try:
+        # chat.base — imported lazily to avoid a hard route-module dependency.
         try:
-            from orivellum.api.routes.conversations import _CHAT_BASE_PROMPT as base
-        except Exception:
-            # Route module may be unavailable in some contexts; the seed is a
-            # convenience, not a correctness requirement.
-            return
-        with db._lock:
-            db._conn.execute(
-                "INSERT INTO prompts(id,slot,name,content,version,active,notes,"
-                "created_at) VALUES(?,?,?,?,1,1,?,?)",
-                (_uuid(), "chat.base", "Default chat persona", base,
-                 "Seeded from the hardcoded chat base persona.", _now()),
-            )
-            db._conn.commit()
+            from orivellum.api.routes.conversations import _CHAT_BASE_PROMPT
+            _seed_prompt_slot(
+                db, "chat.base", "Default chat persona", _CHAT_BASE_PROMPT,
+                "Seeded from the hardcoded chat base persona.")
+        except Exception as exc:  # route module may be unavailable in some ctx
+            logger.warning("seed chat.base failed: %s", exc)
+
+        # harvest.extract — the LLM knowledge-extraction template.
+        try:
+            from orivellum.capabilities.knowledge_harvest import _EXTRACT_PROMPT
+            _seed_prompt_slot(
+                db, "harvest.extract", "Knowledge extraction prompt", _EXTRACT_PROMPT,
+                "Must keep the {title} and {chunk} placeholders and its literal "
+                "JSON braces doubled as {{ }} — it is filled via str.format().")
+        except Exception as exc:
+            logger.warning("seed harvest.extract failed: %s", exc)
+
+        # mcos.judge — the judge rubric (used verbatim, no placeholders).
+        try:
+            _seed_prompt_slot(
+                db, "mcos.judge", "Evaluation judge rubric", _JUDGE_RUBRIC,
+                "Used verbatim as the judge system prompt; no placeholders.")
+        except Exception as exc:
+            logger.warning("seed mcos.judge failed: %s", exc)
     except Exception as exc:  # pragma: no cover — seeding must never break
         logger.warning("seed_default_prompts failed: %s", exc)
 
@@ -590,6 +624,18 @@ def _grounding_judge(case: dict, response: str) -> float | None:
     return grounded / len(sentences)
 
 
+# Judge rubric (system prompt).  No format placeholders — it is used verbatim,
+# so a DB-sourced override needs no substitution.  Exact current text.
+_JUDGE_RUBRIC = (
+    "You are a strict evaluation judge. Given a question, the expected "
+    "answer criteria, and a candidate response, rate how well the response "
+    "satisfies the criteria.\n"
+    "Reply with ONLY a JSON object of the form "
+    '{\"score\": <number 0.0-1.0>, \"reason\": \"<one sentence>\"}. '
+    "Do not include any other text."
+)
+
+
 def _llm_judge(case: dict, response: str, cfg: Any, db: Any) -> tuple[float | None, str | None]:
     """LLM grader over a strict JSON rubric.
 
@@ -609,14 +655,15 @@ def _llm_judge(case: dict, response: str, cfg: Any, db: Any) -> tuple[float | No
         expectation_lines.append("Expected output: " + str(expected_output))
     expectation = "\n".join(expectation_lines) or "(no explicit expectation)"
 
-    rubric = (
-        "You are a strict evaluation judge. Given a question, the expected "
-        "answer criteria, and a candidate response, rate how well the response "
-        "satisfies the criteria.\n"
-        "Reply with ONLY a JSON object of the form "
-        '{\"score\": <number 0.0-1.0>, \"reason\": \"<one sentence>\"}. '
-        "Do not include any other text."
-    )
+    # Judge rubric is the system prompt; prefer the active registry template
+    # (slot 'mcos.judge') with the hardcoded constant as a never-break fallback.
+    rubric = _JUDGE_RUBRIC
+    try:
+        active = db.get_active_prompt("mcos.judge") if db is not None else None
+        if active:
+            rubric = active
+    except Exception:
+        rubric = _JUDGE_RUBRIC
     user = (
         f"Question:\n{case.get('question', '')}\n\n"
         f"{expectation}\n\n"
@@ -821,6 +868,136 @@ def run_prompt_benchmark(db: Any, cfg: Any, prompt_id: str) -> dict:
                          system_prompt=active["content"], run_meta=a_meta)
 
     return {"candidate_runs": candidate_runs, "active_runs": active_runs}
+
+
+def _prev_prompt_health_aggregate(db: Any, slot: str,
+                                  before_session: str) -> float | None:
+    """Mean avg_score of the most recent PRIOR prompt-health session for a slot.
+
+    Sessions are identified by ``meta.prompt_health_session`` (an ISO timestamp
+    stamped on every run of a set).  Returns the mean over that session's done
+    runs, or None when there is no prior session.
+    """
+    with db._lock:
+        prev_session = db._conn.execute(
+            "SELECT json_extract(meta,'$.prompt_health_session') AS s "
+            "FROM eval_runs WHERE status='done' AND json_valid(meta) "
+            "AND json_extract(meta,'$.prompt_health')=1 "
+            "AND json_extract(meta,'$.prompt_slot')=? "
+            "AND json_extract(meta,'$.prompt_health_session') < ? "
+            "ORDER BY s DESC LIMIT 1",
+            (slot, before_session),
+        ).fetchone()
+        if not prev_session or prev_session["s"] is None:
+            return None
+        rows = db._conn.execute(
+            "SELECT avg_score FROM eval_runs WHERE status='done' "
+            "AND json_valid(meta) AND json_extract(meta,'$.prompt_health')=1 "
+            "AND json_extract(meta,'$.prompt_slot')=? "
+            "AND json_extract(meta,'$.prompt_health_session')=? "
+            "AND avg_score IS NOT NULL",
+            (slot, prev_session["s"]),
+        ).fetchall()
+    vals = [float(r["avg_score"]) for r in rows if r["avg_score"] is not None]
+    return (sum(vals) / len(vals)) if vals else None
+
+
+def run_prompt_health(db: Any, cfg: Any) -> dict:
+    """Nightly health check for the ACTIVE chat.base prompt.
+
+    Runs every enabled llm suite with the active prompt as a system preamble,
+    tagging each run meta with ``prompt_health``/``prompt_id``/``prompt_version``
+    (and a shared ``prompt_health_session`` timestamp).  These carry a
+    ``prompt_id`` so they are already excluded from normal regression baselines.
+
+    Compares the current session's aggregate avg against the previous nightly
+    session's aggregate for the same slot; a drop > 0.15 flags
+    ``prompt_health_regressed=true`` on the FINAL run of the set and emits a
+    ``prompt_regression`` audit.  Returns a summary dict.
+    """
+    slot = "chat.base"
+    with db._lock:
+        active = db._conn.execute(
+            "SELECT id, name, content, version FROM prompts "
+            "WHERE slot=? AND active=1 LIMIT 1", (slot,),
+        ).fetchone()
+    if active is None:
+        return {"ok": False, "reason": "no active chat.base prompt", "runs": []}
+    active = dict(active)
+
+    suites = _enabled_llm_benchmarks(db)
+    if not suites:
+        return {"ok": False, "reason": "no enabled llm suites", "runs": []}
+
+    session = _now()
+    run_ids: list[str] = []
+    scores: list[float] = []
+    for suite in suites:
+        bid = suite["id"]
+        meta = {"prompt_health": True, "prompt_id": active["id"],
+                "prompt_version": active["version"], "prompt_slot": slot,
+                "prompt_health_session": session}
+        rid = _create_run_row(db, cfg, bid, initial_meta=meta)
+        run_ids.append(rid)
+        _execute_run(db, cfg, bid, rid,
+                     system_prompt=active["content"], run_meta=meta)
+        with db._lock:
+            row = db._conn.execute(
+                "SELECT avg_score FROM eval_runs WHERE id=?", (rid,)
+            ).fetchone()
+        if row and row["avg_score"] is not None:
+            scores.append(float(row["avg_score"]))
+
+    current_agg = (sum(scores) / len(scores)) if scores else None
+    prev_agg = _prev_prompt_health_aggregate(db, slot, session)
+    regressed = False
+    delta = None
+    if current_agg is not None and prev_agg is not None:
+        delta = round(current_agg - prev_agg, 6)
+        regressed = delta < -0.15
+
+    flagged_id: str | None = None
+    if regressed and run_ids:
+        # Flag the most recent run of this session whose status is 'done' — NOT
+        # simply run_ids[-1], which may be a failed row.  /regressions filters
+        # status='done', so flagging a failed run would make the regression
+        # invisible and un-ackable.  If no run finished, we skip the flag but
+        # still audit (noting there is no ackable run) so governance sees it.
+        with db._lock:
+            done_row = db._conn.execute(
+                "SELECT id FROM eval_runs WHERE status='done' AND json_valid(meta) "
+                "AND json_extract(meta,'$.prompt_health')=1 "
+                "AND json_extract(meta,'$.prompt_health_session')=? "
+                "ORDER BY finished_at DESC, started_at DESC LIMIT 1",
+                (session,),
+            ).fetchone()
+            if done_row is not None:
+                flagged_id = done_row["id"]
+                db._conn.execute(
+                    "UPDATE eval_runs SET meta=json_set("
+                    "CASE WHEN json_valid(meta) THEN meta ELSE '{}' END, "
+                    "'$.prompt_health_regressed', json('true')) WHERE id=?",
+                    (flagged_id,),
+                )
+                db._conn.commit()
+        try:
+            note = "" if flagged_id else " (no finished run — not ackable)"
+            db.audit(
+                "prompt_regression",
+                object_id=flagged_id or run_ids[-1],
+                object_type="eval_run",
+                actor="mcos", result="warn",
+                detail=(f"prompt='{active['name']}' v{active['version']} "
+                        f"nightly avg {current_agg:.4f} vs prev {prev_agg:.4f} "
+                        f"(delta={delta}, dropped > 0.15){note}"),
+            )
+        except Exception as exc:  # never let governance logging strand the pass
+            logger.warning("prompt_regression audit failed: %s", exc)
+
+    return {"ok": True, "runs": run_ids, "current_agg": current_agg,
+            "prev_agg": prev_agg, "delta": delta, "regressed": regressed,
+            "flagged_run_id": flagged_id,
+            "prompt_name": active["name"], "prompt_version": active["version"]}
 
 
 def _finalize_run(db: Any, run_id: str, *, status: str, avg_score: float | None,
