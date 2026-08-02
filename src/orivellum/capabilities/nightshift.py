@@ -127,31 +127,31 @@ def _pass_db_optimise(db: "OrivellumDB", report: list[str]) -> None:
             db._conn.execute("ANALYZE")
             db._conn.commit()
 
-        # VACUUM rewrites the whole file — must run outside a transaction
-        # and outside the lock to avoid deadlock
-        import sqlite3
-        db_path = None
-        try:
-            db_path = db._conn.execute("PRAGMA database_list").fetchone()
-            if db_path:
-                db_path = db_path[2]  # filename column
-        except Exception:
-            pass
+        # VACUUM — run on the main serialized connection while holding the
+        # app lock so our own writers cannot race it (avoids SQLITE_BUSY).
+        # VACUUM cannot run inside a transaction, so commit first.
+        with db._lock:
+            db_path = None
+            try:
+                row = db._conn.execute("PRAGMA database_list").fetchone()
+                if row:
+                    db_path = row[2]  # filename column
+            except Exception:
+                pass
 
-        if db_path and os.path.exists(db_path):
-            size_before = os.path.getsize(db_path)
-            # Use a separate connection for VACUUM (cannot run in WAL tx)
-            conn = sqlite3.connect(db_path, timeout=30)
-            conn.execute("VACUUM")
-            conn.close()
+            size_before = os.path.getsize(db_path) if db_path and os.path.exists(db_path) else None
+            db._conn.commit()
+            db._conn.execute("VACUUM")
+
+        if size_before is not None:
             size_after = os.path.getsize(db_path)
             saved_mb = max(0, (size_before - size_after) / 1_048_576)
             msg = f"DB optimised — VACUUM saved {saved_mb:.1f} MB" if saved_mb > 0.05 \
                   else "DB optimised — VACUUM (no size change)"
-            report.append(msg)
-            logger.info(msg)
         else:
-            report.append("DB optimised — ANALYZE + WAL checkpoint (VACUUM skipped: path unknown)")
+            msg = "DB optimised — VACUUM + ANALYZE + WAL checkpoint"
+        report.append(msg)
+        logger.info(msg)
 
     except Exception as exc:
         logger.warning("DB optimise pass failed: %s", exc)
@@ -218,12 +218,20 @@ def _pass_orphan_cleanup(db: "OrivellumDB", report: list[str]) -> None:
                 """DELETE FROM chunks
                    WHERE doc_id NOT IN (SELECT id FROM documents)"""
             ).rowcount
-            # Embeddings with no knowledge item
+            # Orphaned embeddings — type-aware: knowledge vectors checked
+            # against knowledge, chunk vectors against chunks.  Never touch
+            # vectors of other/unknown object types.
             v_deleted = 0
             try:
-                v_deleted = db._conn.execute(
+                v_deleted += db._conn.execute(
                     """DELETE FROM vectors
-                       WHERE object_id NOT IN (SELECT id FROM knowledge)"""
+                       WHERE object_type = 'knowledge'
+                         AND object_id NOT IN (SELECT id FROM knowledge)"""
+                ).rowcount
+                v_deleted += db._conn.execute(
+                    """DELETE FROM vectors
+                       WHERE object_type = 'chunk'
+                         AND object_id NOT IN (SELECT id FROM chunks)"""
                 ).rowcount
             except Exception:
                 pass
@@ -248,7 +256,7 @@ def _pass_stuck_docs(db: "OrivellumDB", cfg: "OrivellumConfig",
         from orivellum.capabilities.pipeline import process_document as _proc
         lib_root = Path(cfg.data_dir) / "library"
         stuck = _get_stuck_docs(db, max_docs=20)
-        recovered = 0
+        queue: list[dict] = []
         for sdoc in stuck:
             content_path = sdoc.get("content_path")
             file_path: Path | None = None
@@ -258,27 +266,32 @@ def _pass_stuck_docs(db: "OrivellumDB", cfg: "OrivellumConfig",
                 file_path = Path(sdoc["source"])
             if not file_path or not file_path.exists():
                 continue
-            try:
-                db.update_document_extracted(sdoc["id"], "", 0,
-                                             readiness="imported",
-                                             error_message=None)
-                t = threading.Thread(
-                    target=_proc,
-                    kwargs=dict(doc_id=sdoc["id"], file_path=str(file_path),
-                                kind=sdoc.get("kind") or "text",
-                                work_id=sdoc.get("work_id"),
-                                title=sdoc.get("title") or sdoc["id"],
-                                db=db),
-                    daemon=True,
-                )
-                t.start()
-                recovered += 1
-            except Exception as rec_exc:
-                logger.warning("Recovery failed for %s: %s", sdoc["id"], rec_exc)
+            queue.append({**sdoc, "_file_path": str(file_path)})
 
-        if recovered:
-            report.append(f"Recovery: re-queued {recovered} stuck document(s)")
-            logger.info("Nightshift: queued %d stuck docs", recovered)
+        if not queue:
+            return
+
+        # Process the queue sequentially in ONE worker thread — 20 parallel
+        # extraction pipelines would contend on the shared SQLite connection
+        # and saturate CPU / the LLM endpoint on a single-user machine.
+        def _worker(items: list[dict]) -> None:
+            for it in items:
+                try:
+                    db.update_document_extracted(it["id"], "", 0,
+                                                 readiness="imported",
+                                                 error_message=None)
+                    _proc(doc_id=it["id"], file_path=it["_file_path"],
+                          kind=it.get("kind") or "text",
+                          work_id=it.get("work_id"),
+                          title=it.get("title") or it["id"],
+                          db=db)
+                except Exception as rec_exc:
+                    logger.warning("Recovery failed for %s: %s", it["id"], rec_exc)
+
+        threading.Thread(target=_worker, args=(queue,),
+                         name="nightshift-recovery", daemon=True).start()
+        report.append(f"Recovery: re-queued {len(queue)} stuck document(s) (sequential)")
+        logger.info("Nightshift: queued %d stuck docs for sequential recovery", len(queue))
     except Exception as exc:
         logger.warning("Stuck-doc pass failed: %s", exc)
 
