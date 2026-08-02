@@ -280,6 +280,36 @@ class ReviewQueueTests(unittest.TestCase):
         # Pair must remain unresolved after the rejected request
         self.assertEqual(len(self.db.list_near_duplicates(resolved=False)), 1)
 
+    def test_cross_endpoint_duplicate_resolution_is_final(self):
+        # Resolving via the review queue must block the legacy library route
+        # from overturning the decision or re-applying side effects — and
+        # vice versa. Both surfaces go through the same claim-first primitive.
+        d1, d2 = _make_doc(self.db, "A"), _make_doc(self.db, "B")
+        did = _add_dupe(self.db, d1["id"], d2["id"])
+        r = self.client.post(f"/api/review/duplicate:{did}/resolve",
+                             json={"decision": "reject"})  # keep_both
+        self.assertEqual(r.status_code, 200)
+        # Legacy route now loses the race → 409, no lifecycle change
+        r = self.client.post(f"/api/library/duplicates/{did}/resolve",
+                             json={"action": "mark_superseded"})
+        self.assertEqual(r.status_code, 409)
+        self.assertNotEqual(self.db.get_document(d2["id"])["lifecycle"], "superseded")
+        with self.db._lock:
+            row = self.db._conn.execute(
+                "SELECT resolution FROM doc_dupes WHERE id=?", (did,)).fetchone()
+        self.assertEqual(row["resolution"], "keep_both")
+
+        # And the reverse: legacy route first, review route loses.
+        d3, d4 = _make_doc(self.db, "C"), _make_doc(self.db, "D")
+        did2 = _add_dupe(self.db, d3["id"], d4["id"])
+        r = self.client.post(f"/api/library/duplicates/{did2}/resolve",
+                             json={"action": "keep_both"})
+        self.assertEqual(r.status_code, 200)
+        r = self.client.post(f"/api/review/duplicate:{did2}/resolve",
+                             json={"decision": "approve"})
+        self.assertEqual(r.status_code, 409)
+        self.assertNotEqual(self.db.get_document(d4["id"])["lifecycle"], "superseded")
+
     def test_double_resolve_conflicts(self):
         # duplicate: second resolve → 409
         d1, d2 = _make_doc(self.db), _make_doc(self.db)

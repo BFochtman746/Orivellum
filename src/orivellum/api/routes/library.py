@@ -231,6 +231,8 @@ def library_resolve_duplicate(dupe_id: str, body: DupeResolveBody):
                                        canonical_doc_id=body.canonical_doc_id)
     if result is None:
         raise HTTPException(404, f"Duplicate pair {dupe_id!r} not found")
+    if result.get("already_resolved"):
+        raise HTTPException(409, f"Duplicate pair {dupe_id!r} was already resolved")
     return {"ok": True, "dupe_id": dupe_id, "action": body.action}
 
 

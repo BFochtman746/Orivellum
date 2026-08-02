@@ -272,7 +272,11 @@ class OrivellumDB:
                              pass canonical_doc_id to specify which survives
                              (defaults to doc_a if omitted)
 
-        Returns the original doc_dupes row dict, or None if not found.
+        Claim-first: the pair is claimed with a conditional UPDATE (resolved=0),
+        and side effects run only for the successful claimant.  Returns the
+        doc_dupes row dict on success, None if not found, or a dict with
+        already_resolved=True (no side effects applied) if the pair was
+        resolved earlier or concurrently.
         """
         _VALID = {"keep_both", "mark_versions", "mark_superseded"}
         if action not in _VALID:
@@ -282,18 +286,21 @@ class OrivellumDB:
             row = self._conn.execute(
                 "SELECT * FROM doc_dupes WHERE id=?", (dupe_id,)
             ).fetchone()
-        if not row:
-            return None
-
-        dupe = dict(row)
-        now = _now()
-
-        with self._lock:
-            self._conn.execute(
-                "UPDATE doc_dupes SET resolved=1, resolution=? WHERE id=?",
+            if not row:
+                return None
+            cur = self._conn.execute(
+                "UPDATE doc_dupes SET resolved=1, resolution=? WHERE id=? AND resolved=0",
                 (action, dupe_id),
             )
+            claimed = cur.rowcount
             self._conn.commit()
+
+        dupe = dict(row)
+        if not claimed:
+            dupe["already_resolved"] = True
+            return dupe
+
+        now = _now()
 
         if action == "mark_versions":
             # Create DERIVED_FROM relationship: doc_b is derived from doc_a.

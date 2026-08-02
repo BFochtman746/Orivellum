@@ -399,33 +399,30 @@ def _resolve_duplicate(db, item_id: str, body: ResolveBody) -> dict:
     # reject  = not duplicates → keep both, dismiss the pair
     action = "mark_superseded" if body.decision == "approve" else "keep_both"
 
-    # Validate + atomically claim the pair before applying side effects.
+    # Validate canonical_doc_id against the pair before attempting the claim.
     with db._lock:
         row = db._conn.execute(
-            "SELECT * FROM doc_dupes WHERE id=?", (item_id,)
+            "SELECT doc_a_id, doc_b_id FROM doc_dupes WHERE id=?", (item_id,)
         ).fetchone()
-        if not row:
-            raise HTTPException(404, f"Duplicate pair {item_id!r} not found")
-        pair_ids = {row["doc_a_id"], row["doc_b_id"]}
-        if (body.decision == "approve" and body.canonical_doc_id
-                and body.canonical_doc_id not in pair_ids):
-            raise HTTPException(
-                400,
-                "canonical_doc_id must be one of the pair's documents "
-                f"({row['doc_a_id']}, {row['doc_b_id']})",
-            )
-        cur = db._conn.execute(
-            "UPDATE doc_dupes SET resolved=1, resolution=? WHERE id=? AND resolved=0",
-            (action, item_id),
+    if not row:
+        raise HTTPException(404, f"Duplicate pair {item_id!r} not found")
+    pair_ids = {row["doc_a_id"], row["doc_b_id"]}
+    if (body.decision == "approve" and body.canonical_doc_id
+            and body.canonical_doc_id not in pair_ids):
+        raise HTTPException(
+            400,
+            "canonical_doc_id must be one of the pair's documents "
+            f"({row['doc_a_id']}, {row['doc_b_id']})",
         )
-        claimed = cur.rowcount
-        db._conn.commit()
-    if not claimed:
-        raise HTTPException(409, "Duplicate pair was already resolved")
 
-    # Apply the side effects (lifecycle change / audit) via the shared db method;
-    # its own resolved/resolution write is an idempotent re-set of our claim.
-    db.resolve_near_duplicate(item_id, action, canonical_doc_id=body.canonical_doc_id)
+    # Claim-first resolution lives in the shared db primitive, so this route
+    # and the legacy /library/duplicates route can never both apply effects.
+    result = db.resolve_near_duplicate(item_id, action,
+                                       canonical_doc_id=body.canonical_doc_id)
+    if result is None:
+        raise HTTPException(404, f"Duplicate pair {item_id!r} not found")
+    if result.get("already_resolved"):
+        raise HTTPException(409, "Duplicate pair was already resolved")
     canonical = (body.canonical_doc_id
                  if body.canonical_doc_id in pair_ids else row["doc_a_id"])
     return {"ok": True, "decision": body.decision, "action": action,
