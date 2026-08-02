@@ -605,6 +605,50 @@ export const SearchLibraryResponse = zod.object({
 
 
 /**
+ * @summary List near-duplicate document pairs
+ */
+export const listDuplicatesQueryResolvedDefault = false;
+
+export const ListDuplicatesQueryParams = zod.object({
+  "resolved": zod.coerce.boolean().default(listDuplicatesQueryResolvedDefault)
+})
+
+export const ListDuplicatesResponse = zod.object({
+  "pairs": zod.array(zod.object({
+  "id": zod.string().optional(),
+  "doc_a_id": zod.string().optional(),
+  "doc_b_id": zod.string().optional(),
+  "doc_a_title": zod.string().nullish(),
+  "doc_b_title": zod.string().nullish(),
+  "similarity": zod.number().optional(),
+  "kind": zod.string().optional().describe('near_duplicate | likely_revision'),
+  "resolved": zod.int().optional(),
+  "resolution": zod.string().nullish(),
+  "created_at": zod.string().optional()
+})).optional(),
+  "count": zod.int().optional()
+})
+
+
+/**
+ * @summary Resolve a near-duplicate pair
+ */
+export const ResolveDuplicateParams = zod.object({
+  "dupeId": zod.coerce.string()
+})
+
+export const ResolveDuplicateBody = zod.object({
+  "action": zod.enum(['keep_both', 'mark_versions', 'mark_superseded'])
+})
+
+export const ResolveDuplicateResponse = zod.object({
+  "ok": zod.boolean().optional(),
+  "dupe_id": zod.string().optional(),
+  "action": zod.string().optional()
+})
+
+
+/**
  * @summary Get a single document
  */
 export const GetDocumentParams = zod.object({

@@ -221,15 +221,82 @@ class OrivellumDB:
     # -------------------------------------------------------------------------
 
     def list_near_duplicates(self, resolved: bool = False) -> list[dict]:
-        """Return doc_dupes rows with document titles joined in."""
+        """Return doc_dupes rows with document titles joined in.
+
+        By default returns only unresolved pairs (resolved=False).
+        Pass resolved=True to fetch already-actioned pairs instead.
+        """
         q = """SELECT dd.*, da.title as doc_a_title, db2.title as doc_b_title
                FROM doc_dupes dd
                JOIN documents da  ON da.id  = dd.doc_a_id
                JOIN documents db2 ON db2.id = dd.doc_b_id
+               WHERE dd.resolved=?
                ORDER BY dd.similarity DESC"""
         with self._lock:
-            rows = self._conn.execute(q).fetchall()
+            rows = self._conn.execute(q, (1 if resolved else 0,)).fetchall()
         return [dict(r) for r in rows]
+
+    def resolve_near_duplicate(self, dupe_id: str, action: str) -> dict | None:
+        """Mark a near-duplicate pair as resolved.
+
+        action options:
+          keep_both        — dismiss the alert; keep both documents as-is
+          mark_versions    — create a DERIVED_FROM relationship between the pair
+          mark_superseded  — set doc_b lifecycle to 'superseded'
+
+        Returns the original doc_dupes row dict, or None if not found.
+        """
+        _VALID = {"keep_both", "mark_versions", "mark_superseded"}
+        if action not in _VALID:
+            raise ValueError(f"action must be one of {sorted(_VALID)}")
+
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM doc_dupes WHERE id=?", (dupe_id,)
+            ).fetchone()
+        if not row:
+            return None
+
+        dupe = dict(row)
+        now = _now()
+
+        with self._lock:
+            self._conn.execute(
+                "UPDATE doc_dupes SET resolved=1, resolution=? WHERE id=?",
+                (action, dupe_id),
+            )
+            self._conn.commit()
+
+        if action == "mark_versions":
+            # Create DERIVED_FROM relationship: doc_b is derived from doc_a.
+            # relationships.id is a FK to objects, so we must create the object row first.
+            try:
+                rel_oid = self._create_object("relationship")
+                with self._lock:
+                    self._conn.execute(
+                        """INSERT OR IGNORE INTO relationships
+                           (id, source_id, target_id, kind, weight, meta, created_at)
+                           VALUES(?,?,?,'DERIVED_FROM',1.0,'{}',?)""",
+                        (rel_oid, dupe["doc_b_id"], dupe["doc_a_id"], now),
+                    )
+                    self._conn.commit()
+                self.audit("document.version_linked", object_id=dupe["doc_a_id"],
+                           object_type="document", actor="user",
+                           detail=f"DERIVED_FROM {dupe['doc_b_id'][:8]}")
+            except Exception as exc:
+                logger.debug("mark_versions relationship insert failed: %s", exc)
+
+        elif action == "mark_superseded":
+            # Mark doc_b as the superseded (older/draft) document
+            try:
+                self.update_document_lifecycle(dupe["doc_b_id"], "superseded")
+            except Exception as exc:
+                logger.debug("mark_superseded lifecycle update failed: %s", exc)
+
+        self.audit("document.dupe_resolved", object_id=dupe_id,
+                   object_type="doc_dupe", actor="user",
+                   detail=f"action={action}")
+        return dupe
 
     # -------------------------------------------------------------------------
     # Object creation helper

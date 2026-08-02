@@ -170,6 +170,43 @@ def library_search(q: str, work_id: str | None = None, limit: int = 10):
     return {"query": q, "results": results, "count": len(results)}
 
 
+# ── Duplicates (must be registered BEFORE /{doc_id} so the literal segment wins) ─
+
+@router.get("/library/duplicates")
+def library_duplicates(resolved: bool = False):
+    """Return all detected near-duplicate / likely-revision document pairs."""
+    db = get_db()
+    pairs = db.list_near_duplicates(resolved=resolved)
+    return {"pairs": pairs, "count": len(pairs)}
+
+
+_VALID_RESOLVE_ACTIONS = {"keep_both", "mark_versions", "mark_superseded"}
+
+
+class DupeResolveBody(BaseModel):
+    action: str  # keep_both | mark_versions | mark_superseded
+
+
+@router.post("/library/duplicates/{dupe_id}/resolve")
+def library_resolve_duplicate(dupe_id: str, body: DupeResolveBody):
+    """Resolve a near-duplicate pair.
+
+    action: keep_both — dismiss the alert, no structural change
+            mark_versions — create a DERIVED_FROM relationship between the pair
+            mark_superseded — set the older/draft doc (doc_b) lifecycle to superseded
+    """
+    if body.action not in _VALID_RESOLVE_ACTIONS:
+        raise HTTPException(
+            400,
+            f"action must be one of: {', '.join(sorted(_VALID_RESOLVE_ACTIONS))}",
+        )
+    db = get_db()
+    result = db.resolve_near_duplicate(dupe_id, body.action)
+    if result is None:
+        raise HTTPException(404, f"Duplicate pair {dupe_id!r} not found")
+    return {"ok": True, "dupe_id": dupe_id, "action": body.action}
+
+
 @router.get("/library/{doc_id}")
 def library_get(doc_id: str):
     db = get_db()
@@ -247,14 +284,6 @@ def library_doc_knowledge(doc_id: str, limit: int = 200):
         ).fetchall()
     items = [db._k_dict(r) for r in rows]
     return {"knowledge": items, "count": len(items), "doc_id": doc_id}
-
-
-@router.get("/library/duplicates")
-def library_duplicates():
-    """Return all detected near-duplicate / likely-revision document pairs."""
-    db = get_db()
-    pairs = db.list_near_duplicates()
-    return {"pairs": pairs, "count": len(pairs)}
 
 
 @router.get("/library/{doc_id}/versions")

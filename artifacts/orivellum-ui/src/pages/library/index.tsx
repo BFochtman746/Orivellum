@@ -59,49 +59,132 @@ function LifecycleBadge({ lifecycle }: { lifecycle?: string }) {
 
 // ─── Near-duplicates banner ───────────────────────────────────────────────────
 
+type DupePair = {
+  id: string;
+  doc_a_id: string;
+  doc_b_id: string;
+  doc_a_title: string;
+  doc_b_title: string;
+  similarity: number;
+  kind: string;
+};
+
+function DuplicatePairRow({
+  pair,
+  onResolved,
+}: {
+  pair: DupePair;
+  onResolved: () => void;
+}) {
+  const [resolving, setResolving] = useState<string | null>(null);
+
+  const resolve = async (action: string) => {
+    setResolving(action);
+    try {
+      const resp = await apiFetch(`${BASE}/library/duplicates/${pair.id}/resolve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action }),
+      });
+      if (!resp.ok) throw new Error("Failed");
+      const label =
+        action === "keep_both"
+          ? "Dismissed"
+          : action === "mark_versions"
+          ? "Linked as versions"
+          : "Marked superseded";
+      toast.success(label);
+      onResolved();
+    } catch {
+      toast.error("Could not resolve — try again");
+    } finally {
+      setResolving(null);
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-1.5 py-2 border-t border-amber-200/60 first:border-t-0 first:pt-0">
+      <p className="text-[11px] font-mono text-amber-800 flex items-center flex-wrap gap-x-1.5 gap-y-0.5">
+        <span className="font-semibold">{pair.doc_a_title || pair.doc_a_id.slice(0, 8)}</span>
+        <span className="opacity-60">↔</span>
+        <span className="font-semibold">{pair.doc_b_title || pair.doc_b_id.slice(0, 8)}</span>
+        <span className="opacity-60 ml-1">
+          {Math.round(pair.similarity * 100)}% similar · {pair.kind.replace(/_/g, " ")}
+        </span>
+      </p>
+      <div className="flex items-center gap-1.5 flex-wrap">
+        <button
+          onClick={() => resolve("mark_versions")}
+          disabled={resolving !== null}
+          className="text-[10px] font-mono px-2 py-0.5 rounded border border-amber-400 bg-amber-100 hover:bg-amber-200 text-amber-900 disabled:opacity-40 transition-colors"
+        >
+          {resolving === "mark_versions" ? "…" : "Link as versions"}
+        </button>
+        <button
+          onClick={() => resolve("mark_superseded")}
+          disabled={resolving !== null}
+          className="text-[10px] font-mono px-2 py-0.5 rounded border border-amber-300 bg-white/50 hover:bg-amber-100 text-amber-800 disabled:opacity-40 transition-colors"
+        >
+          {resolving === "mark_superseded" ? "…" : "Mark older superseded"}
+        </button>
+        <button
+          onClick={() => resolve("keep_both")}
+          disabled={resolving !== null}
+          className="text-[10px] font-mono px-2 py-0.5 rounded text-amber-600/70 hover:text-amber-700 disabled:opacity-40 transition-colors"
+        >
+          {resolving === "keep_both" ? "…" : "Keep both"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function DuplicatesBanner() {
-  const [dismissed, setDismissed] = useState(false);
-  const { data } = useQuery<{
-    pairs: Array<{ id: string; doc_a_id: string; doc_b_id: string; doc_a_title: string; doc_b_title: string; similarity: number; kind: string }>;
-    count: number;
-  }>({
+  const [collapsed, setCollapsed] = useState(false);
+  const queryClient = useQueryClient();
+  const { data, refetch } = useQuery<{ pairs: DupePair[]; count: number }>({
     queryKey: ["library", "duplicates"],
     queryFn: () => apiFetch(`${BASE}/library/duplicates`).then((r) => r.json()),
-    staleTime: 120_000,
+    staleTime: 60_000,
+    refetchInterval: 300_000,
   });
 
   const count = data?.count ?? 0;
-  if (dismissed || count === 0) return null;
+  if (count === 0) return null;
+
+  const handleResolved = () => {
+    refetch();
+    queryClient.invalidateQueries({ queryKey: ["library", "duplicates"] });
+  };
 
   return (
-    <div className="flex items-start gap-3 px-4 py-3 rounded-lg border border-amber-200 bg-amber-50/60 text-amber-900">
-      <GitMerge className="w-4 h-4 mt-0.5 shrink-0 text-amber-600" />
-      <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium">
+    <div className="rounded-lg border border-amber-200 bg-amber-50/60 text-amber-900 overflow-hidden">
+      {/* Header row */}
+      <div className="flex items-center gap-2.5 px-4 py-2.5">
+        <GitMerge className="w-4 h-4 shrink-0 text-amber-600" />
+        <p className="flex-1 text-sm font-medium">
           {count} near-duplicate pair{count !== 1 ? "s" : ""} detected
         </p>
-        <div className="mt-1.5 space-y-1">
-          {(data?.pairs ?? []).slice(0, 3).map((p) => (
-            <p key={p.id} className="text-[11px] font-mono text-amber-800">
-              <span className="font-semibold">{p.doc_a_title}</span>
-              <span className="mx-1.5 opacity-60">↔</span>
-              <span className="font-semibold">{p.doc_b_title}</span>
-              <span className="ml-2 opacity-60">{Math.round(p.similarity * 100)}% similar · {p.kind.replace("_", " ")}</span>
-            </p>
+        <button
+          onClick={() => setCollapsed((c) => !c)}
+          className="text-[10px] font-mono text-amber-600/70 hover:text-amber-700 transition-colors"
+        >
+          {collapsed ? "show" : "hide"}
+        </button>
+      </div>
+      {/* Expandable pair list */}
+      {!collapsed && (
+        <div className="px-4 pb-3 space-y-0">
+          {(data?.pairs ?? []).slice(0, 5).map((p) => (
+            <DuplicatePairRow key={p.id} pair={p} onResolved={handleResolved} />
           ))}
-          {count > 3 && (
-            <p className="text-[11px] font-mono text-amber-700 opacity-70">
-              and {count - 3} more…
+          {count > 5 && (
+            <p className="text-[10px] font-mono text-amber-700/60 pt-1.5 border-t border-amber-200/60">
+              {count - 5} more pair{count - 5 !== 1 ? "s" : ""} not shown
             </p>
           )}
         </div>
-      </div>
-      <button
-        onClick={() => setDismissed(true)}
-        className="text-amber-600/60 hover:text-amber-600 transition-colors shrink-0"
-      >
-        <X className="w-4 h-4" />
-      </button>
+      )}
     </div>
   );
 }

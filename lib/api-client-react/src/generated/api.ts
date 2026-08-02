@@ -52,6 +52,8 @@ import type {
   ListCapabilities200,
   ListConversations200,
   ListConversationsParams,
+  ListDuplicates200,
+  ListDuplicatesParams,
   ListFilesParams,
   ListKnowledge200,
   ListKnowledgeParams,
@@ -66,6 +68,8 @@ import type {
   ModelList,
   OkResponse,
   ProjectCreate,
+  ResolveDuplicate200,
+  ResolveDuplicateBody,
   ReviewKnowledgeItem200,
   ReviewKnowledgeItemBody,
   SearchKnowledge200,
@@ -1977,6 +1981,162 @@ export function useSearchLibrary<TData = Awaited<ReturnType<typeof searchLibrary
 
 
 
+
+export const getListDuplicatesUrl = (params?: ListDuplicatesParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/library/duplicates?${stringifiedParams}` : `/api/library/duplicates`
+}
+
+/**
+ * @summary List near-duplicate document pairs
+ */
+export const listDuplicates = async (params?: ListDuplicatesParams, options?: Parameters<typeof customFetch>[1]): Promise<ListDuplicates200> => {
+
+  return customFetch<ListDuplicates200>(getListDuplicatesUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListDuplicatesQueryKey = (params?: ListDuplicatesParams,) => {
+    return [
+    `/api/library/duplicates`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getListDuplicatesQueryOptions = <TData = Awaited<ReturnType<typeof listDuplicates>>, TError = ErrorType<unknown>>(params?: ListDuplicatesParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listDuplicates>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListDuplicatesQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listDuplicates>>> = ({ signal }) => listDuplicates(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listDuplicates>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListDuplicatesQueryResult = NonNullable<Awaited<ReturnType<typeof listDuplicates>>>
+export type ListDuplicatesQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary List near-duplicate document pairs
+ */
+
+export function useListDuplicates<TData = Awaited<ReturnType<typeof listDuplicates>>, TError = ErrorType<unknown>>(
+ params?: ListDuplicatesParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listDuplicates>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListDuplicatesQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getResolveDuplicateUrl = (dupeId: string,) => {
+
+
+
+
+  return `/api/library/duplicates/${dupeId}/resolve`
+}
+
+/**
+ * @summary Resolve a near-duplicate pair
+ */
+export const resolveDuplicate = async (dupeId: string,
+    resolveDuplicateBody: ResolveDuplicateBody, options?: Parameters<typeof customFetch>[1]): Promise<ResolveDuplicate200> => {
+
+  return customFetch<ResolveDuplicate200>(getResolveDuplicateUrl(dupeId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(resolveDuplicateBody)
+  }
+);}
+
+
+
+
+
+export const getResolveDuplicateMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof resolveDuplicate>>, TError,{dupeId: string;data: BodyType<ResolveDuplicateBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof resolveDuplicate>>, TError,{dupeId: string;data: BodyType<ResolveDuplicateBody>}, TContext> => {
+
+const mutationKey = ['resolveDuplicate'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof resolveDuplicate>>, {dupeId: string;data: BodyType<ResolveDuplicateBody>}> = (props) => {
+          const {dupeId,data} = props ?? {};
+
+          return  resolveDuplicate(dupeId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ResolveDuplicateMutationResult = NonNullable<Awaited<ReturnType<typeof resolveDuplicate>>>
+    export type ResolveDuplicateMutationBody = BodyType<ResolveDuplicateBody>
+    export type ResolveDuplicateMutationError = ErrorType<void>
+
+    /**
+ * @summary Resolve a near-duplicate pair
+ */
+export const useResolveDuplicate = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof resolveDuplicate>>, TError,{dupeId: string;data: BodyType<ResolveDuplicateBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof resolveDuplicate>>,
+        TError,
+        {dupeId: string;data: BodyType<ResolveDuplicateBody>},
+        TContext
+      > => {
+      return useMutation(getResolveDuplicateMutationOptions(options));
+    }
 
 export const getGetDocumentUrl = (docId: string,) => {
 

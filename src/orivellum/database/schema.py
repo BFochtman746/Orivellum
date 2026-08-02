@@ -758,4 +758,13 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         UPDATE objects SET lifecycle='draft', updated_at=datetime('now')
         WHERE type='document' AND lifecycle='active'
     """),
+
+    # v49 — Near-duplicate resolution tracking (MONARCH #147)
+    # Adds resolved/resolution columns to doc_dupes so pairs can be dismissed
+    # or acted upon without being re-detected.
+    (49, "Add resolution columns to doc_dupes", """
+        ALTER TABLE doc_dupes ADD COLUMN resolved INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE doc_dupes ADD COLUMN resolution TEXT;
+        CREATE INDEX IF NOT EXISTS dd_resolved ON doc_dupes(resolved)
+    """),
 ]

@@ -335,6 +335,23 @@ export interface Briefing {
   greeting?: string;
 }
 
+export interface DuplicatePair {
+  id?: string;
+  doc_a_id?: string;
+  doc_b_id?: string;
+  /** @nullable */
+  doc_a_title?: string | null;
+  /** @nullable */
+  doc_b_title?: string | null;
+  similarity?: number;
+  /** near_duplicate | likely_revision */
+  kind?: string;
+  resolved?: number;
+  /** @nullable */
+  resolution?: string | null;
+  created_at?: string;
+}
+
 export interface OkResponse {
   ok?: boolean;
 }
@@ -462,6 +479,34 @@ export type SearchLibrary200 = {
   query?: string;
   results?: SearchLibrary200ResultsItem[];
   count?: number;
+};
+
+export type ListDuplicatesParams = {
+resolved?: boolean;
+};
+
+export type ListDuplicates200 = {
+  pairs?: DuplicatePair[];
+  count?: number;
+};
+
+export type ResolveDuplicateBodyAction = typeof ResolveDuplicateBodyAction[keyof typeof ResolveDuplicateBodyAction];
+
+
+export const ResolveDuplicateBodyAction = {
+  keep_both: 'keep_both',
+  mark_versions: 'mark_versions',
+  mark_superseded: 'mark_superseded',
+} as const;
+
+export type ResolveDuplicateBody = {
+  action: ResolveDuplicateBodyAction;
+};
+
+export type ResolveDuplicate200 = {
+  ok?: boolean;
+  dupe_id?: string;
+  action?: string;
 };
 
 export type GetDocument200 = {

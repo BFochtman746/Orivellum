@@ -511,6 +511,61 @@ paths:
                   results: { type: array, items: { type: object } }
                   count: { type: integer }
 
+  /library/duplicates:
+    get:
+      operationId: listDuplicates
+      summary: List near-duplicate document pairs
+      tags: [library]
+      parameters:
+        - name: resolved
+          in: query
+          schema: { type: boolean, default: false }
+      responses:
+        "200":
+          description: Duplicate pairs
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  pairs: { type: array, items: { $ref: "#/components/schemas/DuplicatePair" } }
+                  count: { type: integer }
+
+  /library/duplicates/{dupeId}/resolve:
+    post:
+      operationId: resolveDuplicate
+      summary: Resolve a near-duplicate pair
+      tags: [library]
+      parameters:
+        - name: dupeId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action]
+              properties:
+                action:
+                  type: string
+                  enum: [keep_both, mark_versions, mark_superseded]
+      responses:
+        "200":
+          description: Resolution recorded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  dupe_id: { type: string }
+                  action: { type: string }
+        "404":
+          description: Pair not found
+
   /library/{docId}:
     get:
       operationId: getDocument
@@ -1273,6 +1328,20 @@ components:
         date: { type: string }
         summary: { $ref: "#/components/schemas/DashboardSummary" }
         greeting: { type: string }
+
+    DuplicatePair:
+      type: object
+      properties:
+        id: { type: string }
+        doc_a_id: { type: string }
+        doc_b_id: { type: string }
+        doc_a_title: { type: string, nullable: true }
+        doc_b_title: { type: string, nullable: true }
+        similarity: { type: number }
+        kind: { type: string, description: "near_duplicate | likely_revision" }
+        resolved: { type: integer }
+        resolution: { type: string, nullable: true }
+        created_at: { type: string }
 
     OkResponse:
       type: object
