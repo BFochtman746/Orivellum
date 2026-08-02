@@ -313,6 +313,19 @@ def process_document(doc_id: str, file_path: str, kind: str,
         )
         logger.info("Doc %s processed — %d words, ready", doc_id, result.word_count)
 
+        # Step 4.4: chunk embeddings — daemon thread so semantic search picks
+        # up new documents quickly without ever blocking readiness.  When the
+        # embeddings endpoint is down this exits quietly; the nightly backfill
+        # catches up later.
+        try:
+            import threading as _threading
+            from orivellum.capabilities.embeddings import embed_chunks_for_doc
+            _threading.Thread(
+                target=embed_chunks_for_doc, args=(doc_id, db), daemon=True,
+            ).start()
+        except Exception as _emb_exc:
+            logger.debug("Embedding kickoff non-fatal for %s: %s", doc_id, _emb_exc)
+
         # Step 4.5: chapter/section extraction — runs after readiness so it
         # never delays the document appearing as usable.  Non-fatal: failure
         # is logged but does not change readiness.

@@ -439,9 +439,10 @@ export default function Library() {
       },
     }
   );
+  const [searchMode, setSearchMode] = useState<"keyword" | "semantic" | "hybrid">("hybrid");
   const { data: searchResp, isLoading: loadingSearch } = useSearchLibrary(
-    { q: search },
-    { query: { enabled: !!search, queryKey: ["librarySearch", search] } }
+    { q: search, mode: searchMode },
+    { query: { enabled: !!search, queryKey: ["librarySearch", search, searchMode] } }
   );
   const deleteDoc = useDeleteDocument();
   const [readinessFilter, setReadinessFilter] = useState<"all" | "ready" | "processing" | "error">("all");
@@ -660,11 +661,30 @@ export default function Library() {
             <div className="relative flex-1 max-w-md">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
               <Input
-                placeholder="Search all documents (full-text)…"
+                placeholder="Search all documents…"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 className="pl-9 bg-background/50"
               />
+            </div>
+            <div className="flex items-center gap-1 p-0.5 bg-muted/30 rounded-lg shrink-0" title="Search mode">
+              {([
+                ["keyword", "Keyword"],
+                ["semantic", "Semantic"],
+                ["hybrid", "Hybrid"],
+              ] as const).map(([value, label]) => (
+                <button
+                  key={value}
+                  onClick={() => setSearchMode(value)}
+                  className={`px-2.5 py-1 rounded text-xs font-mono transition-colors ${
+                    searchMode === value
+                      ? "bg-background shadow-sm text-foreground"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
             </div>
             <select
               value={sortBy}

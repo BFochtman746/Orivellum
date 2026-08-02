@@ -591,7 +591,17 @@ export type SearchLibraryParams = {
 q: string;
 work_id?: string;
 limit?: number;
+mode?: SearchLibraryMode;
 };
+
+export type SearchLibraryMode = typeof SearchLibraryMode[keyof typeof SearchLibraryMode];
+
+
+export const SearchLibraryMode = {
+  keyword: 'keyword',
+  semantic: 'semantic',
+  hybrid: 'hybrid',
+} as const;
 
 export type SearchLibrary200ResultsItem = { [key: string]: unknown };
 

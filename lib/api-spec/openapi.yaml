@@ -570,7 +570,7 @@ paths:
   /library/search:
     get:
       operationId: searchLibrary
-      summary: Full-text search library
+      summary: Search library (keyword, semantic, or hybrid)
       tags: [library]
       parameters:
         - name: q
@@ -583,6 +583,12 @@ paths:
         - name: limit
           in: query
           schema: { type: integer, default: 10 }
+        - name: mode
+          in: query
+          schema:
+            type: string
+            enum: [keyword, semantic, hybrid]
+            default: hybrid
       responses:
         "200":
           description: Search results

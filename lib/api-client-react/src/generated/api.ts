@@ -2247,7 +2247,7 @@ export const getSearchLibraryUrl = (params: SearchLibraryParams,) => {
 }
 
 /**
- * @summary Full-text search library
+ * @summary Search library (keyword, semantic, or hybrid)
  */
 export const searchLibrary = async (params: SearchLibraryParams, options?: Parameters<typeof customFetch>[1]): Promise<SearchLibrary200> => {
 
@@ -2294,7 +2294,7 @@ export type SearchLibraryQueryError = ErrorType<unknown>
 
 
 /**
- * @summary Full-text search library
+ * @summary Search library (keyword, semantic, or hybrid)
  */
 
 export function useSearchLibrary<TData = Awaited<ReturnType<typeof searchLibrary>>, TError = ErrorType<unknown>>(

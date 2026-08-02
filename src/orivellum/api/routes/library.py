@@ -161,22 +161,50 @@ def library_list(work_id: str | None = None, kind: str | None = None,
     return {"documents": docs, "count": len(docs)}
 
 
-@router.get("/library/search")
-def library_search(q: str, work_id: str | None = None, limit: int = 10):
-    """BM25-ranked document search.
+_SEARCH_MODES = {"keyword", "semantic", "hybrid"}
 
-    Queries chunks FTS, then aggregates to document-level results so each
+
+@router.get("/library/search")
+def library_search(q: str, work_id: str | None = None, limit: int = 10,
+                   mode: str = "hybrid"):
+    """Document search — keyword (BM25), semantic (cosine), or hybrid (RRF).
+
+    Queries chunks, then aggregates to document-level results so each
     document appears at most once.  Each result has the same shape as a
-    ``GET /api/library`` document entry, with two extra fields:
-    - ``snippet``     – the best-matching excerpt from that doc (may contain
-                        ``[[`` / ``]]`` markers around matched terms)
-    - ``bm25_score``  – raw BM25 relevance score (lower = more relevant)
+    ``GET /api/library`` document entry, with extra fields:
+    - ``snippet``     – best-matching excerpt (keyword hits carry ``[[``/``]]``
+                        markers around matched terms)
+    - ``bm25_score``  – raw BM25 relevance score (keyword/hybrid, lower = better)
+    - ``score``       – cosine similarity (semantic/hybrid when available)
+    - ``match_type``  – "keyword" | "semantic" | "both" (hybrid/semantic modes)
+
+    Semantic and hybrid modes degrade gracefully to keyword-only results when
+    the local embeddings endpoint is unavailable.
     """
     if not q:
         raise HTTPException(400, "q parameter required")
+    if mode not in _SEARCH_MODES:
+        raise HTTPException(400, f"mode must be one of: {', '.join(sorted(_SEARCH_MODES))}")
     db = get_db()
-    # Over-fetch chunks so dedup still returns enough unique docs
-    chunk_results = db.search_chunks(q.strip(), work_id=work_id, limit=min(limit * 4, 100))
+    query = q.strip()
+    fetch = min(limit * 4, 100)
+
+    # Over-fetch chunks so doc-level dedup still returns enough unique docs
+    if mode == "keyword":
+        chunk_results = db.search_chunks(query, work_id=work_id, limit=fetch)
+    elif mode == "semantic":
+        from orivellum.capabilities.embeddings import semantic_search
+        chunk_results = semantic_search(query, db, "chunk", limit=fetch, work_id=work_id)
+        if not chunk_results:
+            # Degrade to keyword results (embeddings unavailable, or nothing
+            # above the similarity floor) rather than returning an empty page.
+            chunk_results = db.search_chunks(query, work_id=work_id, limit=fetch)
+            for c in chunk_results:
+                c.setdefault("match_type", "keyword")
+    else:  # hybrid
+        from orivellum.capabilities.embeddings import hybrid_search_chunks
+        chunk_results = hybrid_search_chunks(query, db, limit=fetch, work_id=work_id)
+
     seen: dict[str, dict] = {}
     for chunk in chunk_results:
         doc_id = chunk.get("doc_id")
@@ -188,9 +216,13 @@ def library_search(q: str, work_id: str | None = None, limit: int = 10):
         raw_snip = chunk.get("snippet") or (chunk.get("text") or "")[:300]
         doc["snippet"] = raw_snip
         doc["bm25_score"] = chunk.get("bm25_score")
+        if chunk.get("score") is not None:
+            doc["score"] = chunk.get("score")
+        if chunk.get("match_type"):
+            doc["match_type"] = chunk.get("match_type")
         seen[doc_id] = doc
     results = list(seen.values())[:limit]
-    return {"query": q, "results": results, "count": len(results)}
+    return {"query": q, "results": results, "count": len(results), "mode": mode}
 
 
 # ── Duplicates (must be registered BEFORE /{doc_id} so the literal segment wins) ─

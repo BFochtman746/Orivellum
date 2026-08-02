@@ -337,8 +337,12 @@ def _build_system_prompt(db: Any, conv: dict, scope: str = "work",
             trusted_k = [k for k in knowledge_hits
                          if k.get("review_status") in _TRUSTED][:_CONTEXT_KNOWLEDGE]
 
-            chunk_hits = db.search_chunks(user_query, work_id=None,
-                                          limit=_CONTEXT_CHUNKS * 2)
+            # Hybrid chunk retrieval (BM25 + cosine, RRF-fused).  Falls back to
+            # keyword-only when embeddings are unavailable, and to semantic-only
+            # when the query is too short/conceptual for FTS5 to match anything.
+            from orivellum.capabilities.embeddings import hybrid_search_chunks
+            chunk_hits = hybrid_search_chunks(user_query, db, work_id=None,
+                                              limit=_CONTEXT_CHUNKS * 2)
             trusted_c = chunk_hits[:_CONTEXT_CHUNKS]
 
             if trusted_k or trusted_c:

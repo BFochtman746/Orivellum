@@ -699,14 +699,16 @@ export const ListLibraryResponse = zod.object({
 
 
 /**
- * @summary Full-text search library
+ * @summary Search library (keyword, semantic, or hybrid)
  */
 export const searchLibraryQueryLimitDefault = 10;
+export const searchLibraryQueryModeDefault = `hybrid`;
 
 export const SearchLibraryQueryParams = zod.object({
   "q": zod.coerce.string(),
   "work_id": zod.coerce.string().optional(),
-  "limit": zod.coerce.number().int().default(searchLibraryQueryLimitDefault)
+  "limit": zod.coerce.number().int().default(searchLibraryQueryLimitDefault),
+  "mode": zod.enum(['keyword', 'semantic', 'hybrid']).default(searchLibraryQueryModeDefault)
 })
 
 export const SearchLibraryResponse = zod.object({
