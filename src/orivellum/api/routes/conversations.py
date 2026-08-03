@@ -61,6 +61,47 @@ class MessageSend(BaseModel):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Image thumbnail helper
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _make_thumbnail_b64(
+    image_b64: str,
+    image_media_type: str = "image/jpeg",
+    max_px: int = 200,
+    max_kb: int = 20,
+) -> str | None:
+    """Decode *image_b64*, shrink to ≤*max_px* on the longest side, and
+    re-encode as a compact JPEG.  Returns a base64 string or None on failure.
+
+    Size is capped at *max_kb* KiB by progressively lowering JPEG quality.
+    Stored in message meta as ``image_thumbnail_b64`` so mobile can render a
+    thumbnail in chat history even after a fresh app start (no local URI).
+    """
+    try:
+        import base64 as _b64
+        import io
+        from PIL import Image as _PIL
+        raw = _b64.b64decode(image_b64)
+        img = _PIL.open(io.BytesIO(raw)).convert("RGB")
+        w, h = img.size
+        scale = max_px / max(w, h, 1)
+        if scale < 1.0:
+            nw, nh = max(1, int(w * scale)), max(1, int(h * scale))
+            img = img.resize((nw, nh), _PIL.Resampling.LANCZOS)
+        raw_out = b""
+        for quality in (80, 60, 40, 20):
+            buf = io.BytesIO()
+            img.save(buf, format="JPEG", quality=quality, optimize=True)
+            raw_out = buf.getvalue()
+            if len(raw_out) <= max_kb * 1024:
+                break
+        return _b64.b64encode(raw_out).decode()
+    except Exception as exc:
+        logger.debug("thumbnail generation failed: %s", exc)
+        return None
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Route handlers
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -120,6 +161,14 @@ async def send_message(conv_id: str, body: MessageSend):
     elif body.image_b64:
         stored_text = f"[Image] {body.text}"
 
+    # Build meta for the user message — include a compact thumbnail so mobile
+    # can show the image in history after the session ends (no local URI).
+    user_meta: dict = {}
+    if body.image_b64:
+        thumb = _make_thumbnail_b64(body.image_b64, body.image_media_type)
+        if thumb:
+            user_meta["image_thumbnail_b64"] = thumb
+
     # Duplicate-send guard: skip storing user message if an identical one was stored
     # within the last 5 seconds (protects against React StrictMode double-calls,
     # client retries, and accidental double-taps).  We still proceed with the AI
@@ -127,14 +176,14 @@ async def send_message(conv_id: str, body: MessageSend):
     with db._lock:
         recent_dup = db._conn.execute(
             """SELECT id FROM messages
-               WHERE conv_id=? AND role='user' AND text=?
+               WHERE conversation_id=? AND role='user' AND text=?
                AND created_at > datetime('now','-5 seconds')""",
             (conv_id, stored_text)
         ).fetchone()
     if recent_dup:
         logger.debug("Duplicate user message suppressed for conv %s", conv_id)
     else:
-        db.add_message(conv_id, "user", stored_text)
+        db.add_message(conv_id, "user", stored_text, meta=user_meta or None)
 
     # Background auto-capture: skip when the user explicitly says "remember that…"
     # to avoid a competing write racing against the intent router's _handle_remember.

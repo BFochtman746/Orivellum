@@ -166,11 +166,17 @@ function MessageBubble({ message, colors, isDark }: { message: LocalMessage; col
         >
           {isUser || isErr ? (
             <>
-              {/* Attached image thumbnail (user messages only) */}
-              {isUser && (message as LocalMessage).localImageUri ? (
+              {/* Attached image thumbnail (user messages only).
+                  localImageUri → current-session optimistic message (full-res local URI).
+                  meta.image_thumbnail_b64 → server-stored compact JPEG (persists across
+                  sessions so history always shows the image, not just "[Image attached]"). */}
+              {isUser && ((message as LocalMessage).localImageUri || (message as any).meta?.image_thumbnail_b64) ? (
                 <Image
-                  source={{ uri: (message as LocalMessage).localImageUri }}
-                  style={{ width: 180, height: 180, borderRadius: 8, marginBottom: message.text && message.text !== '[Image attached]' ? 6 : 0 }}
+                  source={{
+                    uri: (message as LocalMessage).localImageUri
+                      ?? `data:image/jpeg;base64,${(message as any).meta.image_thumbnail_b64}`,
+                  }}
+                  style={{ width: 160, height: 160, borderRadius: 8, marginBottom: message.text && message.text !== '[Image attached]' ? 6 : 0 }}
                   resizeMode="cover"
                 />
               ) : null}
