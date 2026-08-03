@@ -21,7 +21,7 @@ import { toast } from "sonner";
 import {
   Shield, ThumbsUp, ThumbsDown, RefreshCw, CheckCircle2,
   Sparkles, Link, Keyboard, AlertTriangle, Gauge, ArrowRight,
-  TrendingDown, Loader2,
+  TrendingDown, Loader2, Link2, Inbox, ShieldCheck, ShieldAlert,
 } from "lucide-react";
 import { useLocation } from "wouter";
 
@@ -381,6 +381,148 @@ function RegressionsSection() {
   );
 }
 
+// ── Audit-chain integrity ──────────────────────────────────────────────────────
+
+interface AuditChainStatus {
+  ok: boolean;
+  checked_rows: number;
+  status: "intact" | "broken";
+  reason?: string;
+}
+
+function AuditChainSection() {
+  const { data, isLoading, isError, refetch, isFetching } =
+    useQuery<AuditChainStatus>({
+      queryKey: ["governance", "audit-chain"],
+      queryFn: () =>
+        apiFetch(`${BASE}/governance/audit-chain`).then((r) => r.json()),
+      staleTime: 60_000,
+      refetchInterval: 120_000,
+    });
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <div className="flex items-center gap-2">
+          <Link2 className="w-4 h-4 text-muted-foreground" />
+          <h2 className="text-sm font-mono font-semibold text-foreground/80">
+            Audit Chain Integrity
+          </h2>
+        </div>
+        <button
+          onClick={() => refetch()}
+          disabled={isFetching}
+          className="flex items-center gap-1 text-[11px] font-mono text-muted-foreground hover:text-foreground transition-colors"
+        >
+          <RefreshCw className={`w-3 h-3 ${isFetching ? "animate-spin" : ""}`} />
+          Check now
+        </button>
+      </div>
+
+      {isLoading ? (
+        <div className="h-12 rounded-lg bg-muted/20 animate-pulse" />
+      ) : isError ? (
+        <div className="rounded-lg border border-dashed border-border/60 p-3 flex items-center gap-2 text-xs text-muted-foreground">
+          <AlertTriangle className="w-3.5 h-3.5 shrink-0 text-amber-500" />
+          Could not reach audit-chain endpoint.
+        </div>
+      ) : data?.ok ? (
+        <div className="rounded-lg border border-emerald-200/70 bg-emerald-50/30 dark:bg-emerald-950/20 dark:border-emerald-900/50 p-3 flex items-center gap-2.5">
+          <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium text-emerald-800 dark:text-emerald-300">
+              Chain intact
+            </p>
+            <p className="text-[11px] font-mono text-emerald-700/70 dark:text-emerald-400/70 mt-0.5">
+              {data.checked_rows.toLocaleString()} row{data.checked_rows !== 1 ? "s" : ""} verified — no tampering detected
+            </p>
+          </div>
+        </div>
+      ) : (
+        <div className="rounded-lg border border-red-300/70 bg-red-50/40 dark:bg-red-950/20 dark:border-red-900/50 p-3 flex items-start gap-2.5">
+          <ShieldAlert className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold text-red-800 dark:text-red-300">
+              Chain integrity broken
+            </p>
+            <p className="text-[11px] font-mono text-red-700/80 dark:text-red-400/80 mt-0.5 break-words">
+              {data?.reason ?? "Unknown reason"}
+            </p>
+            <p className="text-[10px] font-mono text-red-600/60 mt-1">
+              {(data?.checked_rows ?? 0).toLocaleString()} rows checked
+            </p>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Outbox backlog ─────────────────────────────────────────────────────────────
+
+interface OutboxEvent {
+  id: string;
+  event_type: string;
+  object_id: string | null;
+  object_type: string | null;
+  created_at: string;
+  dispatched_at: string | null;
+}
+
+function OutboxSection() {
+  const { data } = useQuery<{ events: OutboxEvent[]; count: number }>({
+    queryKey: ["governance", "outbox"],
+    queryFn: () =>
+      apiFetch(`${BASE}/governance/outbox?pending_only=true&limit=20`).then(
+        (r) => r.json()
+      ),
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+  });
+
+  const events = data?.events ?? [];
+  // Only surface the section when there's a backlog — a drained outbox is expected.
+  if (events.length === 0) return null;
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-2">
+        <Inbox className="w-4 h-4 text-amber-600" />
+        <h2 className="text-sm font-mono font-semibold text-amber-700">
+          Outbox Backlog ({data?.count ?? events.length})
+        </h2>
+      </div>
+
+      <div className="rounded-lg border border-amber-200/60 bg-amber-50/30 dark:bg-amber-950/20 dark:border-amber-900/50 divide-y divide-border/30">
+        {events.slice(0, 10).map((ev) => (
+          <div key={ev.id} className="px-3 py-2 flex items-center gap-3 text-xs font-mono">
+            <span className="shrink-0 px-1.5 py-0.5 rounded bg-amber-100/80 dark:bg-amber-900/40 text-amber-800 dark:text-amber-300 text-[10px]">
+              {ev.event_type}
+            </span>
+            <span className="flex-1 truncate text-muted-foreground">
+              {ev.object_type ?? "—"} {ev.object_id ? `· ${ev.object_id.slice(0, 12)}…` : ""}
+            </span>
+            <span className="shrink-0 text-muted-foreground/60 text-[10px]">
+              {new Date(ev.created_at).toLocaleTimeString(undefined, {
+                hour: "2-digit", minute: "2-digit",
+              })}
+            </span>
+          </div>
+        ))}
+        {(data?.count ?? 0) > 10 && (
+          <p className="px-3 py-2 text-[11px] font-mono text-muted-foreground/60">
+            … and {(data!.count - 10).toLocaleString()} more
+          </p>
+        )}
+      </div>
+
+      <p className="text-[10px] font-mono text-muted-foreground/50">
+        Nightshift drains the outbox automatically on its next run.
+      </p>
+    </div>
+  );
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function GovernancePage() {
@@ -556,6 +698,12 @@ export default function GovernancePage() {
           ))}
         </div>
       )}
+
+      {/* Audit-chain integrity */}
+      <AuditChainSection />
+
+      {/* Outbox backlog — only shown when events are pending */}
+      <OutboxSection />
 
       {/* Contradicting claims */}
       <ConflictsSection />
