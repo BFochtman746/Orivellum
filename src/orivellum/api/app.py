@@ -246,11 +246,11 @@ def create_app() -> FastAPI:
     from orivellum.api.routes import (
         auth, health, works, conversations, library, knowledge,
         projects, backups, studio, files, system, dashboard, learning, write,
-        mcos, review, claims,
+        mcos, review, claims, pklos,
     )
     for module in [auth, health, works, conversations, library, knowledge,
                    projects, backups, studio, files, system, dashboard, learning, write,
-                   mcos, review, claims]:
+                   mcos, review, claims, pklos]:
         app.include_router(module.router)
 
     # ── Governed-core exception handlers ─────────────────────────────────────

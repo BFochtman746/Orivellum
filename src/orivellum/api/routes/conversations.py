@@ -15,6 +15,7 @@ from orivellum.capabilities.pklos.fact_router import is_checkable_fact, should_c
 from orivellum.capabilities.pklos.abstention import AbstentionPolicy
 from orivellum.capabilities.pklos.claim_ledger import ClaimLedger
 from orivellum.capabilities.pklos.policy_enforcer import PolicyEnforcer
+from orivellum.capabilities.pklos.output_validator import OutputValidator
 from orivellum.capabilities.pklos.capture_stamp import (
     CaptureStamp, detect_factual_assertions,
 )
@@ -329,6 +330,24 @@ async def send_message(conv_id: str, body: MessageSend):
     else:
         _ai_fn = _call_ai_vision if body.image_b64 else _call_ai
         reply = await _ai_fn(messages, model=model, db=db)
+
+    # PKLOS output validation (non-streaming path).
+    # For checkable hardware/system facts, verify the reply doesn't invent values.
+    # Runs only when the query is deterministically verifiable (fast pattern check).
+    # Best-effort: any exception falls through to the unmodified reply.
+    if body.text and is_checkable_fact(body.text):
+        try:
+            _ov = OutputValidator(db)
+            _ov_claims = db.search_claims_for_context(body.text, limit=15)
+            _ov_result = _ov.validate(body.text, reply, verified_claims=_ov_claims)
+            if _ov_result.must_regenerate:
+                logger.info(
+                    "OutputValidator: replacing reply for conv %s (%d hard violations)",
+                    conv_id, sum(1 for v in _ov_result.violations if v.startswith("HARD")),
+                )
+                reply = _ov.build_fallback_answer(body.text, _ov_claims)
+        except Exception as _ov_exc:
+            logger.debug("OutputValidator skipped (non-fatal): %s", _ov_exc)
 
     ns_meta: dict = {"model": model}
     if ns_sources:
@@ -1042,6 +1061,28 @@ async def _stream_response(
             except Exception:
                 pass
         _maybe_auto_title(db, conv, user_text)
+
+        # PKLOS output validation (streaming path).
+        # After the full reply is accumulated and persisted, check it against the
+        # claim ledger.  If a hard violation is found, replace the stored message
+        # with the safe fallback and emit a pklos_correction SSE event so the
+        # client can update the rendered bubble without a full reload.
+        if full_reply and _stream_ok and is_checkable_fact(user_text):
+            try:
+                _ov = OutputValidator(db)
+                _ov_claims = db.search_claims_for_context(user_text, limit=15)
+                _ov_result = _ov.validate(user_text, full_reply, verified_claims=_ov_claims)
+                if _ov_result.must_regenerate:
+                    _correction = _ov.build_fallback_answer(user_text, _ov_claims)
+                    db.finalize_message(_assist_id, _correction, "done")
+                    logger.info(
+                        "OutputValidator (stream): corrected reply for conv %s (%d violations)",
+                        conv_id, sum(1 for v in _ov_result.violations if v.startswith("HARD")),
+                    )
+                    yield f"data: {json.dumps({'pklos_correction': _correction, 'message_id': _assist_id})}\n\n"
+            except Exception as _ov_exc:
+                logger.debug("OutputValidator (stream) skipped (non-fatal): %s", _ov_exc)
+
         if sources:
             import json as _json
             yield f"data: {_json.dumps({'sources': sources})}\n\n"

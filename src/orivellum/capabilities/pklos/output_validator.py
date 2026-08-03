@@ -189,9 +189,18 @@ class OutputValidator:
             # Sentence makes a specific factual claim about the user's system.
             # Is it hedged?
             if _is_hedged(sentence):
-                violations.append(
-                    f"SOFT: factual sentence is hedged (acceptable but note): {sentence[:80]!r}"
-                )
+                if not verified_claims:
+                    # No evidence at all: hedging doesn't save a specific value guess.
+                    # "probably 16 GB" is still a fabricated number (HARD violation).
+                    hard_violations.append(
+                        f"HARD: hedged specific-value claim with no ledger evidence "
+                        f"(hedging does not permit guessing): {sentence[:80]!r}"
+                    )
+                else:
+                    # Has evidence; model hedged appropriately about partial coverage.
+                    violations.append(
+                        f"SOFT: factual sentence is hedged (acceptable but note): {sentence[:80]!r}"
+                    )
                 continue
 
             # Is there a verified claim that supports this sentence?

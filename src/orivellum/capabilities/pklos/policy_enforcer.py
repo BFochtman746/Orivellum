@@ -126,8 +126,40 @@ class PolicyEnforcer:
 
         # Checkable fact: consult claim ledger
         from .claim_ledger import ClaimLedger
+        from .authority import SUBJECT_DEVICE_A01
         ledger = ClaimLedger(self._db)
         claims = ledger.search_for_context(query, limit=15)
+
+        # Fallback: FTS may not match hardware predicate names (e.g. "RAM" does not
+        # match "installed_physical_memory_bytes").  For hardware/system queries,
+        # also load all device claims directly so verified inventory is always
+        # surfaced for checkable questions about A-01.
+        # Trigger even when FTS returned RETRIEVED claims, if none are usable.
+        _has_usable = any(
+            c.get("status") in (
+                ClaimStatus.VERIFIED.value, ClaimStatus.USER_ASSERTED.value
+            )
+            for c in claims
+        )
+        if not _has_usable:
+            try:
+                all_device = self._db.list_claims(
+                    subject=SUBJECT_DEVICE_A01, status=None, limit=50
+                )
+                live_statuses = {
+                    ClaimStatus.VERIFIED.value,
+                    ClaimStatus.PARTIALLY_VERIFIED.value,
+                    ClaimStatus.USER_ASSERTED.value,
+                    ClaimStatus.RETRIEVED.value,
+                    "CURRENT",
+                }
+                claims = [
+                    c for c in (all_device or [])
+                    if c.get("status") in live_statuses
+                    and c.get("authority_tier") != "A8"
+                ]
+            except Exception:
+                pass  # non-fatal; fall through to abstention
 
         # Split verified vs asserted
         verified = [c for c in claims if c.get("status") == ClaimStatus.VERIFIED.value]

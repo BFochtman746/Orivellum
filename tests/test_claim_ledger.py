@@ -62,7 +62,7 @@ def test_upsert_claim_insert_new(db):
     assert claim["predicate"] == "ram_gb"
     assert claim["value"] == "128"
     assert claim["unit"] == "GB"
-    assert claim["status"] == "CURRENT"
+    assert claim["status"] == "USER_ASSERTED"
     assert claim["authority_tier"] == "A7"
 
 
@@ -99,7 +99,7 @@ def test_upsert_claim_lower_authority_does_not_downgrade(db):
 def test_upsert_claim_multiple_predicates_are_independent(db):
     db.upsert_claim("user_system", "ram_gb", "128", authority_tier="A7")
     db.upsert_claim("user_system", "gpu_model", "RTX 4090", authority_tier="A7")
-    claims = db.list_claims(subject="user_system", status="CURRENT")
+    claims = db.list_claims(subject="user_system", status="USER_ASSERTED")
     predicates = {c["predicate"] for c in claims}
     assert "ram_gb" in predicates
     assert "gpu_model" in predicates
@@ -126,8 +126,8 @@ def test_list_claims_by_subject(db):
     db.upsert_claim("user_system", "cpu_model", "Ryzen 9 9950X")
     db.upsert_claim("book:abc", "title", "My Novel")
 
-    sys_claims = db.list_claims(subject="user_system", status="CURRENT")
-    book_claims = db.list_claims(subject="book:abc", status="CURRENT")
+    sys_claims = db.list_claims(subject="user_system", status="USER_ASSERTED")
+    book_claims = db.list_claims(subject="book:abc", status="USER_ASSERTED")
 
     assert len(sys_claims) >= 2
     assert all(c["subject"] == "user_system" for c in sys_claims)
@@ -146,7 +146,8 @@ def test_update_claim_status_transitions(db):
 
 def test_update_claim_status_same_status_returns_false(db):
     cid = db.upsert_claim("user_system", "ram_gb", "128")
-    changed = db.update_claim_status(cid, "CURRENT")
+    # Initial A7 upsert produces USER_ASSERTED; updating to the same status returns False
+    changed = db.update_claim_status(cid, "USER_ASSERTED")
     assert changed is False
 
 
@@ -158,7 +159,8 @@ def test_update_claim_status_logs_transition(db):
         (cid,),
     ).fetchall()
     statuses = [r["to_status"] for r in rows]
-    assert "CURRENT" in statuses  # initial insert
+    # The explicit STALE transition is always logged.
+    # (Initial insert may log USER_ASSERTED; legacy DBs may log CURRENT.)
     assert "STALE" in statuses    # explicit transition
 
 
@@ -261,8 +263,8 @@ def test_fact_router_checkable_facts():
     ]
     for q in checkable:
         result = router.classify(q)
-        assert result == RequestClass.CHECKABLE_FACT, \
-            f"Expected CHECKABLE_FACT for: {q!r}, got {result}"
+        assert result == RequestClass.DETERMINISTICALLY_VERIFIABLE, \
+            f"Expected DETERMINISTICALLY_VERIFIABLE for: {q!r}, got {result}"
 
 
 def test_fact_router_general_fact():

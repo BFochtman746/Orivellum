@@ -22,6 +22,7 @@ Planned (BUILDABLE-NOW, not yet wired):
 from .base import AdapterBase, Evidence, Recipe, AdapterRegistry
 from .recollection import RecollectionAdapter
 from .library import LibraryAdapter
+from .windows_inventory import WindowsInventoryAdapter
 
 __all__ = [
     "AdapterBase",
@@ -30,4 +31,5 @@ __all__ = [
     "AdapterRegistry",
     "RecollectionAdapter",
     "LibraryAdapter",
+    "WindowsInventoryAdapter",
 ]
