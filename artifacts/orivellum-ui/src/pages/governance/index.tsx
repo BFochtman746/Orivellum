@@ -523,6 +523,139 @@ function OutboxSection() {
   );
 }
 
+// ── Open findings (M0.2 blockers) ─────────────────────────────────────────────
+
+interface Finding {
+  id: string;
+  object_id: string;
+  object_type: string;
+  kind: string;
+  description: string;
+  severity: "info" | "warning" | "high" | "critical";
+  state: "open" | "resolved";
+  created_at: string;
+  resolved_at: string | null;
+  resolved_by: string | null;
+}
+
+const SEVERITY_BADGE: Record<string, string> = {
+  critical: "border-red-400   text-red-800   bg-red-100/80   dark:bg-red-950/40 dark:text-red-300",
+  high:     "border-orange-300 text-orange-800 bg-orange-100/70 dark:bg-orange-950/40 dark:text-orange-300",
+  warning:  "border-amber-200 text-amber-700 bg-amber-50/70   dark:bg-amber-950/30 dark:text-amber-300",
+  info:     "border-border/60 text-muted-foreground bg-muted/30",
+};
+
+function FindingsSection() {
+  const qc = useQueryClient();
+  const [resolving, setResolving] = useState<Set<string>>(new Set());
+
+  const { data, refetch } = useQuery<{ findings: Finding[]; count: number }>({
+    queryKey: ["governance", "findings", "open"],
+    queryFn: () =>
+      apiFetch(`${BASE}/governance/findings?state=open&limit=50`).then(
+        (r) => r.json()
+      ),
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+  });
+
+  const findings = data?.findings ?? [];
+  // Only show when there are open findings
+  if (findings.length === 0) return null;
+
+  const blocking = findings.filter(
+    (f) => f.severity === "high" || f.severity === "critical"
+  );
+  const advisory = findings.filter(
+    (f) => f.severity === "warning" || f.severity === "info"
+  );
+
+  const resolve = async (fid: string) => {
+    setResolving((s) => new Set([...s, fid]));
+    try {
+      const r = await apiFetch(`${BASE}/governance/findings/${fid}/resolve`, {
+        method: "PATCH",
+      });
+      if (!r.ok) throw new Error("Resolve failed");
+      toast.success("Finding resolved");
+      qc.invalidateQueries({ queryKey: ["governance", "findings"] });
+      refetch();
+    } catch {
+      toast.error("Could not resolve finding");
+    } finally {
+      setResolving((s) => { const n = new Set(s); n.delete(fid); return n; });
+    }
+  };
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-2">
+        <AlertTriangle className="w-4 h-4 text-orange-600" />
+        <h2 className="text-sm font-mono font-semibold text-orange-700 dark:text-orange-400">
+          Open Findings ({findings.length})
+          {blocking.length > 0 && (
+            <span className="ml-2 text-[10px] font-normal text-red-600 dark:text-red-400">
+              · {blocking.length} blocking
+            </span>
+          )}
+        </h2>
+      </div>
+
+      <div className="space-y-1.5">
+        {findings.map((f) => {
+          const busy = resolving.has(f.id);
+          return (
+            <div
+              key={f.id}
+              className={`rounded-lg border p-3 flex items-start gap-3 ${
+                f.severity === "critical" || f.severity === "high"
+                  ? "border-orange-200/60 bg-orange-50/30 dark:bg-orange-950/20 dark:border-orange-900/40"
+                  : "border-border/40 bg-muted/10"
+              }`}
+            >
+              <div className="flex-1 min-w-0 space-y-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-mono border ${SEVERITY_BADGE[f.severity] ?? SEVERITY_BADGE.info}`}>
+                    {f.severity}
+                  </span>
+                  <span className="text-[10px] font-mono text-muted-foreground/70 bg-muted/40 px-1.5 py-0.5 rounded border border-border/30">
+                    {f.object_type}
+                  </span>
+                  {(f.severity === "high" || f.severity === "critical") && (
+                    <span className="text-[10px] font-mono text-red-600 dark:text-red-400">
+                      blocks transitions
+                    </span>
+                  )}
+                </div>
+                <p className="text-sm text-foreground/80 leading-snug">{f.description}</p>
+                <p className="text-[10px] font-mono text-muted-foreground/50">
+                  {f.object_id.slice(0, 12)}… · {new Date(f.created_at).toLocaleDateString()}
+                </p>
+              </div>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={busy}
+                onClick={() => resolve(f.id)}
+                className="h-7 text-[11px] gap-1 shrink-0 border-emerald-200 text-emerald-700 hover:bg-emerald-50 dark:border-emerald-900 dark:text-emerald-400"
+              >
+                {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle2 className="w-3 h-3" />}
+                Resolve
+              </Button>
+            </div>
+          );
+        })}
+      </div>
+
+      {advisory.length > 0 && blocking.length > 0 && (
+        <p className="text-[10px] font-mono text-muted-foreground/50">
+          {advisory.length} advisory finding{advisory.length !== 1 ? "s" : ""} do not block transitions.
+        </p>
+      )}
+    </div>
+  );
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function GovernancePage() {
@@ -709,6 +842,9 @@ export default function GovernancePage() {
       <ConflictsSection />
 
       <RegressionsSection />
+
+      {/* Open findings — only shown when blockers exist */}
+      <FindingsSection />
 
       {/* Filters + bulk approve */}
       {allItems.length > 0 && (

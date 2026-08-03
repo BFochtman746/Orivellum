@@ -494,6 +494,59 @@ def system_jobs():
     }
 
 
+class JobStateUpdateBody(BaseModel):
+    from_state: str
+    to_state: str
+    actor: str = "system"
+    detail: str | None = None
+
+
+@router.patch("/system/jobs/{job_id}/state")
+def update_job_state(job_id: str, body: JobStateUpdateBody):
+    """Advance or return a job's lifecycle state via JOB_SM.
+
+    The server enforces the declared state graph (queued→running→done/failed/
+    cancelled; queued→cancelled).  Undeclared transitions return 422; open
+    high/critical findings on the job return 409 with the blocker list.
+
+    Body:
+        from_state: current state (client's view, used for idempotency check)
+        to_state:   desired new state
+        actor:      who is requesting the change (default: "system")
+        detail:     optional reason for the audit log
+    """
+    from orivellum.capabilities.state_machine import (
+        InvalidTransitionError, BlockedTransitionError,
+    )
+    db = get_db()
+    job = db.get_job(job_id)
+    if not job:
+        raise HTTPException(404, "Job not found")
+    # Idempotent: if already in to_state, return success without error.
+    if job["state"] == body.to_state:
+        return {"id": job_id, "state": job["state"], "changed": False}
+    # Let update_job_state raise the typed exceptions — app.py maps them to HTTP.
+    db.update_job_state(
+        job_id,
+        from_state=body.from_state,
+        to_state=body.to_state,
+        actor=body.actor,
+        detail=body.detail,
+    )
+    updated = db.get_job(job_id)
+    return {"id": job_id, "state": updated["state"] if updated else body.to_state, "changed": True}
+
+
+@router.get("/system/jobs/{job_id}")
+def get_job(job_id: str):
+    """Return a single job by id."""
+    db = get_db()
+    job = db.get_job(job_id)
+    if not job:
+        raise HTTPException(404, "Job not found")
+    return job
+
+
 @router.get("/system/user-memory")
 def list_user_memory():
     db = get_db()

@@ -2107,6 +2107,100 @@ class OrivellumDB:
         return result
 
     # -------------------------------------------------------------------------
+    # Job state transitions (M0.2 — JOB_SM)
+    # -------------------------------------------------------------------------
+
+    def update_job_state(
+        self,
+        job_id: str,
+        *,
+        from_state: str,
+        to_state: str,
+        actor: str = "system",
+        detail: str | None = None,
+        check_blockers: bool = True,
+    ) -> None:
+        """Apply a JOB_SM state transition atomically via governed_write.
+
+        Raises:
+            InvalidTransitionError: if the transition is not declared in JOB_SM.
+            BlockedTransitionError: if an open high/critical finding blocks it.
+        """
+        from orivellum.capabilities.state_machine import JOB_SM, apply_transition
+        apply_transition(
+            self, JOB_SM,
+            object_id=job_id,
+            object_type="job",
+            table="jobs",
+            state_col="state",
+            from_state=from_state,
+            to_state=to_state,
+            actor=actor,
+            detail=detail,
+            check_blockers=check_blockers,
+        )
+
+    def create_job(
+        self,
+        *,
+        job_type: str,
+        priority: int = 0,
+        max_attempts: int = 3,
+        correlation_id: str | None = None,
+        input_data: dict | None = None,
+    ) -> str:
+        """Create a new job in the 'queued' state.  Returns the new job id."""
+        jid = str(uuid.uuid4())
+        import json as _json
+        input_payload = _json.dumps(input_data or {})
+        now = _now()
+        with self._lock:
+            self._conn.execute(
+                """INSERT INTO jobs(id, job_type, state, priority, created_at,
+                   max_attempts, input, correlation_id)
+                   VALUES(?,?,?,?,?,?,?,?)""",
+                (jid, job_type, "queued", priority, now,
+                 max_attempts, input_payload, correlation_id),
+            )
+            self._conn.commit()
+        self.audit("job.created", object_id=jid, object_type="job",
+                   actor="system", detail=job_type)
+        return jid
+
+    def get_job(self, job_id: str) -> dict | None:
+        """Return a single job row, or None."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM jobs WHERE id=?", (job_id,)
+            ).fetchone()
+        return dict(row) if row else None
+
+    def list_jobs(
+        self,
+        *,
+        state: str | None = None,
+        job_type: str | None = None,
+        limit: int = 50,
+    ) -> list[dict]:
+        """Return jobs filtered by state and/or job_type."""
+        clauses: list[str] = []
+        params: list = []
+        if state is not None:
+            clauses.append("state=?")
+            params.append(state)
+        if job_type is not None:
+            clauses.append("job_type=?")
+            params.append(job_type)
+        where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+        params.append(limit)
+        with self._lock:
+            rows = self._conn.execute(
+                f"SELECT * FROM jobs {where} ORDER BY created_at DESC LIMIT ?",
+                params,
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    # -------------------------------------------------------------------------
     # Findings (M0.2 governance blockers)
     # -------------------------------------------------------------------------
 
