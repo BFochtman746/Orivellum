@@ -2107,6 +2107,124 @@ class OrivellumDB:
         return result
 
     # -------------------------------------------------------------------------
+    # Findings (M0.2 governance blockers)
+    # -------------------------------------------------------------------------
+
+    def create_finding(
+        self,
+        *,
+        object_id: str,
+        object_type: str,
+        description: str,
+        kind: str = "issue",
+        severity: str = "high",
+        meta: dict | None = None,
+    ) -> str:
+        """Create a governance finding that may block state-machine transitions.
+
+        A finding with severity ``high`` or ``critical`` blocks all forward
+        transitions on *object_id* until it is resolved.
+
+        Returns the new finding id.
+        """
+        fid = str(uuid.uuid4())
+        now = _now()
+        import json as _json
+        payload = _json.dumps(meta or {})
+        with self._lock:
+            self._conn.execute(
+                """INSERT INTO findings(id, object_id, object_type, kind,
+                   description, severity, state, created_at, meta)
+                   VALUES(?,?,?,?,?,?,?,?,?)""",
+                (fid, object_id, object_type, kind,
+                 description, severity, "open", now, payload),
+            )
+            self._conn.commit()
+        self.audit(
+            "finding.created",
+            object_id=fid,
+            object_type="finding",
+            actor="system",
+            detail=f"{severity}/{kind} on {object_id[:12]}…: {description[:80]}",
+        )
+        return fid
+
+    def list_findings(
+        self,
+        *,
+        object_id: str | None = None,
+        state: str | None = None,
+        min_severity: tuple[str, ...] | None = None,
+        limit: int = 100,
+    ) -> list[dict]:
+        """Return findings filtered by *object_id* and/or *state*.
+
+        Args:
+            object_id:    Restrict to findings on this object.
+            state:        ``"open"`` or ``"resolved"``; None returns all.
+            min_severity: Tuple of severities to include, e.g.
+                          ``("high", "critical")``.  None includes all.
+            limit:        Maximum rows to return.
+        """
+        clauses: list[str] = []
+        params: list = []
+        if object_id is not None:
+            clauses.append("object_id = ?")
+            params.append(object_id)
+        if state is not None:
+            clauses.append("state = ?")
+            params.append(state)
+        if min_severity is not None:
+            placeholders = ",".join("?" * len(min_severity))
+            clauses.append(f"severity IN ({placeholders})")
+            params.extend(min_severity)
+        where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+        params.append(limit)
+        with self._lock:
+            rows = self._conn.execute(
+                f"SELECT * FROM findings {where} ORDER BY created_at DESC LIMIT ?",
+                params,
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_finding(self, finding_id: str) -> dict | None:
+        """Return a single finding by id, or None."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM findings WHERE id=?", (finding_id,)
+            ).fetchone()
+        return dict(row) if row else None
+
+    def resolve_finding(
+        self,
+        finding_id: str,
+        *,
+        resolved_by: str = "system",
+    ) -> bool:
+        """Mark a finding resolved.
+
+        Returns True if the finding existed and was open (i.e. actually changed).
+        """
+        now = _now()
+        with self._lock:
+            cur = self._conn.execute(
+                """UPDATE findings SET state='resolved', resolved_at=?,
+                   resolved_by=? WHERE id=? AND state='open'""",
+                (now, resolved_by, finding_id),
+            )
+            changed = cur.rowcount > 0
+            if changed:
+                self._conn.commit()
+        if changed:
+            self.audit(
+                "finding.resolved",
+                object_id=finding_id,
+                object_type="finding",
+                actor=resolved_by,
+            )
+        return changed
+
+    # -------------------------------------------------------------------------
     # Health / diagnostics
     # -------------------------------------------------------------------------
 

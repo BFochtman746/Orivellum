@@ -944,4 +944,38 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         ALTER TABLE documents     ADD COLUMN version INTEGER NOT NULL DEFAULT 1;
         ALTER TABLE knowledge     ADD COLUMN version INTEGER NOT NULL DEFAULT 1
     """),
+
+    # v58 — Governance findings (M0.2 Sovereign Platform).
+    # A finding is a blocker that prevents forward state-machine transitions
+    # on an object until a human resolves it.  Severity determines whether the
+    # finding actually blocks: high/critical block all forward transitions;
+    # warning/info are advisory only.
+    (58, "Add findings table for governance blockers (M0.2)", """
+        CREATE TABLE IF NOT EXISTS findings (
+            id           TEXT PRIMARY KEY,
+            object_id    TEXT NOT NULL,
+            object_type  TEXT NOT NULL DEFAULT 'unknown',
+            kind         TEXT NOT NULL DEFAULT 'issue',
+            description  TEXT NOT NULL,
+            severity     TEXT NOT NULL DEFAULT 'high',
+            state        TEXT NOT NULL DEFAULT 'open',
+            created_at   TEXT NOT NULL,
+            resolved_at  TEXT,
+            resolved_by  TEXT,
+            meta         TEXT NOT NULL DEFAULT '{}'
+        );
+        CREATE INDEX IF NOT EXISTS findings_object_state
+            ON findings(object_id, state);
+        CREATE INDEX IF NOT EXISTS findings_open
+            ON findings(state)
+            WHERE state = 'open'
+    """),
+
+    # v59 — Add state column to messages for MessageState lifecycle (M0.2).
+    # Messages start as 'done' (retroactively) since all existing rows are
+    # already complete.  New messages created via the pipeline will be written
+    # with the correct initial state ('queued' or 'done' as appropriate).
+    (59, "Add state column to messages for MessageState lifecycle (M0.2)", """
+        ALTER TABLE messages ADD COLUMN state TEXT NOT NULL DEFAULT 'done'
+    """),
 ]

@@ -255,15 +255,13 @@ def create_app() -> FastAPI:
 
     # ── Governed-core exception handlers ─────────────────────────────────────
     from orivellum.database.db import VersionConflictError
+    from orivellum.capabilities.state_machine import (
+        InvalidTransitionError, BlockedTransitionError,
+    )
 
     @app.exception_handler(VersionConflictError)
     async def version_conflict_handler(request: Request, exc: VersionConflictError):
-        """Return 409 Conflict whenever an optimistic-concurrency check fails.
-
-        The response body follows the same shape as other error responses so
-        the client can show a human-readable message and knows to re-fetch
-        before retrying.
-        """
+        """Return 409 Conflict whenever an optimistic-concurrency check fails."""
         return JSONResponse(
             {
                 "detail": str(exc),
@@ -272,6 +270,55 @@ def create_app() -> FastAPI:
                 "expected_version": exc.expected,
                 "actual_version": exc.actual,
                 "retryable": True,
+            },
+            status_code=409,
+        )
+
+    @app.exception_handler(InvalidTransitionError)
+    async def invalid_transition_handler(request: Request,
+                                         exc: InvalidTransitionError):
+        """Return 422 Unprocessable Entity for undeclared state-machine transitions.
+
+        The response tells the client the current state, the disallowed target,
+        and what targets are actually reachable, so it can surface a useful
+        error to the user without a round-trip.
+        """
+        return JSONResponse(
+            {
+                "detail": str(exc),
+                "error": "INVALID_TRANSITION",
+                "from_state": exc.from_state,
+                "to_state": exc.to_state,
+                "allowed": sorted(exc.allowed),
+                "retryable": False,
+            },
+            status_code=422,
+        )
+
+    @app.exception_handler(BlockedTransitionError)
+    async def blocked_transition_handler(request: Request,
+                                          exc: BlockedTransitionError):
+        """Return 409 Conflict when open findings block a forward transition.
+
+        Names every blocking finding so the client can link directly to the
+        governance queue for resolution.
+        """
+        return JSONResponse(
+            {
+                "detail": str(exc),
+                "error": "BLOCKED_TRANSITION",
+                "from_state": exc.from_state,
+                "to_state": exc.to_state,
+                "blockers": [
+                    {
+                        "id": b["id"],
+                        "kind": b.get("kind", "issue"),
+                        "severity": b.get("severity", "high"),
+                        "description": b.get("description", ""),
+                    }
+                    for b in exc.blockers
+                ],
+                "retryable": False,
             },
             status_code=409,
         )
