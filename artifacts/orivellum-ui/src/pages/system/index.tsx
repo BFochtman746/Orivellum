@@ -3,7 +3,7 @@ import { apiFetch } from "@/lib/auth";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
-import { Activity, Database, Cpu, CheckCircle2, XCircle, AlertCircle, Terminal, Sparkles, Moon, Brain, Trash2, ScrollText, User, Settings, Image as ImageIcon } from "lucide-react";
+import { Activity, Database, Cpu, CheckCircle2, XCircle, AlertCircle, Terminal, Sparkles, Moon, Brain, Trash2, ScrollText, User, Settings, Image as ImageIcon, Eye, Loader2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -327,6 +327,163 @@ function useSetAiExtractionSetting() {
   });
 }
 
+// ─── Vision model card ────────────────────────────────────────────────────────
+
+type VisionProbeResult = { ok: boolean; model: string; response?: string; error?: string };
+
+function VisionModelCard() {
+  const qc = useQueryClient();
+  const { data, isLoading } = useQuery({
+    queryKey: ["system", "vision-model"],
+    queryFn: async () => {
+      const r = await apiFetch(`${API_BASE}/api/system/settings/vision-model`);
+      if (!r.ok) throw new Error();
+      return r.json() as Promise<{ model: string; stored: string; config_default: string }>;
+    },
+    staleTime: 60_000,
+  });
+
+  const [editing, setEditing] = useState(false);
+  const [val, setVal] = useState("");
+  const [probeResult, setProbeResult] = useState<VisionProbeResult | null>(null);
+  const [probing, setProbing] = useState(false);
+
+  function startEdit() { setVal(data?.model ?? ""); setEditing(true); }
+
+  async function save() {
+    try {
+      const r = await apiFetch(`${API_BASE}/api/system/settings/vision-model`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: val.trim() }),
+      });
+      if (!r.ok) throw new Error();
+      qc.invalidateQueries({ queryKey: ["system", "vision-model"] });
+      setProbeResult(null); // reset probe after model change
+      toast.success(val.trim() ? "Vision model saved" : "Reverted to config default");
+      setEditing(false);
+    } catch {
+      toast.error("Could not save vision model");
+    }
+  }
+
+  async function probe() {
+    setProbing(true);
+    setProbeResult(null);
+    try {
+      const r = await apiFetch(`${API_BASE}/api/system/vision/probe`, { method: "POST" });
+      const json = await r.json() as VisionProbeResult;
+      setProbeResult(json);
+      if (json.ok) {
+        toast.success(`Vision works — model replied: "${json.response?.slice(0, 60)}"`);
+      } else {
+        toast.warning("Vision test failed — model may not support images");
+      }
+    } catch {
+      toast.error("Probe request failed");
+    } finally {
+      setProbing(false);
+    }
+  }
+
+  const effectiveModel = data?.model;
+
+  return (
+    <Card>
+      <CardContent className="p-6">
+        <div className="flex items-start gap-3">
+          <Eye className="w-5 h-5 text-primary mt-0.5 shrink-0" />
+          <div className="flex-1 space-y-2">
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <div>
+                <h3 className="font-medium text-sm">Vision Model (Image Understanding)</h3>
+                <p className="text-sm text-muted-foreground mt-0.5 max-w-xl">
+                  Used when you attach an image in chat and when importing image files into your library.
+                  Set to a vision-capable model (e.g. <code className="bg-muted px-1 rounded">llava</code>,{" "}
+                  <code className="bg-muted px-1 rounded">qwen2-vl</code>,{" "}
+                  <code className="bg-muted px-1 rounded">llama3.2-vision</code>). Leave blank to use
+                  your default workhorse model (only works if it supports vision).
+                </p>
+              </div>
+              <div className="flex gap-2 shrink-0">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="text-xs gap-1.5"
+                  onClick={probe}
+                  disabled={probing}
+                >
+                  {probing
+                    ? <><Loader2 className="w-3 h-3 animate-spin" />Testing…</>
+                    : <><Eye className="w-3 h-3" />Test Vision</>}
+                </Button>
+                {!editing && (
+                  <Button size="sm" variant="outline" className="text-xs" onClick={startEdit}>
+                    {effectiveModel ? "Edit" : "Set Model"}
+                  </Button>
+                )}
+              </div>
+            </div>
+
+            {/* Current model display */}
+            {!editing && (
+              isLoading ? (
+                <Skeleton className="h-6 w-64" />
+              ) : effectiveModel ? (
+                <p className="text-xs font-mono bg-muted/40 rounded px-2 py-1 truncate">{effectiveModel}</p>
+              ) : (
+                <p className="text-xs text-muted-foreground/60 font-mono">
+                  Not set — falls back to workhorse model
+                </p>
+              )
+            )}
+
+            {/* Edit field */}
+            {editing && (
+              <div className="flex gap-2">
+                <input
+                  autoFocus
+                  value={val}
+                  onChange={e => setVal(e.target.value)}
+                  placeholder="e.g. llava, qwen2-vl, llama3.2-vision or leave blank"
+                  className="flex-1 text-sm font-mono border border-border rounded px-2 py-1 bg-background focus:outline-none focus:ring-1 focus:ring-primary"
+                  onKeyDown={e => { if (e.key === "Enter") save(); if (e.key === "Escape") setEditing(false); }}
+                />
+                <Button size="sm" onClick={save}>Save</Button>
+                <Button size="sm" variant="ghost" onClick={() => setEditing(false)}>Cancel</Button>
+              </div>
+            )}
+
+            {/* Probe result */}
+            {probeResult && (
+              <div className={`flex items-start gap-2 text-xs rounded-lg px-3 py-2 mt-1 ${
+                probeResult.ok
+                  ? "bg-emerald-500/10 border border-emerald-500/30 text-emerald-700 dark:text-emerald-400"
+                  : "bg-destructive/10 border border-destructive/30 text-destructive"
+              }`}>
+                {probeResult.ok
+                  ? <CheckCircle2 className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                  : <XCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />}
+                <div>
+                  <span className="font-medium">{probeResult.ok ? "Vision supported" : "Vision not supported"}</span>
+                  <span className="ml-1 opacity-75">({probeResult.model})</span>
+                  {probeResult.ok && probeResult.response && (
+                    <p className="mt-0.5 opacity-80">Reply: "{probeResult.response.slice(0, 120)}"</p>
+                  )}
+                  {!probeResult.ok && probeResult.error && (
+                    <p className="mt-0.5 opacity-80">{probeResult.error.slice(0, 200)}</p>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+
 function ImageGenUrlCard() {
   const qc = useQueryClient();
   const { data } = useQuery({
@@ -507,6 +664,9 @@ export default function System() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Vision Model Setting */}
+      <VisionModelCard />
 
       {/* Image Generation URL Setting */}
       <ImageGenUrlCard />

@@ -506,6 +506,103 @@ def set_ai_extraction_setting(body: AiExtractionUpdate):
     return {"enabled": body.enabled, "ok": True}
 
 
+# ── Vision model settings + probe ─────────────────────────────────────────────
+
+@router.get("/system/settings/vision-model")
+def get_vision_model_setting():
+    """Return the configured vision model name (empty = use workhorse fallback)."""
+    db  = get_db()
+    cfg = get_config()
+    stored = db.get_setting("vision_model", "")
+    effective = stored or cfg.serving.vision_model or ""
+    return {"model": effective, "stored": stored, "config_default": cfg.serving.vision_model}
+
+
+class VisionModelUpdate(BaseModel):
+    model: str  # empty string = use config default / workhorse fallback
+
+
+@router.put("/system/settings/vision-model")
+def set_vision_model_setting(body: VisionModelUpdate):
+    """Persist a custom vision model name.  Empty string removes the override."""
+    db = get_db()
+    db.set_setting("vision_model", body.model.strip(), actor="user")
+    return {"model": body.model.strip(), "ok": True}
+
+
+@router.post("/system/vision/probe")
+def probe_vision_model():
+    """Test whether the configured vision model accepts image inputs.
+
+    Sends a 1×1 white JPEG (the smallest possible valid image) with a simple
+    "What colour is this?" question.  The model must respond with something
+    containing "white" or any colour word — we accept any non-empty reply as
+    proof of vision support since returning *anything* from an image message
+    confirms the model can process vision input.
+
+    Returns:
+        ok          — True when the model responded
+        model       — model name that was tested
+        response    — first 200 chars of the model's reply
+        error       — error message if ok=False
+    """
+    import base64
+    import io
+
+    db  = get_db()
+    cfg = get_config()
+
+    # Resolve model (DB override → config vision_model → workhorse fallback)
+    stored  = db.get_setting("vision_model", "")
+    model   = stored or cfg.serving.vision_model or cfg.serving.workhorse_model
+
+    # Build a 1×1 white JPEG — smallest meaningful vision payload
+    try:
+        from PIL import Image as _PIL
+        buf = io.BytesIO()
+        img = _PIL.new("RGB", (1, 1), color=(255, 255, 255))
+        img.save(buf, format="JPEG")
+        b64 = base64.b64encode(buf.getvalue()).decode()
+    except ImportError:
+        # Pillow not available — use a hardcoded 1×1 white JPEG (from spec)
+        _TINY_WHITE_JPEG = (
+            "/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8U"
+            "HRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgN"
+            "DRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIy"
+            "MjIyMjL/wAARCAABAAEDASIAAhEBAxEB/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAA"
+            "AAAAAAAAAAAAAAAAAAAA/8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/EABQQAQAAAAAAAAAAAAAAAA"
+            "AAAAP/2gAMAwEAAhEDEQA/AJAA/9k="
+        )
+        b64 = _TINY_WHITE_JPEG
+
+    from orivellum.capabilities.llm import llm_call
+
+    try:
+        result = llm_call(
+            [{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "What colour is this image? Reply in one word."},
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
+                ],
+            }],
+            base_url=cfg.serving.base_url,
+            model=model,
+            timeout=20,
+            purpose="system.vision_probe",
+            db=db,
+        )
+        if result.ok and result.text and result.text.strip():
+            return {"ok": True, "model": model, "response": result.text.strip()[:200]}
+        return {
+            "ok": False,
+            "model": model,
+            "error": result.error or "Model returned an empty response — vision may not be supported",
+        }
+    except Exception as exc:
+        return {"ok": False, "model": model, "error": str(exc)}
+
+
 @router.get("/system/settings/image-gen")
 def get_image_gen_setting():
     """Return the configured image generation URL (empty = use auto-detection)."""

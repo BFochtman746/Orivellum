@@ -257,10 +257,14 @@ def _model_for(conv: dict) -> str:
 def _model_for_vision(conv: dict) -> str:
     """Return the vision model for this conversation.
 
-    Priority: conversation.model → config vision_model → workhorse fallback.
+    Priority: conversation.model → DB vision_model setting
+              → config vision_model → workhorse fallback.
+    The DB setting (editable from System Settings) overrides the YAML config.
     """
     cfg = get_config()
-    return conv.get("model") or cfg.serving.vision_model or cfg.serving.workhorse_model
+    db  = get_db()
+    db_vision = db.get_setting("vision_model", "")
+    return conv.get("model") or db_vision or cfg.serving.vision_model or cfg.serving.workhorse_model
 
 
 # Hardcoded fallback for the chat base persona.  The MCOS prompt registry

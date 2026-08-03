@@ -356,7 +356,16 @@ def _extract_image_vision(path: Path, db=None) -> "ExtractionResult | None":
     try:
         from orivellum.configuration.config import load_config
         cfg = load_config()
-        if not cfg.serving.vision_model:
+        # Resolve vision model: DB setting overrides YAML config.
+        # Import here (lazy) to avoid circular import at module load.
+        _vision_model: str = ""
+        try:
+            from orivellum.api._deps import get_db as _get_db
+            _db = _get_db()
+            _vision_model = _db.get_setting("vision_model", "") or cfg.serving.vision_model
+        except Exception:
+            _vision_model = cfg.serving.vision_model
+        if not _vision_model:
             return None
 
         import base64
@@ -393,7 +402,7 @@ def _extract_image_vision(path: Path, db=None) -> "ExtractionResult | None":
                 ],
             }],
             base_url=cfg.serving.base_url,
-            model=cfg.serving.vision_model,
+            model=_vision_model,
             timeout=cfg.serving.extraction_timeout_sec,
             purpose="extraction.llm", db=db,
         )
