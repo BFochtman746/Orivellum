@@ -64,18 +64,36 @@ class MessageSend(BaseModel):
 # Image thumbnail helper
 # ──────────────────────────────────────────────────────────────────────────────
 
+# These two constants govern the compact JPEG thumbnail stored in
+# message meta (key ``image_thumbnail_b64``) whenever a user attaches
+# an image to a chat message.  Change both here — they are referenced by
+# _make_thumbnail_b64() and by tests — never inline them elsewhere.
+#
+# Storage budget per image-bearing message:
+#   max longest side ≤ _THUMBNAIL_MAX_PX px, size ≤ _THUMBNAIL_MAX_KB KiB.
+#   Worst case: 100 image messages ≈ 100 × 20 KiB = ~2 MB added to the
+#   messages table.  Acceptable; revisit if message volumes grow into the
+#   thousands per conversation.
+_THUMBNAIL_MAX_PX: int = 200   # longest dimension in pixels after resize
+_THUMBNAIL_MAX_KB: int = 20    # hard upper-bound on base64-decoded JPEG bytes
+
+
 def _make_thumbnail_b64(
     image_b64: str,
     image_media_type: str = "image/jpeg",
-    max_px: int = 200,
-    max_kb: int = 20,
+    max_px: int = _THUMBNAIL_MAX_PX,
+    max_kb: int = _THUMBNAIL_MAX_KB,
 ) -> str | None:
     """Decode *image_b64*, shrink to ≤*max_px* on the longest side, and
     re-encode as a compact JPEG.  Returns a base64 string or None on failure.
 
-    Size is capped at *max_kb* KiB by progressively lowering JPEG quality.
-    Stored in message meta as ``image_thumbnail_b64`` so mobile can render a
-    thumbnail in chat history even after a fresh app start (no local URI).
+    Size is capped at *max_kb* KiB by progressively lowering JPEG quality
+    (80 → 60 → 40 → 20).  Stored in message meta as ``image_thumbnail_b64``
+    so mobile can render a thumbnail in chat history even after a fresh app
+    start when no local URI is available.
+
+    The defaults come from the module-level constants ``_THUMBNAIL_MAX_PX``
+    and ``_THUMBNAIL_MAX_KB`` — change those, not the call sites.
     """
     try:
         import base64 as _b64
