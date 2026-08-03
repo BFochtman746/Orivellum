@@ -802,7 +802,16 @@ class OrivellumDB:
                     meta: dict | None = None) -> dict:
         mid = _uuid()
         now = _now()
-        with self._lock:
+        _wc = len(text.split()) if text else 0
+        with self.governed_write(
+            operation="message.created",
+            event_type="message.created",
+            object_id=mid,
+            object_type="message",
+            payload={"conversation_id": conv_id, "role": role, "word_count": _wc},
+            actor="user" if role == "user" else "system",
+            detail=f"{role} {_wc}w",
+        ):
             self._conn.execute(
                 "INSERT INTO messages(id,conversation_id,role,text,meta,created_at) VALUES(?,?,?,?,?,?)",
                 (mid, conv_id, role, text, _jdump(meta or {}), now),
@@ -810,10 +819,6 @@ class OrivellumDB:
             self._conn.execute(
                 "UPDATE conversations SET updated_at=? WHERE id=?", (now, conv_id)
             )
-            self._conn.commit()
-        _wc = len(text.split()) if text else 0
-        self.audit("message.created", object_id=mid, object_type="message",
-                   detail=f"{role} {_wc}w")
         return {"id": mid, "conversation_id": conv_id, "role": role, "text": text,
                 "meta": meta or {}, "created_at": now}
 
@@ -1487,16 +1492,26 @@ class OrivellumDB:
         return [dict(r) for r in rows]
 
     def create_task(self, work_id: str, text: str, priority: int = 0) -> dict:
-        oid = self._create_object("task")
+        oid = _uuid()
         now = _now()
-        with self._lock:
+        with self.governed_write(
+            operation="task.created",
+            event_type="task.created",
+            object_id=oid,
+            object_type="task",
+            payload={"work_id": work_id, "priority": priority},
+            actor="user",
+            detail=text[:120] if text else None,
+        ):
+            self._conn.execute(
+                """INSERT INTO objects(id,type,version,lifecycle,provenance,permissions,
+                   created_at,updated_at,created_by) VALUES(?,?,1,'active','{}','{}',?,?,'user')""",
+                (oid, "task", now, now),
+            )
             self._conn.execute(
                 "INSERT INTO tasks(id,work_id,text,status,priority,meta,created_at) VALUES(?,?,?,'pending',?,?,?)",
                 (oid, work_id, text, priority, "{}", now),
             )
-            self._conn.commit()
-        self.audit("task.created", object_id=oid, object_type="task",
-                   detail=text[:120] if text else None)
         with self._lock:
             row = self._conn.execute("SELECT * FROM tasks WHERE id=?", (oid,)).fetchone()
         return dict(row) if row else {}
@@ -1518,15 +1533,19 @@ class OrivellumDB:
             return dict(row) if row else None
         set_clause = ", ".join(f"{k}=?" for k in updates)
         vals = list(updates.values()) + [task_id]
-        _rowcount = 0
+        _changed_fields = [k for k in updates if k != "completed_at"]
+        with self.governed_write(
+            operation="task.updated",
+            event_type="task.updated",
+            object_id=task_id,
+            object_type="task",
+            payload={"fields": _changed_fields},
+            actor="user",
+            detail=",".join(_changed_fields),
+        ):
+            self._conn.execute(f"UPDATE tasks SET {set_clause} WHERE id=?", vals)
         with self._lock:
-            cur = self._conn.execute(f"UPDATE tasks SET {set_clause} WHERE id=?", vals)
-            _rowcount = cur.rowcount
-            self._conn.commit()
             row = self._conn.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
-        if _rowcount > 0:
-            self.audit("task.updated", object_id=task_id, object_type="task",
-                       detail=",".join(k for k in updates if k != "completed_at"))
         return dict(row) if row else None
 
     # -------------------------------------------------------------------------
@@ -1615,19 +1634,20 @@ class OrivellumDB:
                                   word_count: int, readiness: str = "ready",
                                   error_message: str | None = None) -> None:
         """Persist extraction results back on the document row."""
-        _rowcount = 0
-        with self._lock:
-            cur = self._conn.execute(
+        _op = "document.extraction_failed" if readiness in ("error", "no_text") else "document.extracted"
+        with self.governed_write(
+            operation=_op,
+            event_type=_op,
+            object_id=doc_id,
+            object_type="document",
+            payload={"readiness": readiness, "word_count": word_count},
+            actor="system",
+            detail=error_message or f"{word_count}w {readiness}",
+        ):
+            self._conn.execute(
                 "UPDATE documents SET extracted_text=?, word_count=?, readiness=?, error_message=? WHERE id=?",
                 (extracted_text, word_count, readiness, error_message, doc_id),
             )
-            _rowcount = cur.rowcount
-            self._conn.commit()
-        if _rowcount > 0:
-            _op = "document.extraction_failed" if readiness in ("error", "no_text") else "document.extracted"
-            self.audit(_op, object_id=doc_id, object_type="document",
-                       result="error" if readiness in ("error", "no_text") else "ok",
-                       detail=error_message or f"{word_count}w {readiness}")
 
     def upsert_book_chapters(self, doc_id: str, work_id: str | None,
                              chapters: list[dict]) -> int:
