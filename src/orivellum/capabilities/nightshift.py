@@ -605,6 +605,54 @@ def run_nightshift(db: "OrivellumDB", cfg: "OrivellumConfig",
             _status["finished_at"] = datetime.now(timezone.utc).isoformat()
 
 
+def _pass_dispatch_outbox(db: "OrivellumDB", report: list[str]) -> None:
+    """Drain the transactional outbox by marking all pending events dispatched.
+
+    The outbox (schema v56) records every governed write atomically.  Until a
+    real consumer (SSE push, webhook, search-index sync) is wired, nightshift
+    acts as the null dispatcher: it logs what it saw and marks events processed
+    so the table does not grow unboundedly.
+
+    When a real consumer exists, replace the mark-dispatched call here with
+    the actual delivery logic and only mark dispatched on confirmed delivery.
+    """
+    try:
+        pending = db.list_outbox(pending_only=True, limit=500)
+        if not pending:
+            report.append("outbox: 0 pending events")
+            return
+        # Group by event_type for the report line.
+        from collections import Counter
+        counts: Counter = Counter(e["event_type"] for e in pending)
+        for event in pending:
+            db.dispatch_outbox_event(event["id"])
+        summary = ", ".join(f"{t}×{n}" for t, n in counts.most_common(10))
+        report.append(f"outbox: dispatched {len(pending)} events ({summary})")
+        logger.info("Nightshift outbox: drained %d events", len(pending))
+    except Exception as exc:
+        report.append(f"outbox: drain failed — {exc}")
+        logger.warning("Nightshift outbox drain failed: %s", exc)
+
+
+def _pass_verify_audit_chain(db: "OrivellumDB", report: list[str]) -> None:
+    """Verify the hash-chained audit ledger is intact.
+
+    Calls ``db.verify_audit_chain()`` and appends a ✓ or ✗ line to the
+    nightshift report so any tampering surfaces in the nightly report before
+    a human checks the governance page.
+    """
+    try:
+        ok, reason = db.verify_audit_chain()
+        if ok:
+            report.append("audit-chain: ✓ intact")
+        else:
+            report.append(f"audit-chain: ✗ BROKEN — {reason}")
+            logger.error("Nightshift audit-chain verification FAILED: %s", reason)
+    except Exception as exc:
+        report.append(f"audit-chain: check failed — {exc}")
+        logger.warning("Nightshift audit-chain check error: %s", exc)
+
+
 def _run_nightshift_passes(db: "OrivellumDB", cfg: "OrivellumConfig") -> None:
     date_str = datetime.now().strftime("%Y-%m-%d")
     start_ts = time.time()
@@ -612,48 +660,56 @@ def _run_nightshift_passes(db: "OrivellumDB", cfg: "OrivellumConfig") -> None:
     report: list[str] = []
 
     # 1 — Database maintenance
-    logger.info("Nightshift pass 1/11: database optimisation")
+    logger.info("Nightshift pass 1/13: database optimisation")
     _pass_db_optimise(db, report)
 
     # 2 — Zero-byte temp file cleanup
-    logger.info("Nightshift pass 2/11: output temp-file cleanup")
+    logger.info("Nightshift pass 2/13: output temp-file cleanup")
     _pass_cleanup_outputs(cfg, report)
 
     # 3 — Prune old night reports
-    logger.info("Nightshift pass 3/11: prune old reports")
+    logger.info("Nightshift pass 3/13: prune old reports")
     _pass_prune_old_reports(cfg)
 
     # 4 — Orphaned knowledge / chunks / vectors
-    logger.info("Nightshift pass 4/11: orphan cleanup")
+    logger.info("Nightshift pass 4/13: orphan cleanup")
     _pass_orphan_cleanup(db, report)
 
     # 5 — Retry stuck documents
-    logger.info("Nightshift pass 5/11: stuck document recovery")
+    logger.info("Nightshift pass 5/13: stuck document recovery")
     _pass_stuck_docs(db, cfg, report)
 
     # 6 — Harvest sparse documents
-    logger.info("Nightshift pass 6/11: sparse document harvest")
+    logger.info("Nightshift pass 6/13: sparse document harvest")
     items_added = _pass_sparse_harvest(db, report)
 
     # 7 — Gap analysis
-    logger.info("Nightshift pass 7/11: gap analysis")
+    logger.info("Nightshift pass 7/13: gap analysis")
     _pass_gap_analysis(db, report)
 
     # 8 — Evidence rescoring + contradiction detection
-    logger.info("Nightshift pass 8/11: evidence rescoring")
+    logger.info("Nightshift pass 8/13: evidence rescoring")
     _pass_evidence(db, report)
 
     # 9 — Semantic embedding backfill
-    logger.info("Nightshift pass 9/11: embedding backfill")
+    logger.info("Nightshift pass 9/13: embedding backfill")
     _pass_embeddings(db, report)
 
     # 10 — Work stats refresh
-    logger.info("Nightshift pass 10/11: work stats refresh")
+    logger.info("Nightshift pass 10/13: work stats refresh")
     _pass_work_stats(db, report)
 
     # 11 — MCOS benchmark evaluations
-    logger.info("Nightshift pass 11/11: MCOS benchmark evaluations")
+    logger.info("Nightshift pass 11/13: MCOS benchmark evaluations")
     _pass_mcos(db, cfg, report)
+
+    # 12 — Drain transactional outbox
+    logger.info("Nightshift pass 12/13: outbox drain")
+    _pass_dispatch_outbox(db, report)
+
+    # 13 — Verify audit-chain integrity
+    logger.info("Nightshift pass 13/13: audit-chain verification")
+    _pass_verify_audit_chain(db, report)
 
     elapsed = time.time() - start_ts
     report.append(f"Completed in {elapsed:.0f}s")

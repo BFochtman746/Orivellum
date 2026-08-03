@@ -128,24 +128,60 @@ def system_models():
 
 @router.get("/system/tools")
 def system_tools():
-    """List registered capability tools (stub — populated as capabilities load)."""
-    return {"tools": [], "count": 0}
+    """List all registered capability tools from the capabilities registry.
+
+    Returns every entry in ``CAPABILITY_REGISTRY`` enriched with a live
+    ``status`` field that reflects whether required dependencies are reachable.
+    """
+    from orivellum.capabilities import CAPABILITY_REGISTRY
+    cfg = get_config()
+    lemonade_up = bool(getattr(getattr(cfg, "serving", None), "base_url", None))
+    tavily_up = bool(os.getenv("TAVILY_API_KEY"))
+
+    def _status(cap: dict) -> str:
+        reqs = cap.get("requires", [])
+        if not reqs:
+            return "available"
+        if "lemonade" in reqs and not lemonade_up:
+            return "requires_lemonade"
+        if "tavily" in reqs and not tavily_up:
+            return "requires_api_key"
+        if "external_api" in reqs:
+            return "available"
+        return "available"
+
+    tools = [
+        {**cap, "status": _status(cap)}
+        for cap in CAPABILITY_REGISTRY
+    ]
+    return {"tools": tools, "count": len(tools)}
 
 
 @router.get("/system/capabilities")
 def system_capabilities():
-    """List capability modules and their status."""
+    """List capability modules grouped by category with live status.
+
+    Replaces the former hardcoded list.  Reads from the same
+    ``CAPABILITY_REGISTRY`` as ``/system/tools``.
+    """
+    from orivellum.capabilities import CAPABILITY_REGISTRY
+    cfg = get_config()
+    lemonade_up = bool(getattr(getattr(cfg, "serving", None), "base_url", None))
+    tavily_up = bool(os.getenv("TAVILY_API_KEY"))
+
+    def _status(cap: dict) -> str:
+        reqs = cap.get("requires", [])
+        if not reqs:
+            return "available"
+        if "lemonade" in reqs and not lemonade_up:
+            return "requires_lemonade"
+        if "tavily" in reqs and not tavily_up:
+            return "requires_api_key"
+        return "available"
+
     capabilities = [
-        {"id": "pdf", "name": "PDF", "status": "available"},
-        {"id": "docx", "name": "DOCX", "status": "available"},
-        {"id": "excel", "name": "Excel", "status": "available"},
-        {"id": "ocr", "name": "OCR", "status": "available"},
-        {"id": "knowledge", "name": "Knowledge", "status": "available"},
-        {"id": "voice", "name": "Voice/TTS", "status": "requires_lemonade"},
-        {"id": "audiobook", "name": "Audiobook", "status": "requires_lemonade"},
-        {"id": "imagegen", "name": "Image Generation", "status": "requires_lemonade"},
-        {"id": "code", "name": "Code Execution", "status": "available"},
-        {"id": "math", "name": "Math", "status": "available"},
+        {**cap, "status": _status(cap)}
+        for cap in CAPABILITY_REGISTRY
     ]
     return {"capabilities": capabilities, "count": len(capabilities)}
 
@@ -620,6 +656,48 @@ def set_image_gen_setting(body: ImageGenUrlUpdate):
     db = get_db()
     db.set_setting("image_gen_url", body.url.strip(), actor="user")
     return {"url": body.url.strip(), "ok": True}
+
+
+@router.get("/governance/audit-chain")
+def governance_audit_chain():
+    """Verify the integrity of the hash-chained audit ledger.
+
+    Walks every chained audit row (those with ``row_hash IS NOT NULL``) in
+    insertion order and recomputes the hash chain from scratch.  Returns
+    immediately — the walk is O(n) in the number of chained rows.
+
+    Response:
+        ``{"ok": true, "checked_rows": N}`` when the chain is intact.
+        ``{"ok": false, "reason": "...", "checked_rows": N}`` when any
+        link is broken or a hash does not match.
+    """
+    db = get_db()
+    # Count chained rows for the response.
+    with db._lock:
+        row = db._conn.execute(
+            "SELECT COUNT(*) FROM audit_log WHERE row_hash IS NOT NULL"
+        ).fetchone()
+    checked = row[0] if row else 0
+    ok, reason = db.verify_audit_chain()
+    if ok:
+        return {"ok": True, "checked_rows": checked, "status": "intact"}
+    return JSONResponse(
+        {"ok": False, "checked_rows": checked, "status": "broken", "reason": reason},
+        status_code=200,   # 200 so the UI can render the broken state without an error
+    )
+
+
+@router.get("/governance/outbox")
+def governance_outbox(pending_only: bool = True, limit: int = 100):
+    """Return transactional outbox events.
+
+    By default returns only undispatched (pending) events so the governance
+    page can show backlog depth.  Pass ``pending_only=false`` to see all
+    events including already-dispatched ones.
+    """
+    db = get_db()
+    events = db.list_outbox(pending_only=pending_only, limit=min(limit, 500))
+    return {"events": events, "count": len(events), "pending_only": pending_only}
 
 
 @router.get("/governance/pending")

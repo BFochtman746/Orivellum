@@ -253,6 +253,29 @@ def create_app() -> FastAPI:
                    mcos, review]:
         app.include_router(module.router)
 
+    # ── Governed-core exception handlers ─────────────────────────────────────
+    from orivellum.database.db import VersionConflictError
+
+    @app.exception_handler(VersionConflictError)
+    async def version_conflict_handler(request: Request, exc: VersionConflictError):
+        """Return 409 Conflict whenever an optimistic-concurrency check fails.
+
+        The response body follows the same shape as other error responses so
+        the client can show a human-readable message and knows to re-fetch
+        before retrying.
+        """
+        return JSONResponse(
+            {
+                "detail": str(exc),
+                "error": "VERSION_CONFLICT",
+                "object_id": exc.object_id,
+                "expected_version": exc.expected,
+                "actual_version": exc.actual,
+                "retryable": True,
+            },
+            status_code=409,
+        )
+
     # 404 handler for /api/* paths
     @app.exception_handler(404)
     async def not_found(request: Request, exc):
