@@ -28,6 +28,14 @@ from .schema import MIGRATIONS
 # Governed-core exceptions (Sovereign Platform M0.1)
 # ---------------------------------------------------------------------------
 
+class _CASConflict(Exception):
+    """Internal sentinel: compare-and-set check failed inside governed_write.
+
+    Raised inside a governed_write block so the transaction rolls back
+    before the caller can return "conflict".  Never exposed to callers.
+    """
+
+
 class VersionConflictError(Exception):
     """Raised when an optimistic-concurrency update is attempted with a stale
     expected_version.  The caller should re-fetch the object and retry.
@@ -710,15 +718,20 @@ class OrivellumDB:
 
     def delete_work(self, work_id: str) -> bool:
         now = _now()
-        with self._lock:
+        _deleted = False
+        with self.governed_write(
+            operation="work.deleted",
+            event_type="work.deleted",
+            object_id=work_id,
+            object_type="work",
+            actor="user",
+        ):
             cur = self._conn.execute(
                 "UPDATE objects SET lifecycle='deleted', updated_at=? WHERE id=? AND lifecycle!='deleted'",
                 (now, work_id),
             )
-            self._conn.commit()
-        if cur.rowcount > 0:
-            self.audit("work.deleted", object_id=work_id, object_type="work")
-        return cur.rowcount > 0
+            _deleted = cur.rowcount > 0
+        return _deleted
 
     @staticmethod
     def _work_dict(row: Any) -> dict:
@@ -770,14 +783,19 @@ class OrivellumDB:
                             model: str | None = None) -> dict:
         cid = _uuid()
         now = _now()
-        with self._lock:
+        with self.governed_write(
+            operation="conversation.created",
+            event_type="conversation.created",
+            object_id=cid,
+            object_type="conversation",
+            payload={"work_id": work_id, "model": model},
+            actor="user",
+            detail=title[:120] if title else work_id,
+        ):
             self._conn.execute(
                 "INSERT INTO conversations(id,work_id,title,archived,model,created_at,updated_at) VALUES(?,?,?,0,?,?,?)",
                 (cid, work_id, title, model, now, now),
             )
-            self._conn.commit()
-        self.audit("conversation.created", object_id=cid, object_type="conversation",
-                   detail=title[:120] if title else work_id)
         return self.get_conversation(cid)  # type: ignore[return-value]
 
     def add_message(self, conv_id: str, role: str, text: str,
@@ -862,12 +880,17 @@ class OrivellumDB:
         return self.get_conversation(conv_id)
 
     def delete_conversation(self, conv_id: str) -> bool:
-        with self._lock:
+        _deleted = False
+        with self.governed_write(
+            operation="conversation.deleted",
+            event_type="conversation.deleted",
+            object_id=conv_id,
+            object_type="conversation",
+            actor="user",
+        ):
             cur = self._conn.execute("DELETE FROM conversations WHERE id=?", (conv_id,))
-            self._conn.commit()
-        if cur.rowcount > 0:
-            self.audit("conversation.deleted", object_id=conv_id, object_type="conversation")
-        return cur.rowcount > 0
+            _deleted = cur.rowcount > 0
+        return _deleted
 
     # -------------------------------------------------------------------------
     # Documents
@@ -923,31 +946,39 @@ class OrivellumDB:
             raise ValueError(f"Invalid lifecycle: {lifecycle!r}. "
                              f"Valid values: {sorted(self._DOC_LIFECYCLES)}")
         now = _now()
+        # Read the work/kind before the write transaction (read-only, no lock held).
         with self._lock:
+            _meta_row = self._conn.execute(
+                "SELECT work_id, kind FROM documents WHERE id=?", (doc_id,)
+            ).fetchone()
+        _work_id = _meta_row["work_id"] if _meta_row else None
+        _kind = _meta_row["kind"] if _meta_row else None
+        _changed = False
+        with self.governed_write(
+            operation="document.lifecycle_updated",
+            event_type="document.lifecycle_updated",
+            object_id=doc_id,
+            object_type="document",
+            payload={"lifecycle": lifecycle, "work_id": _work_id},
+            actor="user",
+            detail=lifecycle,
+        ):
             cur = self._conn.execute(
                 "UPDATE objects SET lifecycle=?, updated_at=? WHERE id=?",
                 (lifecycle, now, doc_id),
             )
-            if lifecycle == "canonical" and cur.rowcount > 0:
-                row = self._conn.execute(
-                    "SELECT work_id, kind FROM documents WHERE id=?", (doc_id,)
-                ).fetchone()
-                if row and row["work_id"]:
-                    # Demote all other same-work docs of same kind to 'draft'
-                    # (skip superseded and deleted so they stay as-is)
-                    self._conn.execute(
-                        """UPDATE objects SET lifecycle='draft', updated_at=?
-                           WHERE id IN (
-                               SELECT id FROM documents
-                               WHERE work_id=? AND kind=? AND id!=?
-                           ) AND lifecycle NOT IN ('superseded','deleted')""",
-                        (now, row["work_id"], row["kind"], doc_id),
-                    )
-            self._conn.commit()
-        if cur.rowcount > 0:
-            self.audit("document.lifecycle_updated", object_id=doc_id,
-                       object_type="document", detail=lifecycle)
-        return cur.rowcount > 0
+            _changed = cur.rowcount > 0
+            if lifecycle == "canonical" and _changed and _work_id and _kind:
+                # Demote all other same-work docs of same kind to 'draft'
+                self._conn.execute(
+                    """UPDATE objects SET lifecycle='draft', updated_at=?
+                       WHERE id IN (
+                           SELECT id FROM documents
+                           WHERE work_id=? AND kind=? AND id!=?
+                       ) AND lifecycle NOT IN ('superseded','deleted')""",
+                    (now, _work_id, _kind, doc_id),
+                )
+        return _changed
 
     def create_document(self, title: str, source: str | None = None, sha256: str | None = None,
                         kind: str | None = None, work_id: str | None = None,
@@ -1738,28 +1769,50 @@ class OrivellumDB:
         valid = {"auto", "ai_auto", "approved", "rejected"}
         if status not in valid:
             raise ValueError(f"review_status must be one of {valid}")
-        _before_status: str | None = None
+        # Read before entering governed_write to support early-exit paths
+        # (not_found, CAS conflict) without holding the write lock unnecessarily.
         with self._lock:
             _row = self._conn.execute(
                 "SELECT review_status FROM knowledge WHERE id=?", (item_id,)
             ).fetchone()
-            if not _row:
-                return "not_found"
-            _before_status = _row["review_status"]
-            if expected_status is not None and _before_status not in expected_status:
-                return "conflict"
-            cur = self._conn.execute(
-                "UPDATE knowledge SET review_status=? WHERE id=?",
-                (status, item_id),
-            )
-            self._conn.commit()
-        if cur.rowcount > 0:
-            _bh = hashlib.sha256(json.dumps({"review_status": _before_status}).encode()).hexdigest() if _before_status else None
-            _ah = hashlib.sha256(json.dumps({"review_status": status}).encode()).hexdigest()
-            self.audit("knowledge.review_updated", object_id=item_id, object_type="knowledge",
-                       before_hash=_bh, after_hash=_ah,
-                       detail=f"{_before_status}→{status}")
-        return "updated" if cur.rowcount > 0 else "not_found"
+        if not _row:
+            return "not_found"
+        _before_status: str = _row["review_status"]
+        if expected_status is not None and _before_status not in expected_status:
+            return "conflict"
+        _bh = hashlib.sha256(
+            json.dumps({"review_status": _before_status}).encode()
+        ).hexdigest()
+        _ah = hashlib.sha256(
+            json.dumps({"review_status": status}).encode()
+        ).hexdigest()
+        _changed = False
+        try:
+            with self.governed_write(
+                operation="knowledge.review_updated",
+                event_type="knowledge.review_updated",
+                object_id=item_id,
+                object_type="knowledge",
+                payload={"before": _before_status, "after": status},
+                actor="user",
+                detail=f"{_before_status}→{status}",
+            ):
+                # Re-check CAS inside the write lock to close the read→write window.
+                if expected_status is not None:
+                    _live = self._conn.execute(
+                        "SELECT review_status FROM knowledge WHERE id=?", (item_id,)
+                    ).fetchone()
+                    if not _live or _live["review_status"] not in expected_status:
+                        # CAS lost the race — governed_write will rollback on exit.
+                        raise _CASConflict()
+                cur = self._conn.execute(
+                    "UPDATE knowledge SET review_status=? WHERE id=?",
+                    (status, item_id),
+                )
+                _changed = cur.rowcount > 0
+        except _CASConflict:
+            return "conflict"
+        return "updated" if _changed else "not_found"
 
     def update_knowledge_confidence(self, item_id: str, confidence: float,
                                     evidence: dict | None = None) -> bool:
