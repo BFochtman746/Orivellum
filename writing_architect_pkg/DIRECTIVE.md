@@ -5,6 +5,10 @@ governed foundation implemented, tested (12/12), and installable. WR-00
 accepted by Brian Fochtman on 2026-08-02 (`wr00_baseline/WR00_ACCEPTANCE.md`).
 WR-02 research & evidence implemented, tested (16/16 WR-02 + 12/12 WR-01
 regression = **28/28 total**), and exit-condition chain verified.
+WR-03 canon & continuity implemented, tested (19/19 WR-03 + 28/28 prior
+regression = **56/56 total**), exit-condition verified: all five continuity
+validators each catch their seeded defect fixture and produce zero false
+positives on clean data.
 **Authority:** This directive governs the build. It supersedes every "master,"
 "final," "ultimate," and "complete" document in the archive for the purpose of
 *what gets built next*. Those documents remain **source doctrine**, not build
@@ -205,14 +209,30 @@ discipline the system itself enforces.
   question → T2-source → fact-claim → evidence → verifier → accepted-claim
   chain that passes all nine gate checks. Audit chain intact after run.
 
-### WR-03 — Canon & continuity
-- **Entry:** WR-02 exit accepted.
-- **Build:** `canon_entity` / `canon_fact` / `timeline_event` population from
-  Book Bible; continuity validators (age/date conflict, impossible travel,
-  knowledge leak, name drift, object resurrection) as deterministic checks that
-  raise `editorial_finding` rows.
-- **Exit:** the five continuity validators each catch a seeded defect fixture
-  (spec 13.2 continuity family) with 100% recall.
+### WR-03 — Canon & continuity ✅ DONE (2026-08-03)
+
+- **Entry gate:** WR-02 exit accepted.
+- **Built:**
+  - `domain/schema_wr03.sql` — 5 new tables:
+    `entity_alias`, `entity_location`, `knowledge_state`,
+    `contract_knowledge_access`, `chapter_contract_entity_ref`
+  - `domain/db._apply_wr03_migrations()` — idempotent ALTER TABLE additions
+    to `canon_entity` (birth_date, birth_uncertainty, death_date, destruction_date),
+    `canon_fact` (stated_age_years, at_date), `timeline_event` (location)
+  - `domain/continuity.py` — 5 deterministic validators + `run_all_validators()`:
+    - `check_age_date_conflict` — stated age vs birth_date (±5yr tolerance)
+    - `check_impossible_travel` — entity in two locations on same date_ref
+    - `check_knowledge_leak` — POV character accesses knowledge before scene_sequence allows
+    - `check_name_drift` — entity referenced by alias not in `entity_alias`
+    - `check_object_resurrection` — object/person appears after destruction_date/death_date
+  - `_parse_year()` — date parsing for BCE/CE/ISO/approximate/range notation
+  - CLI: `wa entity`, `wa alias`, `wa fact`, `wa entity-location`,
+    `wa knowledge-state`, `wa contract-knowledge`, `wa entity-ref`,
+    `wa continuity-check [--validator NAME]`
+  - `tests/test_wr03.py` — 19 tests (10 validator pairs + 6 CLI + 2 integration + 9 parse_year)
+- **Exit condition verified:** `run_all_validators` on a book with one seeded
+  defect per validator returns `total_findings ≥ 5`; on a clean book returns
+  `total_findings == 0`. All 56 tests (WR-01 + WR-02 + WR-03) pass.
 
 ### WR-04 — Architecture
 - **Entry:** WR-03 exit accepted.

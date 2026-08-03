@@ -16,7 +16,8 @@ import sqlite3
 import uuid
 from datetime import datetime, timezone
 
-_SCHEMA_PATH = os.path.join(os.path.dirname(__file__), "schema.sql")
+_SCHEMA_PATH     = os.path.join(os.path.dirname(__file__), "schema.sql")
+_SCHEMA_WR03_PATH = os.path.join(os.path.dirname(__file__), "schema_wr03.sql")
 
 # Canonical lifecycle (spec 3.2)
 LIFECYCLE = [
@@ -53,12 +54,37 @@ def connect(db_path: str) -> sqlite3.Connection:
     return conn
 
 
+def _apply_wr03_migrations(conn: sqlite3.Connection) -> None:
+    """Add WR-03 columns to existing tables. Idempotent — guards against
+    double-application by catching the OperationalError SQLite raises when
+    a column already exists."""
+    additions = [
+        ("canon_entity",   "birth_date",          "TEXT"),
+        ("canon_entity",   "birth_uncertainty",   "TEXT"),
+        ("canon_entity",   "death_date",          "TEXT"),
+        ("canon_entity",   "destruction_date",    "TEXT"),
+        ("canon_fact",     "stated_age_years",    "INTEGER"),
+        ("canon_fact",     "at_date",             "TEXT"),
+        ("timeline_event", "location",            "TEXT"),
+    ]
+    for table, column, col_type in additions:
+        try:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
+        except sqlite3.OperationalError:
+            pass  # column already exists — idempotent
+    conn.commit()
+
+
 def init_db(db_path: str) -> sqlite3.Connection:
     """Create/upgrade the store and seed lifecycle states. Idempotent."""
     fresh = not os.path.exists(db_path)
     conn = connect(db_path)
     with open(_SCHEMA_PATH, "r", encoding="utf-8") as fh:
         conn.executescript(fh.read())
+    # WR-03: new tables + column additions
+    with open(_SCHEMA_WR03_PATH, "r", encoding="utf-8") as fh:
+        conn.executescript(fh.read())
+    _apply_wr03_migrations(conn)
     # seed lifecycle
     for code, ordinal, name, exit_cond in LIFECYCLE:
         conn.execute(

@@ -32,6 +32,29 @@ WR-02 commands (research & evidence):
                                           Record a conflict between two claims
     wa research-status DB BOOK_ID         Show full research chain summary
     wa demo-wr02 DB BOOK_ID               Seed a complete question→claim→evidence chain
+
+WR-03 commands (canon & continuity):
+    wa entity   DB BOOK_ID --name "Deborah" --kind person
+                            [--birth-date "1200 BCE" --birth-uncertainty "±25yr"
+                             --death-date "..." --destruction-date "..." --actor "..."]
+                                          Register a canon entity
+    wa alias    DB ENTITY_ID --alias "the Judge" [--alias-type title]
+                                          Register an alias for an entity
+    wa fact     DB ENTITY_ID --fact "..." [--time-start "..." --time-end "..."
+                             --stated-age N --at-date "..." --claim CID --actor "..."]
+                                          Create a canon fact (with optional age check data)
+    wa entity-location DB ENTITY_ID --date "1125 BCE" --location "Mount Tabor"
+                            [--scene "Chapter 3"]
+                                          Record where an entity is at a given date
+    wa knowledge-state DB ENTITY_ID --fact "..." --from-scene "Chapter 5" --scene-seq 5
+                            [--source-event "..."]
+                                          Declare what a character knows from a given scene
+    wa contract-knowledge DB CONTRACT_ID --knowledge-state KID --scene-seq 3
+                                          Link a contract to a knowledge state it accesses
+    wa entity-ref DB CONTRACT_ID --entity EID --name-used "the Prophetess"
+                                          Register a name used for an entity in a contract
+    wa continuity-check DB BOOK_ID [--validator NAME]
+                                          Run continuity validators and print JSON report
 """
 from __future__ import annotations
 
@@ -43,6 +66,7 @@ import sys
 from . import __version__
 from .domain import db as dbm
 from .domain import lifecycle, policy
+from .domain import continuity as cont
 from .forensics import baseline
 
 
@@ -709,6 +733,265 @@ def cmd_demo_wr02(args):
     return 0
 
 
+# ─── WR-03 commands ──────────────────────────────────────────────────────────
+
+def cmd_entity(args):
+    """Register a canon entity for a book."""
+    conn = dbm.init_db(args.db)
+    if not conn.execute("SELECT id FROM book_project WHERE id=?",
+                        (args.book,)).fetchone():
+        print(f"error: book {args.book!r} not found", file=sys.stderr)
+        conn.close()
+        return 2
+    eid = dbm.new_id("ce_")
+    now = dbm.now_utc()
+    conn.execute(
+        "INSERT INTO canon_entity"
+        "(id,book_id,kind,name,birth_date,birth_uncertainty,"
+        " death_date,destruction_date,created_utc)"
+        " VALUES (?,?,?,?,?,?,?,?,?)",
+        (eid, args.book, args.kind, args.name,
+         getattr(args, "birth_date", None),
+         getattr(args, "birth_uncertainty", None),
+         getattr(args, "death_date", None),
+         getattr(args, "destruction_date", None),
+         now),
+    )
+    conn.commit()
+    dbm.audit(conn, actor=args.actor or "operator", action="ENTITY_CREATED",
+              object_type="canon_entity", object_id=eid,
+              detail={"name": args.name, "kind": args.kind})
+    conn.close()
+    print(f"created entity {eid}  name={args.name!r}  kind={args.kind}")
+    return 0
+
+
+def cmd_alias(args):
+    """Register an alias for a canon entity."""
+    conn = dbm.init_db(args.db)
+    if not conn.execute("SELECT id FROM canon_entity WHERE id=?",
+                        (args.entity,)).fetchone():
+        print(f"error: entity {args.entity!r} not found", file=sys.stderr)
+        conn.close()
+        return 2
+    aid = dbm.new_id("ea_")
+    now = dbm.now_utc()
+    try:
+        conn.execute(
+            "INSERT INTO entity_alias(id,entity_id,alias,alias_type,created_utc)"
+            " VALUES (?,?,?,?,?)",
+            (aid, args.entity, args.alias, args.alias_type, now),
+        )
+        conn.commit()
+    except Exception as exc:
+        print(f"REFUSED: {exc}", file=sys.stderr)
+        conn.close()
+        return 1
+    dbm.audit(conn, actor="operator", action="ALIAS_REGISTERED",
+              object_type="entity_alias", object_id=aid,
+              detail={"entity": args.entity, "alias": args.alias,
+                      "alias_type": args.alias_type})
+    conn.close()
+    print(f"registered alias {aid}  alias={args.alias!r}  type={args.alias_type}")
+    return 0
+
+
+def cmd_fact(args):
+    """Create a canon fact for an entity (optionally with age-check data)."""
+    conn = dbm.init_db(args.db)
+    if not conn.execute("SELECT id FROM canon_entity WHERE id=?",
+                        (args.entity,)).fetchone():
+        print(f"error: entity {args.entity!r} not found", file=sys.stderr)
+        conn.close()
+        return 2
+    fid = dbm.new_id("cf_")
+    now = dbm.now_utc()
+    conn.execute(
+        "INSERT INTO canon_fact"
+        "(id,entity_id,fact,time_start,time_end,"
+        " stated_age_years,at_date,evidence_claim,created_utc)"
+        " VALUES (?,?,?,?,?,?,?,?,?)",
+        (fid, args.entity, args.fact,
+         getattr(args, "time_start", None),
+         getattr(args, "time_end", None),
+         getattr(args, "stated_age", None),
+         getattr(args, "at_date", None),
+         getattr(args, "claim", None),
+         now),
+    )
+    conn.commit()
+    dbm.audit(conn, actor=args.actor or "operator", action="FACT_CREATED",
+              object_type="canon_fact", object_id=fid,
+              detail={"fact": args.fact[:120]})
+    conn.close()
+    print(f"created fact {fid}")
+    return 0
+
+
+def cmd_entity_location(args):
+    """Record where an entity is at a given date."""
+    conn = dbm.init_db(args.db)
+    if not conn.execute("SELECT id FROM canon_entity WHERE id=?",
+                        (args.entity,)).fetchone():
+        print(f"error: entity {args.entity!r} not found", file=sys.stderr)
+        conn.close()
+        return 2
+    lid = dbm.new_id("el_")
+    now = dbm.now_utc()
+    conn.execute(
+        "INSERT INTO entity_location(id,entity_id,date_ref,location,scene_ref,created_utc)"
+        " VALUES (?,?,?,?,?,?)",
+        (lid, args.entity, args.date, args.location,
+         getattr(args, "scene", None), now),
+    )
+    conn.commit()
+    dbm.audit(conn, actor="operator", action="ENTITY_LOCATION_ADDED",
+              object_type="entity_location", object_id=lid,
+              detail={"entity": args.entity, "date": args.date,
+                      "location": args.location})
+    conn.close()
+    print(f"added location {lid}  {args.date!r} → {args.location!r}")
+    return 0
+
+
+def cmd_knowledge_state(args):
+    """Declare what a character knows from a given scene onward."""
+    conn = dbm.init_db(args.db)
+    if not conn.execute("SELECT id FROM canon_entity WHERE id=?",
+                        (args.entity,)).fetchone():
+        print(f"error: entity {args.entity!r} not found", file=sys.stderr)
+        conn.close()
+        return 2
+    kid = dbm.new_id("ks_")
+    now = dbm.now_utc()
+    conn.execute(
+        "INSERT INTO knowledge_state"
+        "(id,entity_id,fact_description,can_know_from_scene,"
+        " scene_sequence,source_event,created_utc)"
+        " VALUES (?,?,?,?,?,?,?)",
+        (kid, args.entity, args.fact, args.from_scene, args.scene_seq,
+         getattr(args, "source_event", None), now),
+    )
+    conn.commit()
+    dbm.audit(conn, actor="operator", action="KNOWLEDGE_STATE_CREATED",
+              object_type="knowledge_state", object_id=kid,
+              detail={"entity": args.entity, "fact": args.fact[:120],
+                      "from_scene": args.from_scene, "seq": args.scene_seq})
+    conn.close()
+    print(f"created knowledge_state {kid}  available from seq {args.scene_seq}")
+    return 0
+
+
+def cmd_contract_knowledge(args):
+    """Link a chapter contract to a knowledge_state it accesses."""
+    conn = dbm.init_db(args.db)
+    if not conn.execute("SELECT id FROM chapter_contract WHERE id=?",
+                        (args.contract,)).fetchone():
+        print(f"error: contract {args.contract!r} not found", file=sys.stderr)
+        conn.close()
+        return 2
+    if not conn.execute("SELECT id FROM knowledge_state WHERE id=?",
+                        (args.knowledge_state,)).fetchone():
+        print(f"error: knowledge_state {args.knowledge_state!r} not found",
+              file=sys.stderr)
+        conn.close()
+        return 2
+    kid = dbm.new_id("cka_")
+    now = dbm.now_utc()
+    try:
+        conn.execute(
+            "INSERT INTO contract_knowledge_access"
+            "(id,contract_id,knowledge_state_id,scene_sequence,created_utc)"
+            " VALUES (?,?,?,?,?)",
+            (kid, args.contract, args.knowledge_state, args.scene_seq, now),
+        )
+        conn.commit()
+    except Exception as exc:
+        print(f"REFUSED: {exc}", file=sys.stderr)
+        conn.close()
+        return 1
+    dbm.audit(conn, actor="operator", action="CONTRACT_KNOWLEDGE_LINKED",
+              object_type="contract_knowledge_access", object_id=kid,
+              detail={"contract": args.contract,
+                      "knowledge_state": args.knowledge_state,
+                      "scene_seq": args.scene_seq})
+    conn.close()
+    print(f"linked {kid}  contract={args.contract}  seq={args.scene_seq}")
+    return 0
+
+
+def cmd_entity_ref(args):
+    """Register a name used for an entity inside a chapter contract."""
+    conn = dbm.init_db(args.db)
+    if not conn.execute("SELECT id FROM chapter_contract WHERE id=?",
+                        (args.contract,)).fetchone():
+        print(f"error: contract {args.contract!r} not found", file=sys.stderr)
+        conn.close()
+        return 2
+    if not conn.execute("SELECT id FROM canon_entity WHERE id=?",
+                        (args.entity,)).fetchone():
+        print(f"error: entity {args.entity!r} not found", file=sys.stderr)
+        conn.close()
+        return 2
+    rid = dbm.new_id("cer_")
+    now = dbm.now_utc()
+    try:
+        conn.execute(
+            "INSERT INTO chapter_contract_entity_ref"
+            "(id,contract_id,entity_id,name_used,created_utc)"
+            " VALUES (?,?,?,?,?)",
+            (rid, args.contract, args.entity, args.name_used, now),
+        )
+        conn.commit()
+    except Exception as exc:
+        print(f"REFUSED: {exc}", file=sys.stderr)
+        conn.close()
+        return 1
+    dbm.audit(conn, actor="operator", action="ENTITY_REF_REGISTERED",
+              object_type="chapter_contract_entity_ref", object_id=rid,
+              detail={"contract": args.contract, "entity": args.entity,
+                      "name_used": args.name_used})
+    conn.close()
+    print(f"registered entity-ref {rid}  name_used={args.name_used!r}")
+    return 0
+
+
+def cmd_continuity_check(args):
+    """Run continuity validators and print a JSON report."""
+    conn = dbm.init_db(args.db)
+    if not conn.execute("SELECT id FROM book_project WHERE id=?",
+                        (args.book,)).fetchone():
+        print(f"error: book {args.book!r} not found", file=sys.stderr)
+        conn.close()
+        return 2
+
+    validator_map = {
+        "age_date_conflict":   cont.check_age_date_conflict,
+        "impossible_travel":   cont.check_impossible_travel,
+        "knowledge_leak":      cont.check_knowledge_leak,
+        "name_drift":          cont.check_name_drift,
+        "object_resurrection": cont.check_object_resurrection,
+    }
+
+    if args.validator and args.validator not in validator_map:
+        print(f"error: unknown validator {args.validator!r}. "
+              f"Choose from: {', '.join(validator_map)}", file=sys.stderr)
+        conn.close()
+        return 2
+
+    if args.validator:
+        findings = validator_map[args.validator](conn, args.book)
+        result = {args.validator: findings,
+                  "total_findings": len(findings),
+                  "clean": len(findings) == 0}
+    else:
+        result = cont.run_all_validators(conn, args.book)
+
+    conn.close()
+    _p(result)
+    return 0 if result["clean"] else 1
+
+
 # ─── Parser ──────────────────────────────────────────────────────────────────
 
 def build_parser() -> argparse.ArgumentParser:
@@ -848,6 +1131,78 @@ def build_parser() -> argparse.ArgumentParser:
                            help="seed the WR-02 exit-condition chain for Ash and Silence")
     demo2.add_argument("db"); demo2.add_argument("book")
     demo2.set_defaults(func=cmd_demo_wr02)
+
+    # WR-03 ── ────────────────────────────────────────────────────────────────
+
+    ent = sub.add_parser("entity", help="register a canon entity")
+    ent.add_argument("db"); ent.add_argument("book")
+    ent.add_argument("--name", required=True)
+    ent.add_argument("--kind", default="person",
+                     choices=["person","place","object","institution","concept"])
+    ent.add_argument("--birth-date",         dest="birth_date",         default=None)
+    ent.add_argument("--birth-uncertainty",  dest="birth_uncertainty",  default=None)
+    ent.add_argument("--death-date",         dest="death_date",         default=None)
+    ent.add_argument("--destruction-date",   dest="destruction_date",   default=None)
+    ent.add_argument("--actor", default=None)
+    ent.set_defaults(func=cmd_entity)
+
+    al = sub.add_parser("alias", help="register an alias for an entity")
+    al.add_argument("db"); al.add_argument("entity")
+    al.add_argument("--alias", required=True)
+    al.add_argument("--alias-type", dest="alias_type", default="name",
+                    choices=["name","title","epithet","transliteration","nickname"])
+    al.set_defaults(func=cmd_alias)
+
+    ft = sub.add_parser("fact", help="create a canon fact (with optional age data)")
+    ft.add_argument("db"); ft.add_argument("entity")
+    ft.add_argument("--fact", required=True)
+    ft.add_argument("--time-start",  dest="time_start",  default=None)
+    ft.add_argument("--time-end",    dest="time_end",    default=None)
+    ft.add_argument("--stated-age",  dest="stated_age",  type=int, default=None)
+    ft.add_argument("--at-date",     dest="at_date",     default=None)
+    ft.add_argument("--claim",       default=None, help="evidence claim ID")
+    ft.add_argument("--actor",       default=None)
+    ft.set_defaults(func=cmd_fact)
+
+    el = sub.add_parser("entity-location",
+                        help="record where an entity is at a given date")
+    el.add_argument("db"); el.add_argument("entity")
+    el.add_argument("--date",     required=True)
+    el.add_argument("--location", required=True)
+    el.add_argument("--scene",    default=None)
+    el.set_defaults(func=cmd_entity_location)
+
+    ks = sub.add_parser("knowledge-state",
+                        help="declare what a character knows from a given scene")
+    ks.add_argument("db"); ks.add_argument("entity")
+    ks.add_argument("--fact",        required=True)
+    ks.add_argument("--from-scene",  dest="from_scene",  required=True)
+    ks.add_argument("--scene-seq",   dest="scene_seq",   type=int, required=True)
+    ks.add_argument("--source-event",dest="source_event",default=None)
+    ks.set_defaults(func=cmd_knowledge_state)
+
+    ck = sub.add_parser("contract-knowledge",
+                        help="link a contract to a knowledge state it accesses")
+    ck.add_argument("db"); ck.add_argument("contract")
+    ck.add_argument("--knowledge-state", dest="knowledge_state", required=True)
+    ck.add_argument("--scene-seq",       dest="scene_seq",       type=int, required=True)
+    ck.set_defaults(func=cmd_contract_knowledge)
+
+    er = sub.add_parser("entity-ref",
+                        help="register a name used for an entity in a contract")
+    er.add_argument("db"); er.add_argument("contract")
+    er.add_argument("--entity",    required=True)
+    er.add_argument("--name-used", dest="name_used", required=True)
+    er.set_defaults(func=cmd_entity_ref)
+
+    cc = sub.add_parser("continuity-check",
+                        help="run continuity validators and print JSON report")
+    cc.add_argument("db"); cc.add_argument("book")
+    cc.add_argument("--validator", default=None,
+                    choices=["age_date_conflict","impossible_travel",
+                             "knowledge_leak","name_drift","object_resurrection"],
+                    help="run only this validator (default: all five)")
+    cc.set_defaults(func=cmd_continuity_check)
 
     return p
 
