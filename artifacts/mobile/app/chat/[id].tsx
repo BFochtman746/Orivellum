@@ -421,6 +421,55 @@ export default function ChatScreen() {
     }
   };
 
+  // ── Take a photo with the camera ─────────────────────────────────────────
+  const takePhoto = async () => {
+    const { status } = await ImagePicker.requestCameraPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert(
+        'Camera permission needed',
+        'Allow camera access to take a photo and ask the AI about it.'
+      );
+      return;
+    }
+    const result = await ImagePicker.launchCameraAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: false,
+      quality: 0.7,
+      base64: true,
+    });
+    if (!result.canceled && result.assets[0]) {
+      const asset = result.assets[0];
+      setPendingImage({
+        uri: asset.uri,
+        base64: asset.base64 ?? '',
+        mediaType: asset.mimeType ?? 'image/jpeg',
+      });
+    }
+  };
+
+  // ── Show image source picker (library or camera) ──────────────────────────
+  const handleImageAttach = () => {
+    if (Platform.OS === 'ios') {
+      ActionSheetIOS.showActionSheetWithOptions(
+        {
+          options: ['Cancel', 'Photo Library', 'Take Photo'],
+          cancelButtonIndex: 0,
+          title: 'Attach Image',
+        },
+        (idx) => {
+          if (idx === 1) pickImage();
+          else if (idx === 2) takePhoto();
+        }
+      );
+    } else {
+      Alert.alert('Attach Image', 'Choose a source', [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Photo Library', onPress: pickImage },
+        { text: 'Take Photo', onPress: takePhoto },
+      ]);
+    }
+  };
+
   // ── Send message (with optional image) ────────────────────────────────────
   const handleSend = async () => {
     const trimmed = text.trim();
@@ -710,9 +759,9 @@ export default function ChatScreen() {
               {deepMode ? 'Deep' : 'Fast'}
             </Text>
           </Pressable>
-          {/* Image attach button */}
+          {/* Image attach button — opens action sheet: Photo Library or Take Photo */}
           <Pressable
-            onPress={pickImage}
+            onPress={handleImageAttach}
             disabled={sending}
             hitSlop={6}
             style={[

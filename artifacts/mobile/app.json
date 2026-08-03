@@ -16,7 +16,8 @@
     "ios": {
       "supportsTablet": false,
       "infoPlist": {
-        "NSPhotoLibraryAddUsageDescription": "Orivellum saves generated images to your photo library when you tap Save to Photos."
+        "NSPhotoLibraryAddUsageDescription": "Orivellum saves generated images to your photo library when you tap Save to Photos.",
+        "NSCameraUsageDescription": "Orivellum uses your camera so you can photograph a document, whiteboard, or diagram and ask the AI about it."
       }
     },
     "android": {},
@@ -35,7 +36,8 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "Orivellum needs access to your photo library so you can attach images to chat messages and ask the AI about them."
+          "photosPermission": "Orivellum needs access to your photo library so you can attach images to chat messages and ask the AI about them.",
+          "cameraPermission": "Orivellum uses your camera so you can photograph a document, whiteboard, or diagram and ask the AI about it."
         }
       ],
       [
