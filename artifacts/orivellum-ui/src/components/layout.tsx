@@ -762,7 +762,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
           </SheetContent>
 
           {/* Main content */}
-          <main className="flex-1 overflow-auto bg-background selection:bg-primary/20">
+          <main className="flex-1 overflow-hidden bg-background selection:bg-primary/20 flex flex-col">
             {/* Mobile top bar */}
             <div className="lg:hidden flex items-center gap-2 px-4 py-3 border-b border-border/30 bg-background/80 backdrop-blur sticky top-0 z-10">
               <MobileMenuButton />
@@ -809,7 +809,9 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
                 )}
               </button>
             </div>
-            <div className="w-full max-w-[1400px] mx-auto px-6 lg:px-8 py-6 lg:py-8">
+            {/* flex-1 + min-h-0 let full-height pages (chat, write desk) fill the
+                available space; overflow-auto gives normal pages a scrollbar. */}
+            <div className="flex-1 min-h-0 overflow-auto w-full max-w-[1400px] mx-auto px-6 lg:px-8 py-6 lg:py-8 flex flex-col">
               {children}
             </div>
           </main>

@@ -173,8 +173,13 @@ async def test_sources_persisted_on_disconnect():
         ), patch.object(db, "search_chunks", return_value=[]), \
                 patch("httpx.AsyncClient", return_value=mock_client):
             gen = _stream_response(db, conv, "How efficient are rockets?")
-            # Consume the first token so partial reply is buffered, then disconnect
-            await gen.__anext__()
+            # The generator now emits a control event (message_id/state) before the
+            # first token.  Advance past all control events until the first token
+            # event so full_reply has content before we simulate disconnect.
+            for _ in range(15):
+                ev = await gen.__anext__()
+                if '"token"' in ev:
+                    break
             await gen.aclose()
 
         messages = db.get_messages(conv["id"])

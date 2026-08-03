@@ -1078,7 +1078,7 @@ export default function Chat() {
   const conv = activeConv?.conversation;
 
   return (
-    <div className="h-[calc(100vh-6rem)] flex gap-0 md:gap-6 animate-in fade-in duration-500">
+    <div className="flex-1 min-h-0 flex gap-0 md:gap-6 animate-in fade-in duration-500">
       {/* ── Sidebar — full-width on mobile when no conv selected ─────── */}
       <Card className={`flex flex-col shrink-0 rounded-xl overflow-hidden border-border/50 w-full md:w-72 ${activeId ? "hidden md:flex" : "flex"}`}>
         <div className="p-4 border-b border-border/50 bg-muted/10 space-y-3">

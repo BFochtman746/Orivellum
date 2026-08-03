@@ -54,6 +54,8 @@ class AIAssistRequest(BaseModel):
     document_text: str = ""            # full doc plain text for context
     instruction: str = ""              # optional custom instruction (for "ask")
     voice: str = "default"             # tone/style hint
+    image_b64: str | None = None       # base64-encoded image for vision/analysis
+    image_media_type: str = "image/jpeg"
 
 
 # ── Document CRUD ─────────────────────────────────────────────────────────────
@@ -287,6 +289,20 @@ def ai_assist(doc_id: str, body: AIAssistRequest):
     import time as _time
     from orivellum.capabilities.llm import record_llm_call
 
+    # Build user message content — plain text or multimodal (with image)
+    if body.image_b64:
+        _user_content: list | str = [
+            {"type": "text", "text": prompt or "Describe and analyze this image."},
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:{body.image_media_type};base64,{body.image_b64}",
+                },
+            },
+        ]
+    else:
+        _user_content = prompt
+
     def _stream():
         _started = _time.monotonic()
         _ok = True
@@ -300,7 +316,7 @@ def ai_assist(doc_id: str, body: AIAssistRequest):
                     "messages":    [
                         {"role": "system",
                          "content": "You are an expert writing assistant. Follow instructions precisely. Return only what was requested — no preamble, no meta-commentary."},
-                        {"role": "user", "content": prompt},
+                        {"role": "user", "content": _user_content},
                     ],
                     "stream":      True,
                     "max_tokens":  1200,

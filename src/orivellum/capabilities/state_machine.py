@@ -215,7 +215,8 @@ def apply_transition(
 # ---------------------------------------------------------------------------
 
 MESSAGE_SM: StateMachine = StateMachine({
-    MessageState.queued:    {MessageState.running},
+    # queued → failed: pre-stream disconnect before any token arrives
+    MessageState.queued:    {MessageState.running, MessageState.failed},
     MessageState.running:   {MessageState.streaming, MessageState.failed},
     MessageState.streaming: {MessageState.done, MessageState.failed},
     # done and failed are terminal

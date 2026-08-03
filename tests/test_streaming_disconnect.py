@@ -83,10 +83,17 @@ async def test_partial_reply_persisted_on_client_disconnect():
             with patch("httpx.AsyncClient", return_value=mock_client):
                 gen = _stream_response(db, conv, "Say hello")
 
-                # Consume the first SSE event so at least one token is buffered
-                first_event = await gen.__anext__()
-                assert "Hello" in first_event, (
-                    f"First event should contain the first token; got {first_event!r}"
+                # The generator now emits a control event (message_id/state) before
+                # any token.  Advance past all control events until we land on the
+                # first token event so at least one token is buffered in full_reply.
+                first_token_event: str | None = None
+                for _ in range(15):
+                    ev = await gen.__anext__()
+                    if "Hello" in ev:
+                        first_token_event = ev
+                        break
+                assert first_token_event is not None, (
+                    "Expected a 'Hello' token event within the first 15 SSE events"
                 )
 
                 # Simulate client navigating away (disconnect)

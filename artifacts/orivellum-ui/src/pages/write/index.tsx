@@ -42,7 +42,7 @@ import {
   RotateCcw, Maximize2, Minimize2,
   Pin, PinOff, Trash2, Plus, Download,
   ChevronRight, Loader2, MoreHorizontal,
-  BookOpen, MessageSquare,
+  BookOpen, MessageSquare, ImageIcon, X as XIcon,
 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -254,6 +254,8 @@ function AIPanel({
   const [customAsk, setCustomAsk] = useState('');
   const [streaming, setStreaming] = useState(false);
   const [preview, setPreview] = useState('');
+  const [pendingImage, setPendingImage] = useState<{ data: string; type: string } | null>(null);
+  const imgInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
   const abortRef = useRef<AbortController | null>(null);
 
@@ -265,13 +267,28 @@ function AIPanel({
     return { selection, doc };
   }, [editor]);
 
-  const runCommand = useCallback(async (cmd: AICommand, instruction = '') => {
+  const handleImageFile = useCallback((file: File) => {
+    if (!file.type.startsWith('image/')) {
+      toast({ title: 'Not an image', description: 'Please select an image file.', variant: 'destructive' });
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const dataUrl = ev.target?.result as string;
+      const comma = dataUrl.indexOf(',');
+      setPendingImage({ data: dataUrl.slice(comma + 1), type: file.type });
+    };
+    reader.readAsDataURL(file);
+  }, [toast]);
+
+  const runCommand = useCallback(async (cmd: AICommand, instruction = '', imgB64?: string, imgType?: string) => {
     if (!docId || streaming) return;
     const { selection, doc } = getContext();
 
     setActiveCmd(cmd);
     setStreaming(true);
     setPreview('');
+    setPendingImage(null); // clear after sending
 
     const ctrl = new AbortController();
     abortRef.current = ctrl;
@@ -281,7 +298,10 @@ function AIPanel({
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ command: cmd, selection, document_text: doc, instruction }),
+        body: JSON.stringify({
+          command: cmd, selection, document_text: doc, instruction,
+          ...(imgB64 ? { image_b64: imgB64, image_media_type: imgType ?? 'image/jpeg' } : {}),
+        }),
         signal: ctrl.signal,
       });
 
@@ -304,9 +324,12 @@ function AIPanel({
           if (data === '[DONE]') break;
           try {
             const chunk = JSON.parse(data);
-            const token = chunk?.choices?.[0]?.delta?.content ?? '';
-            result += token;
-            setPreview(result);
+            // Handle both our token format and raw OpenAI/Lemonade format
+            const token =
+              chunk?.token ??
+              chunk?.choices?.[0]?.delta?.content ??
+              '';
+            if (token) { result += token; setPreview(result); }
           } catch { /* skip malformed */ }
         }
       }
@@ -408,27 +431,75 @@ function AIPanel({
           ))}
         </div>
 
+        {/* Image preview thumbnail */}
+        {pendingImage && (
+          <div className="flex items-center gap-2 mb-1.5 p-1.5 rounded-lg bg-primary/5 border border-primary/20">
+            <img
+              src={`data:${pendingImage.type};base64,${pendingImage.data}`}
+              alt="Attached"
+              className="h-10 w-10 object-cover rounded border border-border/40 shrink-0"
+            />
+            <span className="text-[11px] text-primary/70 flex-1 truncate">Image attached — ask AI about it</span>
+            <button
+              onClick={() => setPendingImage(null)}
+              className="p-0.5 text-muted-foreground hover:text-destructive transition-colors"
+              title="Remove image"
+            >
+              <XIcon className="w-3 h-3" />
+            </button>
+          </div>
+        )}
+
         {/* Custom ask */}
         <div className="flex gap-1.5">
+          {/* Hidden file input for image upload */}
+          <input
+            ref={imgInputRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) handleImageFile(file);
+              e.target.value = '';
+            }}
+          />
+          {/* Image attach button */}
+          <button
+            type="button"
+            title="Attach image for AI analysis"
+            disabled={streaming}
+            onClick={() => imgInputRef.current?.click()}
+            className={`h-7 w-7 flex items-center justify-center rounded border shrink-0 transition-colors
+              ${pendingImage
+                ? 'border-primary bg-primary/10 text-primary'
+                : 'border-border/50 bg-background text-muted-foreground hover:text-foreground hover:bg-muted/50'
+              } disabled:opacity-40`}
+          >
+            <ImageIcon className="w-3.5 h-3.5" />
+          </button>
           <Input
             value={customAsk}
             onChange={(e) => setCustomAsk(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey && customAsk.trim()) {
+              if (e.key === 'Enter' && !e.shiftKey && (customAsk.trim() || pendingImage)) {
                 e.preventDefault();
-                runCommand('ask', customAsk.trim());
+                runCommand('ask', customAsk.trim(), pendingImage?.data, pendingImage?.type);
                 setCustomAsk('');
               }
             }}
-            placeholder="Ask AI anything about this document… (Enter to send)"
+            placeholder={pendingImage ? 'Ask AI about this image…' : 'Ask AI anything about this document… (Enter to send)'}
             className="h-7 text-xs"
             disabled={streaming}
           />
           <Button
             size="sm"
             className="h-7 px-2.5 shrink-0"
-            disabled={streaming || !customAsk.trim()}
-            onClick={() => { runCommand('ask', customAsk.trim()); setCustomAsk(''); }}
+            disabled={streaming || (!customAsk.trim() && !pendingImage)}
+            onClick={() => {
+              runCommand('ask', customAsk.trim(), pendingImage?.data, pendingImage?.type);
+              setCustomAsk('');
+            }}
           >
             <Sparkles className="w-3 h-3" />
           </Button>
