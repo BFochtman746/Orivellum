@@ -641,7 +641,15 @@ class OrivellumDB:
                     description: str | None = None, meta: dict | None = None) -> dict:
         oid = _uuid()
         now = _now()
-        with self._lock:
+        with self.governed_write(
+            operation="work.created",
+            event_type="work.created",
+            object_id=oid,
+            object_type="work",
+            payload={"work_type": work_type},
+            actor="user",
+            detail=title[:120] if title else None,
+        ):
             self._conn.execute(
                 "INSERT INTO objects(id,type,version,lifecycle,provenance,permissions,created_at,updated_at,created_by) VALUES(?,?,1,'active','{}','{}',?,?,'user')",
                 (oid, "work", now, now),
@@ -650,10 +658,6 @@ class OrivellumDB:
                 "INSERT INTO works(id,title,work_type,description,status,meta) VALUES(?,?,?,?,?,?)",
                 (oid, title, work_type, description, "active", _jdump(meta or {})),
             )
-            self._conn.commit()
-        self.audit("work.created", object_id=oid, object_type="work",
-                   after_hash=hashlib.sha256(f"{title}:{work_type}".encode()).hexdigest(),
-                   detail=title[:120] if title else None)
         return self.get_work(oid)  # type: ignore[return-value]
 
     def update_work(self, work_id: str,
@@ -948,18 +952,27 @@ class OrivellumDB:
     def create_document(self, title: str, source: str | None = None, sha256: str | None = None,
                         kind: str | None = None, work_id: str | None = None,
                         content_path: str | None = None, meta: dict | None = None) -> dict:
-        oid = self._create_object("document", lifecycle="draft")
+        oid = _uuid()
         now = _now()
-        with self._lock:
+        with self.governed_write(
+            operation="document.imported",
+            event_type="document.imported",
+            object_id=oid,
+            object_type="document",
+            payload={"work_id": work_id, "kind": kind, "sha256": sha256},
+            actor="user",
+            detail=(title[:120] if title else source),
+        ):
+            self._conn.execute(
+                """INSERT INTO objects(id,type,version,lifecycle,provenance,permissions,
+                   created_at,updated_at,created_by) VALUES(?,?,1,'draft','{}','{}',?,?,'user')""",
+                (oid, "document", now, now),
+            )
             self._conn.execute(
                 """INSERT INTO documents(id,work_id,title,source,sha256,kind,readiness,
                    content_path,meta,created_at) VALUES(?,?,?,?,?,?,'imported',?,?,?)""",
                 (oid, work_id, title, source, sha256, kind, content_path, _jdump(meta or {}), now),
             )
-            self._conn.commit()
-        self.audit("document.imported", object_id=oid, object_type="document",
-                   after_hash=sha256,
-                   detail=title[:120] if title else source)
         return self.get_document(oid)  # type: ignore[return-value]
 
     def update_document_work(self, doc_id: str, work_id: str | None) -> bool:
@@ -975,22 +988,32 @@ class OrivellumDB:
         return cur.rowcount > 0
 
     def delete_document(self, doc_id: str) -> bool:
+        # Capture title before entering governed_write (read-only, outside TX)
         with self._lock:
-            # Capture title before deletion for audit detail
             _row = self._conn.execute(
                 "SELECT title FROM documents WHERE id=?", (doc_id,)
             ).fetchone()
-            _title = _row["title"] if _row else None
+        if not _row:
+            return False
+        _title = _row["title"]
+        now = _now()
+        # Use governed_write so deletion is audit-logged + outbox-emitted atomically.
+        _deleted = False
+        with self.governed_write(
+            operation="document.deleted",
+            event_type="document.deleted",
+            object_id=doc_id,
+            object_type="document",
+            actor="user",
+            detail=_title,
+        ):
             cur = self._conn.execute("DELETE FROM documents WHERE id=?", (doc_id,))
             self._conn.execute(
                 "UPDATE objects SET lifecycle='deleted', updated_at=? WHERE id=?",
-                (_now(), doc_id),
+                (now, doc_id),
             )
-            self._conn.commit()
-        if cur.rowcount > 0:
-            self.audit("document.deleted", object_id=doc_id, object_type="document",
-                       detail=_title)
-        return cur.rowcount > 0
+            _deleted = cur.rowcount > 0
+        return _deleted
 
     @staticmethod
     def _doc_dict(row: Any) -> dict:
@@ -1658,40 +1681,47 @@ class OrivellumDB:
           {"source": "llm"} to durably mark LLM-extracted items so grouping
           survives after review_status changes to 'approved'/'rejected'.
         """
-        kid = self._create_object("knowledge")
         now = _now()
-        # Dedup by text_hash within same work
+        # Dedup by text_hash within same work (checked before acquiring write lock)
         text_hash = hashlib.sha256(f"{work_id}:{text}".encode()).hexdigest()
         meta_json = _jdump(meta or {})
-        _inserted = False
-        _existing_id: str | None = None
+        # Fast dedup check outside governed_write to avoid holding the write lock
+        # during the SELECT.
         with self._lock:
             existing = self._conn.execute(
                 "SELECT id FROM knowledge WHERE text_hash=? AND work_id IS ?",
                 (text_hash, work_id),
             ).fetchone()
-            if existing:
-                _existing_id = existing["id"]
-            else:
-                self._conn.execute(
-                    """INSERT INTO knowledge(id,work_id,kind,text,subject,predicate,object,
-                       confidence,source_doc_id,source_chunk_id,review_status,meta,
-                       created_at,text_hash)
-                       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                    (kid, work_id, kind, text, subject, predicate, obj, confidence,
-                     source_doc_id, source_chunk_id, review_status, meta_json, now, text_hash),
-                )
-                self._conn.execute(
-                    "INSERT INTO knowledge_fts(knowledge_id,work_id,text,subject,object) VALUES(?,?,?,?,?)",
-                    (kid, work_id, text, subject or "", obj or ""),
-                )
-                self._conn.commit()
-                _inserted = True
-        if _existing_id:
-            return _existing_id
-        if _inserted:
-            self.audit("knowledge.created", object_id=kid, object_type="knowledge",
-                       detail=f"{kind}: {text[:80]}")
+        if existing:
+            return existing["id"]
+        # Not a duplicate — write atomically with audit + outbox.
+        kid = _uuid()
+        with self.governed_write(
+            operation="knowledge.created",
+            event_type="knowledge.created",
+            object_id=kid,
+            object_type="knowledge",
+            payload={"work_id": work_id, "kind": kind, "review_status": review_status},
+            actor="system",
+            detail=f"{kind}: {text[:80]}",
+        ):
+            self._conn.execute(
+                """INSERT INTO objects(id,type,version,lifecycle,provenance,permissions,
+                   created_at,updated_at,created_by) VALUES(?,?,1,'active','{}','{}',?,?,'system')""",
+                (kid, "knowledge", now, now),
+            )
+            self._conn.execute(
+                """INSERT INTO knowledge(id,work_id,kind,text,subject,predicate,object,
+                   confidence,source_doc_id,source_chunk_id,review_status,meta,
+                   created_at,text_hash)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (kid, work_id, kind, text, subject, predicate, obj, confidence,
+                 source_doc_id, source_chunk_id, review_status, meta_json, now, text_hash),
+            )
+            self._conn.execute(
+                "INSERT INTO knowledge_fts(knowledge_id,work_id,text,subject,object) VALUES(?,?,?,?,?)",
+                (kid, work_id, text, subject or "", obj or ""),
+            )
         return kid
 
     def update_knowledge_review_status(self, item_id: str, status: str,
