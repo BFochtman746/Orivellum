@@ -799,7 +799,18 @@ class OrivellumDB:
         return self.get_conversation(cid)  # type: ignore[return-value]
 
     def add_message(self, conv_id: str, role: str, text: str,
-                    meta: dict | None = None) -> dict:
+                    meta: dict | None = None,
+                    state: str = "done") -> dict:
+        """Insert a message and bump the conversation's updated_at.
+
+        Args:
+            conv_id: conversation to append to.
+            role:    "user" or "assistant".
+            text:    message body (may be empty for a pre-created streaming stub).
+            meta:    arbitrary JSON metadata.
+            state:   initial MessageState — defaults to "done" (use "queued"
+                     when pre-creating an assistant stub for a streaming reply).
+        """
         mid = _uuid()
         now = _now()
         _wc = len(text.split()) if text else 0
@@ -808,19 +819,79 @@ class OrivellumDB:
             event_type="message.created",
             object_id=mid,
             object_type="message",
-            payload={"conversation_id": conv_id, "role": role, "word_count": _wc},
+            payload={"conversation_id": conv_id, "role": role,
+                     "word_count": _wc, "state": state},
             actor="user" if role == "user" else "system",
-            detail=f"{role} {_wc}w",
+            detail=f"{role} {state} {_wc}w",
         ):
             self._conn.execute(
-                "INSERT INTO messages(id,conversation_id,role,text,meta,created_at) VALUES(?,?,?,?,?,?)",
-                (mid, conv_id, role, text, _jdump(meta or {}), now),
+                """INSERT INTO messages(id,conversation_id,role,text,meta,created_at,state)
+                   VALUES(?,?,?,?,?,?,?)""",
+                (mid, conv_id, role, text, _jdump(meta or {}), now, state),
             )
             self._conn.execute(
                 "UPDATE conversations SET updated_at=? WHERE id=?", (now, conv_id)
             )
         return {"id": mid, "conversation_id": conv_id, "role": role, "text": text,
-                "meta": meta or {}, "created_at": now}
+                "state": state, "meta": meta or {}, "created_at": now}
+
+    def transition_message(self, msg_id: str, to_state: str) -> None:
+        """Apply a MESSAGE_SM state transition to an existing message.
+
+        Reads the current state, validates via MESSAGE_SM, then atomically
+        records the state change (governed_write: audit + outbox).
+
+        Raises:
+            InvalidTransitionError: if the transition is not in MESSAGE_SM.
+            BlockedTransitionError: if open high/critical findings block it.
+        """
+        from orivellum.capabilities.state_machine import apply_transition, MESSAGE_SM
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT state FROM messages WHERE id=?", (msg_id,)
+            ).fetchone()
+        if not row:
+            return  # message not found — caller already logged it
+        apply_transition(
+            self, MESSAGE_SM,
+            object_id=msg_id,
+            object_type="message",
+            table="messages",
+            state_col="state",
+            from_state=row["state"],
+            to_state=to_state,
+            actor="system",
+            # streaming transitions are never blocked by findings
+            check_blockers=False,
+        )
+
+    def finalize_message(self, msg_id: str, text: str, state: str) -> None:
+        """Write the final text + state to a pre-created assistant message stub.
+
+        Used at the end of the streaming pipeline to atomically commit the
+        full reply text and the terminal state ('done' or 'failed') in one
+        governed_write transaction.
+
+        Does NOT validate via MESSAGE_SM — the caller is responsible for
+        making sure the message is in a state that can reach *state* (i.e.
+        transition_message(msg_id, 'streaming') should have been called first).
+        If the message is not found, the call is a no-op.
+        """
+        now = _now()
+        _wc = len(text.split()) if text else 0
+        with self.governed_write(
+            operation="message.finalized",
+            event_type="message.finalized",
+            object_id=msg_id,
+            object_type="message",
+            payload={"state": state, "word_count": _wc},
+            actor="system",
+            detail=f"{state} {_wc}w",
+        ):
+            self._conn.execute(
+                "UPDATE messages SET text=?, state=? WHERE id=?",
+                (text, state, msg_id),
+            )
 
     def update_conversation(self, conv_id: str, title: str | None = None,
                             archived: bool | None = None,

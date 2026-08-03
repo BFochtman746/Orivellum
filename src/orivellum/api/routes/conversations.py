@@ -700,6 +700,10 @@ async def _stream_response(
     _stream_ok = True
     _stream_err: str | None = None
     _stream_purpose = "chat.stream"
+    # Initialise before the try block so the GeneratorExit handler can always
+    # reference _assist_id even when an early-return path (intent/clarify/council)
+    # fires before the stub is created.
+    _assist_id: str = ""
     try:
         # ── Intent routing — runs before deep mode and normal AI ──────────────
         tool_result = await _maybe_dispatch_intent(db, user_text, cfg.serving.base_url, model)
@@ -784,11 +788,29 @@ async def _stream_response(
                     return
                 # Council failed → fall through to the direct streaming path
 
+        # ── Pre-create assistant message stub (state=queued) ─────────────────
+        # Creating the stub before any AI call means the message is already
+        # in the database even if the client disconnects during streaming.
+        # The message_id is emitted immediately so the client can associate
+        # incoming token SSE events with the right DB row.
+        _assist_meta: dict = {"model": model}
+        _assist_stub = db.add_message(conv_id, "assistant", "", state="queued",
+                                      meta=_assist_meta)
+        _assist_id = _assist_stub["id"]
+        yield f"data: {json.dumps({'message_id': _assist_id, 'state': 'queued'})}\n\n"
+
+        # ── Transition to 'running' — AI call is about to begin ───────────────
+        try:
+            db.transition_message(_assist_id, "running")
+        except Exception:
+            pass  # non-fatal if transition fails; streaming still proceeds
+
         # ── Per-chunk silence timeout ─────────────────────────────────────────
         # If the AI server sends no new token for this long, treat the stream as
         # stalled and close it cleanly. The timeout is enforced per-chunk (not
         # just for the initial connection) using asyncio.wait_for per __anext__.
         _CHUNK_TIMEOUT_SEC = 30
+        _first_token_received = False
 
         try:
             import httpx
@@ -845,11 +867,24 @@ async def _stream_response(
                                             flush = _tag_buf[: len(_tag_buf) - partial]
                                             _tag_buf = _tag_buf[len(_tag_buf) - partial :]
                                             if flush:
+                                                # First real content token — advance to 'streaming'
+                                                if not _first_token_received:
+                                                    _first_token_received = True
+                                                    try:
+                                                        db.transition_message(_assist_id, "streaming")
+                                                    except Exception:
+                                                        pass
                                                 full_reply += flush
                                                 yield f"data: {json.dumps({'token': flush})}\n\n"
                                             break
                                         before = _tag_buf[:idx]
                                         if before:
+                                            if not _first_token_received:
+                                                _first_token_received = True
+                                                try:
+                                                    db.transition_message(_assist_id, "streaming")
+                                                except Exception:
+                                                    pass
                                             full_reply += before
                                             yield f"data: {json.dumps({'token': before})}\n\n"
                                         _in_think = True
@@ -892,13 +927,28 @@ async def _stream_response(
             yield f"data: {json.dumps({'token': full_reply})}\n\n"
 
         # Normal completion path (also reached after AI failure fallback)
+        # Use finalize_message instead of add_message — the stub already exists.
+        _final_state = "done" if _stream_ok else "failed"
+        meta: dict = {"model": model}
+        if thinking_text:
+            meta["thinking"] = thinking_text
+        if sources:
+            meta["sources"] = sources
         if full_reply:
-            meta: dict = {"model": model}
-            if thinking_text:
-                meta["thinking"] = thinking_text
-            if sources:
-                meta["sources"] = sources
-            db.add_message(conv_id, "assistant", full_reply, meta=meta)
+            # Update text + metadata on the stub, then set terminal state
+            with db._lock:
+                db._conn.execute(
+                    "UPDATE messages SET meta=? WHERE id=?",
+                    (json.dumps(meta), _assist_id),
+                )
+                db._conn.commit()
+            db.finalize_message(_assist_id, full_reply, _final_state)
+        else:
+            # No reply at all — just mark the stub as failed
+            try:
+                db.transition_message(_assist_id, "failed")
+            except Exception:
+                pass
         _maybe_auto_title(db, conv, user_text)
         if sources:
             import json as _json
@@ -910,18 +960,28 @@ async def _stream_response(
         # conversation isn't left with only the user turn and no reply.
         _stream_ok = False
         _stream_err = "client_disconnected"
-        if full_reply:
+        if _assist_id:
+            # Stub was created — finalize it with whatever arrived before disconnect.
             try:
-                truncated = full_reply + "\n\n*(Response was cut short — re-send to continue.)*"
-                _meta: dict = {"model": model, "cut_short": True}
-                if thinking_text:
-                    _meta["thinking"] = thinking_text
-                if sources:
-                    _meta["sources"] = sources
-                db.add_message(conv_id, "assistant", truncated, meta=_meta)
+                if full_reply:
+                    truncated = full_reply + "\n\n*(Response was cut short — re-send to continue.)*"
+                    _meta: dict = {"model": model, "cut_short": True}
+                    if thinking_text:
+                        _meta["thinking"] = thinking_text
+                    if sources:
+                        _meta["sources"] = sources
+                    with db._lock:
+                        db._conn.execute(
+                            "UPDATE messages SET meta=? WHERE id=?",
+                            (json.dumps(_meta), _assist_id),
+                        )
+                        db._conn.commit()
+                    db.finalize_message(_assist_id, truncated, "failed")
+                else:
+                    db.transition_message(_assist_id, "failed")
                 _maybe_auto_title(db, conv, user_text)
             except Exception as save_exc:
-                logger.warning("Could not persist partial reply: %s", save_exc)
+                logger.warning("Could not persist partial reply on disconnect: %s", save_exc)
         raise  # Re-raise so the async generator closes properly
 
     finally:
