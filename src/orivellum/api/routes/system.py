@@ -3,10 +3,12 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, BackgroundTasks, Body, HTTPException
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from orivellum.api._deps import get_db, get_config
