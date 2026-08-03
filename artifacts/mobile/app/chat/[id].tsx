@@ -3,7 +3,9 @@ import { mobileFetch } from '@/lib/api';
 import {
   ActionSheetIOS,
   ActivityIndicator,
+  Alert,
   FlatList,
+  Image,
   Modal,
   Platform,
   Pressable,
@@ -14,6 +16,7 @@ import {
   View,
   useColorScheme,
 } from 'react-native';
+import * as ImagePicker from 'expo-image-picker';
 import Markdown from 'react-native-markdown-display';
 import { useColors } from '@/hooks/useColors';
 import { Feather } from '@expo/vector-icons';
@@ -34,7 +37,9 @@ import { OfflineBanner } from '@/components/OfflineBanner';
 
 const LAST_MODEL_KEY = 'orivellum:lastModel';
 
-function MessageBubble({ message, colors, isDark }: { message: Message & { isError?: boolean }; colors: any; isDark: boolean }) {
+type LocalMessage = Message & { isError?: boolean; localImageUri?: string };
+
+function MessageBubble({ message, colors, isDark }: { message: LocalMessage; colors: any; isDark: boolean }) {
   const isUser = message.role === 'user';
   const isErr = (message as any).isError;
   const textColor = isUser ? colors.primaryForeground : isErr ? colors.mutedForeground : colors.foreground;
@@ -160,14 +165,28 @@ function MessageBubble({ message, colors, isDark }: { message: Message & { isErr
           ]}
         >
           {isUser || isErr ? (
-            <Text
-              style={[
-                styles.bubbleText,
-                { color: textColor, fontStyle: isErr ? 'italic' : 'normal' },
-              ]}
-            >
-              {message.text}
-            </Text>
+            <>
+              {/* Attached image thumbnail (user messages only) */}
+              {isUser && (message as LocalMessage).localImageUri ? (
+                <Image
+                  source={{ uri: (message as LocalMessage).localImageUri }}
+                  style={{ width: 180, height: 180, borderRadius: 8, marginBottom: message.text && message.text !== '[Image attached]' ? 6 : 0 }}
+                  resizeMode="cover"
+                />
+              ) : null}
+              {/* Show text only when it's not the bare placeholder */}
+              {(!isUser || (message.text && message.text !== '[Image attached]')) && (
+                <Text
+                  style={[
+                    styles.bubbleText,
+                    { color: textColor, fontStyle: isErr ? 'italic' : 'normal' },
+                  ]}
+                >
+                  {/* Strip "[Image] " prefix for display */}
+                  {isUser ? message.text?.replace(/^\[Image\] /, '') : message.text}
+                </Text>
+              )}
+            </>
           ) : (
             <>
               {!!(message as any).meta?.thinking && (
@@ -276,11 +295,17 @@ export default function ChatScreen() {
 
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
-  const [localMessages, setLocalMessages] = useState<(Message & { isError?: boolean })[]>([]);
+  const [localMessages, setLocalMessages] = useState<LocalMessage[]>([]);
   const [initialized, setInitialized] = useState(false);
   const [sendFailed, setSendFailed] = useState(false);
   const [modelPickerVisible, setModelPickerVisible] = useState(false);
   const [deepMode, setDeepMode] = useState(false);
+  // Image attachment state
+  const [pendingImage, setPendingImage] = useState<{
+    uri: string;
+    base64: string;
+    mediaType: string;
+  } | null>(null);
 
   const { data, isLoading, isError, refetch } = useGetConversation(id, { query: { staleTime: 10_000 } } as any);
   const conversation = data?.conversation;
@@ -370,20 +395,59 @@ export default function ChatScreen() {
 
   const displayMessages = [...localMessages].reverse();
 
+  // ── Pick an image from the photo library ──────────────────────────────────
+  const pickImage = async () => {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert(
+        'Permission needed',
+        'Allow access to your photo library to attach images to chat.'
+      );
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: false,
+      quality: 0.7,
+      base64: true,
+    });
+    if (!result.canceled && result.assets[0]) {
+      const asset = result.assets[0];
+      setPendingImage({
+        uri: asset.uri,
+        base64: asset.base64 ?? '',
+        mediaType: asset.mimeType ?? 'image/jpeg',
+      });
+    }
+  };
+
+  // ── Send message (with optional image) ────────────────────────────────────
   const handleSend = async () => {
     const trimmed = text.trim();
-    if (!trimmed || sending) return;
+    // Allow send with image even when text is empty
+    if ((!trimmed && !pendingImage) || sending) return;
 
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setText('');
     setSendFailed(false);
 
-    const userMsg: Message = {
+    // Capture and clear pending image before the async path
+    const imageToSend = pendingImage;
+    setPendingImage(null);
+
+    // Build display text for the optimistic message
+    const displayText = imageToSend
+      ? (trimmed ? `[Image] ${trimmed}` : '[Image attached]')
+      : trimmed;
+
+    const userMsg: LocalMessage = {
       id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
       conversation_id: id,
       role: 'user',
-      text: trimmed,
+      text: displayText,
       created_at: new Date().toISOString(),
+      // Keep local URI for thumbnail display; never sent to server
+      localImageUri: imageToSend?.uri,
     };
 
     setLocalMessages((prev) => [...prev, userMsg]);
@@ -392,27 +456,49 @@ export default function ChatScreen() {
     try {
       const domain = process.env.EXPO_PUBLIC_DOMAIN;
       const url = `https://${domain}/api/conversations/${id}/messages`;
+      const payload: Record<string, unknown> = {
+        text: trimmed || (imageToSend ? 'What is in this image?' : ''),
+        stream: false,
+        deep: deepMode,
+      };
+      if (imageToSend?.base64) {
+        payload.image_b64 = imageToSend.base64;
+        payload.image_media_type = imageToSend.mediaType;
+      }
       const resp = await mobileFetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: trimmed, stream: false, deep: deepMode }),
+        body: JSON.stringify(payload),
       });
 
-      if (!resp.ok) throw new Error(`Server returned ${resp.status}`);
+      if (!resp.ok) {
+        // Try to surface a helpful message for vision failures
+        let errText = `Server returned ${resp.status}`;
+        try {
+          const errBody = await resp.json();
+          errText = errBody?.detail ?? errText;
+        } catch { /* ignore */ }
+        throw new Error(errText);
+      }
       const body = await resp.json();
       const aiMsg: Message = body.message;
       if (aiMsg) {
         setLocalMessages((prev) => [...prev, aiMsg]);
       }
     } catch (err) {
-      const isNetworkError =
-        err instanceof TypeError && err.message.toLowerCase().includes('network');
-      const errMsg: Message & { isError: boolean } = {
+      const msg = err instanceof Error ? err.message : '';
+      const isNetworkError = err instanceof TypeError && msg.toLowerCase().includes('network');
+      const isVisionError = msg.toLowerCase().includes('vision') ||
+        msg.toLowerCase().includes('multimodal') ||
+        msg.toLowerCase().includes('image');
+      const errMsg: LocalMessage = {
         id: Date.now().toString() + 'err',
         conversation_id: id,
         role: 'assistant',
         text: isNetworkError
           ? 'Cannot reach the server. Check your connection and try again.'
+          : isVisionError
+          ? 'This model does not support images. Set a vision-capable model in System Settings (e.g. llava, qwen2-vl).'
           : 'Something went wrong sending your message. Please try again.',
         created_at: new Date().toISOString(),
         isError: true,
@@ -583,6 +669,26 @@ export default function ChatScreen() {
             },
           ]}
         >
+          {/* Pending image preview strip */}
+          {pendingImage ? (
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6, gap: 8 }}>
+              <Image
+                source={{ uri: pendingImage.uri }}
+                style={{ width: 56, height: 56, borderRadius: 8, borderWidth: 1, borderColor: colors.border }}
+                resizeMode="cover"
+              />
+              <Pressable
+                onPress={() => setPendingImage(null)}
+                hitSlop={8}
+                style={{ backgroundColor: colors.muted, borderRadius: 12, padding: 3 }}
+              >
+                <Feather name="x" size={12} color={colors.mutedForeground} />
+              </Pressable>
+            </View>
+          ) : null}
+
+          {/* Row: deep toggle + image button + input + send */}
+          <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 6 }}>
           {/* Deep mode toggle */}
           <Pressable
             onPress={() => setDeepMode((d) => !d)}
@@ -598,6 +704,24 @@ export default function ChatScreen() {
             <Text style={[styles.deepToggleText, { color: deepMode ? colors.primary : colors.mutedForeground }]}>
               {deepMode ? 'Deep' : 'Fast'}
             </Text>
+          </Pressable>
+          {/* Image attach button */}
+          <Pressable
+            onPress={pickImage}
+            disabled={sending}
+            hitSlop={6}
+            style={[
+              styles.deepToggle,
+              pendingImage
+                ? { backgroundColor: colors.primary + '18', borderColor: colors.primary + '44' }
+                : { backgroundColor: colors.muted, borderColor: colors.border },
+            ]}
+          >
+            <Feather
+              name="image"
+              size={14}
+              color={pendingImage ? colors.primary : colors.mutedForeground}
+            />
           </Pressable>
           <TextInput
             ref={inputRef}
@@ -622,12 +746,12 @@ export default function ChatScreen() {
           />
           <Pressable
             onPress={handleSend}
-            disabled={!text.trim() || sending || (isError && !initialized)}
+            disabled={(!text.trim() && !pendingImage) || sending || (isError && !initialized)}
             style={({ pressed }) => [
               styles.sendBtn,
               {
                 backgroundColor:
-                  text.trim() && !sending && (!isError || initialized)
+                  (text.trim() || pendingImage) && !sending && (!isError || initialized)
                     ? colors.primary : colors.muted,
                 opacity: pressed ? 0.7 : 1,
               },
@@ -637,12 +761,13 @@ export default function ChatScreen() {
               name="arrow-up"
               size={20}
               color={
-                text.trim() && !sending && (!isError || initialized)
+                (text.trim() || pendingImage) && !sending && (!isError || initialized)
                   ? colors.primaryForeground
                   : colors.mutedForeground
               }
             />
           </Pressable>
+          </View>{/* end row */}
         </View>
       </View>
     </KeyboardAvoidingView>
@@ -724,9 +849,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 40,
   },
   inputBar: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    gap: 10,
+    flexDirection: 'column',
     paddingHorizontal: 12,
     paddingTop: 10,
     borderTopWidth: 1,
