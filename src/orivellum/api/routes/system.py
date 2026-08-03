@@ -702,6 +702,91 @@ def governance_outbox(pending_only: bool = True, limit: int = 100):
     return {"events": events, "count": len(events), "pending_only": pending_only}
 
 
+@router.get("/governance/findings")
+def governance_list_findings(
+    object_id: str | None = None,
+    state: str | None = None,
+    severity: str | None = None,
+    limit: int = 100,
+):
+    """List governance findings, optionally filtered by object, state, or severity.
+
+    Query params:
+        object_id: restrict to findings on this object
+        state:     "open" or "resolved" (default: both)
+        severity:  comma-separated severities, e.g. "high,critical"
+        limit:     max rows (capped at 500)
+    """
+    db = get_db()
+    min_severity: tuple | None = None
+    if severity:
+        min_severity = tuple(s.strip() for s in severity.split(",") if s.strip())
+    findings = db.list_findings(
+        object_id=object_id,
+        state=state,
+        min_severity=min_severity or None,
+        limit=min(limit, 500),
+    )
+    return {"findings": findings, "count": len(findings)}
+
+
+class FindingCreateBody(BaseModel):
+    object_id: str
+    object_type: str = "unknown"
+    description: str
+    kind: str = "issue"
+    severity: str = "high"
+
+
+@router.post("/governance/findings", status_code=201)
+def governance_create_finding(body: FindingCreateBody):
+    """Create a governance finding (blocker) on an object.
+
+    A finding with severity ``high`` or ``critical`` will block forward
+    state-machine transitions on *object_id* until it is resolved.
+    """
+    db = get_db()
+    valid_severities = {"info", "warning", "high", "critical"}
+    if body.severity not in valid_severities:
+        raise HTTPException(400, f"severity must be one of {sorted(valid_severities)}")
+    fid = db.create_finding(
+        object_id=body.object_id,
+        object_type=body.object_type,
+        description=body.description,
+        kind=body.kind,
+        severity=body.severity,
+    )
+    finding = db.get_finding(fid)
+    return finding
+
+
+@router.get("/governance/findings/{finding_id}")
+def governance_get_finding(finding_id: str):
+    """Return a single finding by id."""
+    db = get_db()
+    finding = db.get_finding(finding_id)
+    if not finding:
+        raise HTTPException(404, "Finding not found")
+    return finding
+
+
+@router.patch("/governance/findings/{finding_id}/resolve")
+def governance_resolve_finding(finding_id: str):
+    """Resolve (close) an open governance finding.
+
+    Once resolved, the finding no longer blocks state-machine transitions.
+    Returns the updated finding.
+    """
+    db = get_db()
+    finding = db.get_finding(finding_id)
+    if not finding:
+        raise HTTPException(404, "Finding not found")
+    if finding["state"] == "resolved":
+        return finding  # idempotent — already resolved
+    db.resolve_finding(finding_id, resolved_by="user")
+    return db.get_finding(finding_id)
+
+
 @router.get("/governance/pending")
 def governance_pending(limit: int = 100):
     """Return AI-auto knowledge items awaiting human review, across all Works."""
