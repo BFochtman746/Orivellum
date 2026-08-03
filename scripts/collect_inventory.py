@@ -66,15 +66,39 @@ try {
   $cpu  = Get-CimInstance Win32_Processor | Select-Object -First 1
   $cs   = Get-CimInstance Win32_ComputerSystem
   $mems = Get-CimInstance Win32_PhysicalMemory
-  $gpu  = Get-CimInstance Win32_VideoController | Select-Object -First 1
+
+  # Skip virtual/remote display adapters (Parsec, VMware, Citrix, RDP, etc.)
+  # and pick the first real physical GPU.
+  $virtualKeywords = @('parsec','vmware','citrix','remote','virtual','indirect','basic render',
+                       'microsoft basic','rdp','spice','vnc','teamviewer')
+  $allGpus = Get-CimInstance Win32_VideoController
+  $realGpu = $allGpus | Where-Object {
+    $n = $_.Name.ToLower()
+    $isVirtual = $false
+    foreach ($kw in $virtualKeywords) { if ($n -like "*$kw*") { $isVirtual = $true; break } }
+    -not $isVirtual
+  } | Select-Object -First 1
+  if (-not $realGpu) { $realGpu = $allGpus | Select-Object -First 1 }
+
   $os   = Get-CimInstance Win32_OperatingSystem
   $bios = Get-CimInstance Win32_BIOS
   $disk = Get-CimInstance Win32_DiskDrive
 
+  # RAM note: on unified-memory / UMA architecture (AMD Ryzen AI MAX, Apple Silicon, etc.)
+  # Win32_ComputerSystem.TotalPhysicalMemory returns OS-available memory AFTER the
+  # firmware/GPU reserves its share — it under-reports installed DRAM significantly.
+  # Win32_PhysicalMemory.Capacity sum is the authoritative installed-DRAM figure.
+  $dimmSum = ($mems | Measure-Object -Property Capacity -Sum).Sum
+
   @{
     cpu  = @{ Name=$cpu.Name; Cores=$cpu.NumberOfCores; Threads=$cpu.NumberOfLogicalProcessors; MaxMHz=$cpu.MaxClockSpeed }
-    mem  = @{ TotalBytes=$cs.TotalPhysicalMemory; DimmSum=($mems | Measure-Object -Property Capacity -Sum).Sum }
-    gpu  = @{ Name=$gpu.Name; Processor=$gpu.VideoProcessor }
+    mem  = @{
+      # Prefer DIMM sum as the installed-memory figure (correct on UMA).
+      # Keep OS total as a secondary corroboration source.
+      DimmSum      = $dimmSum
+      OsVisibleBytes = $cs.TotalPhysicalMemory
+    }
+    gpu  = @{ Name=$realGpu.Name; Processor=$realGpu.VideoProcessor }
     os   = @{ Caption=$os.Caption; Version=$os.Version; Build=$os.BuildNumber }
     bios = @{ Mfr=$bios.Manufacturer; Ver=$bios.SMBIOSBIOSVersion }
     disk = @{ TotalBytes=($disk | Measure-Object -Property Size -Sum).Sum }
@@ -115,12 +139,20 @@ def _collect_windows() -> dict:
             "MaxClockSpeed": cpu.get("MaxMHz"),
         }
 
-    # RAM — two sources (primary + DIMM sum corroboration)
+    # RAM — DIMM sum is the authoritative installed-DRAM figure on UMA systems.
+    # Win32_ComputerSystem.TotalPhysicalMemory under-reports on AMD Ryzen AI MAX /
+    # Apple Silicon because GPU firmware reserves memory before the OS sees it.
+    # We store DimmSum as TotalPhysicalMemory (installed) and OsVisibleBytes as
+    # the secondary corroboration source.
     mem = data.get("mem") or {}
-    if mem.get("TotalBytes"):
+    dimm_sum = mem.get("DimmSum") or 0
+    os_visible = mem.get("OsVisibleBytes") or 0
+    if dimm_sum or os_visible:
+        primary = dimm_sum if dimm_sum else os_visible
         result["memory"] = {
-            "TotalPhysicalMemory": mem["TotalBytes"],
-            "PhysicalMemoryCapacitySum": mem.get("DimmSum") or mem["TotalBytes"],
+            "TotalPhysicalMemory": primary,           # installed DRAM (DIMM sum)
+            "PhysicalMemoryCapacitySum": dimm_sum or primary,
+            "OsVisibleMemory": os_visible,            # informational: post-firmware
         }
 
     # GPU — NO AdapterRAM (INV-REQ-001)
@@ -273,20 +305,75 @@ def _collect_linux() -> dict:
 
 _LEMONADE_PORTS = [13305, 11434, 8080, 1234]
 
+# Lemonade and Ollama expose memory through different paths depending on version.
+# We try all known paths; first non-empty result wins.
+_VRAM_PATHS = [
+    "/api/memory",            # Lemonade ≥0.13 standard
+    "/v1/memory",             # alternate prefix
+    "/api/v1/memory",         # alternate prefix
+    "/memory",                # bare path
+    "/info",                  # some Lemonade builds return {vram_total, vram_free}
+    "/api/info",
+    "/api/status",
+]
 
-def _probe_vram() -> dict:
-    """Probe the Lemonade/Ollama API for usable VRAM (A0 ground-truth source)."""
+
+def _parse_vram_response(data: dict) -> tuple[int, int] | None:
+    """Try all known field names from various Lemonade/Ollama memory responses.
+    Returns (total_bytes, free_bytes) or None.
+    """
+    candidates = [
+        ("total",       "free"),
+        ("vram_total",  "vram_free"),
+        ("totalMemory", "freeMemory"),
+        ("total_memory","free_memory"),
+        ("gpu_memory",  "gpu_memory_free"),
+    ]
+    for total_key, free_key in candidates:
+        if total_key in data and data[total_key]:
+            total = int(data[total_key])
+            free  = int(data.get(free_key, 0))
+            if total > 1_000_000:   # sanity: must be at least 1 MB
+                return total, free
+    return None
+
+
+def _probe_vram(manual_gib: float | None = None) -> dict:
+    """Probe the Lemonade/Ollama API for usable VRAM (A0 ground-truth source).
+
+    If manual_gib is set (from --vram-gb flag), skip the probe and record that
+    value directly as a user-supplied measurement.
+    """
+    if manual_gib is not None:
+        total_bytes = int(manual_gib * 1_073_741_824)
+        print(f"  VRAM: manual override → {manual_gib:.0f} GiB (user-supplied)")
+        return {
+            "source": "user_supplied",
+            "total_bytes": total_bytes,
+            "free_bytes": 0,
+        }
+
     for port in _LEMONADE_PORTS:
-        data = _probe_api(f"http://localhost:{port}/api/memory")
-        if data and data.get("total"):
-            print(f"  VRAM: Lemonade on port {port} → "
-                  f"{data['total'] / (1024**3):.0f} GiB (A0)")
-            return {
-                "source": f"lemonade_api:{port}",
-                "total_bytes": int(data["total"]),
-                "free_bytes": int(data.get("free", 0)),
-            }
-    print("  VRAM: no runtime API reachable — marking UNAVAILABLE")
+        for path in _VRAM_PATHS:
+            data = _probe_api(f"http://localhost:{port}{path}", timeout=2)
+            if not data:
+                continue
+            parsed = _parse_vram_response(data)
+            if parsed:
+                total, free = parsed
+                gib = total / (1024 ** 3)
+                print(f"  VRAM: port {port}{path} → {gib:.0f} GiB (A0)")
+                return {
+                    "source": f"lemonade_api:{port}",
+                    "total_bytes": total,
+                    "free_bytes": free,
+                }
+
+    # Fallback: detect UMA architecture from CPU name and suggest --vram-gb
+    print("  VRAM: no runtime memory API found on any port.")
+    print("        If this is a UMA system (AMD Ryzen AI MAX+, Apple Silicon),")
+    print("        re-run with --vram-gb <N> to record the configured allocation.")
+    print("        e.g. --vram-gb 96   (for a 128 GiB system with 96 GiB GPU allocation)")
     return {"source": "unavailable"}
 
 
@@ -304,7 +391,7 @@ def _probe_models() -> list[str]:
 
 # ── Main ───────────────────────────────────────────────────────────────────────
 
-def build_payload(subject: str) -> dict:
+def build_payload(subject: str, vram_gib: float | None = None) -> dict:
     """Collect hardware facts and return the inventory payload dict."""
     system = platform.system()
     is_wsl = "microsoft" in platform.uname().release.lower() if hasattr(platform, "uname") else False
@@ -341,7 +428,7 @@ def build_payload(subject: str) -> dict:
         print(f"  Disk: {tb:.1f} TiB")
 
     # VRAM and models (platform-independent API probes)
-    vram = _probe_vram()
+    vram = _probe_vram(manual_gib=vram_gib)
     models = _probe_models()
 
     return {
@@ -407,11 +494,14 @@ def main():
                         help="API key / session secret (or set ORIVELLUM_API_KEY env var)")
     parser.add_argument("--subject", default="device:a01",
                         help="Canonical device identifier (default: device:a01)")
+    parser.add_argument("--vram-gb", type=float, default=None,
+                        help="Override VRAM size in GiB (use when the API probe fails). "
+                             "For AMD Ryzen AI MAX+ 395 with 128 GiB: typically 96.")
     parser.add_argument("--dry-run", action="store_true",
                         help="Print the JSON payload without posting it")
     args = parser.parse_args()
 
-    payload = build_payload(args.subject)
+    payload = build_payload(args.subject, vram_gib=args.vram_gb)
 
     if args.dry_run:
         print("\n── DRY RUN — payload (not posted) ──────────────────────────────")
