@@ -899,4 +899,49 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         );
         CREATE INDEX IF NOT EXISTS rd_until ON review_deferrals(deferred_until)
     """),
+
+    # ── Sovereign Platform M0.1 — governed data foundation ──────────────────
+
+    # v55 — Hash-chain columns on audit_log.
+    # Every new audit row stores the previous row's row_hash (prev_hash) and
+    # its own hash (row_hash = sha256(prev_hash | operation | object_id |
+    # detail | timestamp | id)).  Rows written before v55 have NULL hashes and
+    # are skipped by verify_audit_chain().
+    (55, "Add hash-chain columns to audit_log (prev_hash, row_hash)", """
+        ALTER TABLE audit_log ADD COLUMN prev_hash TEXT;
+        ALTER TABLE audit_log ADD COLUMN row_hash  TEXT;
+        CREATE INDEX IF NOT EXISTS audit_row_hash ON audit_log(row_hash)
+    """),
+
+    # v56 — Transactional outbox.
+    # Every governed write emits an outbox event in the same SQLite transaction
+    # as the domain change and the audit row.  A lightweight dispatcher marks
+    # events dispatched_at once they have been forwarded (e.g. to SSE or a
+    # background queue).
+    (56, "Add transactional outbox table", """
+        CREATE TABLE IF NOT EXISTS outbox (
+            id            TEXT PRIMARY KEY,
+            event_type    TEXT NOT NULL,
+            object_id     TEXT,
+            object_type   TEXT,
+            payload       TEXT NOT NULL DEFAULT '{}',
+            created_at    TEXT NOT NULL,
+            dispatched_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS outbox_pending ON outbox(created_at)
+            WHERE dispatched_at IS NULL;
+        CREATE INDEX IF NOT EXISTS outbox_created ON outbox(created_at)
+    """),
+
+    # v57 — Optimistic-concurrency version columns on key aggregates.
+    # conversations, messages, documents, and knowledge all gain a version
+    # integer (DEFAULT 1).  Works already have a version column via the
+    # objects table.  Callers that want optimistic concurrency pass
+    # expected_version; db helpers raise VersionConflictError on mismatch.
+    (57, "Add version column to conversations, messages, documents, knowledge", """
+        ALTER TABLE conversations ADD COLUMN version INTEGER NOT NULL DEFAULT 1;
+        ALTER TABLE messages      ADD COLUMN version INTEGER NOT NULL DEFAULT 1;
+        ALTER TABLE documents     ADD COLUMN version INTEGER NOT NULL DEFAULT 1;
+        ALTER TABLE knowledge     ADD COLUMN version INTEGER NOT NULL DEFAULT 1
+    """),
 ]

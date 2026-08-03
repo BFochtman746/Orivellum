@@ -16,11 +16,38 @@ import logging
 import sqlite3
 import threading
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Generator
 
 from .schema import MIGRATIONS
+
+
+# ---------------------------------------------------------------------------
+# Governed-core exceptions (Sovereign Platform M0.1)
+# ---------------------------------------------------------------------------
+
+class VersionConflictError(Exception):
+    """Raised when an optimistic-concurrency update is attempted with a stale
+    expected_version.  The caller should re-fetch the object and retry.
+
+    Attributes:
+        object_id: the primary key of the row that conflicted.
+        expected: the version the caller believed was current.
+        actual: the version actually stored in the DB (may be None if the
+                row no longer exists).
+    """
+
+    def __init__(self, object_id: str, expected: int | None,
+                 actual: int | None) -> None:
+        super().__init__(
+            f"Version conflict on {object_id!r}: "
+            f"expected {expected}, got {actual}"
+        )
+        self.object_id = object_id
+        self.expected = expected
+        self.actual = actual
 
 logger = logging.getLogger(__name__)
 
@@ -167,6 +194,215 @@ class OrivellumDB:
     # Audit log
     # -------------------------------------------------------------------------
 
+    # =========================================================================
+    # Governed-core — M0.1 (Sovereign Platform)
+    # =========================================================================
+
+    def _audit_tx(
+        self,
+        operation: str,
+        object_id: str | None = None,
+        object_type: str | None = None,
+        actor: str = "system",
+        result: str = "ok",
+        detail: str | None = None,
+        before_hash: str | None = None,
+        after_hash: str | None = None,
+    ) -> str:
+        """Insert one hash-chained audit row WITHOUT committing.
+
+        Must be called with ``self._lock`` already held and inside an open
+        transaction (i.e. inside a ``governed_write`` block or an explicit
+        ``with self._lock:`` context).  Returns the new row's ``row_hash``
+        so callers can thread it through if needed.
+
+        Chain formula::
+            row_hash = sha256(prev_hash | operation | object_id | detail | timestamp | id)
+
+        Rows written before schema v55 have NULL ``row_hash`` / ``prev_hash``
+        and are skipped by :meth:`verify_audit_chain`.
+        """
+        entry_id = _uuid()
+        now = _now()
+        prev_row = self._conn.execute(
+            "SELECT row_hash FROM audit_log "
+            "WHERE row_hash IS NOT NULL "
+            "ORDER BY timestamp DESC, id DESC LIMIT 1"
+        ).fetchone()
+        prev_hash = prev_row["row_hash"] if prev_row else "0" * 64
+        chain_data = "|".join([
+            prev_hash, operation, object_id or "", detail or "", now, entry_id
+        ])
+        row_hash = hashlib.sha256(chain_data.encode()).hexdigest()
+        self._conn.execute(
+            """INSERT INTO audit_log(id, timestamp, actor, operation,
+               object_id, object_type, before_hash, after_hash,
+               result, detail, app_version, prev_hash, row_hash)
+               VALUES(?,?,?,?,?,?,?,?,?,?,'0.1.0',?,?)""",
+            (entry_id, now, actor, operation, object_id, object_type,
+             before_hash, after_hash, result, detail, prev_hash, row_hash),
+        )
+        return row_hash
+
+    def _emit_outbox_tx(
+        self,
+        event_type: str,
+        object_id: str | None = None,
+        object_type: str | None = None,
+        payload: dict | None = None,
+    ) -> None:
+        """Insert one outbox event WITHOUT committing.
+
+        Must be called with ``self._lock`` held inside an open transaction.
+        """
+        self._conn.execute(
+            """INSERT INTO outbox(id, event_type, object_id, object_type,
+               payload, created_at)
+               VALUES(?,?,?,?,?,?)""",
+            (_uuid(), event_type, object_id, object_type,
+             json.dumps(payload or {}), _now()),
+        )
+
+    @contextmanager
+    def governed_write(
+        self,
+        *,
+        operation: str,
+        event_type: str,
+        object_id: str | None = None,
+        object_type: str | None = None,
+        payload: dict | None = None,
+        actor: str = "system",
+        detail: str | None = None,
+    ) -> Generator[None, None, None]:
+        """Context manager for atomic domain-change + audit + outbox writes.
+
+        Acquires the DB lock, yields so the caller can execute domain SQL
+        (without committing), then on successful exit inserts one audit row
+        and one outbox event and commits everything in a single transaction.
+        On any exception the transaction is rolled back and the exception is
+        re-raised unchanged.
+
+        **The caller must NOT call** ``self._conn.commit()`` inside the
+        ``with`` block — ``governed_write`` is the only committer.
+
+        Example::
+            with db.governed_write(
+                operation="work.updated",
+                event_type="work.updated",
+                object_id=wid,
+                object_type="work",
+                payload={"fields": ["title"]},
+                detail="title",
+            ):
+                db._conn.execute("UPDATE works SET title=? WHERE id=?", (t, wid))
+                db._conn.execute("UPDATE objects SET version=version+1 WHERE id=?", (wid,))
+                # no commit here — governed_write commits for you
+
+        Raises:
+            VersionConflictError: if the caller raises it inside the block
+                (the transaction is rolled back before re-raising).
+            Any other exception from domain SQL is also rolled back and
+                re-raised.
+        """
+        with self._lock:
+            try:
+                yield
+                self._audit_tx(operation, object_id, object_type,
+                               actor=actor, detail=detail)
+                self._emit_outbox_tx(event_type, object_id, object_type,
+                                     payload or {})
+                self._conn.commit()
+            except Exception:
+                try:
+                    self._conn.rollback()
+                except Exception:
+                    pass
+                raise
+
+    def verify_audit_chain(self) -> tuple[bool, str]:
+        """Walk every hash-chained audit row and verify the chain is intact.
+
+        Rows written before schema v55 (``row_hash IS NULL``) are skipped so
+        that pre-existing data does not cause false failures.
+
+        Returns:
+            ``(True, "")`` if the chain is intact.
+            ``(False, reason)`` if any link is broken or a hash does not match.
+        """
+        with self._lock:
+            rows = self._conn.execute(
+                """SELECT id, timestamp, operation, object_id, detail,
+                          prev_hash, row_hash
+                   FROM audit_log
+                   WHERE row_hash IS NOT NULL
+                   ORDER BY timestamp ASC, id ASC"""
+            ).fetchall()
+        expected_prev = "0" * 64
+        for r in rows:
+            # Verify stored prev_hash chains to the last seen row_hash.
+            stored_prev = r["prev_hash"] or ("0" * 64)
+            if stored_prev != expected_prev:
+                return (
+                    False,
+                    f"Chain break at audit row {r['id']!r}: "
+                    f"stored prev_hash={stored_prev[:12]}… "
+                    f"expected={expected_prev[:12]}…",
+                )
+            # Verify row_hash was computed correctly.
+            chain_data = "|".join([
+                stored_prev, r["operation"], r["object_id"] or "",
+                r["detail"] or "", r["timestamp"], r["id"],
+            ])
+            expected_hash = hashlib.sha256(chain_data.encode()).hexdigest()
+            if r["row_hash"] != expected_hash:
+                return (
+                    False,
+                    f"Hash mismatch at audit row {r['id']!r}: "
+                    f"stored={r['row_hash'][:12]}… "
+                    f"computed={expected_hash[:12]}…",
+                )
+            expected_prev = r["row_hash"]
+        return True, ""
+
+    def list_outbox(
+        self,
+        pending_only: bool = True,
+        limit: int = 200,
+    ) -> list[dict]:
+        """Return outbox events, newest first.
+
+        Args:
+            pending_only: when True (default) only return undispatched events
+                (``dispatched_at IS NULL``).
+        """
+        q = "SELECT * FROM outbox"
+        if pending_only:
+            q += " WHERE dispatched_at IS NULL"
+        q += " ORDER BY created_at DESC LIMIT ?"
+        with self._lock:
+            rows = self._conn.execute(q, (limit,)).fetchall()
+        return [dict(r) for r in rows]
+
+    def dispatch_outbox_event(self, event_id: str) -> bool:
+        """Mark one outbox event as dispatched (idempotent).
+
+        Returns True if the row existed and was updated, False otherwise.
+        """
+        now = _now()
+        with self._lock:
+            cur = self._conn.execute(
+                "UPDATE outbox SET dispatched_at=? "
+                "WHERE id=? AND dispatched_at IS NULL",
+                (now, event_id),
+            )
+            self._conn.commit()
+        return cur.rowcount > 0
+
+    # =========================================================================
+    # End governed-core
+    # =========================================================================
+
     def audit(
         self,
         operation: str,
@@ -178,24 +414,25 @@ class OrivellumDB:
         before_hash: str | None = None,
         after_hash: str | None = None,
     ) -> None:
-        """Append a single audit-log entry.  Never raises — audit failures are
-        logged as warnings, never allowed to break the calling operation."""
+        """Append a single hash-chained audit-log entry and commit.
+
+        This is the standalone (auto-committing) variant.  Code that already
+        holds the lock and is building an atomic transaction should call
+        :meth:`_audit_tx` directly instead.
+
+        Never raises — audit failures are logged as warnings so they cannot
+        break the calling operation.
+        """
         try:
-            entry_id = _uuid()
-            now = _now()
             with self._lock:
-                self._conn.execute(
-                    """INSERT INTO audit_log(id, timestamp, actor, operation,
-                       object_id, object_type, before_hash, after_hash,
-                       result, detail, app_version)
-                       VALUES(?,?,?,?,?,?,?,?,?,?,'0.1.0')""",
-                    (entry_id, now, actor, operation, object_id,
-                     object_type, before_hash, after_hash, result, detail),
+                self._audit_tx(
+                    operation, object_id, object_type,
+                    actor=actor, result=result, detail=detail,
+                    before_hash=before_hash, after_hash=after_hash,
                 )
                 self._conn.commit()
         except Exception as exc:
-            import logging as _log
-            _log.getLogger(__name__).warning("audit write failed: %s", exc)
+            logger.warning("audit write failed: %s", exc)
 
     def list_audit_log(
         self,
@@ -419,7 +656,23 @@ class OrivellumDB:
                    detail=title[:120] if title else None)
         return self.get_work(oid)  # type: ignore[return-value]
 
-    def update_work(self, work_id: str, **kwargs: Any) -> dict | None:
+    def update_work(self, work_id: str,
+                    expected_version: int | None = None,
+                    **kwargs: Any) -> dict | None:
+        """Update mutable fields on a work.
+
+        Args:
+            work_id: the work to update.
+            expected_version: when supplied, the current ``objects.version``
+                must equal this value or :exc:`VersionConflictError` is raised
+                and nothing is written.  The version is incremented on every
+                successful update.
+            **kwargs: field / value pairs to update (allowed: title,
+                description, status, meta).
+
+        Returns:
+            The refreshed work dict, or None if the work does not exist.
+        """
         now = _now()
         allowed = {"title", "description", "status", "meta"}
         updates = {k: v for k, v in kwargs.items() if k in allowed and v is not None}
@@ -429,32 +682,26 @@ class OrivellumDB:
             updates["meta"] = _jdump(updates["meta"])
         set_clause = ", ".join(f"{k}=?" for k in updates)
         vals = list(updates.values()) + [work_id]
-        _before_row: dict | None = None
-        _rowcount = 0
-        with self._lock:
-            _br = self._conn.execute(
-                "SELECT title, status, description, meta FROM works WHERE id=?", (work_id,)
-            ).fetchone()
-            if _br:
-                _before_row = {"title": _br["title"], "status": _br["status"],
-                               "description": _br["description"], "meta": _br["meta"]}
-            cur = self._conn.execute(f"UPDATE works SET {set_clause} WHERE id=?", vals)
-            _rowcount = cur.rowcount
-            self._conn.execute("UPDATE objects SET updated_at=? WHERE id=?", (now, work_id))
-            self._conn.commit()
-        if _rowcount > 0 and _before_row is not None:
-            _bh = hashlib.sha256(json.dumps(_before_row, sort_keys=True).encode()).hexdigest()
-            # Fetch the same canonical fields AFTER the update for a comparable after-hash
-            with self._lock:
-                _ar = self._conn.execute(
-                    "SELECT title, status, description, meta FROM works WHERE id=?", (work_id,)
+        with self.governed_write(
+            operation="work.updated",
+            event_type="work.updated",
+            object_id=work_id,
+            object_type="work",
+            payload={"fields": list(updates.keys())},
+            detail=",".join(updates.keys()),
+        ):
+            if expected_version is not None:
+                row = self._conn.execute(
+                    "SELECT version FROM objects WHERE id=?", (work_id,)
                 ).fetchone()
-            _after_row = {"title": _ar["title"], "status": _ar["status"],
-                          "description": _ar["description"], "meta": _ar["meta"]} if _ar else {}
-            _ah = hashlib.sha256(json.dumps(_after_row, sort_keys=True).encode()).hexdigest()
-            self.audit("work.updated", object_id=work_id, object_type="work",
-                       before_hash=_bh, after_hash=_ah,
-                       detail=",".join(updates.keys()))
+                actual = row["version"] if row else None
+                if actual != expected_version:
+                    raise VersionConflictError(work_id, expected_version, actual)
+            self._conn.execute(f"UPDATE works SET {set_clause} WHERE id=?", vals)
+            self._conn.execute(
+                "UPDATE objects SET updated_at=?, version=version+1 WHERE id=?",
+                (now, work_id),
+            )
         return self.get_work(work_id)
 
     def delete_work(self, work_id: str) -> bool:
@@ -550,7 +797,22 @@ class OrivellumDB:
 
     def update_conversation(self, conv_id: str, title: str | None = None,
                             archived: bool | None = None,
-                            model: str | None = None) -> dict | None:
+                            model: str | None = None,
+                            expected_version: int | None = None) -> dict | None:
+        """Update mutable fields on a conversation.
+
+        Args:
+            conv_id: the conversation to update.
+            title: new display title, or None to leave unchanged.
+            archived: True/False to archive/unarchive, or None to leave unchanged.
+            model: model attribution string, or None to leave unchanged.
+            expected_version: when supplied, the current ``conversations.version``
+                must equal this value or :exc:`VersionConflictError` is raised
+                and nothing is written.  The version is incremented on success.
+
+        Returns:
+            The refreshed conversation dict, or None if it does not exist.
+        """
         now = _now()
         updates: dict[str, Any] = {"updated_at": now}
         if title is not None:
@@ -559,18 +821,40 @@ class OrivellumDB:
             updates["archived"] = 1 if archived else 0
         if model is not None:
             updates["model"] = model
-        set_clause = ", ".join(f"{k}=?" for k in updates)
-        vals = list(updates.values()) + [conv_id]
-        _rowcount = 0
-        with self._lock:
-            cur = self._conn.execute(f"UPDATE conversations SET {set_clause} WHERE id=?", vals)
-            _rowcount = cur.rowcount
-            self._conn.commit()
-        if _rowcount > 0:
-            meaningful = {k: v for k, v in updates.items() if k != "updated_at"}
-            if meaningful:
-                self.audit("conversation.updated", object_id=conv_id, object_type="conversation",
-                           detail=",".join(meaningful.keys()))
+        meaningful = {k: v for k, v in updates.items() if k != "updated_at"}
+        if not meaningful and expected_version is None:
+            # Nothing to do — skip the governed write entirely.
+            with self._lock:
+                self._conn.execute(
+                    f"UPDATE conversations SET updated_at=? WHERE id=?",
+                    (now, conv_id),
+                )
+                self._conn.commit()
+            return self.get_conversation(conv_id)
+        updates["version"] = None  # placeholder; actual bump done via SQL below
+        set_clause = ", ".join(
+            (f"{k}=?" if k != "version" else "version=version+1")
+            for k in updates
+        )
+        vals = [v for k, v in updates.items() if k != "version"] + [conv_id]
+        with self.governed_write(
+            operation="conversation.updated",
+            event_type="conversation.updated",
+            object_id=conv_id,
+            object_type="conversation",
+            payload={"fields": list(meaningful.keys())},
+            detail=",".join(meaningful.keys()) or None,
+        ):
+            if expected_version is not None:
+                row = self._conn.execute(
+                    "SELECT version FROM conversations WHERE id=?", (conv_id,)
+                ).fetchone()
+                actual = row["version"] if row else None
+                if actual != expected_version:
+                    raise VersionConflictError(conv_id, expected_version, actual)
+            self._conn.execute(
+                f"UPDATE conversations SET {set_clause} WHERE id=?", vals
+            )
         return self.get_conversation(conv_id)
 
     def delete_conversation(self, conv_id: str) -> bool:
