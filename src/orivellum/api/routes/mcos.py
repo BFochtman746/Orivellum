@@ -378,6 +378,8 @@ def list_regressions(limit: int = Query(20, ge=1, le=200)):
             # Prefer the version recorded on the run (may differ from current).
             entry["prompt_version"] = meta.get("prompt_version") or \
                 (pinfo or {}).get("version")
+            # Slot lets governance tell apart chat.base vs harvest.extract, etc.
+            entry["prompt_slot"] = meta.get("prompt_slot")
         out.append(entry)
     return {"regressions": out}
 

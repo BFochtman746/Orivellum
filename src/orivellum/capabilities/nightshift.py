@@ -531,27 +531,48 @@ def _pass_mcos(db: "OrivellumDB", cfg: "OrivellumConfig", report: list[str]) -> 
         if regressions:
             report.append("⚠ MCOS regressions: " + "; ".join(regressions))
 
-        # ── Nightly prompt health (active chat.base) ────────────────────────
+        # ── Nightly prompt health (all registered slots) ─────────────────────
+        # run_prompt_health(db, cfg) with no slot argument returns a list of
+        # per-slot result dicts — one entry per PROMPT_SLOTS entry.
+        # Benchmarkable slots (chat.base) run suites and detect regressions.
+        # Non-benchmarkable slots (harvest.extract, mcos.judge) get structural
+        # validation only and are reported as "skipped (not benchmarkable)".
         # Wrapped independently so a health-pass failure never breaks the rest
         # of the MCOS pass or nightshift; a report line is appended either way.
         try:
             if ai_ok:
                 from orivellum.capabilities.mcos import run_prompt_health
-                hr = run_prompt_health(db, cfg)
-                if hr.get("ok") and hr.get("runs"):
-                    cur = hr.get("current_agg")
-                    cur_str = f"{cur:.2f}" if cur is not None else "n/a"
-                    report.append(
-                        f"Prompt health — '{hr.get('prompt_name')}' "
-                        f"v{hr.get('prompt_version')}: {cur_str} "
-                        f"({len(hr['runs'])} suite run(s))")
-                    if hr.get("regressed"):
+                health_results = run_prompt_health(db, cfg)   # returns list[dict]
+                for hr in health_results:
+                    label = hr.get("prompt_name") or hr.get("slot_label") or hr.get("slot", "?")
+                    ver = hr.get("prompt_version")
+                    ver_str = f" v{ver}" if ver is not None else ""
+                    if hr.get("skipped"):
+                        # Non-benchmarkable slot — structural validation result.
+                        reason = hr.get("reason", "not benchmarkable")
+                        ok_flag = "✓" if hr.get("ok") else "⚠"
                         report.append(
-                            f"⚠ Prompt health regression: "
-                            f"'{hr.get('prompt_name')}' v{hr.get('prompt_version')} "
-                            f"Δ{hr.get('delta')}")
-                elif hr.get("reason"):
-                    report.append(f"Prompt health: skipped ({hr['reason']})")
+                            f"Prompt health — '{label}'{ver_str}: "
+                            f"{ok_flag} {reason} (not benchmarkable)")
+                        if not hr.get("ok"):
+                            # Broken template/empty prompt — flag prominently.
+                            report.append(
+                                f"⚠ Prompt content issue in '{hr.get('slot')}': "
+                                f"{reason}")
+                    elif not hr.get("ok"):
+                        report.append(
+                            f"Prompt health — '{hr.get('slot_label', hr.get('slot'))}': "
+                            f"skipped ({hr.get('reason', 'unknown')})")
+                    else:
+                        cur = hr.get("current_agg")
+                        cur_str = f"{cur:.2f}" if cur is not None else "n/a"
+                        report.append(
+                            f"Prompt health — '{label}'{ver_str}: "
+                            f"{cur_str} ({len(hr['runs'])} suite run(s))")
+                        if hr.get("regressed"):
+                            report.append(
+                                f"⚠ Prompt health regression: "
+                                f"'{label}'{ver_str} Δ{hr.get('delta')}")
             else:
                 report.append("Prompt health: skipped (AI unreachable)")
         except Exception as exc:

@@ -902,32 +902,83 @@ def _prev_prompt_health_aggregate(db: Any, slot: str,
     return (sum(vals) / len(vals)) if vals else None
 
 
-def run_prompt_health(db: Any, cfg: Any) -> dict:
-    """Nightly health check for the ACTIVE chat.base prompt.
+def _validate_nonbenchmarkable_slot(slot: str, content: str) -> tuple[bool, str]:
+    """Structural validation for slots that cannot be benchmarked with suites.
 
-    Runs every enabled llm suite with the active prompt as a system preamble,
-    tagging each run meta with ``prompt_health``/``prompt_id``/``prompt_version``
-    (and a shared ``prompt_health_session`` timestamp).  These carry a
-    ``prompt_id`` so they are already excluded from normal regression baselines.
+    Returns ``(ok, reason)``.  A False result means the prompt content is
+    broken in a detectable way (empty, or missing required placeholders).
+    This is the only quality signal available for these slots at nightly time.
 
-    Compares the current session's aggregate avg against the previous nightly
-    session's aggregate for the same slot; a drop > 0.15 flags
-    ``prompt_health_regressed=true`` on the FINAL run of the set and emits a
-    ``prompt_regression`` audit.  Returns a summary dict.
+    Checks per slot:
+      * harvest.extract — must contain ``{title}`` and ``{chunk}`` and be
+        syntactically valid as a ``str.format()`` template.
+      * mcos.judge     — must be non-empty (used verbatim; no placeholders).
+      * Any unknown slot — non-empty check only.
     """
-    slot = "chat.base"
+    if not content or not content.strip():
+        return False, "empty prompt"
+    if slot == "harvest.extract":
+        if "{title}" not in content:
+            return False, "missing {title} placeholder"
+        if "{chunk}" not in content:
+            return False, "missing {chunk} placeholder"
+        try:
+            content.format(title="t", chunk="c")
+        except (KeyError, ValueError, IndexError) as exc:
+            return False, f"template format error: {exc}"
+    return True, "content valid"
+
+
+def _run_prompt_health_for_slot(db: Any, cfg: Any, slot: str) -> dict:
+    """Run the prompt health check for a single named ``slot``.
+
+    For **benchmarkable** slots (``chat.base``): runs every enabled llm suite
+    with the active prompt as the system preamble, compares the session's
+    aggregate avg_score against the prior nightly session for the same slot,
+    and flags ``prompt_health_regressed=true`` (with a ``prompt_regression``
+    audit) when the drop exceeds 0.15.
+
+    For **non-benchmarkable** slots (``harvest.extract``, ``mcos.judge``):
+    performs structural validation only — no benchmark runs are created.  The
+    returned dict carries ``skipped=True`` and a ``reason`` of ``"content
+    valid"`` (or an error description); regressions are never flagged for these
+    slots because suite-score comparison is not meaningful.
+
+    Returns a per-slot summary dict that always contains at minimum:
+        ok, slot, slot_label, runs (list), prompt_name, prompt_version
+    Benchmarkable slots also carry: current_agg, prev_agg, delta, regressed,
+        flagged_run_id.
+    Non-benchmarkable slots also carry: skipped=True, reason.
+    """
+    slot_info = PROMPT_SLOTS.get(slot, {"label": slot, "benchmarkable": False})
+    slot_label = slot_info["label"]
+
     with db._lock:
         active = db._conn.execute(
             "SELECT id, name, content, version FROM prompts "
             "WHERE slot=? AND active=1 LIMIT 1", (slot,),
         ).fetchone()
     if active is None:
-        return {"ok": False, "reason": "no active chat.base prompt", "runs": []}
+        return {"ok": False, "slot": slot, "slot_label": slot_label,
+                "reason": f"no active {slot} prompt", "runs": []}
     active = dict(active)
 
+    # ── Non-benchmarkable: structural validation only ─────────────────────────
+    if not slot_info.get("benchmarkable"):
+        ok, reason = _validate_nonbenchmarkable_slot(slot, active["content"])
+        return {
+            "ok": ok, "slot": slot, "slot_label": slot_label,
+            "prompt_name": active["name"], "prompt_version": active["version"],
+            "skipped": True,
+            "reason": reason,
+            "runs": [],
+        }
+
+    # ── Benchmarkable: run suites ────────────────────────────────────────────
     suites = _enabled_llm_benchmarks(db)
     if not suites:
-        return {"ok": False, "reason": "no enabled llm suites", "runs": []}
+        return {"ok": False, "slot": slot, "slot_label": slot_label,
+                "reason": "no enabled llm suites", "runs": []}
 
     session = _now()
     run_ids: list[str] = []
@@ -987,17 +1038,56 @@ def run_prompt_health(db: Any, cfg: Any) -> dict:
                 object_id=flagged_id or run_ids[-1],
                 object_type="eval_run",
                 actor="mcos", result="warn",
-                detail=(f"prompt='{active['name']}' v{active['version']} "
+                detail=(f"slot={slot} prompt='{active['name']}' v{active['version']} "
                         f"nightly avg {current_agg:.4f} vs prev {prev_agg:.4f} "
                         f"(delta={delta}, dropped > 0.15){note}"),
             )
         except Exception as exc:  # never let governance logging strand the pass
             logger.warning("prompt_regression audit failed: %s", exc)
 
-    return {"ok": True, "runs": run_ids, "current_agg": current_agg,
-            "prev_agg": prev_agg, "delta": delta, "regressed": regressed,
-            "flagged_run_id": flagged_id,
-            "prompt_name": active["name"], "prompt_version": active["version"]}
+    return {
+        "ok": True, "slot": slot, "slot_label": slot_label,
+        "runs": run_ids, "current_agg": current_agg,
+        "prev_agg": prev_agg, "delta": delta, "regressed": regressed,
+        "flagged_run_id": flagged_id,
+        "prompt_name": active["name"], "prompt_version": active["version"],
+    }
+
+
+def run_prompt_health(db: Any, cfg: Any,
+                      slot: str | None = None) -> dict | list[dict]:
+    """Nightly health check for active prompts.
+
+    When ``slot`` is given, runs the health check for that single slot and
+    returns a single result dict (backward-compatible with the original API).
+
+    When ``slot`` is ``None`` (the default, used by nightshift), iterates
+    every registered slot in ``PROMPT_SLOTS`` that has an active prompt and
+    returns a **list** of per-slot result dicts — one entry per slot checked,
+    in PROMPT_SLOTS definition order.
+
+    Each result dict always contains: ok, slot, slot_label, runs (list),
+    prompt_name (when an active prompt exists), prompt_version.
+    Benchmarkable slots additionally carry: current_agg, prev_agg, delta,
+    regressed, flagged_run_id.
+    Non-benchmarkable slots additionally carry: skipped=True, reason.
+    """
+    if slot is not None:
+        return _run_prompt_health_for_slot(db, cfg, slot)
+
+    # Iterate ALL registered slots; each runs independently.
+    results: list[dict] = []
+    for s in PROMPT_SLOTS:
+        try:
+            results.append(_run_prompt_health_for_slot(db, cfg, s))
+        except Exception as exc:
+            logger.warning("prompt health check failed for slot %s: %s", s, exc)
+            results.append({
+                "ok": False, "slot": s,
+                "slot_label": PROMPT_SLOTS[s]["label"],
+                "reason": f"error: {exc}", "runs": [],
+            })
+    return results
 
 
 def _finalize_run(db: Any, run_id: str, *, status: str, avg_score: float | None,
