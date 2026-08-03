@@ -480,6 +480,8 @@ export default function ChatScreen() {
         } catch { /* ignore */ }
         throw new Error(errText);
       }
+      // Also check for a 200 vision-not-supported marker (future-proofing)
+      // Primary detection is via 422 + VISION_NOT_SUPPORTED prefix above.
       const body = await resp.json();
       const aiMsg: Message = body.message;
       if (aiMsg) {
@@ -488,9 +490,12 @@ export default function ChatScreen() {
     } catch (err) {
       const msg = err instanceof Error ? err.message : '';
       const isNetworkError = err instanceof TypeError && msg.toLowerCase().includes('network');
-      const isVisionError = msg.toLowerCase().includes('vision') ||
+      // Backend returns VISION_NOT_SUPPORTED prefix via HTTP 422 when the
+      // configured model rejects image input — match it reliably.
+      const isVisionError = msg.startsWith('VISION_NOT_SUPPORTED') ||
+        msg.toLowerCase().includes('vision') ||
         msg.toLowerCase().includes('multimodal') ||
-        msg.toLowerCase().includes('image');
+        msg.toLowerCase().includes('does not support image');
       const errMsg: LocalMessage = {
         id: Date.now().toString() + 'err',
         conversation_id: id,

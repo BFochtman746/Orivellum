@@ -229,9 +229,11 @@ async def send_message(conv_id: str, body: MessageSend):
             # Council failed → fall through to direct single call
 
         # "direct" or council/classify fallback
-        reply = await _call_ai(messages, model=model, db=db)
+        _ai_fn = _call_ai_vision if body.image_b64 else _call_ai
+        reply = await _ai_fn(messages, model=model, db=db)
     else:
-        reply = await _call_ai(messages, model=model, db=db)
+        _ai_fn = _call_ai_vision if body.image_b64 else _call_ai
+        reply = await _ai_fn(messages, model=model, db=db)
 
     ns_meta: dict = {"model": model}
     if ns_sources:
@@ -525,6 +527,58 @@ async def _call_ai(messages: list[dict], model: str, db: Any = None) -> str:
         timeout=cfg.serving.timeout_sec, purpose="chat", db=db,
     )
     if not result.ok or result.text is None:
+        return _UNAVAILABLE
+    return result.text
+
+
+# Keywords that local model servers (Ollama, LM Studio, llama.cpp) include in
+# their error payloads when a non-vision model receives an image message.
+_VISION_ERROR_HINTS = (
+    "does not support image", "not multimodal", "multimodal not",
+    "vision not", "not support vision", "image input", "image_url",
+    "does not support vision", "images are not", "image is not",
+    "unsupported content type", "unsupported message content",
+)
+
+
+def _is_vision_error(error: str | None) -> bool:
+    """Return True when an LLM error string indicates vision is unsupported."""
+    if not error:
+        return False
+    low = error.lower()
+    # 4xx HTTP errors from the model server while an image was in the payload
+    # are almost always "model doesn't support vision"; capture them too.
+    if "400" in low or "422" in low or "unsupported" in low:
+        return True
+    return any(hint in low for hint in _VISION_ERROR_HINTS)
+
+
+async def _call_ai_vision(messages: list[dict], model: str, db: Any = None) -> str:
+    """Like _call_ai but raises HTTP 422 when the model rejects image input.
+
+    Used only for the non-streaming path when the request contains an image.
+    The 422 lets clients (mobile, web) detect the failure reliably and show
+    an actionable message rather than the generic "AI unavailable" text.
+    """
+    from starlette.concurrency import run_in_threadpool
+    from orivellum.capabilities.llm import llm_call
+
+    cfg = get_config()
+    result = await run_in_threadpool(
+        llm_call, messages,
+        base_url=cfg.serving.base_url, model=model,
+        timeout=cfg.serving.timeout_sec, purpose="chat", db=db,
+    )
+    if not result.ok or result.text is None:
+        if _is_vision_error(result.error):
+            raise HTTPException(
+                422,
+                detail=(
+                    "VISION_NOT_SUPPORTED: The configured model does not support "
+                    "image input. Set a vision-capable model in System Settings "
+                    f"(e.g. llava, qwen2-vl, llama3.2-vision). Model: {model}"
+                ),
+            )
         return _UNAVAILABLE
     return result.text
 
