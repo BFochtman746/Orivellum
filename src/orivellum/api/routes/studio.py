@@ -610,11 +610,57 @@ async def _try_a1111(client, body: ImageGenRequest) -> dict | None:
     return None
 
 
-async def _try_comfyui(client, body: ImageGenRequest) -> dict | None:
-    """ComfyUI — basic txt2img via the prompt API."""
+def _is_comfyui_url(url: str) -> bool:
+    """Return True when a URL looks like a ComfyUI endpoint.
+
+    Heuristics: port 8188, or the string 'comfyui' in the URL.
+    This lets users paste http://172.20.205.199:8188 into the custom URL field
+    and have it automatically routed to the ComfyUI API rather than the
+    OpenAI-compat /images/generations endpoint (which ComfyUI does not support).
+    """
+    low = url.lower()
+    return ":8188" in low or "comfyui" in low
+
+
+async def _try_comfyui(client, body: ImageGenRequest,
+                       base_url: str = "http://localhost:8188") -> dict | None:
+    """ComfyUI — txt2img via the /prompt API.
+
+    Works with any ComfyUI instance; ``base_url`` defaults to localhost but
+    accepts any http://host:port (e.g. http://172.20.205.199:8188 for WSL
+    rootless-podman setups where localhost-forwarding is not available).
+
+    Loads the checkpoint named in the DB setting ``comfyui_checkpoint``
+    (default: v1-5-pruned-emaonly.ckpt) so users can switch models without
+    editing code.
+    """
+    base = base_url.rstrip("/")
     try:
-        # Minimal workflow: KSampler → VAE decode → save
-        import json as _json, uuid as _uuid
+        import uuid as _uuid
+        import asyncio
+
+        # Resolve checkpoint from DB setting (best-effort; never blocks gen)
+        checkpoint = "v1-5-pruned-emaonly.ckpt"
+        try:
+            from orivellum.api._deps import get_db as _get_db
+            _db = _get_db()
+            ckpt_setting = _db.get_setting("comfyui_checkpoint", "")
+            if ckpt_setting:
+                checkpoint = ckpt_setting
+            else:
+                # Auto-detect: ask ComfyUI which checkpoints are installed
+                obj_resp = await client.get(f"{base}/object_info/CheckpointLoaderSimple",
+                                            timeout=3)
+                if obj_resp.status_code == 200:
+                    info = obj_resp.json()
+                    avail = (info.get("CheckpointLoaderSimple", {})
+                             .get("input", {}).get("required", {})
+                             .get("ckpt_name", [[]])[0])
+                    if avail:
+                        checkpoint = avail[0]
+        except Exception:
+            pass
+
         client_id = str(_uuid.uuid4())
         workflow = {
             "3": {"class_type": "KSampler", "inputs": {
@@ -623,46 +669,49 @@ async def _try_comfyui(client, body: ImageGenRequest) -> dict | None:
                 "denoise": 1, "model": ["4", 0],
                 "positive": ["6", 0], "negative": ["7", 0], "latent_image": ["5", 0]}},
             "4": {"class_type": "CheckpointLoaderSimple",
-                  "inputs": {"ckpt_name": "v1-5-pruned-emaonly.ckpt"}},
+                  "inputs": {"ckpt_name": checkpoint}},
             "5": {"class_type": "EmptyLatentImage",
                   "inputs": {"width": body.width, "height": body.height, "batch_size": 1}},
             "6": {"class_type": "CLIPTextEncode",
                   "inputs": {"text": body.prompt, "clip": ["4", 1]}},
             "7": {"class_type": "CLIPTextEncode",
-                  "inputs": {"text": body.negative_prompt or "", "clip": ["4", 1]}},
+                  "inputs": {"text": body.negative_prompt or "blurry, low quality",
+                             "clip": ["4", 1]}},
             "8": {"class_type": "VAEDecode",
                   "inputs": {"samples": ["3", 0], "vae": ["4", 2]}},
             "9": {"class_type": "SaveImage",
                   "inputs": {"filename_prefix": "orivellum", "images": ["8", 0]}},
         }
         r = await client.post(
-            "http://localhost:8188/prompt",
+            f"{base}/prompt",
             json={"prompt": workflow, "client_id": client_id},
-            timeout=5,
+            timeout=10,
         )
         if r.status_code != 200:
+            logger.debug("ComfyUI /prompt rejected (%s): %s", r.status_code, r.text[:200])
             return None
         prompt_id = r.json().get("prompt_id")
-        # Poll for result (max 90s)
-        import asyncio
-        for _ in range(30):
+        if not prompt_id:
+            return None
+        # Poll for result (max 120s — large models can be slow)
+        for _ in range(40):
             await asyncio.sleep(3)
-            hr = await client.get(f"http://localhost:8188/history/{prompt_id}", timeout=5)
+            hr = await client.get(f"{base}/history/{prompt_id}", timeout=5)
             if hr.status_code == 200:
                 hist = hr.json().get(prompt_id, {})
                 outputs = hist.get("outputs", {})
                 for node_out in outputs.values():
                     for img in node_out.get("images", []):
                         ir = await client.get(
-                            f"http://localhost:8188/view?filename={img['filename']}"
+                            f"{base}/view?filename={img['filename']}"
                             f"&subfolder={img.get('subfolder','')}&type={img.get('type','output')}",
-                            timeout=10)
+                            timeout=15)
                         if ir.status_code == 200:
                             import base64 as _b64
                             b64 = _b64.b64encode(ir.content).decode()
                             return {"data": [{"b64_json": b64}]}
     except Exception as exc:
-        logger.debug("ComfyUI image gen failed: %s", exc)
+        logger.debug("ComfyUI image gen failed (%s): %s", base_url, exc)
     return None
 
 
@@ -693,20 +742,28 @@ async def generate_image(body: ImageGenRequest):
     import httpx
 
     async with httpx.AsyncClient() as client:
-        # 1. User-configured URL
+        # 1. User-configured URL — detect backend type automatically.
+        #    ComfyUI URLs (port 8188 or "comfyui" in URL) are routed to
+        #    _try_comfyui so WSL/remote instances work without OpenAI compat.
         custom_url = db.get_setting("image_gen_url", "").strip()
         if custom_url:
-            result = await _try_openai_compat(client, custom_url, body)
+            if _is_comfyui_url(custom_url):
+                result = await _try_comfyui(client, body, base_url=custom_url)
+            else:
+                result = await _try_openai_compat(client, custom_url, body)
+                if not result:
+                    # Could be A1111 with its own API format
+                    result = await _try_a1111(client, body)
             if result:
                 return _persist_generated_image(result, cfg)
 
-        # 2. Automatic1111 (SD WebUI) — most common local image gen setup
+        # 2. Automatic1111 (SD WebUI) — localhost:7860
         result = await _try_a1111(client, body)
         if result:
             return _persist_generated_image(result, cfg)
 
-        # 3. ComfyUI
-        result = await _try_comfyui(client, body)
+        # 3. ComfyUI — localhost:8188
+        result = await _try_comfyui(client, body, base_url="http://localhost:8188")
         if result:
             return _persist_generated_image(result, cfg)
 
@@ -717,9 +774,9 @@ async def generate_image(body: ImageGenRequest):
 
     raise HTTPException(
         503,
-        "Image generation unavailable. Install Automatic1111 (SD WebUI) at "
-        "http://localhost:7860, ComfyUI at http://localhost:8188, or configure "
-        "a custom image_gen_url in System Settings.",
+        "Image generation unavailable. Set your ComfyUI address "
+        "(e.g. http://172.20.205.199:8188) in System Settings → Image Generation, "
+        "or install Automatic1111 at http://localhost:7860.",
     )
 
 
@@ -739,13 +796,18 @@ def image_gen_status():
 
     custom = db.get_setting("image_gen_url", "").strip()
     backends = []
-    if custom and _probe(custom):
-        backends.append({"name": "Custom", "url": custom, "online": True})
+    if custom:
+        # Probe ComfyUI via its /system_stats endpoint (more reliable than root)
+        if _is_comfyui_url(custom):
+            probe_url = custom.rstrip("/") + "/system_stats"
+            online = _probe(probe_url) or _probe(custom)
+            backends.append({"name": "ComfyUI (custom)", "url": custom, "online": online})
+        else:
+            backends.append({"name": "Custom", "url": custom, "online": _probe(custom)})
     if _probe("http://localhost:7860"):
         backends.append({"name": "Automatic1111", "url": "http://localhost:7860", "online": True})
     if _probe("http://localhost:8188"):
         backends.append({"name": "ComfyUI", "url": "http://localhost:8188", "online": True})
-    ai_url = f"{cfg.serving.base_url}/images/generations"
     backends.append({
         "name": "AI Server", "url": cfg.serving.base_url,
         "online": _probe(cfg.serving.base_url.replace("/api/v1", "")),
