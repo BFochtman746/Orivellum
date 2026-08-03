@@ -978,4 +978,99 @@ MIGRATIONS: list[tuple[int, str, str]] = [
     (59, "Add state column to messages for MessageState lifecycle (M0.2)", """
         ALTER TABLE messages ADD COLUMN state TEXT NOT NULL DEFAULT 'done'
     """),
+
+    # v60 — PKLOS Layer 0: claim ledger + capture stamps.
+    #
+    # VER-INV-001: No claim is presented above the authority its evidence supports.
+    #
+    # claims        — canonical claim record (subject / predicate / value)
+    # claim_evidence — evidence items attached to a claim
+    # claim_transitions — audit ledger for claim status changes
+    # capture_stamps — boundary provenance log (every factual input stamped on entry)
+    # claims_fts    — FTS5 virtual table for fast context retrieval
+    (60, "PKLOS Layer 0: claim ledger and capture stamps (VER-INV-001) — see v61 for enhanced fields", """
+        CREATE TABLE IF NOT EXISTS claims (
+            id             TEXT PRIMARY KEY,
+            subject        TEXT NOT NULL,
+            predicate      TEXT NOT NULL,
+            value          TEXT NOT NULL,
+            unit           TEXT,
+            authority_tier TEXT NOT NULL DEFAULT 'A7',
+            source_id      TEXT,
+            status         TEXT NOT NULL DEFAULT 'CURRENT',
+            confidence     REAL NOT NULL DEFAULT 1.0,
+            ttl_class      TEXT NOT NULL DEFAULT 'DURABLE',
+            conv_id        TEXT,
+            created_at     TEXT NOT NULL,
+            updated_at     TEXT NOT NULL,
+            meta           TEXT NOT NULL DEFAULT '{}'
+        );
+        CREATE INDEX IF NOT EXISTS claims_subject_pred
+            ON claims(subject, predicate);
+        CREATE INDEX IF NOT EXISTS claims_status
+            ON claims(status);
+        CREATE INDEX IF NOT EXISTS claims_updated
+            ON claims(updated_at DESC);
+
+        CREATE TABLE IF NOT EXISTS claim_evidence (
+            id            TEXT PRIMARY KEY,
+            claim_id      TEXT NOT NULL REFERENCES claims(id) ON DELETE CASCADE,
+            evidence_type TEXT NOT NULL DEFAULT 'assertion',
+            content       TEXT NOT NULL,
+            source_id     TEXT,
+            created_at    TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS ce_claim ON claim_evidence(claim_id);
+
+        CREATE TABLE IF NOT EXISTS claim_transitions (
+            id          TEXT PRIMARY KEY,
+            claim_id    TEXT NOT NULL REFERENCES claims(id) ON DELETE CASCADE,
+            from_status TEXT NOT NULL,
+            to_status   TEXT NOT NULL,
+            actor       TEXT NOT NULL DEFAULT 'system',
+            reason      TEXT,
+            created_at  TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS ct_claim ON claim_transitions(claim_id);
+
+        CREATE TABLE IF NOT EXISTS capture_stamps (
+            id          TEXT PRIMARY KEY,
+            channel     TEXT NOT NULL DEFAULT 'chat',
+            source_type TEXT NOT NULL DEFAULT 'A7',
+            claim_id    TEXT REFERENCES claims(id) ON DELETE SET NULL,
+            raw_text    TEXT,
+            created_at  TEXT NOT NULL,
+            meta        TEXT NOT NULL DEFAULT '{}'
+        );
+        CREATE INDEX IF NOT EXISTS cs_channel ON capture_stamps(channel);
+        CREATE INDEX IF NOT EXISTS cs_created ON capture_stamps(created_at DESC);
+
+        CREATE VIRTUAL TABLE IF NOT EXISTS claims_fts
+            USING fts5(
+                claim_id UNINDEXED,
+                subject,
+                predicate,
+                value,
+                content='claims',
+                content_rowid='rowid'
+            )
+    """),
+
+    # v61 — PKLOS Layer 0: enhance claims table with full spec §3.2 canonical fields.
+    # Spec canonical claim record fields: normalized_display_value, confidence_basis,
+    # observed_at, valid_from, valid_until, verification_rule, supersedes,
+    # contract_version, producer.
+    # Also adds a 'verification_status' column (pending/verified/failed) separate
+    # from 'status' so the state machine and verification lifecycle are distinct.
+    (61, "PKLOS Layer 0: enhance claims with canonical spec fields (§3.2)", """
+        ALTER TABLE claims ADD COLUMN normalized_display_value TEXT;
+        ALTER TABLE claims ADD COLUMN confidence_basis TEXT;
+        ALTER TABLE claims ADD COLUMN observed_at TEXT;
+        ALTER TABLE claims ADD COLUMN valid_from TEXT;
+        ALTER TABLE claims ADD COLUMN valid_until TEXT;
+        ALTER TABLE claims ADD COLUMN verification_rule TEXT;
+        ALTER TABLE claims ADD COLUMN supersedes TEXT;
+        ALTER TABLE claims ADD COLUMN contract_version TEXT NOT NULL DEFAULT '1.0.0';
+        ALTER TABLE claims ADD COLUMN producer TEXT
+    """),
 ]

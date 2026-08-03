@@ -2502,6 +2502,342 @@ class OrivellumDB:
         return changed
 
     # -------------------------------------------------------------------------
+    # PKLOS Layer 0 — Claim ledger (VER-INV-001)
+    # -------------------------------------------------------------------------
+
+    def upsert_claim(
+        self,
+        subject: str,
+        predicate: str,
+        value: str,
+        *,
+        unit: str | None = None,
+        authority_tier: str = "A7",
+        source_id: str | None = None,
+        conv_id: str | None = None,
+        ttl_class: str = "DURABLE",
+        evidence_text: str | None = None,
+        meta: dict | None = None,
+    ) -> str:
+        """Insert or update a claim.  Returns the claim id.
+
+        If a CURRENT or UNOBSERVED claim already exists for (subject, predicate)
+        at equal or lower authority tier (numerically higher A-number = lower
+        authority), update it.  A higher-authority source always wins.
+
+        Authority ordering: A0 > A1 > A2 > … > A8 (lower index = higher authority).
+        We update when incoming tier <= existing tier (equal or better).
+        """
+        import json as _json
+        now = _now()
+        payload = _json.dumps(meta or {})
+
+        # Determine initial status from authority tier (spec §3.3 state machine).
+        # A7/A8 → USER_ASSERTED (not independently verified yet).
+        # A0–A6 → RETRIEVED (has a source; verifier must run to reach VERIFIED).
+        # Backward-compat: treat legacy 'CURRENT' inputs as VERIFIED.
+        new_tier_num = int(authority_tier[1:]) \
+            if len(authority_tier) > 1 and authority_tier[1:].isdigit() else 99
+        new_status = "USER_ASSERTED" if new_tier_num >= 7 else "RETRIEVED"
+
+        # Statuses considered "live" (can be superseded by a new upsert)
+        _LIVE_STATUSES = (
+            'USER_ASSERTED', 'RETRIEVED', 'PARTIALLY_VERIFIED',
+            'VERIFIED', 'CURRENT', 'UNOBSERVED',
+        )
+
+        with self._lock:
+            existing = self._conn.execute(
+                f"""SELECT id, authority_tier, status FROM claims
+                   WHERE subject=? AND predicate=?
+                   AND status IN ({','.join('?'*len(_LIVE_STATUSES))})
+                   ORDER BY updated_at DESC LIMIT 1""",
+                (subject, predicate, *_LIVE_STATUSES),
+            ).fetchone()
+
+            if existing:
+                cid = existing["id"]
+                old_tier_num = int(existing["authority_tier"][1:]) \
+                    if existing["authority_tier"][1:].isdigit() else 99
+
+                # Update if new claim has equal or better authority
+                if new_tier_num <= old_tier_num:
+                    old_status = existing["status"]
+                    self._conn.execute(
+                        """UPDATE claims
+                           SET value=?, unit=?, authority_tier=?, source_id=?,
+                               conv_id=?, ttl_class=?, status=?,
+                               updated_at=?, meta=?
+                           WHERE id=?""",
+                        (value, unit, authority_tier, source_id,
+                         conv_id, ttl_class, new_status, now, payload, cid),
+                    )
+                    # Log transition if status changed
+                    if old_status != new_status:
+                        self._conn.execute(
+                            """INSERT INTO claim_transitions(id,claim_id,from_status,
+                               to_status,actor,reason,created_at)
+                               VALUES(?,?,?,?,?,?,?)""",
+                            (str(uuid.uuid4()), cid, old_status, new_status,
+                             "system", "upsert", now),
+                        )
+                    self._conn.commit()
+                    # Update FTS
+                    try:
+                        self._conn.execute(
+                            "DELETE FROM claims_fts WHERE claim_id=?", (cid,)
+                        )
+                        self._conn.execute(
+                            "INSERT INTO claims_fts(claim_id,subject,predicate,value)"
+                            " VALUES(?,?,?,?)",
+                            (cid, subject, predicate, value),
+                        )
+                        self._conn.commit()
+                    except Exception:
+                        pass
+                    return cid
+                # else: existing claim has higher authority — don't downgrade
+                return cid
+
+            # No existing claim — insert new
+            cid = str(uuid.uuid4())
+            self._conn.execute(
+                """INSERT INTO claims(id,subject,predicate,value,unit,authority_tier,
+                   source_id,status,confidence,ttl_class,conv_id,created_at,
+                   updated_at,meta)
+                   VALUES(?,?,?,?,?,?,?,?,1.0,?,?,?,?,?)""",
+                (cid, subject, predicate, value, unit, authority_tier,
+                 source_id, new_status, ttl_class, conv_id, now, now, payload),
+            )
+            self._conn.execute(
+                """INSERT INTO claim_transitions(id,claim_id,from_status,to_status,
+                   actor,reason,created_at) VALUES(?,?,'UNOBSERVED',?,?,?,?)""",
+                (str(uuid.uuid4()), cid, new_status, "system", "initial_capture", now),
+            )
+            self._conn.commit()
+            # Update FTS
+            try:
+                self._conn.execute(
+                    "INSERT INTO claims_fts(claim_id,subject,predicate,value)"
+                    " VALUES(?,?,?,?)",
+                    (cid, subject, predicate, value),
+                )
+                self._conn.commit()
+            except Exception:
+                pass
+
+        # Attach evidence if provided
+        if evidence_text:
+            self.add_claim_evidence(cid, "assertion", evidence_text,
+                                    source_id=source_id)
+        return cid
+
+    def get_claim(self, claim_id: str) -> dict | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM claims WHERE id=?", (claim_id,)
+            ).fetchone()
+        return dict(row) if row else None
+
+    def get_claim_by_predicate(
+        self, subject: str, predicate: str
+    ) -> dict | None:
+        """Return the most recent live claim for (subject, predicate).
+
+        Prefers VERIFIED > PARTIALLY_VERIFIED > USER_ASSERTED > RETRIEVED > CURRENT.
+        """
+        _PRIORITY = {
+            "VERIFIED": 0, "PARTIALLY_VERIFIED": 1,
+            "USER_ASSERTED": 2, "RETRIEVED": 3, "CURRENT": 4,
+        }
+        _LIVE = tuple(_PRIORITY.keys())
+        with self._lock:
+            rows = self._conn.execute(
+                f"""SELECT * FROM claims WHERE subject=? AND predicate=?
+                   AND status IN ({','.join('?'*len(_LIVE))})
+                   ORDER BY updated_at DESC LIMIT 10""",
+                (subject, predicate, *_LIVE),
+            ).fetchall()
+        if not rows:
+            return None
+        # Return highest-priority status
+        best = min(rows, key=lambda r: _PRIORITY.get(r["status"], 99))
+        return dict(best)
+
+    def list_claims(
+        self,
+        *,
+        subject: str | None = None,
+        status: str | None = None,
+        limit: int = 50,
+    ) -> list[dict]:
+        clauses: list[str] = []
+        params: list = []
+        if subject is not None:
+            clauses.append("subject=?")
+            params.append(subject)
+        if status is not None:
+            clauses.append("status=?")
+            params.append(status)
+        where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+        params.append(limit)
+        with self._lock:
+            rows = self._conn.execute(
+                f"SELECT * FROM claims {where} ORDER BY updated_at DESC LIMIT ?",
+                params,
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def update_claim_status(
+        self,
+        claim_id: str,
+        new_status: str,
+        *,
+        actor: str = "system",
+        reason: str | None = None,
+    ) -> bool:
+        now = _now()
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT status FROM claims WHERE id=?", (claim_id,)
+            ).fetchone()
+            if not row:
+                return False
+            old_status = row["status"]
+            if old_status == new_status:
+                return False
+            self._conn.execute(
+                "UPDATE claims SET status=?, updated_at=? WHERE id=?",
+                (new_status, now, claim_id),
+            )
+            self._conn.execute(
+                """INSERT INTO claim_transitions(id,claim_id,from_status,to_status,
+                   actor,reason,created_at) VALUES(?,?,?,?,?,?,?)""",
+                (str(uuid.uuid4()), claim_id, old_status, new_status,
+                 actor, reason, now),
+            )
+            self._conn.commit()
+        return True
+
+    def add_claim_evidence(
+        self,
+        claim_id: str,
+        evidence_type: str,
+        content: str,
+        *,
+        source_id: str | None = None,
+    ) -> str:
+        eid = str(uuid.uuid4())
+        now = _now()
+        with self._lock:
+            self._conn.execute(
+                """INSERT INTO claim_evidence(id,claim_id,evidence_type,content,
+                   source_id,created_at) VALUES(?,?,?,?,?,?)""",
+                (eid, claim_id, evidence_type, content, source_id, now),
+            )
+            self._conn.commit()
+        return eid
+
+    def search_claims_for_context(
+        self,
+        query: str,
+        *,
+        subject: str | None = None,
+        limit: int = 10,
+    ) -> list[dict]:
+        """Find live claims relevant to a query using FTS5 + fallback.
+
+        Returns VERIFIED, PARTIALLY_VERIFIED, USER_ASSERTED, and RETRIEVED claims.
+        A8 (model inference) is NEVER surfaced (VER-INV-001 / spec §3.1).
+        Backward-compat: also matches legacy 'CURRENT' status.
+        """
+        results: list[dict] = []
+        # A8 predicates are never surfaced (defense in depth for VER-INV-001)
+        base_filter = (
+            "c.status IN ('VERIFIED','PARTIALLY_VERIFIED','USER_ASSERTED',"
+            "'RETRIEVED','CURRENT') AND c.authority_tier != 'A8'"
+        )
+
+        # Try FTS5 first
+        try:
+            tokens = " OR ".join(
+                f'"{t}"' for t in query.split() if len(t) > 1
+            )
+            if tokens:
+                sql = f"""
+                    SELECT c.* FROM claims c
+                    JOIN claims_fts f ON f.claim_id = c.id
+                    WHERE {base_filter}
+                    AND claims_fts MATCH ?
+                    {' AND c.subject=?' if subject else ''}
+                    ORDER BY rank LIMIT ?
+                """
+                params = [tokens]
+                if subject:
+                    params.append(subject)
+                params.append(limit)
+                with self._lock:
+                    rows = self._conn.execute(sql, params).fetchall()
+                results = [dict(r) for r in rows]
+        except Exception:
+            pass
+
+        # Fallback: scan all live claims (keyword in value/predicate)
+        if not results:
+            try:
+                qlow = query.lower()
+                # Fetch all live claims (no status filter → picks up all live statuses)
+                all_claims = [
+                    c for c in self.list_claims(subject=subject, status=None, limit=200)
+                    if c.get("status") in (
+                        "VERIFIED", "PARTIALLY_VERIFIED", "USER_ASSERTED",
+                        "RETRIEVED", "CURRENT",
+                    )
+                ]
+                results = [
+                    c for c in all_claims
+                    if c.get("authority_tier") != "A8"
+                    and (
+                        qlow in (c.get("predicate") or "").lower()
+                        or qlow in (c.get("value") or "").lower()
+                        or qlow in (c.get("subject") or "").lower()
+                        or any(
+                            w in (c.get("predicate") or "").lower()
+                            or w in (c.get("value") or "").lower()
+                            for w in qlow.split()
+                            if len(w) > 2
+                        )
+                    )
+                ][:limit]
+            except Exception:
+                pass
+
+        return results
+
+    def create_capture_stamp(
+        self,
+        stamp_id: str,
+        channel: str,
+        source_type: str,
+        *,
+        claim_id: str | None = None,
+        raw_text: str | None = None,
+        meta: dict | None = None,
+    ) -> str:
+        import json as _json
+        now = _now()
+        payload = _json.dumps(meta or {})
+        with self._lock:
+            self._conn.execute(
+                """INSERT INTO capture_stamps(id,channel,source_type,claim_id,
+                   raw_text,created_at,meta) VALUES(?,?,?,?,?,?,?)""",
+                (stamp_id, channel, source_type, claim_id,
+                 raw_text, now, payload),
+            )
+            self._conn.commit()
+        return stamp_id
+
+    # -------------------------------------------------------------------------
     # Health / diagnostics
     # -------------------------------------------------------------------------
 

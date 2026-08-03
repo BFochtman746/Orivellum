@@ -11,6 +11,13 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from orivellum.api._deps import get_db, get_config
+from orivellum.capabilities.pklos.fact_router import is_checkable_fact, should_capture_as_a7
+from orivellum.capabilities.pklos.abstention import AbstentionPolicy
+from orivellum.capabilities.pklos.claim_ledger import ClaimLedger
+from orivellum.capabilities.pklos.policy_enforcer import PolicyEnforcer
+from orivellum.capabilities.pklos.capture_stamp import (
+    CaptureStamp, detect_factual_assertions,
+)
 
 router = APIRouter(prefix="/api")
 logger = logging.getLogger(__name__)
@@ -213,6 +220,27 @@ async def send_message(conv_id: str, body: MessageSend):
             daemon=True,
         ).start()
 
+    # PKLOS Layer 0 — capture factual assertions about the user's system.
+    # Runs only when the fast pattern detects a hardware/system statement.
+    # Uses a background thread so it never delays the response.
+    if body.text and detect_factual_assertions(body.text):
+        try:
+            cfg_for_capture = get_config()
+            stamp = CaptureStamp(db)
+            threading.Thread(
+                target=stamp.stamp_and_capture,
+                kwargs={
+                    "text": body.text,
+                    "channel": "chat",
+                    "conv_id": conv_id,
+                    "base_url": cfg_for_capture.serving.base_url,
+                    "model": conv.get("model") or cfg_for_capture.serving.workhorse_model,
+                },
+                daemon=True,
+            ).start()
+        except Exception:
+            pass  # capture is best-effort; never block the response
+
     if body.stream:
         return StreamingResponse(
             _stream_response(
@@ -356,6 +384,9 @@ _CHAT_BASE_PROMPT = (
 )
 
 
+_abstention_policy = AbstentionPolicy()
+
+
 def _build_system_prompt(db: Any, conv: dict, scope: str = "work",
                          user_query: str | None = None,
                          out_sources: list | None = None) -> str:
@@ -369,6 +400,13 @@ def _build_system_prompt(db: Any, conv: dict, scope: str = "work",
 
     Only trusted items (rule-based "auto" + user-approved "approved") are injected.
     Pending AI items ("ai_auto") are excluded until the user approves them.
+
+    PKLOS Layer 0 — spec §5.3 PolicyEnforcer (P2/P3):
+      - Classifies the query (spec §5.1 7-class router).
+      - For DETERMINISTICALLY_VERIFIABLE: injects VERIFIED FACTS from the claim
+        ledger (USER_ASSERTED + VERIFIED + PARTIALLY_VERIFIED).
+      - If no claims: enforces abstention — the model MUST NOT guess.
+      - For USER_DECLARED_FACT: logs that the capture path should run.
     """
     # Base persona comes from the MCOS prompt registry (slot 'chat.base') so it
     # can be A/B-benchmarked and swapped without a code change.  Never let this
@@ -380,6 +418,37 @@ def _build_system_prompt(db: Any, conv: dict, scope: str = "work",
             base = active
     except Exception:
         base = _CHAT_BASE_PROMPT
+
+    # ── PKLOS §5.3: host-side policy enforcement ──────────────────────────────
+    # PolicyEnforcer classifies the query and either:
+    #   (a) injects verified claims + use-them instruction, or
+    #   (b) injects abstention instruction (model must not guess)
+    # This runs BEFORE the knowledge search so the claim block is as high as
+    # possible in the prompt, giving it maximum authority.
+    claim_block = ""
+    verification_instruction = ""
+    if user_query:
+        try:
+            enforcer = PolicyEnforcer(db)
+            ctx, instr = enforcer.build_system_prompt_additions(user_query)
+            claim_block = ctx
+            verification_instruction = instr
+        except Exception:
+            # Claim ledger unavailable (old schema) — degrade gracefully to
+            # legacy abstention policy
+            try:
+                checkable = is_checkable_fact(user_query)
+                if checkable:
+                    ledger = ClaimLedger(db)
+                    relevant_claims = ledger.search_for_context(user_query, limit=15)
+                    has_claims = bool(relevant_claims)
+                    claim_block = ledger.format_for_prompt(relevant_claims)
+                    verification_instruction = _abstention_policy.get_instruction(
+                        is_checkable=True,
+                        has_verified_claims=has_claims,
+                    )
+            except Exception:
+                pass
 
     # Prepend durable user memory facts
     try:
@@ -491,7 +560,15 @@ def _build_system_prompt(db: Any, conv: dict, scope: str = "work",
                                     "doc_title": doc,
                                 })
 
-                return f"{base}\n\n" + "\n".join(context_parts)
+                # ── Prepend claim block; append verification instruction ──
+                knowledge_section = "\n".join(context_parts)
+                parts = [base]
+                if claim_block:
+                    parts.append(claim_block)
+                if verification_instruction:
+                    parts.append(verification_instruction)
+                parts.append(knowledge_section)
+                return "\n\n".join(p for p in parts if p.strip())
         except Exception:
             pass  # fall through to recency-based fallback
 
@@ -509,6 +586,14 @@ def _build_system_prompt(db: Any, conv: dict, scope: str = "work",
                      if k.get("review_status") in _TRUSTED][:_CONTEXT_KNOWLEDGE]
 
     if not knowledge:
+        # Still inject claim block + verification instruction even with no knowledge
+        if claim_block or verification_instruction:
+            parts = [base]
+            if claim_block:
+                parts.append(claim_block)
+            if verification_instruction:
+                parts.append(verification_instruction)
+            return "\n\n".join(p for p in parts if p.strip())
         return base
 
     header = (
@@ -523,7 +608,14 @@ def _build_system_prompt(db: Any, conv: dict, scope: str = "work",
         if text:
             context_parts.append(f"  [{kind}] {text[:400]}")
 
-    return f"{base}\n\n" + "\n".join(context_parts)
+    knowledge_section = "\n".join(context_parts)
+    parts = [base]
+    if claim_block:
+        parts.append(claim_block)
+    if verification_instruction:
+        parts.append(verification_instruction)
+    parts.append(knowledge_section)
+    return "\n\n".join(p for p in parts if p.strip())
 
 
 def _build_messages(
