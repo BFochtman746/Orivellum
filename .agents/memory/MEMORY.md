@@ -36,6 +36,7 @@
 - [Near-duplicate detection](orivellum-dedup.md) — MinHash in capabilities/dedup.py; pipeline step 4.6; doc_dupes+minhash_sig tables (v31); schema v49 adds resolved/resolution cols; GET /library/duplicates + POST /library/duplicates/{id}/resolve; route ordering: literal /duplicates MUST precede /{doc_id}.
 - [M0.2 State Machine](orivellum-m02-state-machine.md) — declarative SM + findings blockers; enums.py + state_machine.py; schema v58/v59
 - [WRITING_ARCHITECT WR-02](wa-wr02.md) — stdlib-only Python BPOS at writing_architect_pkg/; v0.2.0; WR-00 accepted; WR-02 research commands built; 28/28 tests; run with `uv run --with pytest pytest tests/`.
+- [BPOS WR-03 Canon & Continuity](bpos-wr03-continuity.md) — 5 validators + schema tables; 56/56 tests; _parse_year must use ± not bare - in uncertainty suffix regex.
 - [Gap cache design](orivellum-gap-cache.md) — schema v50 work_gap_cache table; /gaps/top reads cache first, detects up to 10 uncached Works; nightshift writes cache; stale = > 1 h; ?refresh=true bypasses cache.
 - [Book intelligence view](orivellum-book-intel.md) — lifecycle canonical is per Work+kind; single-canonical views must resolve by newest declaration; batch per-chapter research counts, never N+1 FTS.
 - [Semantic / hybrid search](orivellum-semantic-search.md) — embeddings circuit breaker + short query timeout keep search/chat fast when the endpoint is down; FTS5 ANDs terms so hybrid needs semantic-only fallback.
