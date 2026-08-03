@@ -1557,9 +1557,21 @@ class OrivellumDB:
 
         chunks.id is a FK to objects(id), so we must register it there first.
         """
-        cid = self._create_object("chunk")
+        cid = _uuid()
         now = _now()
-        with self._lock:
+        with self.governed_write(
+            operation="document.chunk_added",
+            event_type="document.chunk_added",
+            object_id=doc_id,
+            object_type="document",
+            actor="system",
+            detail=f"page={page}",
+        ):
+            self._conn.execute(
+                """INSERT INTO objects(id,type,version,lifecycle,provenance,permissions,
+                   created_at,updated_at,created_by) VALUES(?,?,1,'active','{}','{}',?,?,'system')""",
+                (cid, "chunk", now, now),
+            )
             self._conn.execute(
                 "INSERT INTO chunks(id,doc_id,page,text,created_at) VALUES(?,?,?,?,?)",
                 (cid, doc_id, page, text, now),
@@ -1568,9 +1580,6 @@ class OrivellumDB:
                 "INSERT INTO chunks_fts(chunk_id,doc_id,text) VALUES(?,?,?)",
                 (cid, doc_id, text),
             )
-            self._conn.commit()
-        self.audit("document.chunk_added", object_id=doc_id, object_type="document",
-                   detail=f"page={page}")
         return cid
 
     def delete_chunks(self, doc_id: str) -> None:
