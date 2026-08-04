@@ -433,21 +433,52 @@ def _pass_gap_analysis(db: "OrivellumDB", report: list[str]) -> None:
 
 
 def _pass_evidence(db: "OrivellumDB", report: list[str]) -> None:
-    """Rescore confidence and detect contradictions for every active Work."""
+    """Rescore confidence and detect contradictions for stale Works.
+
+    Only processes Works whose last rescore is >24 h old (tracked via the
+    ``evidence_rescore:{work_id}`` settings key).  Capped at 5 Works per run
+    so the pass stays bounded regardless of library size.
+    """
+    from datetime import datetime, timezone, timedelta
+
+    _STALE_HOURS = 24
+    _MAX_WORKS   = 5
+
     try:
         from orivellum.capabilities.evidence import rescore_work, detect_contradictions
-        rescored = conflicts = 0
-        for work in db.list_works(status="active")[:20]:
+        now = datetime.now(timezone.utc)
+        cutoff = now - timedelta(hours=_STALE_HOURS)
+
+        rescored = conflicts = skipped = 0
+        processed = 0
+        for work in db.list_works(status="active"):
+            if processed >= _MAX_WORKS:
+                break
+            wid = work.get("id", "")
+            # Skip if rescored recently
+            last_str = db.get_setting(f"evidence_rescore:{wid}", "")
+            if last_str:
+                try:
+                    last_dt = datetime.fromisoformat(last_str)
+                    if last_dt > cutoff:
+                        skipped += 1
+                        continue
+                except ValueError:
+                    pass  # malformed timestamp — treat as stale
             try:
-                rescored  += rescore_work(work["id"], db)
-                conflicts += detect_contradictions(work["id"], db)
+                rescored  += rescore_work(wid, db)
+                conflicts += detect_contradictions(wid, db)
+                db.set_setting(f"evidence_rescore:{wid}", now.isoformat())
+                processed += 1
             except Exception as exc:
-                logger.warning("Evidence pass failed for %s: %s",
-                               work.get("id", "?")[:8], exc)
+                logger.warning("Evidence pass failed for %s: %s", wid[:8], exc)
+
         if rescored:
-            report.append(f"Evidence: re-scored {rescored} knowledge item(s)")
+            report.append(f"Evidence: re-scored {rescored} knowledge item(s) across {processed} work(s)")
         if conflicts:
             report.append(f"⚠ Contradictions: {conflicts} new conflict(s) — review in Governance")
+        if skipped:
+            logger.debug("Evidence pass: skipped %d recently-rescored work(s)", skipped)
     except Exception as exc:
         logger.warning("Evidence pass failed: %s", exc)
 

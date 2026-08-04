@@ -783,3 +783,41 @@ def advance_pipeline(work_id: str):
         raise HTTPException(409, {"detail": str(exc), "blockers": exc.blockers})
 
     return {"pipeline": db.get_book_pipeline_for_work(work_id)}
+
+
+# ─── Evidence rescore ─────────────────────────────────────────────────────────
+
+@router.post("/works/{work_id}/evidence/rescore")
+async def evidence_rescore(work_id: str):
+    """Re-score confidence and detect contradictions for a Work's knowledge items.
+
+    Returns the number of items whose confidence changed, the number of new
+    conflict pairs detected, and elapsed wall-clock time.
+    """
+    import time
+    from starlette.concurrency import run_in_threadpool
+
+    db = get_db()
+    if not db.get_work(work_id):
+        raise HTTPException(404, f"Work {work_id!r} not found")
+
+    items = db.list_knowledge(work_id=work_id, limit=1)
+    if not items:
+        raise HTTPException(422, "This Work has no knowledge items to rescore.")
+
+    t0 = time.monotonic()
+    from orivellum.capabilities.evidence import rescore_work, detect_contradictions
+    rescored = await run_in_threadpool(rescore_work, work_id, db)
+    conflict_count = await run_in_threadpool(detect_contradictions, work_id, db)
+
+    # Stamp the rescore time so the nightshift pass can skip recently-rescored works
+    from datetime import datetime, timezone
+    db.set_setting(f"evidence_rescore:{work_id}", datetime.now(timezone.utc).isoformat())
+
+    elapsed_ms = round((time.monotonic() - t0) * 1000)
+    return {
+        "work_id": work_id,
+        "rescored_count": rescored,
+        "conflict_count": conflict_count,
+        "elapsed_ms": elapsed_ms,
+    }

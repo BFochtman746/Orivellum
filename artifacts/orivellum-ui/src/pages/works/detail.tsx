@@ -914,6 +914,51 @@ async function setKnowledgeReview(itemId: string, status: string, force = false)
   if (!resp.ok) throw new Error("Review update failed");
 }
 
+// ─── Rescore button ────────────────────────────────────────────────────────────
+
+const WORKS_API_BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
+
+function RescoreButton({ workId, onDone }: { workId: string; onDone: () => void }) {
+  const [rescoring, setRescoring] = useState(false);
+
+  const handleRescore = async () => {
+    setRescoring(true);
+    try {
+      const r = await apiFetch(`${WORKS_API_BASE}/works/${workId}/evidence/rescore`, { method: "POST" });
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}));
+        throw new Error((body as any).detail ?? `HTTP ${r.status}`);
+      }
+      const data = await r.json();
+      const parts: string[] = [];
+      if (data.rescored_count > 0) parts.push(`${data.rescored_count} score${data.rescored_count !== 1 ? "s" : ""} updated`);
+      if (data.conflict_count > 0) parts.push(`${data.conflict_count} conflict${data.conflict_count !== 1 ? "s" : ""} found`);
+      if (parts.length === 0) parts.push("No changes — scores are up to date");
+      toast.success(parts.join(" · "), { duration: 4000 });
+      onDone();
+    } catch (e: any) {
+      toast.error(e.message ?? "Could not rescore");
+    } finally {
+      setRescoring(false);
+    }
+  };
+
+  return (
+    <Button
+      size="sm"
+      variant="outline"
+      className="gap-1.5 h-7 text-xs"
+      onClick={handleRescore}
+      disabled={rescoring}
+      title="Re-score confidence on all knowledge items and detect contradictions"
+    >
+      {rescoring
+        ? <><Loader2 className="w-3 h-3 animate-spin" /> Rescoring…</>
+        : <><RefreshCw className="w-3 h-3" /> Rescore</>}
+    </Button>
+  );
+}
+
 type KnowledgeFilter = "all" | "pending" | "approved" | "rejected";
 type KnowledgeKindFilter = "all" | "entity" | "claim" | "relationship" | "summary";
 type KnowledgeConfFilter = "all" | "high" | "med" | "low";
@@ -1152,6 +1197,7 @@ function KnowledgeTab({ workId }: { workId: string }) {
       <div className="flex items-start justify-between flex-wrap gap-3">
         <h3 className="text-xl font-serif font-medium">Structured Knowledge</h3>
         <div className="flex items-center gap-2 flex-wrap justify-end">
+          <RescoreButton workId={workId} onDone={() => queryClient.invalidateQueries({ queryKey: getGetWorkKnowledgeQueryKey(workId, {}) })} />
           <Button size="sm" variant="outline" className="gap-1.5 h-7 text-xs" onClick={() => setShowAddForm((v) => !v)}>
             <Plus className="w-3 h-3" /> Add manually
           </Button>
