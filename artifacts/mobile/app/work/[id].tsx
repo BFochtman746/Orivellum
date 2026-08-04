@@ -94,7 +94,7 @@ function DocItem({ doc }: { doc: Document }) {
   );
 }
 
-function KnowledgeRow({ item, onReviewed }: { item: KnowledgeItem; onReviewed?: () => void }) {
+function KnowledgeRow({ item, onReviewed, onDelete }: { item: KnowledgeItem; onReviewed?: () => void; onDelete?: () => void }) {
   const colors = useColors();
   const conf = Math.round((item.confidence ?? 0) * 100);
   const [localStatus, setLocalStatus] = useState<string | null>(null);
@@ -124,8 +124,20 @@ function KnowledgeRow({ item, onReviewed }: { item: KnowledgeItem; onReviewed?: 
     }
   };
 
+  const handleLongPress = () => {
+    if (!onDelete) return;
+    Alert.alert('Delete Knowledge Item', 'Remove this item?', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Delete', style: 'destructive', onPress: onDelete },
+    ]);
+  };
+
   return (
-    <View style={[styles.listItem, { borderColor: colors.border, opacity: isRejected ? 0.45 : 1 }]}>
+    <Pressable
+      onLongPress={handleLongPress}
+      delayLongPress={400}
+      style={[styles.listItem, { borderColor: colors.border, opacity: isRejected ? 0.45 : 1 }]}
+    >
       <View style={[styles.itemIcon, { backgroundColor: colors.muted }]}>
         <Feather name="cpu" size={14} color={isAiAuto ? '#8b5cf6' : colors.primary} />
       </View>
@@ -176,7 +188,7 @@ function KnowledgeRow({ item, onReviewed }: { item: KnowledgeItem; onReviewed?: 
           </View>
         )}
       </View>
-    </View>
+    </Pressable>
   );
 }
 
@@ -401,10 +413,11 @@ function GapsTab({
 
 // ─── Overview tab with "Start Discussion" CTA ────────────────────────────────
 
-function OverviewTab({ workId, onStartDiscussion, starting }: {
+function OverviewTab({ workId, onStartDiscussion, starting, onNavigateToTab }: {
   workId: string;
   onStartDiscussion: () => void;
   starting: boolean;
+  onNavigateToTab?: (tab: Tab) => void;
 }) {
   const colors = useColors();
   const { data: workData, isLoading, isError, refetch } = useGetWork(workId);
@@ -442,10 +455,10 @@ function OverviewTab({ workId, onStartDiscussion, starting }: {
 
       <View style={[styles.infoGrid, { borderColor: colors.border }]}>
         {[
-          { label: 'Type', value: work?.work_type ?? '—' },
-          { label: 'Status', value: work?.status ?? '—' },
-          { label: 'Documents', value: String((work as any)?.doc_count ?? 0) },
-          ...((): { label: string; value: string }[] => {
+          { label: 'Type', value: work?.work_type ?? '—', tab: undefined },
+          { label: 'Status', value: work?.status ?? '—', tab: undefined },
+          { label: 'Documents', value: String((work as any)?.doc_count ?? 0), tab: 'docs' as Tab },
+          ...((): { label: string; value: string; tab?: Tab }[] => {
             const ready = (work as any)?.ready_doc_count ?? 0;
             const errs  = (work as any)?.error_doc_count ?? 0;
             const proc  = (work as any)?.processing_doc_count ?? 0;
@@ -455,20 +468,31 @@ function OverviewTab({ workId, onStartDiscussion, starting }: {
             if (ready > 0) parts.push(`${ready} ready`);
             if (proc > 0)  parts.push(`${proc} processing`);
             if (errs > 0)  parts.push(`${errs} error${errs !== 1 ? 's' : ''}`);
-            return parts.length ? [{ label: 'Readiness', value: parts.join(' · ') }] : [];
+            return parts.length ? [{ label: 'Readiness', value: parts.join(' · '), tab: 'docs' as Tab }] : [];
           })(),
-          { label: 'Knowledge', value: String((work as any)?.knowledge_count ?? 0) },
-          { label: 'Pending Tasks', value: String((work as any)?.pending_tasks ?? 0) },
-          { label: 'Conversations', value: String((work as any)?.conv_count ?? 0) },
+          { label: 'Knowledge', value: String((work as any)?.knowledge_count ?? 0), tab: 'knowledge' as Tab },
+          { label: 'Pending Tasks', value: String((work as any)?.pending_tasks ?? 0), tab: 'tasks' as Tab },
+          { label: 'Conversations', value: String((work as any)?.conv_count ?? 0), tab: 'conversations' as Tab },
           {
             label: 'Updated',
             value: work?.updated_at ? new Date(work.updated_at).toLocaleDateString() : '—',
+            tab: undefined,
           },
         ].map((row) => (
-          <View key={row.label} style={[styles.infoRow, { borderBottomColor: colors.border }]}>
+          <Pressable
+            key={row.label}
+            onPress={row.tab ? () => onNavigateToTab?.(row.tab!) : undefined}
+            style={({ pressed }) => [
+              styles.infoRow,
+              { borderBottomColor: colors.border, opacity: (row.tab && pressed) ? 0.7 : 1 },
+            ]}
+          >
             <Text style={[styles.infoLabel, { color: colors.mutedForeground }]}>{row.label}</Text>
-            <Text style={[styles.infoValue, { color: colors.foreground }]}>{row.value}</Text>
-          </View>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+              <Text style={[styles.infoValue, { color: row.tab ? colors.primary : colors.foreground }]}>{row.value}</Text>
+              {row.tab && <Feather name="chevron-right" size={12} color={colors.primary} />}
+            </View>
+          </Pressable>
         ))}
       </View>
 
@@ -969,6 +993,17 @@ export default function WorkDetailScreen() {
     }
   };
 
+  // Delete a knowledge item by id (called from KnowledgeRow long-press).
+  const handleDeleteKnowledge = async (itemId: string) => {
+    try {
+      await mobileFetch(`https://${domain}/api/knowledge/${itemId}`, { method: 'DELETE' });
+      queryClient.invalidateQueries({ queryKey: getGetWorkStatsQueryKey(id) });
+      refetchKn();
+    } catch {
+      Alert.alert('Error', 'Could not delete knowledge item');
+    }
+  };
+
   // Delete a task by id (called from TaskRow long-press).
   const handleDeleteTask = async (taskId: string) => {
     try {
@@ -1051,6 +1086,7 @@ export default function WorkDetailScreen() {
             workId={id}
             onStartDiscussion={handleStartDiscussion}
             starting={startingConvo}
+            onNavigateToTab={setActiveTab}
           />
         );
       case 'docs':
@@ -1103,7 +1139,13 @@ export default function WorkDetailScreen() {
             <FlatList
               data={knowledge}
               keyExtractor={(k) => k.id ?? ''}
-              renderItem={({ item }) => <KnowledgeRow item={item} onReviewed={refetchKn} />}
+              renderItem={({ item }) => (
+                <KnowledgeRow
+                  item={item}
+                  onReviewed={refetchKn}
+                  onDelete={() => handleDeleteKnowledge((item as any).id)}
+                />
+              )}
               contentContainerStyle={styles.listPad}
               refreshControl={
                 <RefreshControl refreshing={knLoading} onRefresh={refetchKn} tintColor={colors.primary} />
