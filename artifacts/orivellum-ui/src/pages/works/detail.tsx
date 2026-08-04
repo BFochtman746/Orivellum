@@ -862,6 +862,11 @@ function KnowledgeTab({ workId }: { workId: string }) {
   const [kindFilter, setKindFilter] = useState<KnowledgeKindFilter>("all");
   const [confFilter, setConfFilter] = useState<KnowledgeConfFilter>("all");
   const [searchText, setSearchText] = useState("");
+  // API search state — hooks must be unconditional, before any early return
+  const [apiSearchResults, setApiSearchResults] = useState<any[]>([]);
+  const [apiSearchLoading, setApiSearchLoading] = useState(false);
+  const apiSeqRef = useRef(0); // monotonic counter to discard stale responses
+
   const deleteKnowledge = useDeleteKnowledgeItem();
   const { data: knowResp, isLoading } = useGetWorkKnowledge(workId, {}, {
     query: { enabled: !!workId, queryKey: getGetWorkKnowledgeQueryKey(workId, {}) },
@@ -869,6 +874,50 @@ function KnowledgeTab({ workId }: { workId: string }) {
   const { data: docsResp } = useGetWorkDocuments(workId, {
     query: { enabled: !!workId, queryKey: getGetWorkDocumentsQueryKey(workId) },
   });
+
+  // API search — when there are many items (> 50) and the user has typed 3+ chars,
+  // debounce a call to GET /api/works/{id}/search instead of filtering in memory.
+  // Must be above any early return to satisfy React rules of hooks.
+  const API_SEARCH_THRESHOLD = 50;
+  const allKnowledgeCount = knowResp?.knowledge?.length ?? 0;
+  const useApiSearch = allKnowledgeCount > API_SEARCH_THRESHOLD && searchText.trim().length >= 3;
+
+  useEffect(() => {
+    if (!useApiSearch) {
+      setApiSearchResults([]);
+      setApiSearchLoading(false);
+      return;
+    }
+    // Claim a sequence slot so any in-flight older request cannot clobber us.
+    const seq = ++apiSeqRef.current;
+    const controller = new AbortController();
+    setApiSearchLoading(true);
+    const timer = setTimeout(async () => {
+      try {
+        const base = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
+        const r = await apiFetch(
+          `${base}/works/${workId}/search?q=${encodeURIComponent(searchText)}&limit=50`,
+          { signal: controller.signal }
+        );
+        if (seq !== apiSeqRef.current) return; // a newer request has started — discard
+        if (!r.ok) { setApiSearchLoading(false); return; }
+        const d = await r.json();
+        if (seq !== apiSeqRef.current) return;
+        setApiSearchResults(d.knowledge ?? []);
+      } catch {
+        // aborted or network error — leave previous results visible
+      } finally {
+        if (seq === apiSeqRef.current) setApiSearchLoading(false);
+      }
+    }, 350);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+      // Only clear spinner if we're still the current request
+      if (seq === apiSeqRef.current) setApiSearchLoading(false);
+    };
+  }, [useApiSearch, searchText, workId]);
+
   // Build doc id → display name lookup
   const docNames: Record<string, string> = {};
   for (const d of docsResp?.documents ?? []) {
@@ -910,49 +959,43 @@ function KnowledgeTab({ workId }: { workId: string }) {
   const allKnowledge = knowResp?.knowledge ?? [];
   const pendingCount = allKnowledge.filter((k) => k.review_status === "ai_auto").length;
 
-  const reviewFiltered = allKnowledge.filter((k) => {
+  // Shared predicate functions so the same filters apply to both in-memory and API results
+  const applyReviewFilter = (k: any) => {
     if (filter === "pending")  return k.review_status === "ai_auto";
     if (filter === "approved") return k.review_status === "approved";
     if (filter === "rejected") return k.review_status === "rejected";
     return true;
-  }).filter((k) => {
+  };
+  const applyKindFilter = (k: any) => {
     if (kindFilter === "all") return true;
     return (k.kind ?? "").toLowerCase() === kindFilter;
-  }).filter((k) => {
+  };
+  const applyConfFilter = (k: any) => {
     if (confFilter === "all") return true;
     const pct = Math.round((k.confidence ?? 0) * 100);
     if (confFilter === "high") return pct >= 80;
     if (confFilter === "med")  return pct >= 50 && pct < 80;
     if (confFilter === "low")  return pct < 50;
     return true;
-  });
+  };
+
+  const reviewFiltered = allKnowledge
+    .filter(applyReviewFilter)
+    .filter(applyKindFilter)
+    .filter(applyConfFilter);
 
   // Collect distinct kinds for the kind filter pills
   const availableKinds = Array.from(new Set(allKnowledge.map((k) => (k.kind ?? "").toLowerCase()))).filter(Boolean);
 
-  // API search fallback — used when the knowledge list is large and user has typed 3+ chars
-  const useApiSearch = allKnowledge.length > 100 && searchText.trim().length >= 3;
-  const [apiSearchResults, setApiSearchResults] = useState<typeof allKnowledge>([]);
-  useEffect(() => {
-    if (!useApiSearch) { setApiSearchResults([]); return; }
-    const controller = new AbortController();
-    const timer = setTimeout(async () => {
-      try {
-        const base = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
-        const r = await fetch(`${base}/works/${workId}/search?q=${encodeURIComponent(searchText)}&limit=50`, {
-          signal: controller.signal,
-        });
-        if (!r.ok) return;
-        const d = await r.json();
-        setApiSearchResults(d.knowledge ?? []);
-      } catch {}
-    }, 350);
-    return () => { clearTimeout(timer); controller.abort(); };
-  }, [useApiSearch, searchText, workId]);
+  // Apply the same review/kind/conf predicates to API results so active filters are respected
+  const apiFiltered = apiSearchResults
+    .filter(applyReviewFilter)
+    .filter(applyKindFilter)
+    .filter(applyConfFilter);
 
   const knowledge = searchText.trim()
-    ? (useApiSearch && apiSearchResults.length > 0
-        ? apiSearchResults
+    ? (useApiSearch
+        ? apiFiltered           // server-side search, locally filtered
         : reviewFiltered.filter((k) => {
             const q = searchText.trim().toLowerCase();
             return (
@@ -992,14 +1035,30 @@ function KnowledgeTab({ workId }: { workId: string }) {
         <h3 className="text-xl font-serif font-medium">Structured Knowledge</h3>
         <div className="flex items-center gap-2 flex-wrap justify-end">
           {allKnowledge.length > 10 && (
-            <div className="relative">
-              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+            <div className="relative flex items-center">
+              {apiSearchLoading
+                ? <Loader2 className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground animate-spin" />
+                : <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />}
               <Input
-                className="pl-8 h-8 text-xs w-52 font-mono"
-                placeholder="Filter knowledge…"
+                className="pl-8 pr-8 h-8 text-xs w-52 font-mono"
+                placeholder={allKnowledge.length > API_SEARCH_THRESHOLD ? "Search knowledge…" : "Filter knowledge…"}
                 value={searchText}
                 onChange={(e) => setSearchText(e.target.value)}
               />
+              {searchText && (
+                <button
+                  onClick={() => { setSearchText(""); setApiSearchResults([]); }}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                  title="Clear search"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+              {useApiSearch && !apiSearchLoading && (
+                <span className="absolute -top-1.5 right-0 text-[9px] font-mono font-semibold text-primary/70 bg-primary/10 border border-primary/20 rounded px-1 leading-tight">
+                  API
+                </span>
+              )}
             </div>
           )}
           {allKnowledge.length > 0 && (
