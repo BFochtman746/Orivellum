@@ -307,6 +307,7 @@ class DocumentTTSRequest(BaseModel):
     voice: str = "af_heart"
     speed: float = 1.0
     max_segments: int = 60  # cap at ~90 000 chars / ~1 hour of reading
+    return_url: bool = False  # when True, return JSON {ok, path} instead of FileResponse (for mobile)
 
 
 @router.post("/studio/tts/document")
@@ -442,6 +443,11 @@ def synthesize_document(body: DocumentTTSRequest):
             raise RuntimeError(f"ffmpeg concat failed: {ff.stderr.decode()[:300]}")
 
         _rotate_outputs(out_dir)
+        if body.return_url:
+            # Mobile clients can't play a streaming FileResponse directly;
+            # return the serve path so they can create an authenticated player.
+            rel = str(mp3_path.relative_to(out_dir))
+            return {"ok": True, "path": rel, "filename": mp3_name}
         return FileResponse(str(mp3_path), media_type="audio/mpeg",
                             filename=mp3_name)
 

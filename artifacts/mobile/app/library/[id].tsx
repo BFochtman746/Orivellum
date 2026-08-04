@@ -1,5 +1,7 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { mobileFetch } from '@/lib/api';
+import { getApiToken } from '@/lib/token';
+import { createAudioPlayer, setAudioModeAsync, type AudioPlayer } from 'expo-audio';
 import {
   ActivityIndicator,
   Alert,
@@ -48,6 +50,15 @@ export default function LibraryDocDetail() {
   const [showWorkPicker, setShowWorkPicker] = useState(false);
   const [linkingWork, setLinkingWork] = useState(false);
 
+  // ── Read Aloud (TTS) ────────────────────────────────────────────────────────
+  type TtsState = 'idle' | 'loading' | 'playing' | 'paused' | 'error';
+  const [ttsState, setTtsState] = useState<TtsState>('idle');
+  const ttsPlayerRef = useRef<AudioPlayer | null>(null);
+
+  useEffect(() => {
+    return () => { ttsPlayerRef.current?.remove(); };
+  }, []);
+
   const domain = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
 
   const { data: docData, isLoading: docLoading, isError: docError, refetch: refetchDoc } =
@@ -71,6 +82,43 @@ export default function LibraryDocDetail() {
   const handleRefresh = async () => {
     setRefreshing(true);
     try { await Promise.all([refetchDoc(), refetchKn()]); } finally { setRefreshing(false); }
+  };
+
+  const handleListen = async () => {
+    if (ttsState === 'playing') {
+      ttsPlayerRef.current?.pause();
+      setTtsState('paused');
+      return;
+    }
+    if (ttsState === 'paused' && ttsPlayerRef.current) {
+      ttsPlayerRef.current.play();
+      setTtsState('playing');
+      return;
+    }
+    setTtsState('loading');
+    try {
+      await setAudioModeAsync({ playsInSilentModeIOS: true });
+      const res = await mobileFetch(`https://${domain}/api/studio/tts/document`, {
+        method: 'POST',
+        body: JSON.stringify({ doc_id: id, return_url: true }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const json = await res.json();
+      const token = getApiToken();
+      const serveUri = `https://${domain}/api/studio/outputs/serve?path=${encodeURIComponent(json.path)}`;
+      const player = createAudioPlayer({
+        uri: serveUri,
+        headers: token ? { authorization: `Bearer ${token}` } : undefined,
+      });
+      ttsPlayerRef.current = player;
+      player.play();
+      setTtsState('playing');
+      player.addListener('playToEnd', () => { setTtsState('idle'); ttsPlayerRef.current = null; });
+    } catch (e: any) {
+      setTtsState('error');
+      Alert.alert('Read Aloud failed', e?.message ?? 'Could not generate audio');
+      setTimeout(() => setTtsState('idle'), 2000);
+    }
   };
 
   const handleReview = async (itemId: string, status: 'approved' | 'rejected') => {
@@ -180,6 +228,29 @@ export default function LibraryDocDetail() {
             </Text>
           ) : null}
         </View>
+        {doc.readiness === 'ready' && (
+          <Pressable
+            onPress={handleListen}
+            disabled={ttsState === 'loading' || ttsState === 'error'}
+            style={[styles.listenBtn, { borderColor: colors.primary + '55', backgroundColor: colors.primary + '0f' }]}
+          >
+            {ttsState === 'loading' ? (
+              <ActivityIndicator size="small" color={colors.primary} />
+            ) : (
+              <Feather
+                name={ttsState === 'playing' ? 'pause' : ttsState === 'paused' ? 'play' : 'headphones'}
+                size={14}
+                color={colors.primary}
+              />
+            )}
+            <Text style={[styles.listenBtnText, { color: colors.primary }]}>
+              {ttsState === 'loading' ? 'Generating…'
+                : ttsState === 'playing' ? 'Pause'
+                : ttsState === 'paused' ? 'Resume'
+                : 'Listen'}
+            </Text>
+          </Pressable>
+        )}
       </View>
 
       <ScrollView
@@ -384,6 +455,12 @@ const styles = StyleSheet.create({
   badge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 5 },
   badgeText: { fontSize: 11, fontFamily: 'Inter_600SemiBold', letterSpacing: 0.3 },
   metaText: { fontSize: 12, fontFamily: 'Inter_400Regular' },
+  listenBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    alignSelf: 'flex-start', marginTop: 10,
+    paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20, borderWidth: 1,
+  },
+  listenBtnText: { fontSize: 13, fontFamily: 'Inter_500Medium' },
   section: { borderWidth: 1, borderRadius: 10, padding: 14, marginBottom: 14 },
   sectionTitle: { fontSize: 10, fontFamily: 'Inter_700Bold', letterSpacing: 1, marginBottom: 10 },
   row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
