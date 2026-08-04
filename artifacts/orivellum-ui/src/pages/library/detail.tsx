@@ -33,7 +33,7 @@ const BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-type Tab = "overview" | "text" | "knowledge" | "chapters" | "versions";
+type Tab = "overview" | "text" | "knowledge" | "chapters" | "versions" | "chunks";
 
 const AI_KINDS = ["entity", "claim", "relationship"] as const;
 type AiKind = (typeof AI_KINDS)[number];
@@ -689,6 +689,14 @@ export default function DocumentDetail() {
   });
   const { data: worksResp } = useListWorks();
 
+  // Extracted text chunks for this document
+  const { data: chunksData, isLoading: chunksLoading } = useQuery<{ chunks: Array<{ id: string; page: number; text: string }>; count: number }>({
+    queryKey: ["doc-chunks", docId],
+    queryFn: () => apiFetch(`${BASE}/library/${docId}/chunks`).then((r) => r.json()),
+    enabled: !!docId && activeTab === "chunks",
+    staleTime: 60_000,
+  });
+
   // Versions for this document (must stay above the early returns — hooks
   // may never run conditionally)
   const { data: versData, isLoading: versLoading, refetch: versRefetch } = useQuery<{
@@ -1019,6 +1027,7 @@ export default function DocumentDetail() {
     { key: "chapters",  label: "Chapters",  icon: List,    badge: chapData?.count ?? 0 },
     { key: "versions",  label: "Versions",  icon: History },
     { key: "text",      label: "Text",      icon: BookOpen },
+    { key: "chunks",    label: "Chunks",    icon: Hash,    badge: chunksData?.count },
     { key: "knowledge", label: "Knowledge", icon: Cpu },
   ];
 
@@ -1380,6 +1389,30 @@ export default function DocumentDetail() {
                   : "No text was extracted from this document."}
               </p>
             </div>
+          )}
+        </div>
+      )}
+
+      {activeTab === "chunks" && (
+        <div className="space-y-3">
+          <p className="text-xs font-mono text-muted-foreground">{chunksData?.count ?? 0} text chunk{(chunksData?.count ?? 0) !== 1 ? "s" : ""}</p>
+          {chunksLoading ? (
+            <div className="space-y-2">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-20 w-full" />)}</div>
+          ) : (chunksData?.chunks ?? []).length === 0 ? (
+            <div className="text-center py-12 bg-muted/10 border border-dashed rounded-lg">
+              <Hash className="w-8 h-8 text-muted-foreground mx-auto mb-3 opacity-50" />
+              <p className="text-muted-foreground text-sm">No text chunks available. Re-extract the document to populate them.</p>
+            </div>
+          ) : (
+            (chunksData?.chunks ?? []).map((chunk, i) => (
+              <div key={chunk.id ?? i} className="border border-border/50 rounded-lg p-3.5 bg-muted/10 group hover:bg-muted/20 transition-colors">
+                <div className="flex items-center gap-2 mb-2">
+                  <Badge variant="outline" className="text-[9px] font-mono">chunk {i + 1}</Badge>
+                  {chunk.page > 0 && <Badge variant="outline" className="text-[9px] font-mono opacity-60">p. {chunk.page}</Badge>}
+                </div>
+                <p className="text-[12px] font-mono leading-relaxed text-foreground/80 whitespace-pre-wrap line-clamp-6">{chunk.text}</p>
+              </div>
+            ))
           )}
         </div>
       )}

@@ -905,6 +905,8 @@ export default function WorkDetailScreen() {
   const [pipeline, setPipeline] = useState<any>(null);
   const [pipelineLoading, setPipelineLoading] = useState(false);
   const [advancingPipeline, setAdvancingPipeline] = useState(false);
+  const [chapters, setChapters] = useState<any[]>([]);
+  const [chaptersLoading, setChaptersLoading] = useState(false);
 
   const fetchPipeline = useCallback(async () => {
     if (!id) return;
@@ -937,9 +939,29 @@ export default function WorkDetailScreen() {
     finally { setAdvancingPipeline(false); }
   };
 
+  const fetchChapters = useCallback(async () => {
+    if (!id) return;
+    setChaptersLoading(true);
+    try {
+      const res = await mobileFetch(`https://${domain}/api/works/${id}/chapters`);
+      if (res.ok) {
+        const json = await res.json();
+        // Flatten: [{doc_title, chapters:[...]}] → flat list annotated with doc_title
+        const flat: any[] = [];
+        for (const doc of json.documents ?? []) {
+          for (const ch of doc.chapters ?? []) {
+            flat.push({ ...ch, doc_title: doc.doc_title });
+          }
+        }
+        setChapters(flat);
+      }
+    } catch { /* non-fatal */ }
+    finally { setChaptersLoading(false); }
+  }, [id, domain]);
+
   useEffect(() => {
-    if (activeTab === 'book') fetchPipeline();
-  }, [activeTab, fetchPipeline]);
+    if (activeTab === 'book') { fetchPipeline(); fetchChapters(); }
+  }, [activeTab, fetchPipeline, fetchChapters]);
   const queryClient = useQueryClient();
   const { mutateAsync: createTask } = useCreateWorkTask();
 
@@ -1319,6 +1341,35 @@ export default function WorkDetailScreen() {
                     </Text>
                   </Pressable>
                 )}
+
+                {/* Chapter list */}
+                {chaptersLoading ? (
+                  <ActivityIndicator color={colors.primary} style={{ marginTop: 8 }} />
+                ) : chapters.length > 0 ? (
+                  <View style={{ gap: 6, marginTop: 4 }}>
+                    <Text style={{ fontSize: 11, fontFamily: 'Inter_600SemiBold', color: colors.mutedForeground, letterSpacing: 0.8 }}>
+                      CHAPTERS ({chapters.length})
+                    </Text>
+                    {chapters.map((ch: any, i: number) => {
+                      const statusColor = ch.status === 'approved' ? '#16a34a' : ch.status === 'drafted' ? colors.primary : colors.mutedForeground;
+                      return (
+                        <View key={ch.id ?? i} style={[styles.listItem, { borderColor: colors.border, paddingVertical: 8 }]}>
+                          <View style={{ flex: 1 }}>
+                            <Text style={{ fontSize: 13, fontFamily: 'Inter_500Medium', color: colors.foreground }} numberOfLines={2}>
+                              {ch.title ?? `Chapter ${ch.seq ?? i + 1}`}
+                            </Text>
+                            <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: colors.mutedForeground, marginTop: 2 }}>
+                              {ch.doc_title} · {ch.word_count ?? 0} words
+                            </Text>
+                          </View>
+                          <View style={{ paddingHorizontal: 7, paddingVertical: 3, borderRadius: 5, borderWidth: 1, borderColor: statusColor + '44', backgroundColor: statusColor + '12' }}>
+                            <Text style={{ fontSize: 10, fontFamily: 'Inter_600SemiBold', color: statusColor }}>{ch.status ?? 'pending'}</Text>
+                          </View>
+                        </View>
+                      );
+                    })}
+                  </View>
+                ) : null}
               </View>
             )}
           </ScrollView>
