@@ -24,7 +24,7 @@ import {
   ArrowLeft, BarChart2, AlertTriangle, Lightbulb, CheckCircle2,
   RefreshCw, ChevronDown, ChevronRight, Layers, Brain,
   BookOpen, FileText, Loader2, Zap, ArrowRight, TrendingUp,
-  Search, UploadCloud, RotateCw, ExternalLink,
+  Search, UploadCloud, RotateCw, ExternalLink, CheckSquare, Plus,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -151,6 +151,27 @@ export default function WorkIntelligence() {
     queryKey: ["pipeline", workId],
     queryFn: () => apiFetch(`${BASE}/works/${workId}/pipeline`).then((r) => r.json()),
     enabled: !!workId, staleTime: 30_000,
+  });
+
+  // "Track as task" state — tracks gap keys (severity+index) already converted
+  const [trackedGaps, setTrackedGaps] = useState<Set<string>>(new Set());
+
+  const createTaskMutation = useMutation({
+    mutationFn: async (text: string) => {
+      const r = await apiFetch(`${BASE}/works/${workId}/tasks`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+      if (!r.ok) throw new Error("Could not create task");
+      return r.json();
+    },
+    onSuccess: (_data, text) => {
+      setTrackedGaps((prev) => new Set(prev).add(text));
+      queryClient.invalidateQueries({ queryKey: ["work-stats", workId] });
+      toast.success("Task created", { description: text });
+    },
+    onError: (e: Error) => toast.error(e.message),
   });
 
   // Evidence rescore mutation
@@ -442,16 +463,36 @@ export default function WorkIntelligence() {
                         </p>
                       )}
                     </div>
-                    {/* "Find sources" action for high/medium gaps */}
+                    {/* Actions for high/medium gaps */}
                     {(severity === "high" || severity === "medium") && (
-                      <button
-                        className="shrink-0 flex items-center gap-1 text-[10px] font-mono text-primary/70 hover:text-primary transition-colors whitespace-nowrap mt-0.5"
-                        onClick={() => goSearch(g.title)}
-                        title={`Search this Work for: ${g.title}`}
-                      >
-                        <Search className="w-3 h-3" />
-                        Find sources
-                      </button>
+                      <div className="shrink-0 flex flex-col items-end gap-1.5 mt-0.5">
+                        <button
+                          className="flex items-center gap-1 text-[10px] font-mono text-primary/70 hover:text-primary transition-colors whitespace-nowrap"
+                          onClick={() => goSearch(g.title)}
+                          title={`Search this Work for: ${g.title}`}
+                        >
+                          <Search className="w-3 h-3" />
+                          Find sources
+                        </button>
+                        {trackedGaps.has(g.title) ? (
+                          <span className="flex items-center gap-1 text-[10px] font-mono text-emerald-700 whitespace-nowrap">
+                            <CheckSquare className="w-3 h-3" />
+                            Task created
+                          </span>
+                        ) : (
+                          <button
+                            className="flex items-center gap-1 text-[10px] font-mono text-muted-foreground hover:text-foreground transition-colors whitespace-nowrap disabled:opacity-40"
+                            onClick={() => createTaskMutation.mutate(g.title)}
+                            disabled={createTaskMutation.isPending}
+                            title={`Track "${g.title}" as a work task`}
+                          >
+                            {createTaskMutation.isPending
+                              ? <Loader2 className="w-3 h-3 animate-spin" />
+                              : <Plus className="w-3 h-3" />}
+                            Track as task
+                          </button>
+                        )}
+                      </div>
                     )}
                   </div>
                 ))}
