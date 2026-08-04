@@ -49,6 +49,25 @@ export default function LibraryDocDetail() {
   const [showWorkPicker, setShowWorkPicker] = useState(false);
   const [linkingWork, setLinkingWork] = useState(false);
   const [lifecycleUpdating, setLifecycleUpdating] = useState(false);
+  const [reprocessing, setReprocessing] = useState(false);
+
+  const handleReprocess = async () => {
+    setReprocessing(true);
+    try {
+      const res = await mobileFetch(`https://${domain}/api/library/${id}/reprocess`, { method: 'POST' });
+      if (!res.ok) throw new Error('Reprocess failed');
+      // Poll until readiness changes from imported/error/no_text
+      let attempts = 0;
+      const poll = setInterval(async () => {
+        attempts++;
+        await refetchDoc();
+        if (attempts >= 15) { clearInterval(poll); setReprocessing(false); }
+      }, 2000);
+    } catch {
+      Alert.alert('Error', 'Could not queue reprocess');
+      setReprocessing(false);
+    }
+  };
 
   // ── Read Aloud (TTS) ────────────────────────────────────────────────────────
   type TtsState = 'idle' | 'loading' | 'playing' | 'paused' | 'error';
@@ -286,6 +305,22 @@ export default function LibraryDocDetail() {
             </Text>
           ) : null}
         </View>
+        {/* Reprocess button — shown for stuck documents */}
+        {(doc.readiness === 'error' || doc.readiness === 'no_text' || doc.readiness === 'imported') && (
+          <Pressable
+            onPress={handleReprocess}
+            disabled={reprocessing}
+            style={[styles.listenBtn, { borderColor: '#f59e0b55', backgroundColor: '#f59e0b0f' }]}
+          >
+            {reprocessing
+              ? <ActivityIndicator size="small" color="#d97706" />
+              : <Feather name="refresh-cw" size={14} color="#d97706" />}
+            <Text style={[styles.listenBtnText, { color: '#d97706' }]}>
+              {reprocessing ? 'Processing…' : 'Re-extract'}
+            </Text>
+          </Pressable>
+        )}
+
         {/* Lifecycle picker row */}
         {(() => {
           const lc = (doc as any).lifecycle ?? 'draft';

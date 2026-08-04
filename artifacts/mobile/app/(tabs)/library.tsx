@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { mobileFetch } from '@/lib/api';
 import {
   ActivityIndicator,
@@ -124,6 +124,7 @@ export default function LibraryScreen() {
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0); // 0–100
   const [workFilter, setWorkFilter] = useState<string | undefined>(undefined); // work_id or undefined = all
+  const [sortBy, setSortBy] = useState<'newest' | 'oldest' | 'az' | 'za'>('newest');
 
   const { data: worksData } = useListWorks({} as any, { query: { staleTime: 60_000 } } as any);
   const works: any[] = (worksData as any)?.works ?? [];
@@ -220,10 +221,18 @@ export default function LibraryScreen() {
   // When offline during a search, fall back to last cached results for that query
   const searchResults: any[] = searchData?.results ?? (searchError && lastSearchCache.current.results.length > 0 ? lastSearchCache.current.results : []);
   const isOfflineSearch = searchError && lastSearchCache.current.results.length > 0;
-  const docs: any[] = isSearching
-    ? searchResults
-    : (listData?.documents ?? []);
-  const hasData = docs.length > 0 || (listData?.documents?.length ?? 0) > 0;
+  const rawDocs: any[] = isSearching ? searchResults : (listData?.documents ?? []);
+  const docs: any[] = useMemo(() => {
+    if (isSearching) return rawDocs;
+    return [...rawDocs].sort((a, b) => {
+      if (sortBy === 'newest') return new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime();
+      if (sortBy === 'oldest') return new Date(a.created_at ?? 0).getTime() - new Date(b.created_at ?? 0).getTime();
+      const ta = (a.title || a.source?.split('/').pop() || '').toLowerCase();
+      const tb = (b.title || b.source?.split('/').pop() || '').toLowerCase();
+      return sortBy === 'az' ? ta.localeCompare(tb) : tb.localeCompare(ta);
+    });
+  }, [rawDocs, sortBy, isSearching]);
+  const hasData = rawDocs.length > 0 || (listData?.documents?.length ?? 0) > 0;
 
   const topPad = isWeb ? 67 : insets.top;
 
@@ -356,6 +365,39 @@ export default function LibraryScreen() {
               </Text>
             </Pressable>
           ))}
+        </ScrollView>
+      )}
+
+      {/* Sort chips — only shown when not searching */}
+      {!isSearching && (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={{ flexDirection: 'row', paddingHorizontal: 12, paddingVertical: 5, gap: 6 }}
+          style={{ borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border }}
+        >
+          {(['newest', 'oldest', 'az', 'za'] as const).map((opt) => {
+            const label = opt === 'newest' ? 'Newest' : opt === 'oldest' ? 'Oldest' : opt === 'az' ? 'A → Z' : 'Z → A';
+            const active = sortBy === opt;
+            return (
+              <Pressable
+                key={opt}
+                onPress={() => setSortBy(opt)}
+                style={{
+                  paddingHorizontal: 10,
+                  paddingVertical: 3,
+                  borderRadius: 12,
+                  borderWidth: 1,
+                  borderColor: active ? colors.primary : colors.border,
+                  backgroundColor: active ? colors.primary + '18' : 'transparent',
+                }}
+              >
+                <Text style={{ fontSize: 11, fontFamily: 'Inter_500Medium', color: active ? colors.primary : colors.mutedForeground }}>
+                  {label}
+                </Text>
+              </Pressable>
+            );
+          })}
         </ScrollView>
       )}
 

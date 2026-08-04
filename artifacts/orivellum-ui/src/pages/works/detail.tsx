@@ -1389,8 +1389,23 @@ function TasksTab({ workId }: { workId: string }) {
                 variant="outline"
                 className="text-[9px] uppercase font-mono opacity-0 group-hover:opacity-100 transition-opacity"
               >
-                Priority {task.priority || 0}
+                P{task.priority || 0}
               </Badge>
+              <button
+                onClick={() => {
+                  if (!task.id) return;
+                  apiFetch(`${WORK_API_BASE}/works/${workId}/tasks/${task.id}`, { method: "DELETE" })
+                    .then(() => {
+                      queryClient.invalidateQueries({ queryKey: getGetWorkTasksQueryKey(workId) });
+                      queryClient.invalidateQueries({ queryKey: getGetWorkStatsQueryKey(workId) });
+                    })
+                    .catch(() => toast.error("Could not delete task"));
+                }}
+                className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 rounded hover:bg-destructive/10 hover:text-destructive text-muted-foreground"
+                title="Delete task"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
             </div>
           ))
         ) : (
@@ -1498,6 +1513,11 @@ function ConversationsTab({ workId }: { workId: string }) {
                   <div className="text-right text-xs font-mono text-muted-foreground space-y-1 shrink-0">
                     <div>{conv.message_count || 0} msgs</div>
                     <div>{conv.updated_at ? format(new Date(conv.updated_at), "MMM d") : ""}</div>
+                    {(conv as any).model && (
+                      <div className="text-[10px] opacity-60 font-mono">
+                        {String((conv as any).model).split("/").pop()?.split("-").slice(0, 3).join("-")}
+                      </div>
+                    )}
                   </div>
                 </CardContent>
               </Card>
