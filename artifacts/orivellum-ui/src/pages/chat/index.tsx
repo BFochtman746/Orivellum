@@ -53,6 +53,17 @@ const API_BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
+/**
+ * Explicit delivery/generation status for a message.
+ *
+ * sending      — user message sent to fetch; awaiting first byte from server
+ * acknowledged — server has started responding (first token received)
+ * streaming    — assistant response is actively streaming tokens
+ * complete     — assistant response finished (or message loaded from server)
+ * failed       — network/server error; user can retry
+ */
+type MessageStatus = "sending" | "acknowledged" | "streaming" | "complete" | "failed";
+
 interface LocalMessage {
   id: string;
 
@@ -61,6 +72,9 @@ interface LocalMessage {
   text: string;
 
   created_at: string;
+
+  /** Explicit lifecycle state. Undefined means loaded from server (treat as complete). */
+  status?: MessageStatus;
 
   streaming?: boolean;
   /** Set when the stream was aborted before completion */
@@ -454,8 +468,10 @@ async function* streamChat(
   });
 
   if (!resp.ok || !resp.body) {
-    yield "AI service is currently unavailable. Your message has been saved.";
-    return;
+    // Throw so sendText's catch path fires and marks both bubbles as failed,
+    // showing the "Not delivered · Retry" control on the user bubble.
+    // The user message is already saved on the backend at this point.
+    throw new Error(`AI service error: ${resp.status} ${resp.statusText}`);
   }
 
   const reader = resp.body.getReader();
@@ -726,8 +742,10 @@ export default function Chat() {
   const accumulatorRef = useRef("");
   const thinkingAccRef = useRef("");   // accumulates reasoning tokens during streaming
   const assistantIdRef = useRef("");
+  const userMsgIdRef   = useRef("");   // tracks the latest user message id for status updates
   const rafRef = useRef<number | null>(null);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesEndRef    = useRef<HTMLDivElement>(null);
+  const msgsContainerRef  = useRef<HTMLDivElement>(null);  // scroll anchor target
   // Synchronous sending flag (avoids stale closure in RAF loop) + abort controller
   const sendingRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
@@ -804,6 +822,27 @@ export default function Chat() {
       }
     };
   }, [activeId]);
+
+  // ── VisualViewport scroll-anchor preservation ────────────────────────────
+  // When the iPhone keyboard opens, --visual-viewport-height shrinks.  Without
+  // a scroll correction the visible messages jump upward.  We compensate by
+  // shifting scrollTop by the same delta so the user's reading position stays
+  // fixed relative to the screen.
+  const prevVvhRef = useRef<number>(0);
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    prevVvhRef.current = vv.height;
+    const handler = () => {
+      const delta = prevVvhRef.current - vv.height;   // positive = keyboard opened
+      if (delta > 10 && msgsContainerRef.current) {
+        msgsContainerRef.current.scrollTop += delta;
+      }
+      prevVvhRef.current = vv.height;
+    };
+    vv.addEventListener("resize", handler, { passive: true });
+    return () => vv.removeEventListener("resize", handler);
+  }, []);
 
   // #40 — When AI comes back online: toast + refetch active conversation + conversation list
   const prevAiOnlineRef = useRef<boolean | undefined>(undefined);
@@ -936,9 +975,12 @@ export default function Chat() {
 
       const capturedImage = pendingImage;
       setPendingImage(null);
+      const userMsgId = randomUUID();
+      userMsgIdRef.current = userMsgId;
       const userMsg: LocalMessage = {
-        id: randomUUID(), role: "user", text,
+        id: userMsgId, role: "user", text,
         created_at: new Date().toISOString(),
+        status: "sending",
         image_b64: capturedImage?.data,
         image_media_type: capturedImage?.type,
       };
@@ -949,7 +991,7 @@ export default function Chat() {
       // Capture the effective model so the attribution label shows during streaming
       const effectiveModel = conv?.model || defaultModel || undefined;
 
-      setLocalMessages([...serverMsgs, userMsg, { id: assistantId, role: "assistant", text: "", created_at: new Date().toISOString(), streaming: true, meta: effectiveModel ? { model: effectiveModel } : undefined }]);
+      setLocalMessages([...serverMsgs, userMsg, { id: assistantId, role: "assistant", text: "", created_at: new Date().toISOString(), status: "streaming", streaming: true, meta: effectiveModel ? { model: effectiveModel } : undefined }]);
 
       // Use sendingRef (not stale-closure `sending`) so the RAF loop continues in background tabs
       const scheduleFlush = () => {
@@ -963,8 +1005,17 @@ export default function Chat() {
       let streamedIntent: string | undefined;
       let streamedSources: KnowledgeSource[] | undefined;
       const SOURCES_PREFIX = "\x02SOURCES\x02";
+      // On the first token we upgrade the user message from "sending" → "acknowledged"
+      // so the "Sending…" indicator disappears as soon as the server starts responding.
+      let userAcknowledged = false;
       try {
         for await (const token of streamChat(convId, text, controller.signal, deepMode, scopeAll ? "all" : "work", capturedImage?.data, capturedImage?.type)) {
+          if (!userAcknowledged) {
+            userAcknowledged = true;
+            setLocalMessages((prev) => prev.map((m) =>
+              m.id === userMsgId ? { ...m, status: "acknowledged" as const } : m
+            ));
+          }
           if (token.startsWith(SOURCES_PREFIX) && token.endsWith(SOURCES_PREFIX) && token.length > SOURCES_PREFIX.length * 2) {
             try {
               streamedSources = JSON.parse(token.slice(SOURCES_PREFIX.length, -SOURCES_PREFIX.length));
@@ -976,7 +1027,7 @@ export default function Chat() {
             const question = token.slice(CLARIFY_PREFIX.length);
             setLocalMessages((prev) => prev.map((m) =>
               m.id === assistantId
-                ? { ...m, text: question, streaming: false, isClarification: true,
+                ? { ...m, text: question, status: "complete" as const, streaming: false, isClarification: true,
                     meta: { ...(m.meta ?? {}), model: effectiveModel, isClarification: true } }
                 : m
             ));
@@ -1007,6 +1058,7 @@ export default function Chat() {
                   ...(finalText ? { text: finalText } : {}),
                   ...(finalThinking ? { thinking: finalThinking } : {}),
                   thinkingStreaming: false,
+                  status: "complete" as const,
                   streaming: false,
                   intent: streamedIntent ?? m.intent,
                   meta: { ...(m.meta ?? {}), ...(streamedSources ? { sources: streamedSources } : {}) },
@@ -1021,29 +1073,31 @@ export default function Chat() {
           const partialText = accumulatorRef.current;
           if (partialText) {
             setLocalMessages((prev) => prev.map((m) =>
-              m.id === assistantId ? { ...m, text: partialText, streaming: false, incomplete: true } : m
+              m.id === assistantId ? { ...m, text: partialText, status: "complete" as const, streaming: false, incomplete: true } : m
             ));
           } else {
             setLocalMessages((prev) => prev.filter((m) => m.id !== assistantId));
           }
         } else {
-          const msg = err?.message ?? String(err);
-          const errLabel = (msg.includes("503") || msg.includes("Service Unavailable") || msg.includes("AI"))
+          const errMsg = err?.message ?? String(err);
+          const errLabel = (errMsg.includes("503") || errMsg.includes("Service Unavailable") || errMsg.includes("AI"))
             ? "AI service unavailable — check Engine Settings"
             : "Message failed to send";
-          // Keep the bubble visible with a failed state instead of silently removing it
-          // so the user can see what happened and retry.
-          setLocalMessages((prev) => prev.map((m) =>
-            m.id === assistantId
-              ? { ...m, text: errLabel, streaming: false, failed: true }
-              : m
-          ));
+          // Mark both the user and assistant messages as failed so the UI can
+          // show "Not delivered — Retry" beneath the user bubble and remove the
+          // assistant bubble (which just shows the error label for now).
+          setLocalMessages((prev) => prev.map((m) => {
+            if (m.id === assistantId) return { ...m, text: errLabel, status: "failed" as const, streaming: false };
+            if (m.id === userMsgId)   return { ...m, status: "failed" as const };
+            return m;
+          }));
         }
       } finally {
         if (rafRef.current !== null) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
         accumulatorRef.current = "";
         thinkingAccRef.current = "";
         assistantIdRef.current = "";
+        userMsgIdRef.current = "";
         sendingRef.current = false;
         abortRef.current = null;
         setSending(false);
@@ -1053,7 +1107,7 @@ export default function Chat() {
         // Clear local messages only if still viewing the same conversation
         // (otherwise the activeId-change effect already cleared them)
         // Keep incomplete (truncated) and failed bubbles — both are meaningful states.
-        setLocalMessages((prev) => prev.filter((m) => m.incomplete || (m as any).failed));
+        setLocalMessages((prev) => prev.filter((m) => m.incomplete || m.status === "failed"));
       }
     },
     [activeId, deepMode, scopeAll, pendingImage, activeConv?.messages, flushAccumulator, queryClient, defaultModel]
@@ -1400,8 +1454,9 @@ export default function Chat() {
 
             {/* Messages — plain overflow-y-auto div instead of Radix ScrollArea.
                 overscroll-contain prevents scroll chaining to the parent on
-                mobile Safari, keeping the composer anchored at the bottom. */}
-            <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-6 py-6">
+                mobile Safari, keeping the composer anchored at the bottom.
+                msgsContainerRef drives the VVH scroll-anchor preservation effect. */}
+            <div ref={msgsContainerRef} className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-6 py-6">
               <div className="max-w-3xl mx-auto space-y-6">
                 {loadingActive && !localOverride ? (
                   <div className="space-y-6">
@@ -1445,8 +1500,43 @@ export default function Chat() {
                             />
                           </div>
                         )}
+                        {/* ── User-message lifecycle indicator ───────────────────
+                            Shown below the bubble, right-aligned, using tiny
+                            font-mono text so it reads as metadata not content.
+                            "sending" shows while awaiting the first server byte;
+                            "failed" shows "Not delivered" + a Retry button.    */}
+                        {msg.role === "user" && msg.status === "sending" && (
+                          <div className="flex items-center gap-1 mt-1 justify-end text-[10px] font-mono text-muted-foreground/50">
+                            <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                            <span>Sending…</span>
+                          </div>
+                        )}
+                        {msg.role === "user" && msg.status === "failed" && (
+                          <div className="flex items-center gap-2 mt-1 justify-end">
+                            <div className="flex items-center gap-1 text-[10px] font-mono text-destructive/70">
+                              <AlertTriangle className="w-2.5 h-2.5 shrink-0" />
+                              <span>Not delivered</span>
+                            </div>
+                            <button
+                              onClick={() => {
+                                const resendText = msg.text || lastSentRef.current;
+                                if (!resendText || sending) return;
+                                // Clear both failed bubbles before retrying so they
+                                // don't accumulate on repeated retries.
+                                setLocalMessages((prev) => prev.filter(
+                                  (m) => m.status !== "failed"
+                                ));
+                                sendText(resendText);
+                              }}
+                              disabled={sending}
+                              className="text-[10px] font-mono text-destructive/80 hover:text-destructive underline underline-offset-2 disabled:opacity-40 disabled:cursor-not-allowed"
+                            >
+                              Retry
+                            </button>
+                          </div>
+                        )}
                         <div className={`px-4 py-3 rounded-lg text-sm break-words
-                          ${(msg as any).failed
+                          ${msg.status === "failed" && msg.role === "assistant"
                             ? "bg-destructive/5 border border-destructive/30 text-destructive"
                             : msg.isClarification
                               ? "bg-amber-50/50 border border-amber-200/60 text-amber-900 dark:bg-amber-950/20 dark:border-amber-800/40 dark:text-amber-100"
@@ -1481,28 +1571,14 @@ export default function Chat() {
                                     </div>
                                   );
                                 })()}
-                                {(msg as any).failed && (() => {
-                                  // Failed send — offer to retry with the same user message
-                                  const prevUser = displayMessages.slice(0, msgIdx).reverse().find(m => m.role === "user");
-                                  const resendText = prevUser?.text || lastSentRef.current;
+                                {msg.status === "failed" && (() => {
+                                  // Failed assistant bubble — the user already has
+                                  // a "Not delivered · Retry" row under their own
+                                  // bubble; this just surfaces the error text.
                                   return (
-                                    <div className="mt-2 flex items-center justify-between gap-2 border-t border-destructive/20 pt-2">
-                                      <div className="flex items-center gap-1.5 text-xs text-destructive/70">
-                                        <AlertTriangle className="w-3 h-3 shrink-0" />
-                                        <span>Failed to send.</span>
-                                      </div>
-                                      <button
-                                        onClick={() => {
-                                          if (!resendText) return;
-                                          // Remove this failed bubble so retries don't accumulate duplicates
-                                          setLocalMessages((prev) => prev.filter((m) => m.id !== msg.id));
-                                          sendText(resendText);
-                                        }}
-                                        disabled={!resendText || sending}
-                                        className="text-xs font-mono text-destructive/80 hover:text-destructive underline underline-offset-2 shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
-                                      >
-                                        Try again
-                                      </button>
+                                    <div className="mt-2 flex items-center gap-1.5 border-t border-destructive/20 pt-2">
+                                      <AlertTriangle className="w-3 h-3 shrink-0 text-destructive/60" />
+                                      <span className="text-xs text-destructive/70">Failed — use Retry beneath your message.</span>
                                     </div>
                                   );
                                 })()}
