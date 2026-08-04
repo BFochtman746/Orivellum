@@ -133,6 +133,7 @@ export default function LibraryDocDetail() {
 
   const [refreshing, setRefreshing] = useState(false);
   const [reviewing, setReviewing] = useState<string | null>(null);
+  const [bulkReviewing, setBulkReviewing] = useState<'approve' | 'dismiss' | null>(null);
   const [showWorkPicker, setShowWorkPicker] = useState(false);
   const [linkingWork, setLinkingWork] = useState(false);
   const [lifecycleUpdating, setLifecycleUpdating] = useState(false);
@@ -266,6 +267,39 @@ export default function LibraryDocDetail() {
       Alert.alert('Error', 'Could not update review status');
     } finally {
       setReviewing(null);
+    }
+  };
+
+  const handleBulkReview = async (action: 'approve' | 'dismiss') => {
+    const pending = (knData as any)?.knowledge?.filter((k: any) => k.review_status === 'ai_auto') ?? [];
+    if (pending.length === 0) return;
+    setBulkReviewing(action);
+    const status = action === 'approve' ? 'approved' : 'rejected';
+    try {
+      const results = await Promise.allSettled(
+        pending.map(async (item: any) => {
+          const res = await mobileFetch(`https://${domain}/api/knowledge/${item.id}/review`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ review_status: status }),
+          });
+          if (!res.ok) throw new Error(`${item.id}: server returned ${res.status}`);
+        })
+      );
+      // Refetch regardless so any successful updates are reflected immediately
+      await refetchKn();
+      const failed = results.filter((r) => r.status === 'rejected').length;
+      if (failed > 0) {
+        const succeeded = results.length - failed;
+        Alert.alert(
+          'Partial update',
+          `${succeeded} item${succeeded !== 1 ? 's' : ''} updated, ${failed} failed. Please retry the remaining items.`
+        );
+      }
+    } catch {
+      Alert.alert('Error', `Could not ${action} all items`);
+    } finally {
+      setBulkReviewing(null);
     }
   };
 
@@ -585,9 +619,51 @@ export default function LibraryDocDetail() {
           ) : (
             <>
               {pendingKnowledge.length > 0 && (
-                <Text style={[styles.reviewHeader, { color: colors.primary }]}>
-                  ✦ {pendingKnowledge.length} AI item{pendingKnowledge.length !== 1 ? 's' : ''} need review
-                </Text>
+                <>
+                  <Text style={[styles.reviewHeader, { color: colors.primary }]}>
+                    ✦ {pendingKnowledge.length} AI item{pendingKnowledge.length !== 1 ? 's' : ''} need review
+                  </Text>
+                  {pendingKnowledge.length > 1 && (
+                    <View style={{ flexDirection: 'row', gap: 8, marginBottom: 10 }}>
+                      <Pressable
+                        onPress={() => handleBulkReview('approve')}
+                        disabled={!!bulkReviewing}
+                        style={{
+                          flex: 1, flexDirection: 'row', alignItems: 'center',
+                          justifyContent: 'center', gap: 5, paddingVertical: 8,
+                          borderRadius: 8, borderWidth: 1,
+                          backgroundColor: '#4A8C6518', borderColor: '#4A8C6544',
+                          opacity: bulkReviewing ? 0.6 : 1,
+                        }}
+                      >
+                        {bulkReviewing === 'approve'
+                          ? <ActivityIndicator size="small" color="#4A8C65" />
+                          : <Feather name="thumbs-up" size={13} color="#4A8C65" />}
+                        <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: '#4A8C65' }}>
+                          Approve all
+                        </Text>
+                      </Pressable>
+                      <Pressable
+                        onPress={() => handleBulkReview('dismiss')}
+                        disabled={!!bulkReviewing}
+                        style={{
+                          flex: 1, flexDirection: 'row', alignItems: 'center',
+                          justifyContent: 'center', gap: 5, paddingVertical: 8,
+                          borderRadius: 8, borderWidth: 1,
+                          backgroundColor: '#dc262618', borderColor: '#dc262644',
+                          opacity: bulkReviewing ? 0.6 : 1,
+                        }}
+                      >
+                        {bulkReviewing === 'dismiss'
+                          ? <ActivityIndicator size="small" color="#dc2626" />
+                          : <Feather name="thumbs-down" size={13} color="#dc2626" />}
+                        <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: '#dc2626' }}>
+                          Dismiss all
+                        </Text>
+                      </Pressable>
+                    </View>
+                  )}
+                </>
               )}
               {[...pendingKnowledge, ...approvedKnowledge, ...otherKnowledge].map((item: any) => {
                 const isPending = item.review_status === 'ai_auto';
