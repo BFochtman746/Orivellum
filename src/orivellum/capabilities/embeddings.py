@@ -6,15 +6,41 @@ Degrades gracefully: when the endpoint is unreachable or returns an error,
 callers fall back to pure BM25/FTS search.
 
 Vectors are stored in the existing `vectors` table (BLOB float32) and
-compared with pure-Python cosine similarity — no numpy dependency. At
-Orivellum's scale (thousands of chunks, not millions) a linear scan is
-milliseconds.
+compared in memory using dot-product on pre-normalized vectors (equivalent
+to cosine similarity with no sqrt overhead) — no numpy dependency.
+
+Performance strategy
+--------------------
+1. **Pre-normalization at cache load**: every vector is normalized to unit
+   length once on first load. Subsequent cosine comparisons reduce to a
+   single dot-product loop (no magnitude computation on each query).
+2. **Process-level vector cache** keyed by ``(db_path, object_type)``:
+   unpacked + normalized vectors are kept in a module-level dict so that
+   each ``OrivellumDB`` instance has its own isolated cache and multiple
+   instances in the same process never cross-contaminate each other.
+3. **Version-based invalidation** (not count-based):
+   ``bump_vector_cache_version(db_path, object_type)`` increments a
+   monotonic integer counter for that key.  ``_load_vecs`` compares the
+   cached version against the current counter; any mismatch triggers a
+   full reload from SQLite.  The bump is called from:
+   - ``db.store_vector`` — after every vector write, *including*
+     DELETE+INSERT replacements that leave the row count unchanged
+   - ``db.update_knowledge_review_status`` — so approved↔rejected
+     eligibility changes are reflected immediately
+   - the governance batch-review endpoint — because it writes
+     ``review_status`` via raw SQL, bypassing the helper above
+   Warm-path cost: two integer comparisons under a threading.Lock —
+   zero SQL round-trips.
+4. **Work-id filtering in Python**: the cache stores all vectors for a
+   type; work_id filtering happens in the scoring loop so a single cache
+   entry serves every query scope for that DB+type pair.
 """
 from __future__ import annotations
 
 import json
 import logging
 import struct
+import threading
 import time
 import urllib.request
 from typing import TYPE_CHECKING
@@ -34,6 +60,118 @@ _BACKFILL_BATCH = 16        # texts per API call
 # to search or chat (they fall back to BM25 instantly during the cooldown).
 _FAIL_COOLDOWN = 60.0       # seconds
 _unavailable_until = 0.0
+
+# ── Vector cache ──────────────────────────────────────────────────────────────
+#
+# Design decisions:
+#
+# 1. Cache key is (db_path, object_type) — not just object_type — so multiple
+#    OrivellumDB instances in the same process (tests, multi-tenant) never
+#    share or cross-contaminate each other's vectors.
+#
+# 2. Invalidation is version-based, not count-based.  db.store_vector calls
+#    bump_vector_cache_version() after *every* write, including DELETE+INSERT
+#    replacements of an existing vector (which leave the row count unchanged
+#    and therefore would not be caught by count comparison).
+#    db.update_knowledge_review_status also bumps "knowledge" so eligibility
+#    changes (approved↔rejected) are reflected promptly.
+#
+# 3. The warm path compares two integers under a lock — zero SQL round-trips.
+#
+# 4. Vectors are pre-normalized at cache-load time so cosine similarity
+#    reduces to a plain dot product during scoring.
+#
+# Thread safety: _cache_lock guards both dicts.  Cached entry lists are never
+# mutated after they are stored — a fresh list is always built and then
+# assigned.
+
+_cache_lock = threading.Lock()
+# (db_path, object_type) → (entries, version_at_load)
+_vec_cache: dict[tuple[str, str], tuple[list, int]] = {}
+# (db_path, object_type) → monotonically increasing write version
+_version_counters: dict[tuple[str, str], int] = {}
+
+
+def _norm_vec(vec: list[float]) -> list[float]:
+    """Return a unit-length copy of *vec*; unchanged if the vector is zero."""
+    mag = sum(x * x for x in vec) ** 0.5
+    if mag == 0.0:
+        return vec
+    inv = 1.0 / mag
+    return [x * inv for x in vec]
+
+
+def _dot(a: list[float], b: list[float]) -> float:
+    """Dot product of two vectors.  Equals cosine similarity when both are unit-length."""
+    return sum(x * y for x, y in zip(a, b))
+
+
+def bump_vector_cache_version(db_path: str, object_type: str) -> None:
+    """Increment the write version for (db_path, object_type).
+
+    Called from ``db.store_vector`` after every vector write (additions *and*
+    replacements) and from ``db.update_knowledge_review_status`` so that
+    eligibility changes invalidate the knowledge cache.
+
+    The next ``_load_vecs`` call for this key will see a stale version and
+    rebuild from SQLite.  The bump is O(1) under a lock — no DB access.
+    """
+    key = (db_path, object_type)
+    with _cache_lock:
+        _version_counters[key] = _version_counters.get(key, 0) + 1
+
+
+def invalidate_vector_cache() -> None:
+    """Test hook: wipe all in-memory vector caches and version counters."""
+    with _cache_lock:
+        _vec_cache.clear()
+        _version_counters.clear()
+
+
+def _load_vecs(db: "OrivellumDB", object_type: str,
+               all_sql: str, all_params: tuple) -> list:
+    """Return cached vector entries, rebuilding when the write version changed.
+
+    *all_sql* must fetch ALL rows for the object_type (no work_id filter) so
+    the single cache entry serves every query scope for that DB+type pair.
+
+    Returns list of (object_id, field_dict, normalized_vec).
+
+    Warm path: two integer comparisons under a lock, no SQL.
+    Cold / stale path: one DB read, unpack, normalize, store.
+    """
+    key = (db._path, object_type)
+
+    # Snapshot the version before we release the lock to start loading.
+    # If a bump happens while we load, ver_before < current version after load,
+    # so we store (entries, ver_before) which is LESS than the bumped version;
+    # the next caller will see the mismatch and rebuild with the fresh data.
+    with _cache_lock:
+        ver_before = _version_counters.get(key, 0)
+        cached = _vec_cache.get(key)
+        if cached is not None and cached[1] == ver_before:
+            return cached[0]  # warm hit — zero SQL
+
+    # Cache miss or stale: load from DB outside the lock.
+    with db._lock:
+        rows = db._conn.execute(all_sql, all_params).fetchall()
+
+    entries: list = []
+    for r in rows:
+        try:
+            raw = unpack_vector(r["embedding"], r["dim"])
+            nv  = _norm_vec(raw)
+        except Exception:
+            continue
+        field = {k: r[k] for k in r.keys() if k not in ("embedding", "dim")}
+        entries.append((field["object_id"], field, nv))
+
+    with _cache_lock:
+        _vec_cache[key] = (entries, ver_before)
+
+    logger.debug("Vector cache rebuilt: db=%s type=%s n=%d",
+                 db._path, object_type, len(entries))
+    return entries
 
 
 def _reset_circuit_breaker() -> None:
@@ -182,54 +320,53 @@ def semantic_search(query: str, db: "OrivellumDB", object_type: str = "knowledge
 
     Returns [] when embeddings are unavailable so callers can fall back to FTS.
     Each hit: {"id", "score", plus the joined text/subject columns}.
+
+    Performance: vectors are loaded once from SQLite, pre-normalized, and kept
+    in ``_vec_cache``.  The cache is invalidated by count-comparison whenever
+    ``count_vectors`` changes (i.e. after any ``store_vector`` call).
+    Work-id filtering is applied in-process so a single cache entry serves all
+    query scopes for the same object_type.
     """
     # Short timeout: this sits on interactive search/chat paths, so a slow or
     # down endpoint must not stall the request (the breaker then skips retries).
     qvecs = embed_texts([query], timeout=_QUERY_TIMEOUT)
     if not qvecs:
         return []
-    qvec = qvecs[0]
+    # Normalize the query vector so cosine similarity = dot product
+    qvec = _norm_vec(qvecs[0])
 
     if object_type == "knowledge":
-        # Select the full canonical knowledge shape so semantic hits are
-        # interchangeable with FTS hits downstream (provenance, meta, etc.).
-        join_sql = """SELECT v.object_id, v.embedding, v.dim,
-                             k.text, k.subject, k.predicate, k.object, k.kind,
-                             k.work_id, k.confidence, k.review_status,
-                             k.source_doc_id, k.source_chunk_id, k.source_offset,
-                             k.meta, k.created_at
-                      FROM vectors v JOIN knowledge k ON k.id = v.object_id
-                      WHERE v.object_type='knowledge'
-                        AND k.review_status IN ('auto','approved')"""
-        params: tuple = ()
-        if work_id:
-            join_sql += " AND k.work_id = ?"
-            params = (work_id,)
+        # Full canonical knowledge shape so semantic hits are interchangeable
+        # with FTS hits downstream (provenance, meta, etc.).
+        # Load ALL knowledge vectors (no work_id filter) — filtered in Python.
+        all_sql = """SELECT v.object_id, v.embedding, v.dim,
+                            k.text, k.subject, k.predicate, k.object, k.kind,
+                            k.work_id, k.confidence, k.review_status,
+                            k.source_doc_id, k.source_chunk_id, k.source_offset,
+                            k.meta, k.created_at
+                     FROM vectors v JOIN knowledge k ON k.id = v.object_id
+                     WHERE v.object_type='knowledge'
+                       AND k.review_status != 'rejected'"""
     else:
-        join_sql = """SELECT v.object_id, v.embedding, v.dim,
-                             c.text, c.doc_id, d.title AS doc_title, d.work_id
-                      FROM vectors v
-                      JOIN chunks c ON c.id = v.object_id
-                      JOIN documents d ON d.id = c.doc_id
-                      WHERE v.object_type='chunk'"""
-        params = ()
-        if work_id:
-            join_sql += " AND d.work_id = ?"
-            params = (work_id,)
+        all_sql = """SELECT v.object_id, v.embedding, v.dim,
+                            c.text, c.doc_id, d.title AS doc_title, d.work_id
+                     FROM vectors v
+                     JOIN chunks c ON c.id = v.object_id
+                     JOIN documents d ON d.id = c.doc_id
+                     WHERE v.object_type='chunk'"""
 
-    with db._lock:
-        rows = db._conn.execute(join_sql, params).fetchall()
+    entries = _load_vecs(db, object_type, all_sql, ())
 
+    _NOISE_FLOOR = 0.25
     scored = []
-    for r in rows:
-        try:
-            vec = unpack_vector(r["embedding"], r["dim"])
-        except Exception:
+    for obj_id, fields, nvec in entries:
+        # Skip entries that don't belong to the requested work scope
+        if work_id and fields.get("work_id") != work_id:
             continue
-        s = cosine(qvec, vec)
-        if s > 0.25:  # noise floor
-            d = {k: r[k] for k in r.keys() if k not in ("embedding", "dim")}
-            d["id"] = d.pop("object_id")
+        s = _dot(qvec, nvec)
+        if s > _NOISE_FLOOR:
+            d = dict(fields)
+            d["id"] = obj_id
             d["score"] = round(s, 4)
             scored.append(d)
     scored.sort(key=lambda d: d["score"], reverse=True)

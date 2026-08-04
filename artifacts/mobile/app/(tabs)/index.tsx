@@ -14,6 +14,7 @@ import { Feather } from '@expo/vector-icons';
 import { useGetDashboardSummary, useGetDashboardActivity, useGetBriefing } from '@workspace/api-client-react';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { font } from '@/lib/typography';
 import type { Work, ActivityItem } from '@workspace/api-client-react';
 import { OfflineBanner, ErrorScreen } from '@/components/OfflineBanner';
 
@@ -145,7 +146,7 @@ export default function DashboardScreen() {
   const activity = activityData?.activity ?? [];
   const hasData = recentWorks.length > 0 || activity.length > 0;
 
-  const topPad = isWeb ? 67 : insets.top;
+  const topPad = isWeb ? 67 : 0;
   const botPad = isWeb ? 34 : 0;
 
   const handleRefresh = () => {
@@ -263,8 +264,8 @@ export default function DashboardScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   header: { marginBottom: 24 },
-  brand: { fontSize: 28, fontFamily: 'Inter_700Bold', letterSpacing: -0.5 },
-  subtitle: { fontSize: 14, fontFamily: 'Inter_400Regular', marginTop: 2 },
+  brand: { fontSize: 28, ...font('bold'), letterSpacing: -0.5 },
+  subtitle: { fontSize: 15, ...font('regular'), lineHeight: 20, marginTop: 2 },
   loader: { marginVertical: 24 },
   studioCard: {
     flexDirection: 'row',
@@ -282,8 +283,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  studioTitle: { fontSize: 15, fontFamily: 'Inter_600SemiBold', marginBottom: 2 },
-  studioSub: { fontSize: 12, fontFamily: 'Inter_400Regular' },
+  studioTitle: { fontSize: 15, ...font('semibold'), lineHeight: 20, marginBottom: 2 },
+  studioSub: { fontSize: 13, ...font('regular'), lineHeight: 18 },
   statsGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -299,12 +300,13 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
     gap: 6,
   },
-  statValue: { fontSize: 24, fontFamily: 'Inter_700Bold' },
-  statLabel: { fontSize: 11, fontFamily: 'Inter_500Medium', textTransform: 'uppercase', letterSpacing: 0.5 },
+  statValue: { fontSize: 24, ...font('bold') },
+  statLabel: { fontSize: 11, ...font('medium'), lineHeight: 14, textTransform: 'uppercase', letterSpacing: 0.5 },
   sectionLabel: {
     fontSize: 11,
-    fontFamily: 'Inter_600SemiBold',
+    ...font('semibold'),
     letterSpacing: 1,
+    lineHeight: 14,
     textTransform: 'uppercase',
     marginBottom: 10,
     marginTop: 24,
@@ -316,16 +318,18 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     padding: 14,
     marginBottom: 8,
+    minHeight: 44,
   },
   workRowLeft: { flex: 1, marginRight: 8 },
-  workTitle: { fontSize: 15, fontFamily: 'Inter_600SemiBold', marginBottom: 3 },
-  workMeta: { fontSize: 12, fontFamily: 'Inter_400Regular' },
+  workTitle: { fontSize: 15, ...font('semibold'), lineHeight: 20, marginBottom: 3 },
+  workMeta: { fontSize: 13, ...font('regular'), lineHeight: 18 },
   activityRow: {
     flexDirection: 'row',
     alignItems: 'center',
     borderBottomWidth: 1,
-    paddingVertical: 10,
+    paddingVertical: 11,
     gap: 10,
+    minHeight: 44,
   },
   activityIcon: {
     width: 28,
@@ -334,16 +338,16 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  activityLabel: { flex: 1, fontSize: 13, fontFamily: 'Inter_400Regular' },
-  activityDate: { fontSize: 11, fontFamily: 'Inter_400Regular' },
+  activityLabel: { flex: 1, fontSize: 13, ...font('regular'), lineHeight: 18 },
+  activityDate: { fontSize: 12, ...font('regular'), lineHeight: 16 },
   emptyState: {
     alignItems: 'center',
     paddingVertical: 60,
     gap: 12,
   },
   emptyText: {
-    fontSize: 14,
-    fontFamily: 'Inter_400Regular',
+    fontSize: 15,
+    ...font('regular'),
     textAlign: 'center',
     lineHeight: 22,
   },

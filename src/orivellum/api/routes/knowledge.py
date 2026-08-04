@@ -65,6 +65,13 @@ def delete_knowledge(item_id: str):
         db._conn.execute("DELETE FROM knowledge WHERE id=?", (item_id,))
         db._conn.commit()
     db.audit("knowledge.deleted", object_id=item_id, object_type="knowledge", actor="user")
+    # This route writes directly via raw SQL and bypasses update_knowledge_review_status,
+    # so we must bump the vector cache version explicitly.
+    try:
+        from orivellum.capabilities.embeddings import bump_vector_cache_version
+        bump_vector_cache_version(db._path, "knowledge")
+    except Exception:
+        pass
     return {"ok": True, "id": item_id}
 
 

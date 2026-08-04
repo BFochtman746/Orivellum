@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useMemo, useRef, useState, useEffect } from 'react';
 import { mobileFetch } from '@/lib/api';
 import {
   ActivityIndicator,
@@ -18,6 +18,7 @@ import { useColors } from '@/hooks/useColors';
 import { Feather } from '@expo/vector-icons';
 import { useListLibrary, useSearchLibrary, useListWorks } from '@workspace/api-client-react';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { font } from '@/lib/typography';
 import { useRouter } from 'expo-router';
 import { OfflineBanner, ErrorScreen } from '@/components/OfflineBanner';
 
@@ -136,9 +137,22 @@ export default function LibraryScreen() {
   /** Default to hybrid so users get conceptual matches right away.
    *  Falls back to keyword results silently when embeddings are off. */
   const [searchMode, setSearchMode] = useState<'keyword' | 'semantic' | 'hybrid'>('hybrid');
+  const [embeddingsDown, setEmbeddingsDown] = useState(false);
 
   const { data: worksData } = useListWorks({} as any, { query: { staleTime: 60_000 } } as any);
   const works: any[] = (worksData as any)?.works ?? [];
+
+  // Poll embeddings circuit-breaker only while the user is in a mode that uses them.
+  useEffect(() => {
+    const domain = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
+    let cancelled = false;
+    if (searchMode === 'keyword') { setEmbeddingsDown(false); return; }
+    mobileFetch(`https://${domain}/api/system/embeddings/status`)
+      .then(r => r.ok ? r.json() : null)
+      .then((data: any) => { if (!cancelled) setEmbeddingsDown(data?.circuit_open === true); })
+      .catch(() => { if (!cancelled) setEmbeddingsDown(false); });
+    return () => { cancelled = true; };
+  }, [searchMode]);
 
   const handleUpload = async () => {
     try {
@@ -269,7 +283,7 @@ export default function LibraryScreen() {
   }, [rawDocs, sortBy, isSearching]);
   const hasData = rawDocs.length > 0 || (listData?.documents?.length ?? 0) > 0;
 
-  const topPad = isWeb ? 67 : insets.top;
+  const topPad = isWeb ? 67 : 0;
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
@@ -358,9 +372,10 @@ export default function LibraryScreen() {
               <Pressable
                 key={mode}
                 onPress={() => setSearchMode(mode)}
+                hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
                 style={{
-                  paddingHorizontal: 10,
-                  paddingVertical: 3,
+                  paddingHorizontal: 12,
+                  paddingVertical: 5,
                   borderRadius: 12,
                   borderWidth: 1,
                   borderColor: active ? colors.primary : colors.border,
@@ -368,8 +383,8 @@ export default function LibraryScreen() {
                 }}
               >
                 <Text style={{
-                  fontSize: 11,
-                  fontFamily: 'Inter_500Medium',
+                  fontSize: 12,
+                  fontWeight: '500',
                   color: active ? colors.primary : colors.mutedForeground,
                 }}>
                   {label}
@@ -378,6 +393,23 @@ export default function LibraryScreen() {
             );
           })}
         </ScrollView>
+      )}
+
+      {/* Embeddings unavailability notice — shown when circuit is open and user is in a semantic mode */}
+      {isSearching && embeddingsDown && searchMode !== 'keyword' && (
+        <View style={{
+          flexDirection: 'row', alignItems: 'center', gap: 8,
+          paddingHorizontal: 14, paddingVertical: 8,
+          backgroundColor: '#92400e0e',
+          borderBottomWidth: StyleSheet.hairlineWidth,
+          borderBottomColor: '#f59e0b44',
+        }}>
+          <Feather name="alert-triangle" size={13} color="#d97706" />
+          <Text style={{ fontSize: 12, color: '#d97706', flex: 1 }}>
+            Semantic search is offline — showing keyword results only
+          </Text>
+          <Text style={{ fontSize: 11, color: '#d97706', opacity: 0.7 }}>Keyword</Text>
+        </View>
       )}
 
       {/* Work filter chips — only shown when works exist */}
@@ -398,9 +430,10 @@ export default function LibraryScreen() {
         >
           <Pressable
             onPress={() => setWorkFilter(undefined)}
+            hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
             style={{
-              paddingHorizontal: 10,
-              paddingVertical: 4,
+              paddingHorizontal: 12,
+              paddingVertical: 5,
               borderRadius: 12,
               borderWidth: 1,
               borderColor: !workFilter ? colors.primary : colors.border,
@@ -408,8 +441,8 @@ export default function LibraryScreen() {
             }}
           >
             <Text style={{
-              fontSize: 11,
-              fontFamily: 'Inter_500Medium',
+              fontSize: 12,
+              fontWeight: '500',
               color: !workFilter ? colors.primary : colors.mutedForeground,
             }}>All</Text>
           </Pressable>
@@ -417,9 +450,10 @@ export default function LibraryScreen() {
             <Pressable
               key={w.id}
               onPress={() => setWorkFilter(workFilter === w.id ? undefined : w.id)}
+              hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
               style={{
-                paddingHorizontal: 10,
-                paddingVertical: 4,
+                paddingHorizontal: 12,
+                paddingVertical: 5,
                 borderRadius: 12,
                 borderWidth: 1,
                 borderColor: workFilter === w.id ? colors.primary : colors.border,
@@ -428,8 +462,8 @@ export default function LibraryScreen() {
             >
               <Text
                 style={{
-                  fontSize: 11,
-                  fontFamily: 'Inter_500Medium',
+                  fontSize: 12,
+                  fontWeight: '500',
                   color: workFilter === w.id ? colors.primary : colors.mutedForeground,
                   maxWidth: 100,
                 }}
@@ -457,16 +491,17 @@ export default function LibraryScreen() {
               <Pressable
                 key={opt}
                 onPress={() => setSortBy(opt)}
+                hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
                 style={{
-                  paddingHorizontal: 10,
-                  paddingVertical: 3,
+                  paddingHorizontal: 12,
+                  paddingVertical: 5,
                   borderRadius: 12,
                   borderWidth: 1,
                   borderColor: active ? colors.primary : colors.border,
                   backgroundColor: active ? colors.primary + '18' : 'transparent',
                 }}
               >
-                <Text style={{ fontSize: 11, fontFamily: 'Inter_500Medium', color: active ? colors.primary : colors.mutedForeground }}>
+                <Text style={{ fontSize: 12, fontWeight: '500', color: active ? colors.primary : colors.mutedForeground }}>
                   {label}
                 </Text>
               </Pressable>
@@ -534,7 +569,7 @@ export default function LibraryScreen() {
           contentContainerStyle={{
             paddingHorizontal: 16,
             paddingTop: 12,
-            paddingBottom: isWeb ? 34 + 50 : insets.bottom + 100,
+            paddingBottom: isWeb ? 34 + 50 : insets.bottom + 24,
           }}
           showsVerticalScrollIndicator={false}
           ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
@@ -551,8 +586,8 @@ const styles = StyleSheet.create({
     paddingBottom: 12,
     borderBottomWidth: 1,
   },
-  title: { fontSize: 28, fontFamily: 'Inter_700Bold', letterSpacing: -0.5 },
-  subtitle: { fontSize: 13, fontFamily: 'Inter_400Regular', marginTop: 2 },
+  title: { fontSize: 28, ...font('bold'), letterSpacing: -0.5 },
+  subtitle: { fontSize: 13, ...font('regular'), lineHeight: 18, marginTop: 2 },
   searchRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -562,10 +597,10 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   searchIcon: {},
-  searchInput: { flex: 1, fontSize: 14, paddingVertical: 0 },
+  searchInput: { flex: 1, fontSize: 15, ...font('regular'), paddingVertical: 0 },
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 10, padding: 32 },
-  emptyTitle: { fontSize: 16, fontFamily: 'Inter_600SemiBold', textAlign: 'center' },
-  emptyText: { fontSize: 13, fontFamily: 'Inter_400Regular', textAlign: 'center', lineHeight: 19 },
+  emptyTitle: { fontSize: 17, ...font('semibold'), lineHeight: 22, textAlign: 'center' },
+  emptyText: { fontSize: 15, ...font('regular'), textAlign: 'center', lineHeight: 22 },
   docRow: {
     flexDirection: 'row',
     alignItems: 'center',

@@ -35,7 +35,7 @@ import * as Haptics from 'expo-haptics';
 import type { Document, KnowledgeItem, Task } from '@workspace/api-client-react';
 import { OfflineBanner, ErrorScreen } from '@/components/OfflineBanner';
 
-type Tab = 'overview' | 'docs' | 'knowledge' | 'tasks' | 'conversations' | 'learn' | 'gaps' | 'book';
+type Tab = 'overview' | 'docs' | 'knowledge' | 'tasks' | 'conversations' | 'learn' | 'gaps' | 'book' | 'brainstorm';
 
 function TabBar({ active, onSelect, colors, badges = {} }: { active: Tab; onSelect: (t: Tab) => void; colors: any; badges?: Partial<Record<Tab, number>> }) {
   const tabs: { key: Tab; label: string }[] = [
@@ -47,6 +47,7 @@ function TabBar({ active, onSelect, colors, badges = {} }: { active: Tab; onSele
     { key: 'gaps', label: 'Gaps' },
     { key: 'learn', label: 'Learn' },
     { key: 'book', label: 'Book' },
+    { key: 'brainstorm', label: 'Ideas' },
   ];
   return (
     <View style={[styles.tabBar, { borderBottomColor: colors.border, backgroundColor: colors.background }]}>
@@ -280,6 +281,465 @@ const GAP_SEVERITY: Record<string, { bg: string; text: string; dot: string }> = 
 
 const SEVERITY_RANK: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
 
+// ── Brainstorm tab ────────────────────────────────────────────────────────────
+
+interface BrainstormIdea {
+  id: string;
+  domain: string;
+  text: string;
+  originality: number;
+  usefulness: number;
+  on_pareto_front: boolean;
+  knowledge_item_id: string | null;
+}
+
+interface BrainstormSession {
+  id: string;
+  work_id: string;
+  seed_prompt: string;
+  context_type: string;
+  status: 'running' | 'done' | 'failed';
+  ideas: BrainstormIdea[];
+  domain_count: number;
+  created_at: string;
+  completed_at: string | null;
+}
+
+const BRAINSTORM_CONTEXTS = [
+  { value: 'general',               label: 'General'   },
+  { value: 'narrative_structure',   label: 'Narrative' },
+  { value: 'chapter_architecture',  label: 'Chapters'  },
+  { value: 'research_planning',     label: 'Research'  },
+] as const;
+
+const BRAINSTORM_DOMAINS = [3, 5, 7] as const;
+
+function IdeaCard({
+  idea,
+  sessionId,
+  workId,
+  colors,
+  onApprove,
+  approving,
+}: {
+  idea: BrainstormIdea;
+  sessionId: string;
+  workId: string;
+  colors: any;
+  onApprove: (sessionId: string, ideaId: string) => void;
+  approving: string | null;
+}) {
+  const isApproved   = !!idea.knowledge_item_id;
+  const isApproving  = approving === idea.id;
+  const pct          = Math.round(idea.originality * 100);
+  const origColor    = pct >= 70 ? '#7c3aed' : pct >= 45 ? '#d97706' : '#94a3b8';
+
+  return (
+    <View
+      style={{
+        borderWidth: 1,
+        borderRadius: 10,
+        padding: 12,
+        marginBottom: 8,
+        borderColor: idea.on_pareto_front ? colors.primary + '55' : colors.border,
+        backgroundColor: idea.on_pareto_front ? colors.primary + '08' : 'transparent',
+        opacity: isApproved ? 0.65 : 1,
+      }}
+    >
+      {/* Domain + scores row */}
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+        <View style={{ backgroundColor: colors.muted, borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2 }}>
+          <Text style={{ fontSize: 10, fontWeight: '500', color: colors.mutedForeground }}>
+            {idea.domain.split(' ').slice(0, 2).join(' ')}
+          </Text>
+        </View>
+        {/* Usefulness dots */}
+        <View style={{ flexDirection: 'row', gap: 3 }}>
+          {[1, 2, 3, 4, 5].map((n) => (
+            <View
+              key={n}
+              style={{
+                width: 6, height: 6, borderRadius: 3,
+                backgroundColor: n <= idea.usefulness ? '#f59e0b' : colors.muted,
+              }}
+            />
+          ))}
+        </View>
+        {/* Originality bar */}
+        <View style={{ flex: 1, height: 3, backgroundColor: colors.muted, borderRadius: 1.5, overflow: 'hidden', minWidth: 40 }}>
+          <View style={{ height: '100%', width: `${pct}%` as any, backgroundColor: origColor }} />
+        </View>
+        <Text style={{ fontSize: 10, fontWeight: '500', color: colors.mutedForeground }}>{pct}%</Text>
+      </View>
+
+      {/* Idea text */}
+      <Text style={{ fontSize: 13, lineHeight: 19, color: colors.foreground, marginBottom: 10 }}>
+        {idea.text}
+      </Text>
+
+      {/* Footer */}
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+        <Text style={{ fontSize: 10, color: colors.mutedForeground }}>
+          orig {pct}% · useful {idea.usefulness}/5
+        </Text>
+        {isApproved ? (
+          <View style={{
+            paddingHorizontal: 8, paddingVertical: 3, borderRadius: 5,
+            borderWidth: 1, borderColor: '#16a34a44', backgroundColor: '#16a34a12',
+          }}>
+            <Text style={{ fontSize: 11, fontWeight: '500', color: '#16a34a' }}>✓ In knowledge</Text>
+          </View>
+        ) : (
+          <Pressable
+            onPress={() => onApprove(sessionId, idea.id)}
+            disabled={isApproving}
+            hitSlop={8}
+            style={({ pressed }) => ({
+              flexDirection: 'row', alignItems: 'center', gap: 4,
+              paddingHorizontal: 10, paddingVertical: 5,
+              borderRadius: 6, borderWidth: 1,
+              borderColor: colors.primary + '55',
+              backgroundColor: pressed ? colors.primary + '14' : 'transparent',
+              opacity: isApproving ? 0.6 : 1,
+              minHeight: 30,
+            })}
+          >
+            {isApproving
+              ? <ActivityIndicator size="small" color={colors.primary} />
+              : <Feather name="thumbs-up" size={12} color={colors.primary} />}
+            <Text style={{ fontSize: 12, fontWeight: '500', color: colors.primary }}>Use idea</Text>
+          </Pressable>
+        )}
+      </View>
+    </View>
+  );
+}
+
+function BrainstormTab({ workId, colors }: { workId: string; colors: any }) {
+  const domain = process.env.EXPO_PUBLIC_DOMAIN ?? '';
+
+  const [seed,         setSeed]         = React.useState('');
+  const [contextType,  setContextType]  = React.useState<string>('general');
+  const [nDomains,     setNDomains]     = React.useState<number>(5);
+  const [running,      setRunning]      = React.useState(false);
+  const [activeSession, setActiveSession] = React.useState<BrainstormSession | null>(null);
+  const [history,      setHistory]      = React.useState<BrainstormSession[]>([]);
+  const [histLoading,  setHistLoading]  = React.useState(true);
+  const [showOthers,   setShowOthers]   = React.useState(false);
+  const [approving,    setApproving]    = React.useState<string | null>(null);
+
+  const loadHistory = React.useCallback(async () => {
+    try {
+      const res = await mobileFetch(`https://${domain}/api/works/${workId}/brainstorm`);
+      if (res.ok) setHistory(await res.json());
+    } catch {
+      // silently ignore — history is optional
+    } finally {
+      setHistLoading(false);
+    }
+  }, [workId, domain]);
+
+  useEffect(() => { loadHistory(); }, [loadHistory]);
+
+  const handleRun = async () => {
+    if (!seed.trim() || running) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    setRunning(true);
+    setActiveSession(null);
+    setShowOthers(false);
+    try {
+      const res = await mobileFetch(`https://${domain}/api/works/${workId}/brainstorm`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          seed_prompt:  seed.trim(),
+          context_type: contextType,
+          n_domains:    nDomains,
+        }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        Alert.alert('Brainstorm failed', (body as any).detail ?? 'Something went wrong');
+        return;
+      }
+      const session: BrainstormSession = await res.json();
+      setActiveSession(session);
+      await loadHistory();
+    } catch (e: any) {
+      Alert.alert('Connection error', e.message ?? 'Could not reach the server');
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  const handleApprove = async (sessionId: string, ideaId: string) => {
+    setApproving(ideaId);
+    try {
+      const res = await mobileFetch(
+        `https://${domain}/api/works/${workId}/brainstorm/${sessionId}/ideas/${ideaId}/approve`,
+        { method: 'POST' }
+      );
+      if (!res.ok) throw new Error('Approval failed');
+      const data: any = await res.json();
+      // Patch the active session locally so the button updates immediately
+      setActiveSession((prev) =>
+        prev
+          ? {
+              ...prev,
+              ideas: prev.ideas.map((i) =>
+                i.id === ideaId ? { ...i, knowledge_item_id: data.knowledge_item_id } : i
+              ),
+            }
+          : prev
+      );
+    } catch (e: any) {
+      Alert.alert('Error', e.message ?? 'Approval failed');
+    } finally {
+      setApproving(null);
+    }
+  };
+
+  const pareto = (activeSession?.ideas ?? []).filter((i) => i.on_pareto_front);
+  const others = (activeSession?.ideas ?? []).filter((i) => !i.on_pareto_front);
+
+  return (
+    <ScrollView
+      contentContainerStyle={{ padding: 16, paddingBottom: 80 }}
+      showsVerticalScrollIndicator={false}
+      keyboardShouldPersistTaps="handled"
+    >
+      {/* ── Seed prompt ─────────────────────────────────────────────────────── */}
+      <TextInput
+        style={{
+          borderWidth: 1,
+          borderColor: colors.border,
+          borderRadius: 8,
+          paddingHorizontal: 12,
+          paddingVertical: 10,
+          fontSize: 14,
+          color: colors.foreground,
+          backgroundColor: colors.card,
+          marginBottom: 10,
+          minHeight: 72,
+          textAlignVertical: 'top',
+        }}
+        value={seed}
+        onChangeText={setSeed}
+        placeholder="What question or topic should we explore? (e.g. How should I structure chapter 3?)"
+        placeholderTextColor={colors.mutedForeground}
+        multiline
+        editable={!running}
+        returnKeyType="default"
+      />
+
+      {/* ── Context type chips ──────────────────────────────────────────────── */}
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={{ gap: 6, paddingBottom: 10 }}
+      >
+        {BRAINSTORM_CONTEXTS.map((opt) => {
+          const active = contextType === opt.value;
+          return (
+            <Pressable
+              key={opt.value}
+              onPress={() => setContextType(opt.value)}
+              hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
+              style={{
+                paddingHorizontal: 12, paddingVertical: 5, borderRadius: 12, borderWidth: 1,
+                borderColor: active ? colors.primary : colors.border,
+                backgroundColor: active ? colors.primary + '18' : 'transparent',
+              }}
+            >
+              <Text style={{ fontSize: 12, fontWeight: '500', color: active ? colors.primary : colors.mutedForeground }}>
+                {opt.label}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </ScrollView>
+
+      {/* ── Domain count chips ──────────────────────────────────────────────── */}
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+        <Text style={{ fontSize: 12, fontWeight: '500', color: colors.mutedForeground }}>Domains:</Text>
+        {BRAINSTORM_DOMAINS.map((n) => {
+          const active = nDomains === n;
+          return (
+            <Pressable
+              key={n}
+              onPress={() => setNDomains(n)}
+              hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
+              style={{
+                paddingHorizontal: 12, paddingVertical: 5, borderRadius: 12, borderWidth: 1,
+                borderColor: active ? colors.primary : colors.border,
+                backgroundColor: active ? colors.primary + '18' : 'transparent',
+              }}
+            >
+              <Text style={{ fontSize: 12, fontWeight: '500', color: active ? colors.primary : colors.mutedForeground }}>
+                {n}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+
+      {/* ── Run button ──────────────────────────────────────────────────────── */}
+      <Pressable
+        onPress={handleRun}
+        disabled={!seed.trim() || running}
+        style={({ pressed }) => ({
+          flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+          gap: 8, paddingVertical: 13, borderRadius: 10,
+          backgroundColor: (!seed.trim() || running)
+            ? colors.muted
+            : pressed ? colors.primary + 'cc' : colors.primary,
+        })}
+      >
+        {running
+          ? <ActivityIndicator color="#fff" size="small" />
+          : <Feather name="zap" size={16} color={(!seed.trim()) ? colors.mutedForeground : '#fff'} />}
+        <Text style={{
+          fontSize: 14, fontWeight: '600',
+          color: (!seed.trim() || running) ? colors.mutedForeground : '#fff',
+        }}>
+          {running ? 'Generating ideas…' : 'Generate ideas'}
+        </Text>
+      </Pressable>
+
+      {/* ── Running indicator ──────────────────────────────────────────────── */}
+      {running && (
+        <View style={{ alignItems: 'center', paddingVertical: 24, gap: 8 }}>
+          <Text style={{ fontSize: 13, color: colors.mutedForeground }}>
+            Thinking across {nDomains} domains…
+          </Text>
+          <Text style={{ fontSize: 11, color: colors.mutedForeground, textAlign: 'center', maxWidth: 240 }}>
+            This usually takes 15–30 seconds. The AI is generating divergent ideas across different fields.
+          </Text>
+        </View>
+      )}
+
+      {/* ── Session results ────────────────────────────────────────────────── */}
+      {activeSession && !running && (
+        <View style={{ marginTop: 20 }}>
+          {/* Meta */}
+          <Text style={{ fontSize: 12, color: colors.mutedForeground, marginBottom: 2 }} numberOfLines={2}>
+            "{activeSession.seed_prompt.slice(0, 100)}{activeSession.seed_prompt.length > 100 ? '…' : ''}"
+          </Text>
+          <Text style={{ fontSize: 11, color: colors.mutedForeground, marginBottom: 14 }}>
+            {activeSession.domain_count} domains · {activeSession.ideas.length} ideas
+            {activeSession.completed_at
+              ? ` · ${new Date(activeSession.completed_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+              : ''}
+          </Text>
+
+          {/* Pareto front */}
+          {pareto.length > 0 && (
+            <View style={{ marginBottom: 8 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                <Feather name="zap" size={14} color={colors.primary} />
+                <Text style={{ fontSize: 13, fontWeight: '600', color: colors.foreground }}>
+                  Best ideas
+                </Text>
+                <Text style={{ fontSize: 11, color: colors.mutedForeground }}>(originality × usefulness)</Text>
+              </View>
+              {pareto.map((idea) => (
+                <IdeaCard
+                  key={idea.id}
+                  idea={idea}
+                  sessionId={activeSession.id}
+                  workId={workId}
+                  colors={colors}
+                  onApprove={handleApprove}
+                  approving={approving}
+                />
+              ))}
+            </View>
+          )}
+
+          {/* Alternate ideas */}
+          {others.length > 0 && (
+            <View>
+              <Pressable
+                onPress={() => setShowOthers((v) => !v)}
+                hitSlop={8}
+                style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingVertical: 8, minHeight: 36 }}
+              >
+                <Feather
+                  name={showOthers ? 'chevron-up' : 'chevron-down'}
+                  size={14}
+                  color={colors.mutedForeground}
+                />
+                <Text style={{ fontSize: 13, color: colors.mutedForeground }}>
+                  {others.length} alternate idea{others.length !== 1 ? 's' : ''}
+                </Text>
+              </Pressable>
+              {showOthers && others.map((idea) => (
+                <IdeaCard
+                  key={idea.id}
+                  idea={idea}
+                  sessionId={activeSession.id}
+                  workId={workId}
+                  colors={colors}
+                  onApprove={handleApprove}
+                  approving={approving}
+                />
+              ))}
+            </View>
+          )}
+        </View>
+      )}
+
+      {/* ── Past sessions ──────────────────────────────────────────────────── */}
+      {!histLoading && history.length > 0 && (
+        <View style={{
+          marginTop: 24,
+          borderTopWidth: StyleSheet.hairlineWidth,
+          borderTopColor: colors.border,
+          paddingTop: 16,
+        }}>
+          <Text style={{
+            fontSize: 11, fontWeight: '600', color: colors.mutedForeground,
+            letterSpacing: 0.8, textTransform: 'uppercase', marginBottom: 8,
+          }}>
+            Past sessions
+          </Text>
+          {history.slice(0, 6).map((s) => (
+            <Pressable
+              key={s.id}
+              onPress={() => { setActiveSession(s); setShowOthers(false); }}
+              style={({ pressed }) => ({
+                flexDirection: 'row', alignItems: 'center', gap: 8,
+                paddingVertical: 10,
+                borderBottomWidth: StyleSheet.hairlineWidth,
+                borderBottomColor: colors.border,
+                minHeight: 44,
+                opacity: pressed ? 0.7 : 1,
+              })}
+            >
+              <Feather name="clock" size={13} color={colors.mutedForeground} />
+              <Text style={{ flex: 1, fontSize: 13, color: colors.foreground }} numberOfLines={1}>
+                {s.seed_prompt}
+              </Text>
+              <Text style={{ fontSize: 11, color: colors.mutedForeground, marginRight: 4 }}>
+                {s.ideas.length}
+              </Text>
+              <View style={{
+                paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, borderWidth: 1,
+                borderColor: s.status === 'done' ? '#16a34a44' : s.status === 'failed' ? '#dc262644' : '#d9770644',
+                backgroundColor: s.status === 'done' ? '#16a34a10' : s.status === 'failed' ? '#dc262610' : '#d9770610',
+              }}>
+                <Text style={{ fontSize: 10, fontWeight: '500', color: s.status === 'done' ? '#16a34a' : s.status === 'failed' ? '#dc2626' : '#d97706' }}>
+                  {s.status}
+                </Text>
+              </View>
+            </Pressable>
+          ))}
+        </View>
+      )}
+    </ScrollView>
+  );
+}
+
 function GapsTab({
   workId,
   colors,
@@ -456,6 +916,15 @@ function OverviewTab({ workId, onStartDiscussion, starting, onNavigateToTab }: {
   const [editingDesc, setEditingDesc] = useState(false);
   const [descDraft, setDescDraft] = useState('');
   const { mutate: updateWork } = useUpdateWork();
+  const [bookIntel, setBookIntel] = useState<any>(null);
+
+  const domain = process.env.EXPO_PUBLIC_DOMAIN ?? '';
+  useEffect(() => {
+    mobileFetch(`https://${domain}/api/works/${workId}/book-intelligence`)
+      .then(r => r.ok ? r.json() : null)
+      .then(data => { if (data) setBookIntel(data); })
+      .catch(() => { /* non-fatal — card simply stays hidden */ });
+  }, [workId, domain]);
 
   const startDescEdit = () => {
     setDescDraft(work?.description ?? '');
@@ -562,6 +1031,101 @@ function OverviewTab({ workId, onStartDiscussion, starting, onNavigateToTab }: {
         ))}
       </View>
 
+      {/* Book health card — rendered when book-intelligence is available */}
+      {bookIntel && (
+        <View style={{
+          marginTop: 16, borderWidth: 1, borderRadius: 10,
+          borderColor: colors.border, overflow: 'hidden',
+        }}>
+          {/* Header row */}
+          <View style={{
+            flexDirection: 'row', alignItems: 'center', gap: 8,
+            paddingHorizontal: 14, paddingVertical: 10,
+            borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border,
+            backgroundColor: colors.muted + '44',
+          }}>
+            <Feather name="book" size={14} color={colors.primary} />
+            <Text style={{ fontSize: 12, fontWeight: '600', color: colors.foreground, flex: 1 }}>
+              Book Health
+            </Text>
+            {bookIntel.completeness?.overall != null && (
+              <View style={{
+                paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10,
+                backgroundColor: bookIntel.completeness.overall >= 70
+                  ? '#16a34a18' : bookIntel.completeness.overall >= 40
+                  ? '#d9770618' : '#dc262618',
+                borderWidth: 1,
+                borderColor: bookIntel.completeness.overall >= 70
+                  ? '#16a34a44' : bookIntel.completeness.overall >= 40
+                  ? '#d9770644' : '#dc262644',
+              }}>
+                <Text style={{
+                  fontSize: 11, fontWeight: '700',
+                  color: bookIntel.completeness.overall >= 70
+                    ? '#16a34a' : bookIntel.completeness.overall >= 40
+                    ? '#d97706' : '#dc2626',
+                }}>
+                  {bookIntel.completeness.overall}%
+                </Text>
+              </View>
+            )}
+          </View>
+
+          {/* Stats */}
+          <View style={{ paddingHorizontal: 14, paddingVertical: 10, gap: 8 }}>
+            {bookIntel.completeness?.readiness && (
+              <Text style={{ fontSize: 12, color: colors.mutedForeground }}>
+                Readiness: <Text style={{ color: colors.foreground, fontWeight: '500' }}>
+                  {bookIntel.completeness.readiness}
+                </Text>
+              </Text>
+            )}
+
+            {/* Knowledge reviewed ratio */}
+            {bookIntel.knowledge_total > 0 && (
+              <View>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
+                  <Text style={{ fontSize: 12, color: colors.mutedForeground }}>Knowledge reviewed</Text>
+                  <Text style={{ fontSize: 12, fontWeight: '600', color: colors.foreground }}>
+                    {bookIntel.knowledge_reviewed}/{bookIntel.knowledge_total}
+                  </Text>
+                </View>
+                <View style={{ height: 4, backgroundColor: colors.muted, borderRadius: 2, overflow: 'hidden' }}>
+                  <View style={{
+                    height: '100%', borderRadius: 2,
+                    backgroundColor: colors.primary,
+                    width: `${Math.round(100 * bookIntel.knowledge_reviewed / bookIntel.knowledge_total)}%` as any,
+                  }} />
+                </View>
+              </View>
+            )}
+
+            {/* Gaps summary */}
+            {Array.isArray(bookIntel.gaps) && bookIntel.gaps.length > 0 && (
+              <Text style={{ fontSize: 12, color: '#d97706' }}>
+                ⚠ {bookIntel.gaps.length} gap{bookIntel.gaps.length !== 1 ? 's' : ''} detected
+              </Text>
+            )}
+
+            {/* Next action */}
+            {bookIntel.next_action && (
+              <View style={{
+                marginTop: 4, padding: 10, borderRadius: 8,
+                backgroundColor: colors.primary + '0e',
+                borderWidth: 1, borderColor: colors.primary + '30',
+              }}>
+                <Text style={{ fontSize: 11, fontWeight: '600', color: colors.primary, marginBottom: 2 }}>
+                  Next step
+                </Text>
+                <Text style={{ fontSize: 12, color: colors.foreground, lineHeight: 17 }}>
+                  {bookIntel.next_action}
+                </Text>
+              </View>
+            )}
+          </View>
+        </View>
+      )}
+
       {/* Start Discussion CTA */}
       <Pressable
         onPress={onStartDiscussion}
@@ -586,7 +1150,7 @@ function OverviewTab({ workId, onStartDiscussion, starting, onNavigateToTab }: {
 
 // ─── Mobile Learn tab ─────────────────────────────────────────────────────────
 
-type MobileLearnPhase = 'loading' | 'seeding' | 'question' | 'assessing' | 'feedback' | 'all_done' | 'error';
+type MobileLearnPhase = 'loading' | 'seeding' | 'question' | 'assessing' | 'feedback' | 'all_done' | 'error' | 'session_done';
 
 interface MobileSession {
   concept_id: string;
@@ -612,6 +1176,12 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
   const [result, setResult]     = useState<MobileAssessResult | null>(null);
   const [summary, setSummary]   = useState<{ total: number; graduated: number; mastery_pct: number } | null>(null);
   const [errorMsg, setErrorMsg] = useState('');
+  const [sessionCorrect, setSessionCorrect] = useState(0);
+  const [learnView, setLearnView] = useState<'study' | 'concepts'>('study');
+  const [concepts, setConcepts] = useState<any[]>([]);
+  const [conceptsLoading, setConceptsLoading] = useState(false);
+
+  const SESSION_LIMIT = 5; // correct answers before "session complete" screen
 
   const domain = process.env.EXPO_PUBLIC_DOMAIN;
   const apiBase = `https://${domain}/api`;
@@ -668,6 +1238,18 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { init(); }, [workId]);
 
+  const loadConcepts = useCallback(async () => {
+    setConceptsLoading(true);
+    try {
+      const r = await mobileFetch(`${apiBase}/works/${workId}/learning/concepts`);
+      if (r.ok) { const d = await r.json(); setConcepts(d.concepts ?? []); }
+    } catch { /* non-fatal */ } finally { setConceptsLoading(false); }
+  }, [apiBase, workId]);
+
+  useEffect(() => {
+    if (learnView === 'concepts') loadConcepts();
+  }, [learnView, loadConcepts]);
+
   const submitAnswer = async () => {
     if (!session || !answer.trim()) return;
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -686,6 +1268,12 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
       const d: MobileAssessResult = await r.json();
       setResult(d);
       setSummary(d.summary);
+      // Track correct answers and enforce session limit
+      if (d.score >= 0.75) {
+        const newCorrect = sessionCorrect + 1;
+        setSessionCorrect(newCorrect);
+        if (newCorrect >= SESSION_LIMIT) { setPhase('session_done'); return; }
+      }
       setPhase('feedback');
     } catch (e: any) {
       setErrorMsg(e.message ?? 'Could not assess answer');
@@ -751,6 +1339,50 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
     );
   }
 
+  // ── Session done (5 correct in one sitting) ──────────────────────────────
+  if (phase === 'session_done') {
+    return (
+      <View style={[styles.centered, { flex: 1, padding: 32 }]}>
+        <Feather name="check-circle" size={52} color="#22c55e" />
+        <Text style={[styles.workTitle, { color: colors.foreground, textAlign: 'center', marginTop: 16, fontSize: 20 }]}>
+          Session complete!
+        </Text>
+        <Text style={[styles.description, { color: colors.mutedForeground, textAlign: 'center', marginTop: 8 }]}>
+          {SESSION_LIMIT} correct answers — great work. Take a short break, then keep going.
+        </Text>
+        {summary && (
+          <Text style={[styles.itemMeta, { color: colors.mutedForeground, marginTop: 10 }]}>
+            {summary.graduated}/{summary.total} concepts mastered · {summary.mastery_pct}%
+          </Text>
+        )}
+        <View style={{ flexDirection: 'row', gap: 12, marginTop: 28 }}>
+          <Pressable
+            onPress={() => setLearnView('concepts')}
+            style={({ pressed }) => ({
+              flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+              gap: 6, paddingVertical: 12, borderRadius: 10, borderWidth: 1,
+              borderColor: colors.border, opacity: pressed ? 0.7 : 1,
+            })}
+          >
+            <Feather name="list" size={14} color={colors.foreground} />
+            <Text style={{ fontWeight: '600', fontSize: 14, color: colors.foreground }}>View concepts</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => { setSessionCorrect(0); init(); }}
+            style={({ pressed }) => ({
+              flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+              gap: 6, paddingVertical: 12, borderRadius: 10,
+              backgroundColor: colors.primary, opacity: pressed ? 0.7 : 1,
+            })}
+          >
+            <Feather name="chevron-right" size={14} color="#fff" />
+            <Text style={{ fontWeight: '600', fontSize: 14, color: '#fff' }}>Keep studying</Text>
+          </Pressable>
+        </View>
+      </View>
+    );
+  }
+
   // ── Error ───────────────────────────────────────────────────────────────
   if (phase === 'error') {
     return (
@@ -778,8 +1410,93 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
       keyboardShouldPersistTaps="handled"
       showsVerticalScrollIndicator={false}
     >
-      {/* Mastery bar */}
-      {summary && (
+      {/* Study / Concepts view toggle */}
+      <View style={{ flexDirection: 'row', gap: 6, marginBottom: 16 }}>
+        {(['study', 'concepts'] as const).map((v) => (
+          <Pressable
+            key={v}
+            onPress={() => setLearnView(v)}
+            hitSlop={8}
+            style={{
+              paddingHorizontal: 14, paddingVertical: 6, borderRadius: 12, borderWidth: 1,
+              borderColor: learnView === v ? colors.primary : colors.border,
+              backgroundColor: learnView === v ? colors.primary + '18' : 'transparent',
+            }}
+          >
+            <Text style={{
+              fontSize: 13, fontWeight: '600',
+              color: learnView === v ? colors.primary : colors.mutedForeground,
+            }}>
+              {v === 'study' ? 'Study' : 'Concepts'}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
+
+      {/* Concepts list — shown when learnView === 'concepts' */}
+      {learnView === 'concepts' && (
+        conceptsLoading ? (
+          <View style={[styles.centered, { paddingVertical: 40 }]}>
+            <ActivityIndicator color={colors.primary} />
+          </View>
+        ) : concepts.length === 0 ? (
+          <View style={[styles.centered, { paddingVertical: 40 }]}>
+            <Feather name="book-open" size={32} color={colors.mutedForeground} />
+            <Text style={[styles.emptyText, { color: colors.mutedForeground, textAlign: 'center', maxWidth: 240 }]}>
+              No concepts yet — start a study session to generate them.
+            </Text>
+          </View>
+        ) : (
+          concepts.map((c: any) => {
+            const pct = Math.round((c.score ?? 0) * 100);
+            const col = c.graduated ? '#16a34a' : pct >= 60 ? colors.primary : pct >= 30 ? '#d97706' : colors.mutedForeground;
+            return (
+              <View
+                key={c.id}
+                style={{
+                  borderWidth: 1, borderRadius: 10, padding: 12, marginBottom: 8,
+                  borderColor: c.graduated ? '#16a34a44' : colors.border,
+                  backgroundColor: c.graduated ? '#16a34a08' : 'transparent',
+                }}
+              >
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: c.description ? 6 : 4 }}>
+                  <Feather
+                    name={c.graduated ? 'award' : 'circle'}
+                    size={14}
+                    color={col}
+                  />
+                  <Text style={{ flex: 1, fontSize: 14, fontWeight: '600', color: colors.foreground }}>
+                    {c.subject}
+                  </Text>
+                  <View style={{
+                    paddingHorizontal: 7, paddingVertical: 2, borderRadius: 8,
+                    backgroundColor: c.graduated ? '#16a34a18' : colors.muted,
+                  }}>
+                    <Text style={{ fontSize: 11, fontWeight: '700', color: col }}>
+                      {c.graduated ? '✓ Mastered' : `${pct}%`}
+                    </Text>
+                  </View>
+                </View>
+                {c.description ? (
+                  <Text style={{ fontSize: 12, color: colors.mutedForeground, marginLeft: 22 }} numberOfLines={2}>
+                    {c.description}
+                  </Text>
+                ) : null}
+                {/* Mastery bar */}
+                <View style={{ marginTop: 8, marginLeft: 22, height: 3, backgroundColor: colors.muted, borderRadius: 1.5, overflow: 'hidden' }}>
+                  <View style={{ height: '100%', width: `${pct}%` as any, backgroundColor: col, borderRadius: 1.5 }} />
+                </View>
+                <Text style={{ fontSize: 10, color: colors.mutedForeground, marginTop: 3, marginLeft: 22 }}>
+                  {c.consecutive_passes} pass{c.consecutive_passes !== 1 ? 'es' : ''} in a row
+                </Text>
+              </View>
+            );
+          })
+        )
+      )}
+
+      {/* Mastery bar — only shown in study view */}
+      {learnView === 'study' && summary && (
         <View style={{ marginBottom: 20 }}>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 5 }}>
             <Text style={[styles.itemMeta, { color: colors.mutedForeground }]}>
@@ -802,8 +1519,8 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
         </View>
       )}
 
-      {/* Concept chip */}
-      {session && (
+      {/* Concept chip — study view only */}
+      {learnView === 'study' && session && (
         <View style={{
           borderWidth: 1, borderColor: colors.border, borderRadius: 10,
           padding: 14, marginBottom: 16, backgroundColor: colors.background,
@@ -825,8 +1542,8 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
         </View>
       )}
 
-      {/* Question card */}
-      {session && (
+      {/* Question card — study view only */}
+      {learnView === 'study' && session && (
         <View style={{
           borderWidth: 1, borderColor: colors.border, borderRadius: 12,
           padding: 16, marginBottom: 16, backgroundColor: colors.background,
@@ -1661,6 +2378,8 @@ export default function WorkDetailScreen() {
           </>
         );
       }
+      case 'brainstorm':
+        return <BrainstormTab workId={id} colors={colors} />;
     }
   };
 

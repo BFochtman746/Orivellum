@@ -1123,6 +1123,15 @@ class OrivellumDB:
                 "UPDATE documents SET work_id=? WHERE id=?", (work_id, doc_id)
             )
             _updated = cur.rowcount > 0
+        if _updated:
+            # Cached chunk entries carry work_id from the JOIN on documents.
+            # A work reassignment changes those joined values, so work-scoped
+            # semantic queries would return chunks in the wrong scope until bumped.
+            try:
+                from orivellum.capabilities.embeddings import bump_vector_cache_version
+                bump_vector_cache_version(self._path, "chunk")
+            except Exception:  # pragma: no cover
+                pass
         return _updated
 
     def delete_document(self, doc_id: str) -> bool:
@@ -1151,6 +1160,16 @@ class OrivellumDB:
                 (now, doc_id),
             )
             _deleted = cur.rowcount > 0
+        if _deleted:
+            # Cached chunk/knowledge entries joined through this document are
+            # now stale. Bump both so the next semantic search doesn't return
+            # results that no longer exist.
+            try:
+                from orivellum.capabilities.embeddings import bump_vector_cache_version
+                bump_vector_cache_version(self._path, "chunk")
+                bump_vector_cache_version(self._path, "knowledge")
+            except Exception:  # pragma: no cover
+                pass
         return _deleted
 
     @staticmethod
@@ -1738,6 +1757,13 @@ class OrivellumDB:
         ):
             self._conn.execute("DELETE FROM chunks_fts WHERE doc_id=?", (doc_id,))
             self._conn.execute("DELETE FROM chunks WHERE doc_id=?", (doc_id,))
+        # Cached chunk entries for this document are now gone; invalidate so
+        # the next semantic search doesn't return deleted chunks.
+        try:
+            from orivellum.capabilities.embeddings import bump_vector_cache_version
+            bump_vector_cache_version(self._path, "chunk")
+        except Exception:  # pragma: no cover
+            pass
 
     def get_extraction_warnings(self, doc_id: str) -> list[dict]:
         """Return all extraction warnings for a document, ordered oldest-first."""
@@ -2201,6 +2227,14 @@ class OrivellumDB:
                 _changed = cur.rowcount > 0
         except _CASConflict:
             return "conflict"
+        if _changed:
+            # Eligibility changed (approved↔rejected): invalidate knowledge cache
+            # so semantic_search reflects the new review_status filter immediately.
+            try:
+                from orivellum.capabilities.embeddings import bump_vector_cache_version
+                bump_vector_cache_version(self._path, "knowledge")
+            except Exception:  # pragma: no cover
+                pass
         return "updated" if _changed else "not_found"
 
     def update_knowledge_confidence(self, item_id: str, confidence: float,
@@ -2387,6 +2421,15 @@ class OrivellumDB:
                 """INSERT INTO vectors(id, object_id, object_type, embedding, dim, created_at)
                    VALUES(?,?,?,?,?,?)""",
                 (str(uuid.uuid4()), object_id, object_type, embedding, dim, _now()))
+        # Invalidate the in-process vector cache so semantic_search picks up
+        # this write (including replacements, which leave the row count unchanged).
+        # Lazy import avoids a load-time circular-dependency edge; Python caches
+        # the module after the first call so subsequent calls are O(1).
+        try:
+            from orivellum.capabilities.embeddings import bump_vector_cache_version
+            bump_vector_cache_version(self._path, object_type)
+        except Exception:  # pragma: no cover
+            pass
 
     def count_vectors(self, object_type: str | None = None) -> int:
         with self._lock:

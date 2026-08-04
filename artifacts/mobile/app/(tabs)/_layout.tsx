@@ -1,17 +1,33 @@
-import React from 'react';
-import { Platform, StyleSheet, useColorScheme, View } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import {
+  Animated,
+  Modal,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+  useColorScheme,
+} from 'react-native';
 import { useColors } from '@/hooks/useColors';
 import { Feather } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
-import { isLiquidGlassAvailable } from 'expo-glass-effect';
-import { Tabs } from 'expo-router';
-import { Icon, Label, NativeTabs } from 'expo-router/unstable-native-tabs';
-import { SymbolView } from 'expo-symbols';
+import { Tabs, usePathname, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useGetSystemHealth, getGetSystemHealthQueryKey } from '@workspace/api-client-react';
+import {
+  useGetSystemHealth,
+  getGetSystemHealthQueryKey,
+} from '@workspace/api-client-react';
 
-/** Small coloured dot showing server reachability. */
-function ServerDot() {
+// ── Constants ──────────────────────────────────────────────────────────────────
+
+const HEADER_HEIGHT = 56;
+const SHEET_CONTENT_HEIGHT = 320;
+
+// ── Server status ──────────────────────────────────────────────────────────────
+
+function useServerDotColor(): string {
   const { data, isError } = useGetSystemHealth({
     query: {
       queryKey: getGetSystemHealthQueryKey(),
@@ -20,80 +36,302 @@ function ServerDot() {
       retry: false,
     },
   });
-  const ok = !isError && data?.status === 'ok';
-  const degraded = !isError && data?.status !== 'ok';
-  const color = isError ? '#ef4444' : degraded ? '#f59e0b' : '#22c55e';
-  return (
-    <View
-      style={{
-        width: 6,
-        height: 6,
-        borderRadius: 3,
-        backgroundColor: color,
-        position: 'absolute',
-        top: 2,
-        right: -2,
-      }}
-    />
-  );
+  if (isError) return '#ef4444';
+  if (data?.status !== 'ok') return '#f59e0b';
+  return '#22c55e';
 }
 
-function NativeTabLayout() {
-  const { data, isError } = useGetSystemHealth({
-    query: {
-      queryKey: getGetSystemHealthQueryKey(),
-      refetchInterval: 15_000,
-      staleTime: 10_000,
-      retry: false,
-    },
-  });
-  const dotColor = isError ? '#ef4444' : data?.status !== 'ok' ? '#f59e0b' : '#22c55e';
+// ── Current section label ──────────────────────────────────────────────────────
 
-  return (
-    <NativeTabs>
-      <NativeTabs.Trigger name="index">
-        {/* Health dot sits over the Dashboard icon */}
-        <View style={{ position: 'relative' }}>
-          <Icon sf={{ default: 'house', selected: 'house.fill' }} />
-          <View style={{
-            width: 6, height: 6, borderRadius: 3,
-            backgroundColor: dotColor,
-            position: 'absolute', top: -1, right: -4,
-          }} />
-        </View>
-        <Label>Dashboard</Label>
-      </NativeTabs.Trigger>
-      <NativeTabs.Trigger name="conversations">
-        <View style={{ position: 'relative' }}>
-          <Icon sf={{ default: 'bubble.left', selected: 'bubble.left.fill' }} />
-          <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: dotColor, position: 'absolute', top: -1, right: -4 }} />
-        </View>
-        <Label>Chats</Label>
-      </NativeTabs.Trigger>
-      <NativeTabs.Trigger name="works">
-        <View style={{ position: 'relative' }}>
-          <Icon sf={{ default: 'books.vertical', selected: 'books.vertical.fill' }} />
-          <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: dotColor, position: 'absolute', top: -1, right: -4 }} />
-        </View>
-        <Label>Works</Label>
-      </NativeTabs.Trigger>
-      <NativeTabs.Trigger name="library">
-        <View style={{ position: 'relative' }}>
-          <Icon sf={{ default: 'folder', selected: 'folder.fill' }} />
-          <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: dotColor, position: 'absolute', top: -1, right: -4 }} />
-        </View>
-        <Label>Library</Label>
-      </NativeTabs.Trigger>
-    </NativeTabs>
-  );
+function useSectionLabel(): string {
+  const path = usePathname();
+  if (path === '/' || path.endsWith('/index')) return 'Dashboard';
+  if (path.includes('/conversations')) return 'Chats';
+  if (path.includes('/works')) return 'Works';
+  if (path.includes('/library')) return 'Library';
+  return 'Orivellum';
 }
 
-function ClassicTabLayout() {
+// ── App header ─────────────────────────────────────────────────────────────────
+
+interface AppHeaderProps {
+  onMenuPress: () => void;
+}
+
+function AppHeader({ onMenuPress }: AppHeaderProps) {
   const colors = useColors();
+  const insets = useSafeAreaInsets();
+  const dotColor = useServerDotColor();
+  const section = useSectionLabel();
   const colorScheme = useColorScheme();
   const isDark = colorScheme === 'dark';
-  const isIOS = Platform.OS === 'ios';
-  const isWeb = Platform.OS === 'web';
+
+  return (
+    <View
+      style={[
+        styles.header,
+        {
+          height: HEADER_HEIGHT + insets.top,
+          paddingTop: insets.top,
+          borderBottomColor: colors.border,
+        },
+      ]}
+    >
+      {/* Blur background on iOS */}
+      {Platform.OS === 'ios' && (
+        <BlurView
+          intensity={80}
+          tint={isDark ? 'dark' : 'light'}
+          style={StyleSheet.absoluteFill}
+        />
+      )}
+      {/* Solid background on Android */}
+      {Platform.OS !== 'ios' && (
+        <View
+          style={[StyleSheet.absoluteFill, { backgroundColor: colors.background }]}
+        />
+      )}
+
+      {/* Content row */}
+      <View style={styles.headerRow}>
+        {/* App wordmark */}
+        <Text style={[styles.headerWordmark, { color: colors.primary }]}>
+          Orivellum
+        </Text>
+
+        {/* Section title (center) */}
+        <Text
+          style={[styles.headerSection, { color: colors.foreground }]}
+          numberOfLines={1}
+        >
+          {section}
+        </Text>
+
+        {/* Right: server dot + menu button */}
+        <View style={styles.headerRight}>
+          <View style={[styles.serverDot, { backgroundColor: dotColor }]} />
+          <TouchableOpacity
+            onPress={onMenuPress}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            style={styles.menuButton}
+            accessibilityLabel="Open navigation"
+            accessibilityRole="button"
+          >
+            <Feather name="menu" size={22} color={colors.foreground} />
+          </TouchableOpacity>
+        </View>
+      </View>
+    </View>
+  );
+}
+
+// ── Nav bottom sheet ───────────────────────────────────────────────────────────
+
+interface NavItem {
+  key: string;
+  label: string;
+  icon: string;
+  route: string;
+}
+
+const NAV_ITEMS: NavItem[] = [
+  { key: 'index',         label: 'Dashboard', icon: 'home',           route: '/'              },
+  { key: 'conversations', label: 'Chats',     icon: 'message-circle', route: '/conversations' },
+  { key: 'works',         label: 'Works',     icon: 'book-open',      route: '/works'         },
+  { key: 'library',       label: 'Library',   icon: 'folder',         route: '/library'       },
+];
+
+function currentRoute(path: string): string {
+  if (path.includes('/conversations')) return '/conversations';
+  if (path.includes('/works')) return '/works';
+  if (path.includes('/library')) return '/library';
+  return '/';
+}
+
+interface NavBottomSheetProps {
+  visible: boolean;
+  onClose: () => void;
+}
+
+function NavBottomSheet({ visible, onClose }: NavBottomSheetProps) {
+  const colors = useColors();
+  const insets = useSafeAreaInsets();
+  const router = useRouter();
+  const path = usePathname();
+
+  // Keep mounted during close animation
+  const [rendered, setRendered] = useState(visible);
+  const slideAnim = useRef(new Animated.Value(SHEET_CONTENT_HEIGHT + 60)).current;
+  const fadeAnim  = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    if (visible) {
+      setRendered(true);
+      Animated.parallel([
+        Animated.spring(slideAnim, {
+          toValue: 0,
+          useNativeDriver: true,
+          tension: 85,
+          friction: 13,
+        }),
+        Animated.timing(fadeAnim, {
+          toValue: 1,
+          duration: 180,
+          useNativeDriver: true,
+        }),
+      ]).start();
+    } else {
+      Animated.parallel([
+        Animated.timing(slideAnim, {
+          toValue: SHEET_CONTENT_HEIGHT + 60,
+          duration: 220,
+          useNativeDriver: true,
+        }),
+        Animated.timing(fadeAnim, {
+          toValue: 0,
+          duration: 180,
+          useNativeDriver: true,
+        }),
+      ]).start(() => setRendered(false));
+    }
+  }, [visible]);
+
+  const handleNav = (route: string) => {
+    onClose();
+    setTimeout(() => router.navigate(route as any), 80);
+  };
+
+  const active = currentRoute(path);
+
+  if (!rendered) return null;
+
+  return (
+    <Modal
+      transparent
+      visible={rendered}
+      animationType="none"
+      onRequestClose={onClose}
+      statusBarTranslucent
+    >
+      {/* Backdrop */}
+      <Animated.View
+        style={[styles.backdrop, { opacity: fadeAnim }]}
+        pointerEvents={visible ? 'auto' : 'none'}
+      >
+        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+      </Animated.View>
+
+      {/* Sheet */}
+      <Animated.View
+        style={[
+          styles.sheet,
+          {
+            backgroundColor: colors.card,
+            borderColor: colors.border,
+            paddingBottom: insets.bottom + 16,
+            transform: [{ translateY: slideAnim }],
+          },
+        ]}
+      >
+        {/* Drag handle */}
+        <View style={[styles.sheetHandle, { backgroundColor: colors.border }]} />
+
+        <Text style={[styles.sheetLabel, { color: colors.mutedForeground }]}>
+          Navigate to
+        </Text>
+
+        {NAV_ITEMS.map((item) => {
+          const isActive = item.route === active;
+          return (
+            <Pressable
+              key={item.key}
+              onPress={() => handleNav(item.route)}
+              style={({ pressed }) => [
+                styles.navItem,
+                {
+                  backgroundColor: isActive
+                    ? `${colors.primary}14`
+                    : pressed
+                    ? `${colors.muted}80`
+                    : 'transparent',
+                },
+              ]}
+              accessibilityRole="menuitem"
+              accessibilityLabel={item.label}
+              accessibilityState={{ selected: isActive }}
+            >
+              {/* Icon container */}
+              <View
+                style={[
+                  styles.navIconWrap,
+                  {
+                    backgroundColor: isActive
+                      ? `${colors.primary}1A`
+                      : colors.muted,
+                  },
+                ]}
+              >
+                <Feather
+                  name={item.icon as any}
+                  size={20}
+                  color={isActive ? colors.primary : colors.mutedForeground}
+                />
+              </View>
+
+              {/* Label */}
+              <Text
+                style={[
+                  styles.navLabel,
+                  {
+                    color: isActive ? colors.primary : colors.foreground,
+                    fontFamily: isActive ? 'Inter_600SemiBold' : 'Inter_400Regular',
+                  },
+                ]}
+              >
+                {item.label}
+              </Text>
+
+              {isActive && (
+                <View style={styles.navCheck}>
+                  <Feather name="check" size={15} color={colors.primary} />
+                </View>
+              )}
+            </Pressable>
+          );
+        })}
+      </Animated.View>
+    </Modal>
+  );
+}
+
+// ── Native layout (iOS / Android) — no tab bar ────────────────────────────────
+
+function NativeAppLayout() {
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  return (
+    <View style={{ flex: 1 }}>
+      <AppHeader onMenuPress={() => setMenuOpen(true)} />
+      <Tabs
+        screenOptions={{
+          headerShown: false,
+          tabBarStyle: { display: 'none' },
+        }}
+      >
+        <Tabs.Screen name="index" />
+        <Tabs.Screen name="conversations" />
+        <Tabs.Screen name="works" />
+        <Tabs.Screen name="library" />
+      </Tabs>
+      <NavBottomSheet visible={menuOpen} onClose={() => setMenuOpen(false)} />
+    </View>
+  );
+}
+
+// ── Web layout — classic tab bar ───────────────────────────────────────────────
+
+function WebTabLayout() {
+  const colors = useColors();
   const insets = useSafeAreaInsets();
 
   return (
@@ -104,44 +342,19 @@ function ClassicTabLayout() {
         tabBarInactiveTintColor: colors.mutedForeground,
         tabBarStyle: {
           position: 'absolute',
-          backgroundColor: isIOS ? 'transparent' : colors.background,
-          borderTopWidth: isWeb ? 1 : 0,
+          backgroundColor: colors.background,
+          borderTopWidth: 1,
           borderTopColor: colors.border,
           elevation: 0,
-          paddingBottom: isWeb ? 0 : insets.bottom,
-          ...(isWeb ? { height: 84 } : {}),
+          height: 84,
         },
-        tabBarBackground: () =>
-          isIOS ? (
-            <BlurView
-              intensity={100}
-              tint={isDark ? 'dark' : 'light'}
-              style={StyleSheet.absoluteFill}
-            />
-          ) : isWeb ? (
-            <View
-              style={[
-                StyleSheet.absoluteFill,
-                { backgroundColor: colors.background },
-              ]}
-            />
-          ) : null,
       }}
     >
       <Tabs.Screen
         name="index"
         options={{
           title: 'Dashboard',
-          tabBarIcon: ({ color }) => (
-            <View style={{ position: 'relative' }}>
-              {isIOS ? (
-                <SymbolView name="house" tintColor={color} size={24} />
-              ) : (
-                <Feather name="home" size={22} color={color} />
-              )}
-              <ServerDot />
-            </View>
-          ),
+          tabBarIcon: ({ color }) => <Feather name="home" size={22} color={color} />,
         }}
       />
       <Tabs.Screen
@@ -149,14 +362,7 @@ function ClassicTabLayout() {
         options={{
           title: 'Chats',
           tabBarIcon: ({ color }) => (
-            <View style={{ position: 'relative' }}>
-              {isIOS ? (
-                <SymbolView name="bubble.left" tintColor={color} size={24} />
-              ) : (
-                <Feather name="message-circle" size={22} color={color} />
-              )}
-              <ServerDot />
-            </View>
+            <Feather name="message-circle" size={22} color={color} />
           ),
         }}
       />
@@ -164,41 +370,140 @@ function ClassicTabLayout() {
         name="works"
         options={{
           title: 'Works',
-          tabBarIcon: ({ color }) => (
-            <View style={{ position: 'relative' }}>
-              {isIOS ? (
-                <SymbolView name="books.vertical" tintColor={color} size={24} />
-              ) : (
-                <Feather name="book-open" size={22} color={color} />
-              )}
-              <ServerDot />
-            </View>
-          ),
+          tabBarIcon: ({ color }) => <Feather name="book-open" size={22} color={color} />,
         }}
       />
       <Tabs.Screen
         name="library"
         options={{
           title: 'Library',
-          tabBarIcon: ({ color }) => (
-            <View style={{ position: 'relative' }}>
-              {isIOS ? (
-                <SymbolView name="folder" tintColor={color} size={24} />
-              ) : (
-                <Feather name="folder" size={22} color={color} />
-              )}
-              <ServerDot />
-            </View>
-          ),
+          tabBarIcon: ({ color }) => <Feather name="folder" size={22} color={color} />,
         }}
       />
     </Tabs>
   );
 }
 
+// ── Export ────────────────────────────────────────────────────────────────────
+
 export default function TabLayout() {
-  if (isLiquidGlassAvailable()) {
-    return <NativeTabLayout />;
+  if (Platform.OS === 'web') {
+    return <WebTabLayout />;
   }
-  return <ClassicTabLayout />;
+  return <NativeAppLayout />;
 }
+
+// ── Styles ────────────────────────────────────────────────────────────────────
+
+const styles = StyleSheet.create({
+  // Header
+  header: {
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    zIndex: 10,
+  },
+  headerRow: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingBottom: 10,
+  },
+  headerWordmark: {
+    fontSize: 12,
+    fontFamily: 'Inter_600SemiBold',
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+    width: 80,
+  },
+  headerSection: {
+    flex: 1,
+    fontSize: 17,
+    fontFamily: 'Inter_600SemiBold',
+    textAlign: 'center',
+  },
+  headerRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    width: 80,
+    justifyContent: 'flex-end',
+  },
+  serverDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+  },
+  menuButton: {
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  // Backdrop
+  backdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.42)',
+  },
+
+  // Bottom sheet
+  sheet: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    borderWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: 12,
+    paddingTop: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -3 },
+    shadowOpacity: 0.12,
+    shadowRadius: 14,
+    elevation: 24,
+  },
+  sheetHandle: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    alignSelf: 'center',
+    marginBottom: 18,
+    marginTop: 6,
+  },
+  sheetLabel: {
+    fontSize: 11,
+    fontFamily: 'Inter_500Medium',
+    letterSpacing: 0.9,
+    textTransform: 'uppercase',
+    paddingHorizontal: 4,
+    marginBottom: 8,
+  },
+
+  // Nav items
+  navItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 11,
+    paddingHorizontal: 10,
+    borderRadius: 12,
+    gap: 14,
+    marginBottom: 4,
+    minHeight: 44,
+  },
+  navIconWrap: {
+    width: 40,
+    height: 40,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  navLabel: {
+    fontSize: 16,
+    flex: 1,
+  },
+  navCheck: {
+    width: 24,
+    alignItems: 'center',
+  },
+});

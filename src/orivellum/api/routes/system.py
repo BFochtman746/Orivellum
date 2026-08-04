@@ -1014,6 +1014,18 @@ def governance_batch_review(body: BatchReviewBody):
     except Exception:
         pass
 
+    # Invalidate the in-process knowledge vector cache so the next semantic
+    # search reflects the updated review_status values (approved items become
+    # eligible; rejected items are filtered out).  This is necessary because
+    # this endpoint writes review_status directly via raw SQL and bypasses the
+    # update_knowledge_review_status helper that would otherwise bump the cache.
+    if updated:
+        try:
+            from orivellum.capabilities.embeddings import bump_vector_cache_version
+            bump_vector_cache_version(db._path, "knowledge")
+        except Exception:
+            pass
+
     return {"updated": updated, "status": body.status, "total_requested": len(body.item_ids)}
 
 

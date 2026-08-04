@@ -23,6 +23,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { mobileFetch } from '@/lib/api';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { font } from '@/lib/typography';
 import * as Haptics from 'expo-haptics';
 import type { Conversation } from '@workspace/api-client-react';
 import { OfflineBanner, ErrorScreen } from '@/components/OfflineBanner';
@@ -90,14 +91,14 @@ function ConversationItem({ item, onArchive, onDelete, onRename }: { item: Conve
           )}
           {(item as any).work_id && (
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
-              <Feather name="book-open" size={10} color={colors.primary} />
-              <Text style={{ fontSize: 10, fontFamily: 'Inter_400Regular', color: colors.primary }} numberOfLines={1}>
+              <Feather name="book-open" size={11} color={colors.primary} />
+              <Text style={{ fontSize: 11, fontWeight: '400', color: colors.primary }} numberOfLines={1}>
                 {(item as any).work_title ?? 'work'}
               </Text>
             </View>
           )}
           {(item as any).model && (
-            <Text style={{ fontSize: 10, fontFamily: 'Inter_400Regular', color: colors.mutedForeground, opacity: 0.7 }}>
+            <Text style={{ fontSize: 11, fontWeight: '400', color: colors.mutedForeground, opacity: 0.7 }}>
               {String((item as any).model).split('/').pop()?.split('-').slice(0, 3).join('-')}
             </Text>
           )}
@@ -216,7 +217,7 @@ export default function ConversationsScreen() {
     }
   };
 
-  const topPad = isWeb ? 67 : insets.top;
+  const topPad = isWeb ? 67 : 0;
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
@@ -236,14 +237,15 @@ export default function ConversationsScreen() {
             <Text style={[styles.title, { color: colors.foreground }]}>Conversations</Text>
             <Pressable
               onPress={() => setShowArchived((v) => !v)}
+              hitSlop={{ top: 12, bottom: 12, left: 8, right: 8 }}
               style={{
-                paddingHorizontal: 8, paddingVertical: 3, borderRadius: 12,
+                paddingHorizontal: 10, paddingVertical: 5, borderRadius: 12,
                 backgroundColor: showArchived ? colors.primary + '22' : colors.muted,
                 borderWidth: 1,
                 borderColor: showArchived ? colors.primary + '55' : colors.border,
               }}
             >
-              <Text style={{ fontSize: 11, fontFamily: 'Inter_500Medium', color: showArchived ? colors.primary : colors.mutedForeground }}>
+              <Text style={{ fontSize: 12, fontWeight: '500', color: showArchived ? colors.primary : colors.mutedForeground }}>
                 {showArchived ? 'Archived' : 'Active'}
               </Text>
             </Pressable>
@@ -324,7 +326,7 @@ export default function ConversationsScreen() {
           contentContainerStyle={{
             paddingHorizontal: 16,
             paddingTop: 12,
-            paddingBottom: isWeb ? 34 + 50 : insets.bottom + 100,
+            paddingBottom: isWeb ? 34 + 50 : insets.bottom + 24,
           }}
           showsVerticalScrollIndicator={false}
           ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
@@ -396,19 +398,19 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderRadius: 9, paddingHorizontal: 10, height: 36,
   },
   searchInput: {
-    flex: 1, fontSize: 14, fontFamily: 'Inter_400Regular',
+    flex: 1, fontSize: 15, ...font('regular'),
   },
-  title: { fontSize: 26, fontFamily: 'Inter_700Bold' },
+  title: { fontSize: 26, ...font('bold'), letterSpacing: -0.3 },
   newBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     alignItems: 'center',
     justifyContent: 'center',
   },
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 10 },
-  emptyTitle: { fontSize: 17, fontFamily: 'Inter_600SemiBold' },
-  emptyText: { fontSize: 14, fontFamily: 'Inter_400Regular' },
+  emptyTitle: { fontSize: 17, ...font('semibold'), lineHeight: 22 },
+  emptyText: { fontSize: 15, ...font('regular'), lineHeight: 22 },
   item: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -416,18 +418,19 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     padding: 14,
     gap: 12,
+    minHeight: 44,
   },
   avatar: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
   },
   itemContent: { flex: 1 },
   itemHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 },
-  itemTitle: { flex: 1, fontSize: 15, fontFamily: 'Inter_600SemiBold', marginRight: 8 },
-  itemDate: { fontSize: 11, fontFamily: 'Inter_400Regular' },
-  itemPreview: { fontSize: 13, fontFamily: 'Inter_400Regular', lineHeight: 18 },
-  itemCount: { fontSize: 11, fontFamily: 'Inter_400Regular', marginTop: 4 },
+  itemTitle: { flex: 1, fontSize: 15, ...font('semibold'), lineHeight: 20, marginRight: 8 },
+  itemDate: { fontSize: 12, ...font('regular'), lineHeight: 16 },
+  itemPreview: { fontSize: 13, ...font('regular'), lineHeight: 18 },
+  itemCount: { fontSize: 12, ...font('regular'), lineHeight: 16, marginTop: 2 },
 });

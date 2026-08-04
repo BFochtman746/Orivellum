@@ -18,6 +18,7 @@ import { useListWorks, useCreateConversation, useDeleteWork } from '@workspace/a
 import { useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { font } from '@/lib/typography';
 import * as Haptics from 'expo-haptics';
 import type { Work } from '@workspace/api-client-react';
 import { OfflineBanner, ErrorScreen } from '@/components/OfflineBanner';
@@ -61,12 +62,13 @@ function WorkCard({ work, onStartChat, onDelete }: { work: Work; onStartChat: ()
         style={{
           backgroundColor: TEAL, borderRadius: 10,
           paddingHorizontal: 18, paddingVertical: 10,
-          alignItems: 'center', justifyContent: 'center', gap: 3,
+          alignItems: 'center', justifyContent: 'center', gap: 4,
+          minHeight: 52,
         }}
-        hitSlop={4}
+        hitSlop={12}
       >
-        <Feather name="message-circle" size={16} color="#fff" />
-        <Text style={{ color: '#fff', fontSize: 10, fontFamily: 'Inter_600SemiBold' }}>Chat</Text>
+        <Feather name="message-circle" size={18} color="#fff" />
+        <Text style={{ color: '#fff', fontSize: 12, fontWeight: '600' }}>Chat</Text>
       </Pressable>
     </View>
   );
@@ -79,12 +81,13 @@ function WorkCard({ work, onStartChat, onDelete }: { work: Work; onStartChat: ()
         style={{
           backgroundColor: colors.muted, borderRadius: 10,
           paddingHorizontal: 18, paddingVertical: 10,
-          alignItems: 'center', justifyContent: 'center', gap: 3,
+          alignItems: 'center', justifyContent: 'center', gap: 4,
+          minHeight: 52,
         }}
-        hitSlop={4}
+        hitSlop={12}
       >
-        <Feather name="arrow-right" size={16} color={colors.foreground} />
-        <Text style={{ color: colors.foreground, fontSize: 10, fontFamily: 'Inter_600SemiBold' }}>Open</Text>
+        <Feather name="arrow-right" size={18} color={colors.foreground} />
+        <Text style={{ color: colors.foreground, fontSize: 12, fontWeight: '600' }}>Open</Text>
       </Pressable>
     </View>
   );
@@ -281,7 +284,7 @@ export default function WorksScreen() {
     });
   }, [deleteMutate, queryClient, refetch]);
 
-  const topPad = isWeb ? 67 : insets.top;
+  const topPad = isWeb ? 67 : 0;
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
@@ -364,7 +367,7 @@ export default function WorksScreen() {
           contentContainerStyle={{
             paddingHorizontal: 16,
             paddingTop: 12,
-            paddingBottom: isWeb ? 34 + 50 : insets.bottom + 100,
+            paddingBottom: isWeb ? 34 + 50 : insets.bottom + 24,
           }}
           showsVerticalScrollIndicator={false}
           ItemSeparatorComponent={() => <View style={{ height: 10 }} />}
@@ -384,11 +387,11 @@ const styles = StyleSheet.create({
     paddingBottom: 14,
     borderBottomWidth: 1,
   },
-  title: { fontSize: 26, fontFamily: 'Inter_700Bold' },
-  count: { fontSize: 13, fontFamily: 'Inter_400Regular' },
+  title: { fontSize: 26, ...font('bold'), letterSpacing: -0.3 },
+  count: { fontSize: 13, ...font('regular'), lineHeight: 18 },
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 10, paddingHorizontal: 32 },
-  emptyTitle: { fontSize: 17, fontFamily: 'Inter_600SemiBold' },
-  emptyText: { fontSize: 14, fontFamily: 'Inter_400Regular', textAlign: 'center', lineHeight: 20 },
+  emptyTitle: { fontSize: 17, ...font('semibold'), lineHeight: 22 },
+  emptyText: { fontSize: 15, ...font('regular'), textAlign: 'center', lineHeight: 22 },
   card: {
     borderRadius: 8,
     borderWidth: 1,
@@ -408,8 +411,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   cardMeta: { flex: 1 },
-  cardTitle: { fontSize: 15, fontFamily: 'Inter_600SemiBold', lineHeight: 20, marginBottom: 3 },
-  cardDesc: { fontSize: 12, fontFamily: 'Inter_400Regular', lineHeight: 17 },
+  cardTitle: { fontSize: 15, ...font('semibold'), lineHeight: 20, marginBottom: 3 },
+  cardDesc: { fontSize: 13, ...font('regular'), lineHeight: 18 },
   cardFooter: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -420,23 +423,24 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
   },
   statChip: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  chipText: { fontSize: 11, fontFamily: 'Inter_400Regular' },
+  chipText: { fontSize: 12, ...font('regular'), lineHeight: 16 },
   statusBadge: {
     marginLeft: 'auto',
     paddingHorizontal: 8,
-    paddingVertical: 2,
+    paddingVertical: 3,
     borderRadius: 10,
   },
-  statusText: { fontSize: 11, fontFamily: 'Inter_500Medium', textTransform: 'capitalize' },
+  statusText: { fontSize: 11, ...font('medium'), lineHeight: 14, textTransform: 'capitalize' },
   chatBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 6,
     borderWidth: 1,
     marginLeft: 'auto',
+    minHeight: 30,
   },
-  chatBtnText: { fontSize: 11, fontFamily: 'Inter_600SemiBold' },
+  chatBtnText: { fontSize: 12, ...font('semibold'), lineHeight: 16 },
 });

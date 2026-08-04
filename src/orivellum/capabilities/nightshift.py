@@ -259,20 +259,23 @@ def _pass_orphan_cleanup(db: "OrivellumDB", report: list[str]) -> None:
             # Orphaned embeddings — type-aware: knowledge vectors checked
             # against knowledge, chunk vectors against chunks.  Never touch
             # vectors of other/unknown object types.
-            v_deleted = 0
+            # Track each type separately so cache bumps are precise.
+            vk_deleted = 0   # orphaned knowledge-type vectors
+            vc_deleted = 0   # orphaned chunk-type vectors
             try:
-                v_deleted += db._conn.execute(
+                vk_deleted = db._conn.execute(
                     """DELETE FROM vectors
                        WHERE object_type = 'knowledge'
                          AND object_id NOT IN (SELECT id FROM knowledge)"""
                 ).rowcount
-                v_deleted += db._conn.execute(
+                vc_deleted = db._conn.execute(
                     """DELETE FROM vectors
                        WHERE object_type = 'chunk'
                          AND object_id NOT IN (SELECT id FROM chunks)"""
                 ).rowcount
             except Exception:
                 pass
+            v_deleted = vk_deleted + vc_deleted
             db._conn.commit()
 
         removed = k_deleted + c_deleted + v_deleted
@@ -283,6 +286,20 @@ def _pass_orphan_cleanup(db: "OrivellumDB", report: list[str]) -> None:
             )
             logger.info("Nightshift orphan cleanup: k=%d c=%d v=%d",
                         k_deleted, c_deleted, v_deleted)
+            # Bump the in-process vector cache for every type that was touched
+            # so semantic_search does not return deleted entries on the next
+            # call. The cache rebuilds lazily on the first subsequent query.
+            # Note: vectors can become orphaned even when k_deleted/c_deleted
+            # are zero (e.g. chunks are cascade-deleted via FK when their
+            # parent document is removed, leaving vectors with no referent).
+            try:
+                from orivellum.capabilities.embeddings import bump_vector_cache_version
+                if k_deleted or vk_deleted:
+                    bump_vector_cache_version(db._path, "knowledge")
+                if c_deleted or vc_deleted:
+                    bump_vector_cache_version(db._path, "chunk")
+            except Exception:
+                pass
     except Exception as exc:
         logger.warning("Orphan cleanup pass failed: %s", exc)
 
