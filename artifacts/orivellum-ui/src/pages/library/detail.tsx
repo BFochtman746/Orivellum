@@ -56,6 +56,12 @@ interface KnowledgeItem {
   meta?: { source?: string } | null;
 }
 
+function formatBytes(b: number): string {
+  if (b < 1024) return `${b} B`;
+  if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)} KB`;
+  return `${(b / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 // ── Editable doc title ────────────────────────────────────────────────────────
 
 function TextSearchableContent({ text }: { text: string }) {
@@ -1388,6 +1394,7 @@ export default function DocumentDetail() {
             { label: "Kind",      value: doc.kind ?? "—" },
             { label: "Readiness", value: readiness },
             { label: "Words",     value: doc.word_count ? doc.word_count.toLocaleString() : "—" },
+            { label: "Size",      value: (doc as any).size_bytes ? formatBytes((doc as any).size_bytes) : "—" },
             { label: "Imported",  value: doc.created_at ? format(new Date(doc.created_at), "PPP") : "—" },
             { label: "SHA-256",   value: doc.sha256 ?? "—" },
           ].map(({ label, value }) => (

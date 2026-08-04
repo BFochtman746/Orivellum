@@ -1085,6 +1085,9 @@ export default function WorkDetailScreen() {
   // Conversations search
   const [convSearch, setConvSearch] = useState('');
 
+  // Docs sort
+  const [docSortKey, setDocSortKey] = useState<'date' | 'name' | 'kind'>('date');
+
   // Task #13 — start a conversation linked to this work
   const handleStartDiscussion = async () => {
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -1228,13 +1231,37 @@ export default function WorkDetailScreen() {
             />
           );
         }
+        const DOC_SORT_KEYS = ['date', 'name', 'kind'] as const;
+        type DocSortKey = typeof DOC_SORT_KEYS[number];
+        const sortedDocs = [...docs].sort((a: any, b: any) => {
+          if (docSortKey === 'name') return (a.title ?? a.source ?? '').localeCompare(b.title ?? b.source ?? '');
+          if (docSortKey === 'kind') return (a.kind ?? '').localeCompare(b.kind ?? '');
+          return ((b as any).created_at ?? '').localeCompare((a as any).created_at ?? '');
+        });
         return (
           <>
             {docsError && docs.length > 0 && (
               <OfflineBanner message="Showing cached documents — server unreachable" onRetry={refetchDocs} />
             )}
+            {/* Sort control */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 6, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border, backgroundColor: colors.background }}>
+              <Text style={{ fontSize: 11, fontFamily: 'Inter_500Medium', color: colors.mutedForeground, marginRight: 2 }}>Sort</Text>
+              {DOC_SORT_KEYS.map((k) => (
+                <Pressable
+                  key={k}
+                  onPress={() => setDocSortKey(k)}
+                  style={{
+                    paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10,
+                    backgroundColor: docSortKey === k ? colors.primary : colors.muted,
+                    borderWidth: 1, borderColor: docSortKey === k ? colors.primary : colors.border,
+                  }}
+                >
+                  <Text style={{ fontSize: 10, fontFamily: 'Inter_600SemiBold', color: docSortKey === k ? colors.primaryForeground : colors.mutedForeground, textTransform: 'capitalize' }}>{k}</Text>
+                </Pressable>
+              ))}
+            </View>
             <FlatList
-              data={docs}
+              data={sortedDocs}
               keyExtractor={(d) => d.id ?? ''}
               renderItem={({ item }) => <DocItem doc={item} onReprocess={async (docId) => {
                 try {
