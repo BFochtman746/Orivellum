@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -7,6 +7,7 @@ import {
   RefreshControl,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import { Swipeable } from 'react-native-gesture-handler';
@@ -236,9 +237,19 @@ export default function WorksScreen() {
     );
   };
 
+  const [search, setSearch] = useState('');
   const { data, isLoading, isError, refetch } = useListWorks({ query: { refetchInterval: 30_000, staleTime: 20_000 } } as any);
-  const works = data?.works ?? [];
-  const hasData = works.length > 0;
+  const allWorks = data?.works ?? [];
+  const works = useMemo(() => {
+    if (!search.trim()) return allWorks;
+    const q = search.toLowerCase();
+    return allWorks.filter((w: any) =>
+      (w.title ?? '').toLowerCase().includes(q) ||
+      (w.description ?? '').toLowerCase().includes(q) ||
+      (w.work_type ?? '').toLowerCase().includes(q)
+    );
+  }, [allWorks, search]);
+  const hasData = allWorks.length > 0;
 
   const topPad = isWeb ? 67 : insets.top;
 
@@ -257,8 +268,26 @@ export default function WorksScreen() {
       >
         <Text style={[styles.title, { color: colors.foreground }]}>Works</Text>
         <Text style={[styles.count, { color: colors.mutedForeground }]}>
-          {works.length} total
+          {works.length}{search.trim() ? ` / ${allWorks.length}` : ''} total
         </Text>
+      </View>
+
+      {/* Search bar */}
+      <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 8, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border, backgroundColor: colors.background, gap: 8 }}>
+        <Feather name="search" size={15} color={colors.mutedForeground} />
+        <TextInput
+          style={{ flex: 1, fontSize: 14, fontFamily: 'Inter_400Regular', color: colors.foreground }}
+          placeholder="Search works…"
+          placeholderTextColor={colors.mutedForeground}
+          value={search}
+          onChangeText={setSearch}
+          returnKeyType="search"
+        />
+        {search.length > 0 && (
+          <Pressable onPress={() => setSearch('')} hitSlop={8}>
+            <Feather name="x" size={15} color={colors.mutedForeground} />
+          </Pressable>
+        )}
       </View>
 
       {/* Offline banner — shown only when we have cached data */}

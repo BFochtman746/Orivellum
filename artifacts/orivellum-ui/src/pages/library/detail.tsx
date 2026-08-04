@@ -56,6 +56,39 @@ interface KnowledgeItem {
   meta?: { source?: string } | null;
 }
 
+// ── Editable doc title ────────────────────────────────────────────────────────
+
+function EditableTitle({ docId: _docId, title, onSave }: { docId: string; title: string; onSave: (t: string) => void }) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(title);
+  const commit = () => {
+    setEditing(false);
+    if (value.trim() && value.trim() !== title) onSave(value.trim());
+    else setValue(title);
+  };
+  if (editing) {
+    return (
+      <input
+        autoFocus
+        className="text-2xl font-serif font-semibold tracking-tight w-full bg-transparent border-b-2 border-primary outline-none pb-0.5"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => { if (e.key === "Enter") commit(); if (e.key === "Escape") { setValue(title); setEditing(false); } }}
+      />
+    );
+  }
+  return (
+    <h1
+      className="text-2xl font-serif font-semibold tracking-tight truncate cursor-pointer hover:text-primary transition-colors"
+      onDoubleClick={() => { setValue(title); setEditing(true); }}
+      title="Double-click to edit title"
+    >
+      {title}
+    </h1>
+  );
+}
+
 // ── Readiness badge ───────────────────────────────────────────────────────────
 
 const READINESS_CFG = {
@@ -676,7 +709,7 @@ export default function DocumentDetail() {
   };
 
   // Work assignment — PATCH /api/library/:docId
-  const updateDoc = useMutation<void, Error, { work_id: string | null }>({
+  const updateDoc = useMutation<void, Error, { work_id?: string | null; title?: string | null }>({
     mutationFn: (body) =>
       apiFetch(`${BASE}/library/${docId}`, {
         method: "PATCH",
@@ -1114,7 +1147,7 @@ export default function DocumentDetail() {
             }
           </div>
           <div className="min-w-0 flex-1">
-            <h1 className="text-2xl font-serif font-semibold tracking-tight truncate">{title}</h1>
+            <EditableTitle docId={docId!} title={title} onSave={(t) => updateDoc.mutate({ title: t })} />
             <div className="flex flex-wrap items-center gap-2 mt-2">
               <Badge variant="secondary" className="font-mono text-[10px] uppercase">
                 {doc.kind ?? "file"}

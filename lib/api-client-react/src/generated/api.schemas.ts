@@ -648,6 +648,8 @@ export type GetDocument200 = {
 export type UpdateDocumentBody = {
   /** @nullable */
   work_id?: string | null;
+  /** @nullable */
+  title?: string | null;
 };
 
 export type UpdateDocument200 = {

@@ -192,7 +192,7 @@ function KnowledgeRow({ item, onReviewed, onDelete }: { item: KnowledgeItem; onR
   );
 }
 
-function TaskRow({ task, onDelete }: { task: Task; onDelete?: () => void }) {
+function TaskRow({ task, onDelete, onToggle }: { task: Task; onDelete?: () => void; onToggle?: () => void }) {
   const colors = useColors();
   const done = task.status === 'done' || task.status === 'complete' || task.status === 'completed';
   const handleLongPress = () => {
@@ -208,11 +208,13 @@ function TaskRow({ task, onDelete }: { task: Task; onDelete?: () => void }) {
       style={[styles.listItem, { borderColor: colors.border }]}
       delayLongPress={400}
     >
-      <Feather
-        name={done ? 'check-circle' : 'circle'}
-        size={18}
-        color={done ? colors.primary : colors.mutedForeground}
-      />
+      <Pressable onPress={onToggle} hitSlop={8}>
+        <Feather
+          name={done ? 'check-circle' : 'circle'}
+          size={18}
+          color={done ? colors.primary : colors.mutedForeground}
+        />
+      </Pressable>
       <View style={styles.itemBody}>
         <Text
           style={[
@@ -1015,6 +1017,23 @@ export default function WorkDetailScreen() {
     }
   };
 
+  // Toggle task status between pending/completed.
+  const handleToggleTask = async (taskId: string, currentStatus: string | undefined) => {
+    const next = (currentStatus === 'done' || currentStatus === 'complete' || currentStatus === 'completed') ? 'pending' : 'completed';
+    try {
+      await mobileFetch(`https://${domain}/api/works/${id}/tasks/${taskId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: next }),
+      });
+      queryClient.invalidateQueries({ queryKey: getGetWorkTasksQueryKey(id) });
+      queryClient.invalidateQueries({ queryKey: getGetWorkStatsQueryKey(id) });
+      refetchTasks();
+    } catch {
+      Alert.alert('Error', 'Could not update task');
+    }
+  };
+
   // Delete a knowledge item by id (called from KnowledgeRow long-press).
   const handleDeleteKnowledge = async (itemId: string) => {
     try {
@@ -1250,6 +1269,7 @@ export default function WorkDetailScreen() {
                 <TaskRow
                   task={item}
                   onDelete={() => handleDeleteTask((item as any).id)}
+                  onToggle={() => handleToggleTask((item as any).id, (item as any).status)}
                 />
               )}
               contentContainerStyle={styles.listPad}

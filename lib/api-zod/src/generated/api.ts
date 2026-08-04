@@ -801,7 +801,8 @@ export const UpdateDocumentParams = zod.object({
 })
 
 export const UpdateDocumentBody = zod.object({
-  "work_id": zod.string().nullish()
+  "work_id": zod.string().nullish(),
+  "title": zod.string().nullish()
 })
 
 export const UpdateDocumentResponse = zod.object({
