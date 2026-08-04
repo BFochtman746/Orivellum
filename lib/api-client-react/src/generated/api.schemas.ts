@@ -197,6 +197,8 @@ export interface Conversation {
   /** @nullable */
   work_id?: string | null;
   /** @nullable */
+  work_title?: string | null;
+  /** @nullable */
   title?: string | null;
   archived?: number;
   /** @nullable */

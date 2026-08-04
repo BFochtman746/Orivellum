@@ -764,7 +764,8 @@ class OrivellumDB:
                            limit: int = 100) -> list[dict]:
         q = """SELECT c.*,
                       (SELECT text FROM messages WHERE conversation_id=c.id ORDER BY created_at DESC LIMIT 1) as last_message,
-                      (SELECT COUNT(*) FROM messages WHERE conversation_id=c.id) as message_count
+                      (SELECT COUNT(*) FROM messages WHERE conversation_id=c.id) as message_count,
+                      (SELECT w.title FROM works w WHERE w.id=c.work_id LIMIT 1) as work_title
                FROM conversations c WHERE c.archived=?"""
         args: list = [1 if archived else 0]
         if work_id:

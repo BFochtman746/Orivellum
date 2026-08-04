@@ -89,7 +89,9 @@ function ConversationItem({ item, onArchive, onDelete }: { item: Conversation; o
           {(item as any).work_id && (
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
               <Feather name="book-open" size={10} color={colors.primary} />
-              <Text style={{ fontSize: 10, fontFamily: 'Inter_400Regular', color: colors.primary }}>work</Text>
+              <Text style={{ fontSize: 10, fontFamily: 'Inter_400Regular', color: colors.primary }} numberOfLines={1}>
+                {(item as any).work_title ?? 'work'}
+              </Text>
             </View>
           )}
           {(item as any).model && (

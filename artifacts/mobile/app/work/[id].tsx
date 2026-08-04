@@ -23,6 +23,7 @@ import {
   useCreateWorkTask,
   useCreateConversation,
   useListConversations,
+  useUpdateWork,
   getListConversationsQueryKey,
   getGetWorkTasksQueryKey,
   getGetWorkStatsQueryKey,
@@ -424,6 +425,24 @@ function OverviewTab({ workId, onStartDiscussion, starting, onNavigateToTab }: {
   const colors = useColors();
   const { data: workData, isLoading, isError, refetch } = useGetWork(workId);
   const work = workData?.work;
+  const queryClient = useQueryClient();
+  const [editingDesc, setEditingDesc] = useState(false);
+  const [descDraft, setDescDraft] = useState('');
+  const { mutate: updateWork } = useUpdateWork();
+
+  const startDescEdit = () => {
+    setDescDraft(work?.description ?? '');
+    setEditingDesc(true);
+  };
+
+  const saveDesc = () => {
+    setEditingDesc(false);
+    const trimmed = descDraft.trim();
+    if (trimmed === (work?.description ?? '')) return;
+    updateWork({ workId, data: { title: work?.title ?? '', description: trimmed || null } }, {
+      onSuccess: () => queryClient.invalidateQueries({ queryKey: [workId] }),
+    });
+  };
 
   if (isLoading && !work) {
     return (
@@ -449,10 +468,28 @@ function OverviewTab({ workId, onStartDiscussion, starting, onNavigateToTab }: {
       showsVerticalScrollIndicator={false}
       refreshControl={<RefreshControl refreshing={isLoading} onRefresh={refetch} tintColor={colors.primary} />}
     >
-      {work?.description ? (
-        <Text style={[styles.description, { color: colors.foreground }]}>{work.description}</Text>
+      {editingDesc ? (
+        <View style={{ marginBottom: 16 }}>
+          <TextInput
+            style={[styles.description, { color: colors.foreground, borderWidth: 1, borderColor: colors.primary, borderRadius: 6, padding: 8 }]}
+            value={descDraft}
+            onChangeText={setDescDraft}
+            multiline
+            autoFocus
+            onBlur={saveDesc}
+            returnKeyType="done"
+            placeholder="Work description…"
+            placeholderTextColor={colors.mutedForeground}
+          />
+        </View>
       ) : (
-        <Text style={[styles.description, { color: colors.mutedForeground }]}>No description.</Text>
+        <Pressable onPress={startDescEdit} style={{ marginBottom: 0 }}>
+          {work?.description ? (
+            <Text style={[styles.description, { color: colors.foreground }]}>{work.description}</Text>
+          ) : (
+            <Text style={[styles.description, { color: colors.mutedForeground, fontStyle: 'italic' }]}>Tap to add a description…</Text>
+          )}
+        </Pressable>
       )}
 
       <View style={[styles.infoGrid, { borderColor: colors.border }]}>

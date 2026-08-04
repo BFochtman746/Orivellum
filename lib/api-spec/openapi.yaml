@@ -1287,6 +1287,7 @@ components:
       properties:
         id: { type: string }
         work_id: { type: string, nullable: true }
+        work_title: { type: string, nullable: true }
         title: { type: string, nullable: true }
         archived: { type: integer }
         model: { type: string, nullable: true }

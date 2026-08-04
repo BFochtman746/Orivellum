@@ -1345,11 +1345,31 @@ function TasksTab({ workId }: { workId: string }) {
     );
   };
 
+  const [taskFilter, setTaskFilter] = useState<"all" | "pending" | "completed">("all");
+
   if (isLoading) return <Skeleton className="h-64 w-full" />;
-  const tasks = tasksResp?.tasks ?? [];
+  const allTasks = tasksResp?.tasks ?? [];
+  const tasks = taskFilter === "all" ? allTasks : allTasks.filter((t) => t.status === taskFilter);
 
   return (
     <div className="space-y-6 max-w-3xl">
+      {/* Filter chips */}
+      <div className="flex items-center gap-2">
+        {(["all", "pending", "completed"] as const).map((f) => (
+          <button
+            key={f}
+            onClick={() => setTaskFilter(f)}
+            className={`px-3 py-1 rounded-full text-xs font-mono uppercase tracking-wider border transition-colors ${
+              taskFilter === f
+                ? "bg-primary text-primary-foreground border-primary"
+                : "bg-transparent text-muted-foreground border-border hover:border-primary/50"
+            }`}
+          >
+            {f === "all" ? `All (${allTasks.length})` : f === "pending" ? `Pending (${allTasks.filter((t) => t.status !== "completed").length})` : `Done (${allTasks.filter((t) => t.status === "completed").length})`}
+          </button>
+        ))}
+      </div>
+
       <form onSubmit={handleAdd} className="flex gap-2">
         <Input
           placeholder="Add a new task…"

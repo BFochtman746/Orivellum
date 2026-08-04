@@ -502,6 +502,7 @@ export const GetWorkConversationsResponse = zod.object({
   "conversations": zod.array(zod.object({
   "id": zod.string().optional(),
   "work_id": zod.string().nullish(),
+  "work_title": zod.string().nullish(),
   "title": zod.string().nullish(),
   "archived": zod.int().optional(),
   "model": zod.string().nullish(),
@@ -528,6 +529,7 @@ export const ListConversationsResponse = zod.object({
   "conversations": zod.array(zod.object({
   "id": zod.string().optional(),
   "work_id": zod.string().nullish(),
+  "work_title": zod.string().nullish(),
   "title": zod.string().nullish(),
   "archived": zod.int().optional(),
   "model": zod.string().nullish(),
@@ -553,6 +555,7 @@ export const CreateConversationResponse = zod.object({
   "conversation": zod.object({
   "id": zod.string().optional(),
   "work_id": zod.string().nullish(),
+  "work_title": zod.string().nullish(),
   "title": zod.string().nullish(),
   "archived": zod.int().optional(),
   "model": zod.string().nullish(),
@@ -575,6 +578,7 @@ export const GetConversationResponse = zod.object({
   "conversation": zod.object({
   "id": zod.string().optional(),
   "work_id": zod.string().nullish(),
+  "work_title": zod.string().nullish(),
   "title": zod.string().nullish(),
   "archived": zod.int().optional(),
   "model": zod.string().nullish(),
@@ -613,6 +617,7 @@ export const UpdateConversationResponse = zod.object({
   "conversation": zod.object({
   "id": zod.string().optional(),
   "work_id": zod.string().nullish(),
+  "work_title": zod.string().nullish(),
   "title": zod.string().nullish(),
   "archived": zod.int().optional(),
   "model": zod.string().nullish(),
