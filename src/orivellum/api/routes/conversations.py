@@ -277,7 +277,9 @@ async def send_message(conv_id: str, body: MessageSend):
     if tool_result is not None:
         tool_text, tool_meta = tool_result
         if ns_sources:
-            tool_meta = {**tool_meta, "sources": ns_sources}
+            # Merge knowledge sources with any tool-specific sources (e.g. web search)
+            existing = tool_meta.get("sources", [])
+            tool_meta = {**tool_meta, "sources": [*existing, *ns_sources]}
         msg = db.add_message(conv_id, "assistant", tool_text, meta=tool_meta)
         _maybe_auto_title(db, conv, body.text)
         return {"message": msg}
@@ -821,7 +823,9 @@ async def _stream_response(
         if tool_result is not None:
             tool_text, tool_meta = tool_result
             if sources:
-                tool_meta = {**tool_meta, "sources": sources}
+                # Merge knowledge sources with any tool-specific sources (e.g. web search)
+                existing = tool_meta.get("sources", [])
+                tool_meta = {**tool_meta, "sources": [*existing, *sources]}
             # Persist before streaming (disconnect-safe)
             db.add_message(conv_id, "assistant", tool_text, meta=tool_meta)
             _maybe_auto_title(db, conv, user_text)
@@ -829,8 +833,10 @@ async def _stream_response(
             _CHUNK = 40
             for i in range(0, len(tool_text), _CHUNK):
                 yield f"data: {json.dumps({'token': tool_text[i:i+_CHUNK], 'intent': tool_meta.get('intent')})}\n\n"
-            if sources:
-                yield f"data: {json.dumps({'sources': sources})}\n\n"
+            # Emit the merged source list (web + knowledge) via the SSE sources sentinel
+            all_sources = tool_meta.get("sources", [])
+            if all_sources:
+                yield f"data: {json.dumps({'sources': all_sources})}\n\n"
             yield "data: [DONE]\n\n"
             return
 
@@ -1161,15 +1167,19 @@ async def _maybe_dispatch_intent(
     logger.debug("Intent routing: %s (query=%r, location=%r)", intent, query[:60], location)
 
     if intent == "web_search":
+        web_sources: list = []
         try:
             from orivellum.capabilities.websearch import web_search_synthesize
-            text = await asyncio.to_thread(
+            text, web_sources = await asyncio.to_thread(
                 web_search_synthesize, query, base_url, model, db
             )
         except Exception as exc:
             logger.warning("Web search failed: %s", exc)
             text = f"🌐 **Web Search**\n\nSearch encountered an error: {exc}\nTry rephrasing your query."
-        return text, {"intent": "web_search", "query": query}
+        ws_meta: dict = {"intent": "web_search", "query": query}
+        if web_sources:
+            ws_meta["sources"] = web_sources
+        return text, ws_meta
 
     if intent == "weather":
         try:

@@ -175,23 +175,31 @@ interface KnowledgeSource {
   work_id?: string | null;
   work_title?: string;
   source_doc_id?: string | null;
+  // Web search sources carry a URL instead of a doc/work id
+  url?: string;
   // Legacy fields (older persisted meta)
   doc_id?: string;
   doc_title?: string;
 }
 
-/** Normalize a source object across the current + legacy backend shapes. */
+/** Normalize a source object across the current + legacy backend shapes.
+ *  Web search sources (kind === "web") carry a url field; knowledge sources
+ *  carry source_doc_id / work_id.  Both end up in the same SourcesFooter. */
 function normalizeSource(s: KnowledgeSource) {
+  const isWeb = s.kind === "web";
   const docId = s.source_doc_id ?? s.doc_id ?? null;
-  const title = s.title ?? s.doc_title ?? (docId ? "Document" : "Knowledge");
-  const workTitle = s.work_title ?? s.doc_title ?? "General";
+  const title = s.title ?? s.doc_title ?? (isWeb ? s.url ?? "Web" : docId ? "Document" : "Knowledge");
+  // Group web sources under "Web" so they appear in their own section
+  const workTitle = isWeb ? "Web" : (s.work_title ?? s.doc_title ?? "General");
   return {
-    id: s.id ?? docId ?? title,
+    id: s.id ?? s.url ?? docId ?? title,
     title,
     kind: s.kind,
     workId: s.work_id ?? null,
     workTitle,
     docId,
+    url: s.url ?? null,
+    isWeb,
   };
 }
 
@@ -209,7 +217,7 @@ function SourcesFooter({ sources }: { sources: KnowledgeSource[] }) {
   });
   if (unique.length === 0) return null;
 
-  // Group by Work/topic
+  // Group by Work/topic — web sources land in "Web", knowledge in their Work title
   const groups: Array<{ title: string; items: typeof unique }> = [];
   const groupIndex = new Map<string, number>();
   for (const s of unique) {
@@ -223,11 +231,15 @@ function SourcesFooter({ sources }: { sources: KnowledgeSource[] }) {
     groups[idx].items.push(s);
   }
 
-  const link = (s: (typeof unique)[number]): string | null => {
-    if (s.docId) return `${import.meta.env.BASE_URL}library/${s.docId}`.replace(/\/+/g, "/");
-    if (s.workId) return `${import.meta.env.BASE_URL}works/${s.workId}`.replace(/\/+/g, "/");
+  const link = (s: (typeof unique)[number]): { href: string; external: boolean } | null => {
+    if (s.isWeb && s.url) return { href: s.url, external: true };
+    if (s.docId) return { href: `${import.meta.env.BASE_URL}library/${s.docId}`.replace(/\/+/g, "/"), external: false };
+    if (s.workId) return { href: `${import.meta.env.BASE_URL}works/${s.workId}`.replace(/\/+/g, "/"), external: false };
     return null;
   };
+
+  // Distinguish "Sources" label when there are web results vs. pure knowledge
+  const hasWeb = unique.some((s) => s.isWeb);
 
   return (
     <div className="mt-1.5">
@@ -235,7 +247,7 @@ function SourcesFooter({ sources }: { sources: KnowledgeSource[] }) {
         onClick={() => setOpen(v => !v)}
         className="flex items-center gap-1.5 text-[10px] font-mono text-muted-foreground/50 hover:text-muted-foreground/80 transition-colors"
       >
-        <BookOpen className="w-2.5 h-2.5" />
+        {hasWeb ? <Globe className="w-2.5 h-2.5" /> : <BookOpen className="w-2.5 h-2.5" />}
         <span>Sources ({unique.length})</span>
         <ChevronDown className={`w-2.5 h-2.5 transition-transform duration-200 ${open ? "rotate-180" : ""}`} />
       </button>
@@ -247,14 +259,17 @@ function SourcesFooter({ sources }: { sources: KnowledgeSource[] }) {
                 {g.title}
               </span>
               {g.items.map((s, i) => {
-                const href = link(s);
-                return href ? (
+                const target = link(s);
+                const Icon = s.isWeb ? Globe : FileText;
+                return target ? (
                   <a
                     key={i}
-                    href={href}
+                    href={target.href}
+                    target={target.external ? "_blank" : undefined}
+                    rel={target.external ? "noopener noreferrer" : undefined}
                     className="flex items-center gap-1.5 text-[10px] font-mono text-primary/60 hover:text-primary/90 transition-colors truncate max-w-xs pl-1.5"
                   >
-                    <FileText className="w-2.5 h-2.5 shrink-0" />
+                    <Icon className="w-2.5 h-2.5 shrink-0" />
                     <span className="truncate">{s.title}</span>
                   </a>
                 ) : (
@@ -262,7 +277,7 @@ function SourcesFooter({ sources }: { sources: KnowledgeSource[] }) {
                     key={i}
                     className="flex items-center gap-1.5 text-[10px] font-mono text-muted-foreground/60 truncate max-w-xs pl-1.5"
                   >
-                    <FileText className="w-2.5 h-2.5 shrink-0" />
+                    <Icon className="w-2.5 h-2.5 shrink-0" />
                     <span className="truncate">{s.title}</span>
                   </span>
                 );

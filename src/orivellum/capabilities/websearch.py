@@ -105,12 +105,17 @@ def web_search(query: str) -> str:
     return f"🌐 **Web Search: {query}**\n\n{block}"
 
 
-def web_search_synthesize(query: str, base_url: str, model: str, db=None) -> str:
+def web_search_synthesize(
+    query: str, base_url: str, model: str, db=None
+) -> tuple[str, list[dict]]:
     """Search with Tavily, then have the local LLM synthesise a cited answer.
 
     Tavily returns the full extracted content of each page — far more than snippets —
-    so the LLM has rich material to work from.  Returns a synthesised answer with
-    inline [1][2] citations followed by a numbered sources list.
+    so the LLM has rich material to work from.  Returns a tuple of:
+      (synthesised_text, sources)
+    where *sources* is a list of ``{"title": ..., "url": ..., "kind": "web"}`` dicts
+    that callers can pass through to the SourcesFooter in the same shape as knowledge
+    sources, giving users one unified collapsible panel.
 
     Falls back to plain formatted results if the LLM call fails.  Never raises.
     """
@@ -121,7 +126,7 @@ def web_search_synthesize(query: str, base_url: str, model: str, db=None) -> str
         results = []
 
     if not results:
-        return web_search(query)
+        return web_search(query), []
 
     # Build the context block the LLM will read.
     # Tavily's `content` field is full extracted page text — truncate to 600 chars
@@ -162,18 +167,22 @@ def web_search_synthesize(query: str, base_url: str, model: str, db=None) -> str
     )
     synthesis = (result.text or "").strip()
     if synthesis:
-        sources: list[str] = []
+        source_lines: list[str] = []
+        source_meta: list[dict] = []
         for i, r in enumerate(results, 1):
             title = (r.get("title") or "").strip()[:120]
             url   = (r.get("url")   or "").strip()
-            sources.append(f"**[{i}]** [{title}]({url})")
+            source_lines.append(f"**[{i}]** [{title}]({url})")
+            if url:
+                source_meta.append({"title": title or url, "url": url, "kind": "web"})
 
-        return (
+        text = (
             f"🌐 **{query}**\n\n"
             f"{synthesis}\n\n"
-            "---\n**Sources**\n" + "\n".join(sources)
+            "---\n**Sources**\n" + "\n".join(source_lines)
         )
+        return text, source_meta
 
-    # Fallback: plain formatted results
+    # Fallback: plain formatted results (no structured sources available)
     block = _format_results_block(query, results)
-    return f"🌐 **Web Search: {query}**\n\n{block}"
+    return f"🌐 **Web Search: {query}**\n\n{block}", []
