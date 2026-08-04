@@ -1303,6 +1303,17 @@ function TasksTab({ workId }: { workId: string }) {
     );
   };
 
+  const handleChangePriority = (taskId: string, current: number) => {
+    const next = ((current ?? 0) + 1) % 4;
+    updateTask.mutate(
+      { workId, taskId, data: { priority: next } },
+      {
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: getGetWorkTasksQueryKey(workId) }),
+        onError: () => toast.error("Could not update priority"),
+      }
+    );
+  };
+
   const handleToggle = (taskId: string, current: string) => {
     const next = current === "completed" ? "pending" : "completed";
     updateTask.mutate(
@@ -1385,12 +1396,22 @@ function TasksTab({ workId }: { workId: string }) {
                   </label>
                 )}
               </div>
-              <Badge
-                variant="outline"
-                className="text-[9px] uppercase font-mono opacity-0 group-hover:opacity-100 transition-opacity"
+              <button
+                onClick={() => handleChangePriority(task.id!, task.priority ?? 0)}
+                className="opacity-0 group-hover:opacity-100 transition-opacity"
+                title="Click to cycle priority"
               >
-                P{task.priority || 0}
-              </Badge>
+                <Badge
+                  variant="outline"
+                  className={`text-[9px] uppercase font-mono cursor-pointer hover:bg-primary/10 ${
+                    task.priority === 1 ? "border-red-400 text-red-600" :
+                    task.priority === 2 ? "border-amber-400 text-amber-600" :
+                    task.priority === 3 ? "border-blue-400 text-blue-600" : ""
+                  }`}
+                >
+                  P{task.priority || 0}
+                </Badge>
+              </button>
               <button
                 onClick={() => {
                   if (!task.id) return;
@@ -1904,7 +1925,17 @@ function GapsTab({ workId }: { workId: string }) {
                   const isExtractPending  = actionPending === docId;
                   return (
                     <div key={i} className={`p-3.5 rounded-lg border ${GAP_SEVERITY_STYLE[sev]}`}>
-                      <p className="font-medium text-sm mb-1">{g.title}</p>
+                      <div className="flex items-start justify-between gap-2 mb-1">
+                        <p className="font-medium text-sm">{g.title}</p>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <span className="text-[9px] font-mono uppercase tracking-wide opacity-50 border border-current/20 rounded px-1 py-0.5">{g.kind.replace(/_/g, " ")}</span>
+                          {!!g.metadata.chapter_title && String(g.metadata.chapter_title) !== g.title && (
+                            <span className="text-[9px] font-mono opacity-40 max-w-[120px] truncate" title={String(g.metadata.chapter_title)}>
+                              {String(g.metadata.chapter_title)}
+                            </span>
+                          )}
+                        </div>
+                      </div>
                       <p className="text-[12px] leading-relaxed opacity-80">{g.description}</p>
                       {/* One-click action */}
                       {(g.kind === "uncovered_chapter" || g.kind === "weak_coverage") && (

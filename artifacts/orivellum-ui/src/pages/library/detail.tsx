@@ -20,7 +20,7 @@ import {
   FileQuestion, RefreshCw, Trash2, Hash, Calendar, Database,
   BookOpen, Cpu, Sparkles, ThumbsUp, ThumbsDown, Link2, Info,
   List, History, Star, GitBranch, ChevronDown,
-  BookHeadphones, Loader2, Play, Pause, X,
+  BookHeadphones, Loader2, Play, Pause, X, Download,
 } from "lucide-react";
 import {
   Tooltip, TooltipContent, TooltipProvider, TooltipTrigger,
@@ -1071,6 +1071,16 @@ export default function DocumentDetail() {
           >
             <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${reprocessing ? "animate-spin" : ""}`} />
             {reprocessing ? "Queued…" : "Re-extract"}
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            asChild
+            title="Download original file"
+          >
+            <a href={`${BASE}/library/${docId}/download`} download>
+              <Download className="w-3.5 h-3.5 mr-1.5" /> Download
+            </a>
           </Button>
           <Button
             variant="outline"

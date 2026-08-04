@@ -1272,6 +1272,7 @@ components:
       properties:
         status: { type: string, nullable: true }
         text: { type: string, nullable: true }
+        priority: { type: integer, nullable: true }
 
     TaskCreate:
       type: object

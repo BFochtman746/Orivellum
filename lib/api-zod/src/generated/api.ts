@@ -345,7 +345,8 @@ export const UpdateWorkTaskParams = zod.object({
 
 export const UpdateWorkTaskBody = zod.object({
   "status": zod.string().nullish(),
-  "text": zod.string().nullish()
+  "text": zod.string().nullish(),
+  "priority": zod.int().nullish()
 })
 
 export const UpdateWorkTaskResponse = zod.object({

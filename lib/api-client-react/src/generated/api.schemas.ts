@@ -183,6 +183,8 @@ export interface TaskUpdate {
   status?: string | null;
   /** @nullable */
   text?: string | null;
+  /** @nullable */
+  priority?: number | null;
 }
 
 export interface TaskCreate {

@@ -336,6 +336,7 @@ function ImportDialog({ onSuccess, defaultOpen = false }: ImportDialogProps) {
             type="file"
             className="hidden"
             accept=".pdf,application/pdf,.docx,.doc,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,.csv,text/csv,.pptx,.ppt,application/vnd.openxmlformats-officedocument.presentationml.presentation,.txt,text/plain,.md,text/markdown,.png,.jpg,.jpeg,.webp,.gif,image/*,.py,.js,.ts,.jsx,.tsx,.java,.cpp,.c,.cs,.go,.rs,.rb,.html,.htm,text/html,.json,application/json,.zip,application/zip,.rtf,.epub,.xml"
+            multiple
             onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }}
           />
           {file ? (
