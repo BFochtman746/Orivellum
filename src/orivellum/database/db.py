@@ -2291,6 +2291,11 @@ class OrivellumDB:
                    FROM conversations WHERE archived=0
                    ORDER BY updated_at DESC LIMIT 5"""
             ).fetchall()
+        with self._lock:
+            tier_rows = self._conn.execute(
+                "SELECT tier, COUNT(*) as cnt FROM documents GROUP BY tier"
+            ).fetchall()
+        tier_counts = {r["tier"]: r["cnt"] for r in tier_rows}
         return {
             "work_count": work_count,
             "document_count": doc_count,
@@ -2298,6 +2303,7 @@ class OrivellumDB:
             "knowledge_count": knowledge_count,
             "conversation_count": conv_count,
             "pending_task_count": task_count,
+            "document_tier_counts": tier_counts,
             "recent_works": [dict(r) for r in recent_works],
             "recent_documents": [dict(r) for r in recent_docs],
             "recent_conversations": [dict(r) for r in recent_convs],

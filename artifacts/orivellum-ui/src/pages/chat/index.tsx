@@ -42,7 +42,7 @@ import {
   MessageSquare, Plus, Send, Search, Bot, User, Copy, Check,
   Trash2, Wifi, WifiOff, Loader2, Cpu, Pencil, BookOpen, Archive, ArchiveRestore,
   AlertTriangle, FolderOpen, FileText, ChevronRight, ChevronLeft, X as XIcon, Zap, Brain,
-  Globe, Paperclip, Download, Layers, HelpCircle, Compass, ChevronDown, ImageIcon,
+  Globe, Paperclip, Download, Layers, HelpCircle, Compass, ChevronDown, ImageIcon, Square,
 } from "lucide-react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -1230,7 +1230,7 @@ export default function Chat() {
               <div className="min-w-0 flex-1">
                 <h2 className="font-serif text-lg font-medium leading-tight truncate">{conv?.title || "Conversation"}</h2>
                 <div className="flex items-center gap-2 mt-0.5">
-                  <span className="text-xs font-mono text-muted-foreground">{conv?.message_count ?? 0} messages</span>
+                  <span className="text-xs font-mono text-muted-foreground">{displayMessages.length} messages</span>
                   {convWorkId && (
                     <a href={`/works/${convWorkId}`} onClick={(e) => { e.stopPropagation(); setLocation(`/works/${convWorkId}`); e.preventDefault(); }}>
                       <Badge variant="secondary" className="text-[10px] h-4 px-1.5 hover:bg-secondary/80 cursor-pointer transition-colors">
@@ -1507,9 +1507,21 @@ export default function Chat() {
                   {deepMode ? <Brain className="w-3.5 h-3.5" /> : <Zap className="w-3.5 h-3.5" />}
                   <span className="hidden sm:inline">{deepMode ? "Deep" : "Fast"}</span>
                 </button>
-                <Button type="submit" size="icon" disabled={(!draft.trim() && !pendingImage) || sending} className="absolute right-2 top-2 h-8 w-8">
-                  {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-                </Button>
+                {sending ? (
+                  <Button
+                    type="button"
+                    size="icon"
+                    onClick={() => abortRef.current?.abort()}
+                    className="absolute right-2 top-2 h-8 w-8 bg-destructive hover:bg-destructive/90 text-destructive-foreground"
+                    title="Stop generating"
+                  >
+                    <Square className="w-3.5 h-3.5 fill-current" />
+                  </Button>
+                ) : (
+                  <Button type="submit" size="icon" disabled={!draft.trim() && !pendingImage} className="absolute right-2 top-2 h-8 w-8">
+                    <Send className="w-4 h-4" />
+                  </Button>
+                )}
               </form>
             </div>
           </>

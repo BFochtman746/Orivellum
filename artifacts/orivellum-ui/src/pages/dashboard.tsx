@@ -286,10 +286,15 @@ export default function Dashboard() {
 
   const docTotal = summary?.document_count ?? 0;
   const docReady = summary?.documents_ready ?? 0;
-  const docSubtitle =
-    docTotal > 0
-      ? `${docReady} of ${docTotal} ready`
-      : undefined;
+  const tierCounts: Record<string, number> = (summary as any)?.document_tier_counts ?? {};
+  const tierSubtitle = (() => {
+    const parts: string[] = [];
+    if (tierCounts.canon)   parts.push(`${tierCounts.canon} canon`);
+    if (tierCounts.source)  parts.push(`${tierCounts.source} source`);
+    if (tierCounts.artifact || tierCounts.system)
+      parts.push(`${(tierCounts.artifact ?? 0) + (tierCounts.system ?? 0)} artifact`);
+    return parts.length ? parts.join(" · ") : (docTotal > 0 ? `${docReady} of ${docTotal} ready` : undefined);
+  })();
 
   return (
     <div className="space-y-8 max-w-5xl animate-in fade-in slide-in-from-bottom-4 duration-500">
@@ -369,7 +374,7 @@ export default function Dashboard() {
         <StatCard
           title="Documents"
           value={docTotal}
-          subtitle={docSubtitle}
+          subtitle={tierSubtitle}
           icon={Library}
           href="/library"
           loading={loadingSummary}

@@ -20,7 +20,7 @@ import {
   Settings, HardDrive, Activity, Mic, Wifi, WifiOff,
   ChevronRight, Plus, Search, Archive, RotateCcw,
   Pencil, Check, X, Menu, DownloadCloud, Feather,
-  ALargeSmall, Loader2, CheckCircle2, ExternalLink, Gauge, Inbox,
+  ALargeSmall, Loader2, CheckCircle2, ExternalLink, Gauge, Inbox, Wand2, SlidersHorizontal,
 } from "lucide-react";
 import { useConnectivity } from "@/lib/useConnectivity";
 import { useQuery } from "@tanstack/react-query";
@@ -43,11 +43,19 @@ const PHASES = [
     id: "import",
     label: "Import",
     icon: DownloadCloud,
-    routes: ["/library", "/files", "/studio"],
+    routes: ["/library"],
     items: [
-      { name: "Library",  href: "/library", icon: Library },
-      { name: "Files",    href: "/files",   icon: FolderOpen },
-      { name: "Studio",   href: "/studio",  icon: Mic },
+      { name: "Library", href: "/library", icon: Library },
+    ],
+  },
+  {
+    id: "create",
+    label: "Create",
+    icon: Wand2,
+    routes: ["/studio", "/write"],
+    items: [
+      { name: "Studio",     href: "/studio", icon: Mic },
+      { name: "Write desk", href: "/write",  icon: Feather },
     ],
   },
   {
@@ -61,26 +69,25 @@ const PHASES = [
     ],
   },
   {
-    id: "write",
-    label: "Write",
-    icon: Feather,
-    routes: ["/write"],
-    items: [
-      { name: "Write desk", href: "/write", icon: Feather },
-    ],
-  },
-  {
     id: "review",
     label: "Review",
     icon: Target,
-    routes: ["/projects", "/backups", "/system", "/mcos", "/governance", "/review"],
+    routes: ["/projects", "/governance", "/review"],
     items: [
-      { name: "Projects",    href: "/projects",   icon: Target },
-      { name: "Review Queue", href: "/review",    icon: Inbox },
-      { name: "Governance",  href: "/governance", icon: CheckCircle2 },
-      { name: "Backups",     href: "/backups",    icon: HardDrive },
-      { name: "System",      href: "/system",     icon: Settings },
-      { name: "Calibration", href: "/mcos",       icon: Gauge },
+      { name: "Projects",     href: "/projects",   icon: Target },
+      { name: "Review Queue", href: "/review",     icon: Inbox },
+      { name: "Governance",   href: "/governance", icon: CheckCircle2 },
+    ],
+  },
+  {
+    id: "settings",
+    label: "Settings",
+    icon: SlidersHorizontal,
+    routes: ["/system", "/backups", "/mcos"],
+    items: [
+      { name: "System",      href: "/system",   icon: Activity },
+      { name: "Backups",     href: "/backups",  icon: HardDrive },
+      { name: "Calibration", href: "/mcos",     icon: Gauge },
     ],
   },
 ] as const;

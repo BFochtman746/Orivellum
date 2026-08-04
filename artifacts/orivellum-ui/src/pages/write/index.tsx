@@ -41,7 +41,7 @@ import {
   Sparkles, Wand2, Zap, Scissors, FileText,
   RotateCcw, Maximize2, Minimize2,
   Pin, PinOff, Trash2, Plus, Download,
-  ChevronRight, Loader2, MoreHorizontal,
+  ChevronRight, ChevronDown, Loader2, MoreHorizontal,
   BookOpen, MessageSquare, ImageIcon, X as XIcon,
 } from 'lucide-react';
 
@@ -609,6 +609,7 @@ export default function WriteDeskPage() {
   const [loading, setLoading]     = useState(true);
   const [saving, setSaving]       = useState(false);
   const [focusMode, setFocusMode] = useState(false);
+  const [aiPanelOpen, setAiPanelOpen] = useState(true);
   const saveTimer                 = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { toast } = useToast();
   const [, navigate] = useLocation();
@@ -862,13 +863,28 @@ export default function WriteDeskPage() {
               </div>
             </div>
 
-            {/* AI Panel */}
+            {/* AI Panel — collapsible */}
             {editor && (
-              <AIPanel
-                docId={activeDoc.id}
-                editor={editor}
-                onInsert={handleAIInsert}
-              />
+              <div className="shrink-0 border-t border-border/50">
+                <button
+                  onClick={() => setAiPanelOpen(v => !v)}
+                  className="w-full px-3 py-1.5 flex items-center justify-between text-xs text-muted-foreground hover:bg-muted/30 transition-colors bg-muted/10"
+                  title={aiPanelOpen ? "Collapse AI panel" : "Expand AI panel"}
+                >
+                  <span className="flex items-center gap-1.5 font-medium">
+                    <Sparkles className="w-3 h-3 text-primary/60" />
+                    AI Assistant
+                  </span>
+                  <ChevronDown className={`w-3 h-3 transition-transform duration-150 ${aiPanelOpen ? "" : "-rotate-90"}`} />
+                </button>
+                {aiPanelOpen && (
+                  <AIPanel
+                    docId={activeDoc.id}
+                    editor={editor}
+                    onInsert={handleAIInsert}
+                  />
+                )}
+              </div>
             )}
           </>
         ) : (

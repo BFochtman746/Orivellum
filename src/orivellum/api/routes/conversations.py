@@ -485,6 +485,28 @@ def _build_system_prompt(db: Any, conv: dict, scope: str = "work",
     except Exception:
         pass  # user_memory table may not exist yet on old schemas
 
+    # ── D-5: Active workspace status block ─────────────────────────────────────
+    # Injects a concise "ACTIVE WORKS" summary so the model can answer
+    # status questions ("what are we working on?") from authoritative state
+    # rather than abstaining. Kept short — one line per work.
+    try:
+        works = db.list_works(limit=5)
+        if works:
+            work_lines = ["ACTIVE WORKS IN YOUR WORKSPACE:"]
+            for w in works:
+                title = w.get("title") or "Untitled"
+                wtype = w.get("work_type") or "work"
+                doc_count = w.get("doc_count") or 0
+                kn_count = w.get("knowledge_count") or 0
+                pending = w.get("pending_tasks") or 0
+                line = f"  • {title} ({wtype}) — {doc_count} docs, {kn_count} knowledge items"
+                if pending:
+                    line += f", {pending} pending tasks"
+                work_lines.append(line)
+            base = "\n".join(work_lines) + "\n\n" + base
+    except Exception:
+        pass  # degraded gracefully when works table unavailable
+
     _TRUSTED = {"auto", "approved"}
     work_id = conv.get("work_id")
 
