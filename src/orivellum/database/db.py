@@ -703,7 +703,7 @@ class OrivellumDB:
             The refreshed work dict, or None if the work does not exist.
         """
         now = _now()
-        allowed = {"title", "description", "status", "meta"}
+        allowed = {"title", "description", "status", "work_type", "meta"}
         updates = {k: v for k, v in kwargs.items() if k in allowed and v is not None}
         if not updates:
             return self.get_work(work_id)

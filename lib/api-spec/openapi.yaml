@@ -1208,6 +1208,7 @@ components:
         title: { type: string, nullable: true }
         description: { type: string, nullable: true }
         status: { type: string, nullable: true }
+        work_type: { type: string, nullable: true }
         meta: { type: object, nullable: true }
 
     WorkStats:

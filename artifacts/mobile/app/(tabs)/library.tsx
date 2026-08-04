@@ -162,6 +162,26 @@ export default function LibraryScreen() {
       });
       setUploadProgress(90);
       const domain = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
+
+      // Ask which Work to link this document to (optional)
+      const uploadWorkId = await new Promise<string | null>((resolve) => {
+        const workOptions = works.map((w: any) => w.title as string);
+        const workIds = works.map((w: any) => w.id as string);
+        if (workOptions.length === 0) { resolve(null); return; }
+        Alert.alert(
+          'Link to a Work?',
+          'Optionally assign this document to an existing Work.',
+          [
+            { text: 'No Work', onPress: () => resolve(null) },
+            ...workOptions.slice(0, 8).map((label, idx) => ({
+              text: label.length > 30 ? label.slice(0, 28) + '…' : label,
+              onPress: () => resolve(workIds[idx] ?? null),
+            })),
+          ],
+          { cancelable: true, onDismiss: () => resolve(null) }
+        );
+      });
+
       const resp = await mobileFetch(`https://${domain}/api/library/import`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -169,6 +189,7 @@ export default function LibraryScreen() {
           filename: asset.name,
           content_b64: b64,
           mime_type: asset.mimeType ?? 'application/octet-stream',
+          ...(uploadWorkId ? { work_id: uploadWorkId } : {}),
         }),
       });
       if (!resp.ok) {

@@ -33,6 +33,7 @@ class WorkUpdate(BaseModel):
     title: str | None = None
     description: str | None = None
     status: str | None = None
+    work_type: str | None = None
     meta: dict[str, Any] | None = None
 
 
@@ -83,7 +84,7 @@ def works_get(work_id: str):
 def works_update(work_id: str, body: WorkUpdate):
     db = get_db()
     work = db.update_work(work_id, title=body.title, description=body.description,
-                          status=body.status, meta=body.meta)
+                          status=body.status, work_type=body.work_type, meta=body.meta)
     if not work:
         raise HTTPException(404, f"Work {work_id!r} not found")
     return {"work": work}

@@ -95,6 +95,8 @@ export interface WorkUpdate {
   /** @nullable */
   status?: string | null;
   /** @nullable */
+  work_type?: string | null;
+  /** @nullable */
   meta?: WorkUpdateMeta;
 }
 

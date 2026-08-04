@@ -242,6 +242,7 @@ export const UpdateWorkBody = zod.object({
   "title": zod.string().nullish(),
   "description": zod.string().nullish(),
   "status": zod.string().nullish(),
+  "work_type": zod.string().nullish(),
   "meta": zod.looseObject({
 
 }).nullish()

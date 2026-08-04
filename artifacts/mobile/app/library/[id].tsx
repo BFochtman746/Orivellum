@@ -10,6 +10,7 @@ import {
   Pressable,
   RefreshControl,
   ScrollView,
+  Share,
   StyleSheet,
   Text,
   View,
@@ -390,6 +391,14 @@ export default function LibraryDocDetail() {
             </Text>
           ) : null}
         </View>
+        {/* Share button */}
+        <Pressable
+          onPress={() => Share.share({ title: docTitle, message: docTitle })}
+          style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4, alignSelf: 'flex-start' }}
+        >
+          <Feather name="share-2" size={13} color={colors.primary} />
+          <Text style={{ fontSize: 12, fontFamily: 'Inter_500Medium', color: colors.primary }}>Share</Text>
+        </Pressable>
         {/* Reprocess button — shown for stuck documents */}
         {(doc.readiness === 'error' || doc.readiness === 'no_text' || doc.readiness === 'imported') && (
           <Pressable

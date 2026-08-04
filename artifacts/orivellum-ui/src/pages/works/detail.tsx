@@ -274,10 +274,32 @@ export default function WorkDetail() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="active" className="text-xs font-mono uppercase">Active</SelectItem>
+                <SelectItem value="complete" className="text-xs font-mono uppercase">Complete</SelectItem>
                 <SelectItem value="archived" className="text-xs font-mono uppercase">Archived</SelectItem>
               </SelectContent>
             </Select>
-            <Badge variant="secondary" className="font-mono text-xs uppercase">{work.work_type}</Badge>
+            <Select
+              value={(work as any).work_type ?? "research"}
+              onValueChange={(val) =>
+                updateWork.mutate(
+                  { workId: workId!, data: { work_type: val } },
+                  {
+                    onSuccess: () => queryClient.invalidateQueries({ queryKey: getGetWorkQueryKey(workId!) }),
+                    onError: () => toast.error("Could not update type"),
+                  }
+                )
+              }
+              disabled={updateWork.isPending}
+            >
+              <SelectTrigger className="h-6 text-[11px] font-mono uppercase px-2 py-0 w-auto border-secondary/30 bg-secondary/40 text-secondary-foreground rounded-full focus:ring-0">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {["research", "writing", "reference", "study", "project", "personal"].map((t) => (
+                  <SelectItem key={t} value={t} className="text-xs font-mono uppercase">{t}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <span className="text-sm font-mono text-muted-foreground flex items-center gap-1">
               <Clock className="w-3 h-3" />
               Created {work.created_at ? format(new Date(work.created_at), "MMM d, yyyy") : "Unknown"}

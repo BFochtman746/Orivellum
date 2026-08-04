@@ -391,7 +391,7 @@ function GapsTab({
                   {g.description}
                 </Text>
               ) : null}
-              {isHigh && (
+              {(
                 <View style={{ flexDirection: 'row', gap: 8, marginTop: 4 }}>
                   <Pressable
                     onPress={() => onCreateTask(`Research gap: ${gapTitle}`)}
