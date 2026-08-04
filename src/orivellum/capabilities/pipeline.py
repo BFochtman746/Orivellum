@@ -110,6 +110,12 @@ def _explode_zip_into_documents(
                     file_path = subdir / f"{sha256[:8]}_{basename}"
                 file_path.write_bytes(content)
 
+                from orivellum.capabilities.classify import (
+                    classify_object as _classify, EXCLUDED_FROM_WORKS as _EFW,
+                )
+                _child_clf = _classify(basename, kind=kind, source_path=name)
+                _child_tier = _child_clf.tier.value
+
                 doc = db.create_document(
                     title=title,
                     source=str(file_path),
@@ -123,8 +129,15 @@ def _explode_zip_into_documents(
                         "zip_path": name,
                         "zip_folder": folder_hint,
                     },
+                    tier=_child_tier,
                 )
                 children.append(doc["id"])
+
+                # Skip knowledge harvest for ARTIFACT/SYSTEM children — they
+                # must never become knowledge nodes or Works.
+                if _child_clf.tier in _EFW:
+                    logger.debug("ZIP child %s is tier=%s — skipping harvest", basename, _child_tier)
+                    continue
 
                 # Queue processing in a daemon thread so we return quickly
                 threading.Thread(
@@ -139,7 +152,11 @@ def _explode_zip_into_documents(
     # Review-queue auto-populate (MONARCH #151): when an archive with no Work
     # produces a group of >2 child docs, suggest assigning them to a new Work
     # named after the archive.  A human approves/rejects it on /review.
-    if work_id is None and len(children) > 2:
+    # Only propose when the archive itself is CANON — never for ARTIFACT/SYSTEM
+    # batches (migration dumps, run reports, etc.).
+    from orivellum.capabilities.classify import classify_object as _clf_arch, Tier as _Tier
+    _archive_tier = _clf_arch(zip_title, source_path=zip_title).tier
+    if work_id is None and len(children) > 2 and _archive_tier == _Tier.CANON:
         try:
             import json as _json
             import uuid as _uuid_mod
