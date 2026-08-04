@@ -741,7 +741,11 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
     <SidebarProvider>
       <ProgressPanel open={progressOpen} onClose={() => setProgressOpen(false)} />
       <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
-        <div className="flex min-h-screen w-full">
+        {/* Height is driven by --visual-viewport-height (set by the inline VisualViewport
+            controller in index.html) so the shell stays inside the visible viewport on
+            iPhone Safari regardless of address bar state. Overflow-hidden prevents any
+            scroll from leaking out of this container. */}
+        <div className="flex w-full overflow-hidden" style={{ height: 'var(--visual-viewport-height, 100dvh)' }}>
           {/* Desktop sidebar */}
           <Sidebar className="hidden lg:flex border-r border-border/50 bg-sidebar flex-col w-56 shrink-0">
             <SidebarHeader className="px-4 py-3 flex flex-row items-center gap-2 border-b border-border/30">
@@ -770,8 +774,13 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
 
           {/* Main content */}
           <main className="flex-1 overflow-hidden bg-background selection:bg-primary/20 flex flex-col">
-            {/* Mobile top bar */}
-            <div className="lg:hidden flex items-center gap-2 px-4 py-3 border-b border-border/30 bg-background/80 backdrop-blur sticky top-0 z-10">
+            {/* Mobile top bar — padding-top consumes the safe-area-inset-top so content
+                never bleeds under the notch. No sticky needed: the parent is a bounded
+                flex column so this header is always visually at the top. */}
+            <div
+              className="lg:hidden flex items-center gap-2 px-4 border-b border-border/30 bg-background/80 backdrop-blur z-10 shrink-0"
+              style={{ paddingTop: 'max(0.75rem, var(--sai-top))', paddingBottom: '0.75rem' }}
+            >
               <MobileMenuButton />
               <div className="font-serif font-bold text-base tracking-tight flex-1 flex items-center gap-2">
                 Orivellum
@@ -818,8 +827,10 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
                 )}
               </button>
             </div>
-            {/* flex-1 + min-h-0 let full-height pages (chat, write desk) fill the
-                available space; overflow-auto gives normal pages a scrollbar. */}
+            {/* Content area: flex-1 + min-h-0 let full-height pages (chat, write desk)
+                fill the available space exactly; overflow-auto gives normal pages a
+                scrollbar. This div is the ONLY vertically scrolling surface for
+                non-chat pages — html/body have overflow:hidden. */}
             <div className="flex-1 min-h-0 overflow-auto w-full max-w-[1400px] mx-auto px-6 lg:px-8 py-6 lg:py-8 flex flex-col">
               {children}
             </div>

@@ -121,6 +121,15 @@
   --app-font-mono: 'Space Mono', monospace;
   
   --radius: 0.25rem; /* slightly sharper corners for a serious feel */
+
+  /* ── Safe-area insets (iPhone notch / home indicator) ──────────────
+     These are read from the OS via env() and exposed as custom
+     properties so any rule can reference them without repeating env().
+     Defaults to 0px on devices without notches.                     */
+  --sai-top:    env(safe-area-inset-top,    0px);
+  --sai-bottom: env(safe-area-inset-bottom, 0px);
+  --sai-left:   env(safe-area-inset-left,   0px);
+  --sai-right:  env(safe-area-inset-right,  0px);
 }
 
 .dark {
@@ -169,6 +178,28 @@
 
   --input: 220 20% 20%;
   --ring: 150 35% 45%;
+}
+
+/* ── App shell geometry foundation ────────────────────────────────────────
+   html + body must have no scroll of their own. All scrolling happens
+   inside designated scroll containers (message list, sidebar lists, etc.).
+   This lets --visual-viewport-height be the single source of truth for
+   the app's height on mobile Safari, where 100vh != visible height.      */
+html {
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none; /* prevent iOS rubber-band on the root */
+}
+
+body {
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+#root {
+  height: 100%;
+  overflow: hidden;
 }
 
 @layer base {

@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
     <title>Orivellum</title>
     <meta name="description" content="Orivellum — built on Replit. Update this description to reflect the app." />
     <meta name="robots" content="index, follow" />
@@ -16,6 +16,38 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!--
+      VisualViewport controller — sets --visual-viewport-height and
+      --visual-viewport-offset-top on :root so the CSS app shell can
+      track iPhone Safari's shrinking/growing address bar in real time.
+      Runs synchronously before first paint to prevent layout shift.
+    -->
+    <script>
+      (function () {
+        var r = document.documentElement;
+        function set(h, t) {
+          r.style.setProperty('--visual-viewport-height', h + 'px');
+          r.style.setProperty('--visual-viewport-offset-top', t + 'px');
+        }
+        // Synchronous initial value — use visualViewport if available, else innerHeight
+        var vv = window.visualViewport;
+        set(vv ? vv.height : window.innerHeight, vv ? vv.offsetTop : 0);
+        function update() {
+          var v = window.visualViewport;
+          set(v ? v.height : window.innerHeight, v ? v.offsetTop : 0);
+        }
+        if (vv) {
+          vv.addEventListener('resize', update, { passive: true });
+          vv.addEventListener('scroll', update, { passive: true });
+        }
+        window.addEventListener('resize', update, { passive: true });
+        // Orientation changes can delay reporting; fire twice to catch the settled value
+        window.addEventListener('orientationchange', function () {
+          setTimeout(update, 100);
+          setTimeout(update, 500);
+        }, { passive: true });
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

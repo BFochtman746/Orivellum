@@ -1398,8 +1398,10 @@ export default function Chat() {
               </div>
             </div>
 
-            {/* Messages */}
-            <ScrollArea className="flex-1 px-6 py-6">
+            {/* Messages — plain overflow-y-auto div instead of Radix ScrollArea.
+                overscroll-contain prevents scroll chaining to the parent on
+                mobile Safari, keeping the composer anchored at the bottom. */}
+            <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-6 py-6">
               <div className="max-w-3xl mx-auto space-y-6">
                 {loadingActive && !localOverride ? (
                   <div className="space-y-6">
@@ -1562,10 +1564,15 @@ export default function Chat() {
                 )}
                 <div ref={messagesEndRef} />
               </div>
-            </ScrollArea>
+            </div>
 
-            {/* Input */}
-            <div className="px-6 py-4 bg-muted/10 border-t border-border/50 shrink-0">
+            {/* Input — bottom padding accounts for the home indicator safe area so the
+                composer never sits below the swipe zone. Task #288 will add full
+                keyboard-avoidance behavior on top of this foundation. */}
+            <div
+              className="px-6 bg-muted/10 border-t border-border/50 shrink-0"
+              style={{ paddingTop: '1rem', paddingBottom: 'max(1rem, var(--sai-bottom))' }}
+            >
               {/* Made-in-this-chat artifact tracker */}
               <ArtifactTracker messages={displayMessages} />
               {/* Hidden image file input */}
