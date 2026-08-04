@@ -1070,6 +1070,9 @@ export default function WorkDetailScreen() {
   const [knSearch, setKnSearch] = useState('');
   const [knKindFilter, setKnKindFilter] = useState<'all' | 'entity' | 'claim' | 'relationship' | 'summary'>('all');
 
+  // Conversations search
+  const [convSearch, setConvSearch] = useState('');
+
   // Task #13 — start a conversation linked to this work
   const handleStartDiscussion = async () => {
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -1536,13 +1539,32 @@ export default function WorkDetailScreen() {
             />
           );
         }
+        const filteredConvs = convSearch.trim()
+          ? convs.filter((c: any) => (c.title ?? '').toLowerCase().includes(convSearch.toLowerCase()))
+          : convs;
         return (
           <>
             {convsError && convs.length > 0 && (
               <OfflineBanner message="Showing cached conversations" onRetry={refetchConvs} />
             )}
+            {/* Search */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 6, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border, backgroundColor: colors.background, gap: 6 }}>
+              <Feather name="search" size={13} color={colors.mutedForeground} />
+              <TextInput
+                style={{ flex: 1, fontSize: 13, fontFamily: 'Inter_400Regular', color: colors.foreground }}
+                placeholder="Search conversations…"
+                placeholderTextColor={colors.mutedForeground}
+                value={convSearch}
+                onChangeText={setConvSearch}
+              />
+              {convSearch.length > 0 && (
+                <Pressable onPress={() => setConvSearch('')} hitSlop={8}>
+                  <Feather name="x" size={13} color={colors.mutedForeground} />
+                </Pressable>
+              )}
+            </View>
             <FlatList
-              data={convs}
+              data={filteredConvs}
               keyExtractor={(c) => (c as any).id ?? ''}
               renderItem={({ item: c }) => (
                 <Pressable

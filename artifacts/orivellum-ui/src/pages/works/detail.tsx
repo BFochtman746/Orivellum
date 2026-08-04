@@ -451,6 +451,7 @@ async function reprocessWorkDoc(docId: string): Promise<void> {
 }
 
 type ReadinessFilter = "all" | "ready" | "imported" | "error";
+type DocSortKey = "name" | "date" | "kind" | "readiness";
 
 function DocumentsTab({ workId }: { workId: string }) {
   const queryClient = useQueryClient();
@@ -458,6 +459,7 @@ function DocumentsTab({ workId }: { workId: string }) {
   const [open, setOpen] = useState(false);
   const [docFilter, setDocFilter] = useState("");
   const [readinessFilter, setReadinessFilter] = useState<ReadinessFilter>("all");
+  const [docSort, setDocSort] = useState<DocSortKey>("date");
   const [retrying, setRetrying] = useState<string | null>(null);
 
   const { data: docsResp, isLoading } = useGetWorkDocuments(workId, {
@@ -568,17 +570,29 @@ function DocumentsTab({ workId }: { workId: string }) {
   const errorCnt     = docs.filter((d) => d.readiness === "error" || d.readiness === "no_text").length;
   const hasNonReady  = processingCnt > 0 || errorCnt > 0;
 
-  // Apply readiness filter first, then text filter
+  // Apply readiness filter first, then text filter, then sort
   const byReadiness = readinessFilter === "all" ? docs
     : readinessFilter === "error" ? docs.filter((d) => d.readiness === "error" || d.readiness === "no_text")
     : docs.filter((d) => d.readiness === readinessFilter);
 
-  const filteredDocs = docFilter.trim()
+  const byText = docFilter.trim()
     ? byReadiness.filter((d) => {
         const hay = `${d.title ?? ""} ${(d as any).source ?? ""}`.toLowerCase();
         return hay.includes(docFilter.trim().toLowerCase());
       })
     : byReadiness;
+
+  const filteredDocs = [...byText].sort((a, b) => {
+    if (docSort === "name") {
+      const na = (a.title ?? (a as any).source ?? "").toLowerCase();
+      const nb = (b.title ?? (b as any).source ?? "").toLowerCase();
+      return na.localeCompare(nb);
+    }
+    if (docSort === "kind") return (a.kind ?? "").localeCompare(b.kind ?? "");
+    if (docSort === "readiness") return (a.readiness ?? "").localeCompare(b.readiness ?? "");
+    // date (default) — newest first
+    return ((b as any).created_at ?? "").localeCompare((a as any).created_at ?? "");
+  });
 
   const READINESS_FILTERS: { key: ReadinessFilter; label: string; count: number }[] = [
     { key: "all",      label: "All",        count: docs.length },
@@ -603,6 +617,17 @@ function DocumentsTab({ workId }: { workId: string }) {
               />
             </div>
           )}
+          <Select value={docSort} onValueChange={(v) => setDocSort(v as DocSortKey)}>
+            <SelectTrigger className="h-8 text-xs w-[110px] font-mono">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="date" className="text-xs font-mono">Newest</SelectItem>
+              <SelectItem value="name" className="text-xs font-mono">Name A–Z</SelectItem>
+              <SelectItem value="kind" className="text-xs font-mono">Kind</SelectItem>
+              <SelectItem value="readiness" className="text-xs font-mono">Readiness</SelectItem>
+            </SelectContent>
+          </Select>
           <Button size="sm" variant="outline" className="gap-2" onClick={() => setOpen(true)}>
             <Plus className="w-4 h-4" /> Add Document
           </Button>
