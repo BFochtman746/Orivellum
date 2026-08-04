@@ -33,7 +33,7 @@ import * as Haptics from 'expo-haptics';
 import type { Document, KnowledgeItem, Task } from '@workspace/api-client-react';
 import { OfflineBanner, ErrorScreen } from '@/components/OfflineBanner';
 
-type Tab = 'overview' | 'docs' | 'knowledge' | 'tasks' | 'conversations' | 'learn' | 'gaps';
+type Tab = 'overview' | 'docs' | 'knowledge' | 'tasks' | 'conversations' | 'learn' | 'gaps' | 'book';
 
 function TabBar({ active, onSelect, colors }: { active: Tab; onSelect: (t: Tab) => void; colors: any }) {
   const tabs: { key: Tab; label: string }[] = [
@@ -44,6 +44,7 @@ function TabBar({ active, onSelect, colors }: { active: Tab; onSelect: (t: Tab) 
     { key: 'conversations', label: 'Chats' },
     { key: 'gaps', label: 'Gaps' },
     { key: 'learn', label: 'Learn' },
+    { key: 'book', label: 'Book' },
   ];
   return (
     <View style={[styles.tabBar, { borderBottomColor: colors.border, backgroundColor: colors.background }]}>
@@ -846,6 +847,47 @@ export default function WorkDetailScreen() {
   const [activeTab, setActiveTab] = useState<Tab>('overview');
   const [newTaskText, setNewTaskText] = useState('');
   const [addingTask, setAddingTask] = useState(false);
+
+  // ── Book / Pipeline tab state ──────────────────────────────────────────────
+  const domain = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
+  const [pipeline, setPipeline] = useState<any>(null);
+  const [pipelineLoading, setPipelineLoading] = useState(false);
+  const [advancingPipeline, setAdvancingPipeline] = useState(false);
+
+  const fetchPipeline = useCallback(async () => {
+    if (!id) return;
+    setPipelineLoading(true);
+    try {
+      const res = await mobileFetch(`https://${domain}/api/works/${id}/pipeline`);
+      if (res.ok) setPipeline(await res.json());
+      else if (res.status === 404) setPipeline(null);
+    } catch { /* non-fatal */ }
+    finally { setPipelineLoading(false); }
+  }, [id, domain]);
+
+  const startPipeline = async () => {
+    try {
+      const res = await mobileFetch(`https://${domain}/api/works/${id}/pipeline`, { method: 'POST' });
+      if (res.ok) fetchPipeline();
+    } catch { Alert.alert('Error', 'Could not start pipeline'); }
+  };
+
+  const advancePipeline = async () => {
+    setAdvancingPipeline(true);
+    try {
+      const res = await mobileFetch(`https://${domain}/api/works/${id}/pipeline/advance`, { method: 'POST' });
+      if (res.ok) { fetchPipeline(); }
+      else {
+        const json = await res.json().catch(() => ({}));
+        Alert.alert('Cannot advance', json.detail ?? 'Open blockers must be resolved first.');
+      }
+    } catch { Alert.alert('Error', 'Could not advance pipeline'); }
+    finally { setAdvancingPipeline(false); }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'book') fetchPipeline();
+  }, [activeTab, fetchPipeline]);
   const queryClient = useQueryClient();
   const { mutateAsync: createTask } = useCreateWorkTask();
 
@@ -1083,6 +1125,82 @@ export default function WorkDetailScreen() {
         return <GapsTab workId={id} colors={colors} onResearch={handleResearchGap} />;
       case 'learn':
         return <MobileLearnTab workId={id} colors={colors} />;
+      case 'book':
+        return (
+          <ScrollView contentContainerStyle={{ padding: 16 }}>
+            {pipelineLoading ? (
+              <ActivityIndicator color={colors.primary} style={{ marginTop: 32 }} />
+            ) : !pipeline ? (
+              <View style={{ alignItems: 'center', paddingVertical: 40, gap: 16 }}>
+                <Feather name="book" size={36} color={colors.mutedForeground} />
+                <Text style={{ fontSize: 15, fontFamily: 'Inter_600SemiBold', color: colors.foreground }}>
+                  No book pipeline yet
+                </Text>
+                <Text style={{ fontSize: 13, fontFamily: 'Inter_400Regular', color: colors.mutedForeground, textAlign: 'center', maxWidth: 260 }}>
+                  Start a pipeline to track this Work through the full book production lifecycle.
+                </Text>
+                <Pressable
+                  onPress={startPipeline}
+                  style={[styles.newChatBtn, { backgroundColor: colors.primary }]}
+                >
+                  <Feather name="play" size={14} color="#fff" />
+                  <Text style={styles.newChatBtnText}>Start Pipeline</Text>
+                </Pressable>
+              </View>
+            ) : (
+              <View style={{ gap: 14 }}>
+                {/* Stage badge */}
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                  <View style={{ paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6, backgroundColor: colors.primary + '18', borderWidth: 1, borderColor: colors.primary + '44' }}>
+                    <Text style={{ fontSize: 13, fontFamily: 'Inter_700Bold', color: colors.primary }}>
+                      {pipeline.status ?? 'B0'}
+                    </Text>
+                  </View>
+                  <Text style={{ fontSize: 15, fontFamily: 'Inter_600SemiBold', color: colors.foreground, flex: 1 }}>
+                    {pipeline.stage_label ?? pipeline.status}
+                  </Text>
+                </View>
+
+                {/* Chapter stats */}
+                {pipeline.chapters_total > 0 && (
+                  <View style={{ backgroundColor: colors.muted + '44', borderRadius: 10, padding: 14, gap: 8 }}>
+                    <Text style={{ fontSize: 11, fontFamily: 'Inter_600SemiBold', color: colors.mutedForeground, letterSpacing: 0.8 }}>CHAPTERS</Text>
+                    {[
+                      { label: 'Total', value: pipeline.chapters_total },
+                      { label: 'Extracted', value: pipeline.chapters_extracted },
+                      { label: 'Drafted', value: pipeline.chapters_drafted },
+                      { label: 'Approved', value: pipeline.chapters_approved },
+                    ].map(({ label, value }) => (
+                      <View key={label} style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                        <Text style={{ fontSize: 13, fontFamily: 'Inter_400Regular', color: colors.foreground }}>{label}</Text>
+                        <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: colors.foreground }}>{value ?? 0}</Text>
+                      </View>
+                    ))}
+                  </View>
+                )}
+
+                {/* Advance button */}
+                {pipeline.next_status && (
+                  <Pressable
+                    onPress={advancePipeline}
+                    disabled={advancingPipeline}
+                    style={({ pressed }) => [
+                      styles.newChatBtn,
+                      { backgroundColor: pressed ? colors.primary + 'cc' : colors.primary, opacity: advancingPipeline ? 0.6 : 1 },
+                    ]}
+                  >
+                    {advancingPipeline
+                      ? <ActivityIndicator size="small" color="#fff" />
+                      : <Feather name="arrow-right" size={14} color="#fff" />}
+                    <Text style={styles.newChatBtnText}>
+                      {advancingPipeline ? 'Advancing…' : `Advance to ${pipeline.next_status}`}
+                    </Text>
+                  </Pressable>
+                )}
+              </View>
+            )}
+          </ScrollView>
+        );
       case 'conversations': {
         const convs = convsData?.conversations ?? [];
         if (convsError && convs.length === 0) {

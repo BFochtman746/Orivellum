@@ -91,6 +91,11 @@ function ConversationItem({ item, onArchive }: { item: Conversation; onArchive?:
               <Text style={{ fontSize: 10, fontFamily: 'Inter_400Regular', color: colors.primary }}>work</Text>
             </View>
           )}
+          {(item as any).model && (
+            <Text style={{ fontSize: 10, fontFamily: 'Inter_400Regular', color: colors.mutedForeground, opacity: 0.7 }}>
+              {String((item as any).model).split('/').pop()?.split('-').slice(0, 3).join('-')}
+            </Text>
+          )}
         </View>
       </View>
       <Feather name="chevron-right" size={16} color={colors.mutedForeground} />
