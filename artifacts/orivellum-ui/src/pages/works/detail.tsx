@@ -1264,6 +1264,8 @@ function TasksTab({ workId }: { workId: string }) {
   const updateTask = useUpdateWorkTask();
   const [newTaskText, setNewTaskText] = useState("");
   const [newTaskPriority, setNewTaskPriority] = useState<number>(0);
+  const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
+  const [editTaskText, setEditTaskText] = useState("");
 
   const handleAdd = (e: React.FormEvent) => {
     e.preventDefault();
@@ -1279,6 +1281,24 @@ function TasksTab({ workId }: { workId: string }) {
           toast.success("Task added");
         },
         onError: () => toast.error("Could not add task"),
+      }
+    );
+  };
+
+  const handleStartEdit = (task: { id?: string; text?: string }) => {
+    setEditingTaskId(task.id ?? null);
+    setEditTaskText(task.text ?? "");
+  };
+
+  const handleSaveEdit = (taskId: string) => {
+    const trimmed = editTaskText.trim();
+    setEditingTaskId(null);
+    if (!trimmed) return;
+    updateTask.mutate(
+      { workId, taskId, data: { text: trimmed } },
+      {
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: getGetWorkTasksQueryKey(workId) }),
+        onError: () => toast.error("Could not update task"),
       }
     );
   };
@@ -1340,14 +1360,30 @@ function TasksTab({ workId }: { workId: string }) {
                 disabled={updateTask.isPending}
               />
               <div className="flex-1 space-y-1">
-                <label
-                  htmlFor={task.id}
-                  className={`text-sm font-medium leading-none cursor-pointer ${
-                    task.status === "completed" ? "line-through text-muted-foreground" : ""
-                  }`}
-                >
-                  {task.text}
-                </label>
+                {editingTaskId === task.id ? (
+                  <input
+                    autoFocus
+                    className="w-full text-sm bg-transparent border-b border-primary outline-none pb-0.5"
+                    value={editTaskText}
+                    onChange={(e) => setEditTaskText(e.target.value)}
+                    onBlur={() => handleSaveEdit(task.id!)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") handleSaveEdit(task.id!);
+                      if (e.key === "Escape") setEditingTaskId(null);
+                    }}
+                  />
+                ) : (
+                  <label
+                    htmlFor={task.id}
+                    className={`text-sm font-medium leading-none cursor-pointer ${
+                      task.status === "completed" ? "line-through text-muted-foreground" : ""
+                    }`}
+                    onDoubleClick={() => handleStartEdit(task)}
+                    title="Double-click to edit"
+                  >
+                    {task.text}
+                  </label>
+                )}
               </div>
               <Badge
                 variant="outline"
