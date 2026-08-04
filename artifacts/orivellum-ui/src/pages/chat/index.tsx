@@ -43,6 +43,7 @@ import {
   Trash2, Wifi, WifiOff, Loader2, Cpu, Pencil, BookOpen, Archive, ArchiveRestore,
   AlertTriangle, FolderOpen, FileText, ChevronRight, ChevronLeft, X as XIcon, Zap, Brain,
   Globe, Paperclip, Download, Layers, HelpCircle, Compass, ChevronDown, ImageIcon, Square,
+  Sparkles, History, RefreshCw,
 } from "lucide-react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -113,6 +114,7 @@ const INTENT_LABELS: Record<string, { icon: string; label: string }> = {
   web_search: { icon: "🌐", label: "Web search" },
   weather:    { icon: "📍", label: "Weather" },
   remember:   { icon: "📌", label: "Remembered" },
+  recall:     { icon: "✨", label: "Memory recall" },
   image_gen:  { icon: "🎨", label: "Image gen" },
 };
 
@@ -887,6 +889,84 @@ function CompassFooter({ workId }: { workId: string }) {
   );
 }
 
+// ─── Memory panel ─────────────────────────────────────────────────────────────
+
+type MemoryFact = {
+  key: string;
+  value: string;
+  prev_value?: string | null;
+  source_conv_id?: string | null;
+  created_at: string;
+};
+
+function MemoryPanel({ apiBase }: { apiBase: string }) {
+  const { data, isLoading, refetch, isRefetching } = useQuery<{ facts: MemoryFact[]; total: number }>({
+    queryKey: ["memory-facts"],
+    queryFn: async () => {
+      const { buildAuthHeaders } = await import("@/lib/auth");
+      const r = await fetch(`${apiBase}/memory`, { headers: buildAuthHeaders() });
+      if (!r.ok) throw new Error("Failed");
+      return r.json();
+    },
+    staleTime: 30_000,
+  });
+
+  const facts = data?.facts ?? [];
+
+  return (
+    <div className="border-b border-border/50 bg-violet-500/5">
+      <div className="px-4 py-2.5 flex items-center justify-between">
+        <div className="flex items-center gap-1.5">
+          <Sparkles className="w-3 h-3 text-violet-500" />
+          <span className="text-xs font-medium text-violet-700 dark:text-violet-300">
+            Memory
+          </span>
+          {facts.length > 0 && (
+            <span className="text-[10px] font-mono text-muted-foreground/60 bg-muted/40 rounded px-1">
+              {facts.length}
+            </span>
+          )}
+        </div>
+        <button
+          onClick={() => refetch()}
+          disabled={isRefetching}
+          title="Refresh"
+          className="p-1 rounded text-muted-foreground/50 hover:text-muted-foreground transition-colors disabled:opacity-40"
+        >
+          <RefreshCw className={`w-3 h-3 ${isRefetching ? "animate-spin" : ""}`} />
+        </button>
+      </div>
+
+      {isLoading ? (
+        <div className="px-4 pb-3 space-y-1.5">
+          {[1, 2, 3].map(i => <Skeleton key={i} className="h-6 w-full rounded" />)}
+        </div>
+      ) : facts.length === 0 ? (
+        <div className="px-4 pb-3 text-[11px] text-muted-foreground/60 italic">
+          No facts yet — they're captured automatically as you chat.
+        </div>
+      ) : (
+        <div className="px-4 pb-3 space-y-1.5 max-h-52 overflow-y-auto">
+          {facts.map((f) => (
+            <div key={f.key} className="text-[11px] leading-snug">
+              <span className="font-mono text-violet-600/80 dark:text-violet-400/80 mr-1">
+                {f.key}:
+              </span>
+              <span className="text-foreground/80">{f.value}</span>
+              {f.prev_value && (
+                <div className="flex items-center gap-1 mt-0.5 text-muted-foreground/50">
+                  <History className="w-2.5 h-2.5 shrink-0" />
+                  <span className="line-through">{f.prev_value}</span>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function Chat() {
@@ -897,6 +977,7 @@ export default function Chat() {
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const [showArchived, setShowArchived] = useState(false);
+  const [showMemory, setShowMemory] = useState(false);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [pendingImage, setPendingImage] = useState<{ data: string; type: string } | null>(null);
@@ -1511,6 +1592,13 @@ export default function Chat() {
             <h2 className="font-serif text-lg font-medium">Conversations</h2>
             <div className="flex items-center gap-0.5">
               <button
+                onClick={() => setShowMemory((v) => !v)}
+                title="Memory — facts I've learned about you"
+                className={`p-1.5 rounded transition-colors ${showMemory ? "text-violet-600 bg-violet-500/10" : "text-muted-foreground hover:text-foreground"}`}
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+              </button>
+              <button
                 onClick={() => setShowArchived((v) => !v)}
                 title={showArchived ? "Show active" : "Show archived"}
                 className={`p-1.5 rounded transition-colors ${showArchived ? "text-primary bg-primary/10" : "text-muted-foreground hover:text-foreground"}`}
@@ -1534,6 +1622,9 @@ export default function Chat() {
             <Input placeholder="Search…" value={search} onChange={(e) => setSearch(e.target.value)} className="pl-8 h-8 text-xs bg-background" />
           </div>
         </div>
+
+        {/* ── Memory panel — shown when Sparkles button is active ──────────── */}
+        {showMemory && <MemoryPanel apiBase={API_BASE} />}
 
         <ScrollArea className="flex-1">
           <div className="p-2 space-y-0.5">

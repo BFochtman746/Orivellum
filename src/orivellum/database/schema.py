@@ -1114,4 +1114,19 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         CREATE INDEX IF NOT EXISTS brs_status ON brainstorm_sessions(status);
         CREATE INDEX IF NOT EXISTS brs_created ON brainstorm_sessions(created_at)
     """),
+
+    # v65 — Memory v2: conversation chunks for semantic recall + temporal versioning
+    # of user_memory facts so old values are preserved with a superseded_at timestamp.
+    (65, "Memory v2: conversation_chunks table + temporal user_memory versioning", """
+        CREATE TABLE IF NOT EXISTS conversation_chunks (
+            id         TEXT PRIMARY KEY,
+            conv_id    TEXT NOT NULL,
+            text       TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_cc_conv    ON conversation_chunks(conv_id);
+        CREATE INDEX IF NOT EXISTS idx_cc_created ON conversation_chunks(created_at DESC);
+        ALTER TABLE user_memory ADD COLUMN superseded_at TEXT;
+        ALTER TABLE user_memory ADD COLUMN prev_value TEXT
+    """),
 ]

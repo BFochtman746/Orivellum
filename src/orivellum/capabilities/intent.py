@@ -9,6 +9,7 @@ Recognized intents:
   - weather     — "what's the weather in X", "temperature in X"
   - image_gen   — "generate an image of X", "draw X"
   - remember    — "remember that X", "my name is X"
+  - recall      — "where are we on X", "what did we decide about X"
   - chat        — everything else
 """
 from __future__ import annotations
@@ -36,6 +37,18 @@ _WEATHER_RE2 = re.compile(
 )
 
 _PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    # recall — "where are we on X", "what did we decide", "what's our progress"
+    (re.compile(
+        r"\b(where (are|were) we (on|with|regarding|about)"
+        r"|what('s| is| was| did| have)? (our|the)? ?(status|progress|decision|outcome|conclusion|summary|update|position) (on|of|about|regarding|for)"
+        r"|what (did we|have we) (decide|concluded|agreed|discussed|settled|resolved|determine)"
+        r"|where did we (land|end up|settle|get to) (on|with)"
+        r"|what'?s? (our|the) current status (on|of|for|about)"
+        r"|summarize (our |the )?(work|progress|decisions|discussion) (on|about|regarding)"
+        r"|recall (what|where|when|how|our|the)"
+        r"|what do (i|we) (know|remember) about)\b",
+        re.IGNORECASE,
+    ), "recall"),
     # remember
     (re.compile(
         r"\b(remember (that|my|i|this)|my name is|i prefer|i like|i dislike"
@@ -87,10 +100,11 @@ Intents:
 - "weather"     — wants current weather, temperature, or forecast for a location
 - "image_gen"   — wants an image generated or drawn
 - "remember"    — explicitly wants to store a personal fact/preference for later recall
+- "recall"      — asking about past conversations, decisions, or progress: "where are we on X", "what did we decide about Y", "what's our status on Z"
 - "chat"        — everything else: questions, analysis, writing, research assistance
 
 Respond ONLY with valid JSON (no code fences):
-{"intent": "<one of the five intents>", "query": "<extracted search query or key phrase>", "location": "<city/region for weather, else null>"}
+{"intent": "<one of the six intents>", "query": "<extracted search query or key phrase>", "location": "<city/region for weather, else null>"}
 
 Message: {message}"""
 
@@ -136,7 +150,7 @@ def classify_intent(
             return {"intent": "chat", "query": user_text, "location": None}
         parsed = json.loads(raw.strip())
         intent = parsed.get("intent", "chat")
-        if intent not in ("web_search", "weather", "image_gen", "remember", "chat"):
+        if intent not in ("web_search", "weather", "image_gen", "remember", "recall", "chat"):
             intent = "chat"
         return {
             "intent": intent,

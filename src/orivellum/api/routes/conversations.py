@@ -6,7 +6,7 @@ import logging
 import re
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -177,6 +177,17 @@ def delete_conversation(conv_id: str):
     return {"ok": True}
 
 
+@router.get("/memory")
+async def get_memory() -> dict:
+    """Return current (non-superseded) user memory facts, newest first."""
+    db = get_db()
+    try:
+        facts = db.get_current_memory_facts(limit=50)
+    except Exception:
+        facts = []
+    return {"facts": facts, "total": len(facts)}
+
+
 @router.post("/conversations/{conv_id}/messages")
 async def send_message(conv_id: str, body: MessageSend):
     db = get_db()
@@ -215,15 +226,7 @@ async def send_message(conv_id: str, body: MessageSend):
     else:
         db.add_message(conv_id, "user", stored_text, meta=user_meta or None)
 
-    # Background auto-capture: skip when the user explicitly says "remember that…"
-    # to avoid a competing write racing against the intent router's _handle_remember.
     import asyncio, threading
-    if not _EXPLICIT_REMEMBER_RE.search(body.text):
-        threading.Thread(
-            target=_maybe_capture_memory,
-            args=(db, conv_id, body.text),
-            daemon=True,
-        ).start()
 
     # PKLOS Layer 0 — capture factual assertions about the user's system.
     # Runs only when the fast pattern detects a hardware/system statement.
@@ -286,6 +289,8 @@ async def send_message(conv_id: str, body: MessageSend):
             tool_meta = {**tool_meta, "sources": [*existing, *ns_sources]}
         msg = db.add_message(conv_id, "assistant", tool_text, meta=tool_meta)
         _maybe_auto_title(db, conv, body.text)
+        threading.Thread(target=_post_reply_background,
+                         args=(db, conv_id, body.text, tool_text), daemon=True).start()
         return {"message": msg}
 
     if body.deep:
@@ -307,6 +312,8 @@ async def send_message(conv_id: str, body: MessageSend):
                 clarify_meta["sources"] = ns_sources
             msg = db.add_message(conv_id, "assistant", question, meta=clarify_meta)
             _maybe_auto_title(db, conv, body.text)
+            threading.Thread(target=_post_reply_background,
+                             args=(db, conv_id, body.text, question), daemon=True).start()
             return {"message": msg}
 
         if route == "complex":
@@ -327,6 +334,9 @@ async def send_message(conv_id: str, body: MessageSend):
                 msg = db.add_message(conv_id, "assistant", council_reply,
                                      meta=council_meta)
                 _maybe_auto_title(db, conv, body.text)
+                threading.Thread(target=_post_reply_background,
+                                 args=(db, conv_id, body.text, council_reply),
+                                 daemon=True).start()
                 return {"message": msg}
             # Council failed → fall through to direct single call
 
@@ -360,6 +370,12 @@ async def send_message(conv_id: str, body: MessageSend):
         ns_meta["sources"] = ns_sources
     msg = db.add_message(conv_id, "assistant", reply, meta=ns_meta)
     _maybe_auto_title(db, conv, body.text)
+    # Background: embed exchange + inference memory capture (non-streaming)
+    threading.Thread(
+        target=_post_reply_background,
+        args=(db, conv_id, body.text, reply),
+        daemon=True,
+    ).start()
     return {"message": msg}
 
 
@@ -564,16 +580,17 @@ def _build_system_prompt(db: Any, conv: dict, scope: str = "work",
             except Exception:
                 pass
 
-    # Prepend durable user memory facts
+    # Prepend durable user memory facts (with temporal history for changed facts)
     try:
-        with db._lock:
-            mem_rows = db._conn.execute(
-                "SELECT key, value FROM user_memory ORDER BY created_at DESC LIMIT 20"
-            ).fetchall()
+        mem_rows = db.get_current_memory_facts(limit=20)
         if mem_rows:
-            mem_block = "MEMORY (durable facts about the user):\n" + "\n".join(
-                f"  {r['key']}: {r['value']}" for r in mem_rows
-            )
+            fact_lines = []
+            for r in mem_rows:
+                line = f"  {r['key']}: {r['value']}"
+                if r.get("prev_value"):
+                    line += f"  [previously: {r['prev_value']}]"
+                fact_lines.append(line)
+            mem_block = "MEMORY (durable facts about the user):\n" + "\n".join(fact_lines)
             base = mem_block + "\n\n" + base
     except Exception:
         pass  # user_memory table may not exist yet on old schemas
@@ -956,6 +973,10 @@ async def _stream_response(
             db.add_message(conv_id, "assistant", tool_text, meta=tool_meta)
             _maybe_auto_title(db, conv, user_text)
             _stream_purpose = "chat.intent"
+            # Background: embed + infer memory (intent path)
+            import threading as _t
+            _t.Thread(target=_post_reply_background,
+                      args=(db, conv_id, user_text, tool_text), daemon=True).start()
             _CHUNK = 40
             for i in range(0, len(tool_text), _CHUNK):
                 yield f"data: {json.dumps({'token': tool_text[i:i+_CHUNK], 'intent': tool_meta.get('intent')})}\n\n"
@@ -989,6 +1010,10 @@ async def _stream_response(
                 db.add_message(conv_id, "assistant", question, meta=clarify_meta)
                 _maybe_auto_title(db, conv, user_text)
                 _stream_purpose = "chat.clarify"
+                # Background: embed + infer memory (clarify path)
+                import threading as _t2
+                _t2.Thread(target=_post_reply_background,
+                           args=(db, conv_id, user_text, question), daemon=True).start()
                 # Also emit a typed SSE event so the frontend can display immediately
                 # without waiting for the query invalidation round-trip.
                 yield f"data: {json.dumps({'event': 'clarify', 'question': question})}\n\n"
@@ -1013,6 +1038,11 @@ async def _stream_response(
                                    meta=council_meta)
                     _maybe_auto_title(db, conv, user_text)
                     _stream_purpose = "chat.council"
+                    # Background: embed + infer memory (council path)
+                    import threading as _t3
+                    _t3.Thread(target=_post_reply_background,
+                               args=(db, conv_id, user_text, council_reply),
+                               daemon=True).start()
                     # Update Project Compass (merge — preserves next_step if set)
                     work_id = conv.get("work_id")
                     if work_id:
@@ -1205,6 +1235,14 @@ async def _stream_response(
             except Exception:
                 pass
         _maybe_auto_title(db, conv, user_text)
+        # Background: embed exchange + inference memory capture (streaming)
+        if full_reply and _stream_ok:
+            import threading as _threading
+            _threading.Thread(
+                target=_post_reply_background,
+                args=(db, conv_id, user_text, full_reply),
+                daemon=True,
+            ).start()
 
         # PKLOS output validation (streaming path).
         # After the full reply is accumulated and persisted, check it against the
@@ -1469,6 +1507,17 @@ async def _maybe_dispatch_intent(
             text = "I couldn't save that right now — try again in a moment."
         return text, {"intent": "remember"}
 
+    if intent == "recall":
+        try:
+            text, recall_meta = await asyncio.to_thread(
+                _handle_recall_query, db, user_text, base_url, model
+            )
+        except Exception as exc:
+            logger.warning("Recall handler failed: %s", exc)
+            text = "I couldn't search past conversations right now — try again in a moment."
+            recall_meta = {"intent": "recall", "query": query}
+        return text, recall_meta
+
     if intent == "image_gen":
         try:
             text = await asyncio.to_thread(_handle_image_gen, query, base_url, model)
@@ -1518,18 +1567,7 @@ def _handle_remember(db: Any, user_text: str, base_url: str, model: str) -> str:
                 "e.g. *\"remember that I prefer APA citations\"*."
             )
 
-        import uuid
-        from datetime import datetime, timezone
-        now = datetime.now(timezone.utc).isoformat()
-        with db._lock:
-            db._conn.execute(
-                """INSERT INTO user_memory(id, key, value, source_conv_id, created_at)
-                   VALUES(?, ?, ?, NULL, ?)
-                   ON CONFLICT(key) DO UPDATE SET value=excluded.value,
-                     created_at=excluded.created_at""",
-                (str(uuid.uuid4()), key, value, now),
-            )
-            db._conn.commit()
+        db.upsert_memory_fact(key, value, source_conv_id=None)
         db.audit("user_memory.upserted", object_id=None, object_type="user_memory",
                  actor="user", detail=key[:80])
 
@@ -1600,60 +1638,213 @@ def _deep_response(messages: list[dict], model: str) -> str:
         return _UNAVAILABLE
 
 
-_MEMORY_PATTERNS = ("remember that", "my name is", "i prefer", "i like", "i dislike",
-                     "i always", "i never", "i'm", "i am", "my email", "my phone")
+def _post_reply_background(
+    db: Any, conv_id: str, user_text: str, assistant_text: str
+) -> None:
+    """Background task launched after every assistant reply.
+
+    Runs two lightweight passes:
+    1. Embed the exchange as a conversation chunk (enables "where are we on X" recall).
+    2. Inference-based memory extraction — no trigger phrase needed.
+
+    Both passes are best-effort; any failure is logged at DEBUG level and never
+    blocks the response that's already been sent to the user.
+    """
+    # 1. Embed exchange → conversation_chunks + vectors
+    try:
+        from orivellum.capabilities.embeddings import embed_conversation_exchange
+        embed_conversation_exchange(conv_id, user_text, assistant_text, db)
+    except Exception as exc:
+        logger.debug("Conv embedding skipped: %s", exc)
+
+    # 2. Inference-based fact extraction
+    _infer_memory_facts(db, conv_id, user_text, assistant_text)
 
 
-def _maybe_capture_memory(db: Any, conv_id: str, user_text: str) -> None:
-    """Extract durable facts from the user's message and upsert into user_memory."""
-    lower = user_text.lower().strip()
-    if not any(p in lower for p in _MEMORY_PATTERNS):
+def _infer_memory_facts(
+    db: Any, conv_id: str, user_text: str, assistant_text: str
+) -> None:
+    """Extract and store durable facts from a full exchange using LLM inference.
+
+    Unlike the legacy trigger-phrase approach, this runs on every substantive
+    exchange.  A quality gate (confidence ≥ 0.75) keeps noise out.  Changed
+    facts are versioned rather than overwritten — the old value is archived
+    with a superseded_at timestamp.
+    """
+    # Skip trivially short exchanges that won't contain storable facts
+    if len(user_text) < 15:
         return
     try:
         cfg = get_config()
         from orivellum.capabilities.cognition import _call_sync
-        prompt = (
-            "Extract durable facts from this message that are worth remembering long-term. "
-            "Facts must be personal preferences, names, or persistent instructions. "
-            "Return ONLY valid JSON: "
-            '{"facts": [{"key": "short_key", "value": "fact text"}]} '
-            "or {\"facts\": []} if nothing is worth remembering.\n\n"
-            f"Message: {user_text[:500]}"
+        exchange = (
+            f"User: {user_text[:600].strip()}\n\n"
+            f"Assistant: {assistant_text[:400].strip()}"
         )
-        raw = _call_sync([{"role": "user", "content": prompt}],
-                         base_url=cfg.serving.base_url, model=cfg.serving.workhorse_model, timeout=15)
+        prompt = (
+            "Review this conversation exchange. Extract ONLY facts that are:\n"
+            "  (a) Specific and concrete — not vague or situational.\n"
+            "  (b) About the USER's identity, preferences, goals, or explicit decisions.\n"
+            "  (c) Durable — worth knowing in future conversations weeks from now.\n"
+            "Do NOT extract: general knowledge, temporary context, what the AI said,\n"
+            "or anything the user only implied rather than stated.\n\n"
+            "Return ONLY valid JSON (no code fences):\n"
+            '{"facts": [{"key": "snake_case_key", "value": "fact text", "confidence": 0.0}]}\n'
+            "Include only facts with confidence ≥ 0.75. Max 3 facts.\n"
+            'Return {"facts": []} if nothing qualifies.\n\n'
+            f"Exchange:\n{exchange}"
+        )
+        raw = _call_sync(
+            [{"role": "user", "content": prompt}],
+            base_url=cfg.serving.base_url,
+            model=cfg.serving.workhorse_model,
+            timeout=15,
+        )
         if not raw:
             return
-        parsed = json.loads(raw.strip())
-        facts  = parsed.get("facts", [])
-        if not facts:
-            return
-        import uuid
-        from datetime import datetime, timezone
-        now = datetime.now(timezone.utc).isoformat()
-        _captured_keys: list[str] = []
-        with db._lock:
-            for fact in facts[:5]:
-                key   = str(fact.get("key", ""))[:80]
-                value = str(fact.get("value", ""))[:500]
-                if not key or not value:
-                    continue
-                db._conn.execute(
-                    """INSERT INTO user_memory(id, key, value, source_conv_id, created_at)
-                       VALUES(?, ?, ?, ?, ?)
-                       ON CONFLICT(key) DO UPDATE SET value=excluded.value,
-                         source_conv_id=excluded.source_conv_id,
-                         created_at=excluded.created_at""",
-                    (str(uuid.uuid4()), key, value, conv_id, now),
-                )
-                _captured_keys.append(key)
-            db._conn.commit()
-        if _captured_keys:
-            db.audit("user_memory.automemory", object_id=None, object_type="user_memory",
-                     actor="system", detail=f"{len(_captured_keys)} facts")
-        logger.info("Automemory: captured %d fact(s) from conversation %s", len(facts), conv_id)
+        clean = raw.strip().strip("`").strip()
+        if clean.startswith("json"):
+            clean = clean[4:].strip()
+        parsed = json.loads(clean)
+        facts = parsed.get("facts", [])
+        written = 0
+        for fact in facts[:3]:
+            key   = str(fact.get("key") or "").strip()[:80]
+            value = str(fact.get("value") or "").strip()[:500]
+            try:
+                confidence = float(fact.get("confidence", 0))
+            except (TypeError, ValueError):
+                confidence = 0.0
+            if not key or not value or confidence < 0.75 or len(key) < 3:
+                continue
+            if db.upsert_memory_fact(key, value, conv_id):
+                written += 1
+        if written:
+            db.audit("user_memory.inferred", object_id=None, object_type="user_memory",
+                     actor="system", detail=f"{written} fact(s) from conv {conv_id[:8]}")
+            logger.info("Inference memory: wrote %d fact(s) from conv %s", written, conv_id[:8])
     except Exception as exc:
-        logger.debug("Automemory extraction skipped: %s", exc)
+        logger.debug("Inference memory extraction skipped: %s", exc)
+
+
+def _handle_recall_query(
+    db: Any, user_text: str, base_url: str, model: str
+) -> tuple[str, dict]:
+    """Handle a recall intent — semantic search + synthesis with source citations.
+
+    Searches:
+      1. Conversation chunks (semantic, with FTS fallback)
+      2. Current user memory facts
+      3. Knowledge items
+
+    Returns (reply_text, meta_dict) where meta contains a ``sources`` list
+    with clickable conversation links.
+    """
+    from orivellum.capabilities.embeddings import semantic_search_conversations
+    from orivellum.capabilities.embeddings import hybrid_search_knowledge
+
+    # ── 1. Search conversation chunks (semantic AND keyword, always combined) ──
+    # Both paths run every time so that chunks without vectors (stored during an
+    # embedding-endpoint outage) are still surfaced via keyword match even when
+    # semantic results exist.  Results are deduplicated by chunk id.
+    sem_hits: list[dict] = []
+    try:
+        sem_hits = semantic_search_conversations(user_text, db, limit=5)
+    except Exception:
+        pass
+    kw_hits: list[dict] = db.search_conversation_chunks(user_text, limit=5)
+    seen_chunk_ids: set[str] = set()
+    conv_hits: list[dict] = []
+    for h in sem_hits + kw_hits:
+        cid = h.get("id") or ""
+        if cid and cid not in seen_chunk_ids:
+            seen_chunk_ids.add(cid)
+            conv_hits.append(h)
+    conv_hits = conv_hits[:5]
+
+    # ── 2. Memory facts that overlap with the query topic ─────────────────────
+    all_facts = db.get_current_memory_facts(limit=20)
+    q_words = {w for w in user_text.lower().split() if len(w) > 3}
+    fact_hits = [
+        f for f in all_facts
+        if any(w in f["value"].lower() or w in f["key"].lower() for w in q_words)
+    ]
+
+    # ── 3. Knowledge items ────────────────────────────────────────────────────
+    kn_hits: list[dict] = []
+    try:
+        kn_hits = hybrid_search_knowledge(user_text, db, limit=4)
+    except Exception:
+        pass
+
+    # ── Build answer if nothing found ─────────────────────────────────────────
+    if not conv_hits and not fact_hits and not kn_hits:
+        return (
+            f'📭 **Nothing found for "{user_text[:80]}"**\n\n'
+            "I don't have stored memory or past conversations on this topic yet. "
+            "As we discuss it, I'll start capturing relevant facts automatically.",
+            {"intent": "recall", "query": user_text},
+        )
+
+    # ── Assemble context for synthesis ────────────────────────────────────────
+    sections: list[str] = []
+    sources: list[dict] = []
+
+    if fact_hits:
+        fact_lines = []
+        for f in fact_hits[:5]:
+            line = f"• {f['key']}: {f['value']}"
+            if f.get("prev_value"):
+                line += f"  *(previously: {f['prev_value']})*"
+            fact_lines.append(line)
+        sections.append("**Stored memory:**\n" + "\n".join(fact_lines))
+
+    if kn_hits:
+        kn_lines = [f"• {h.get('text','')[:200]}" for h in kn_hits[:3]]
+        sections.append("**Knowledge:**\n" + "\n".join(kn_lines))
+
+    if conv_hits:
+        conv_lines: list[str] = []
+        seen_convs: set[str] = set()
+        for h in conv_hits[:4]:
+            title    = (h.get("conv_title") or "Untitled conversation").strip()
+            created  = (h.get("created_at") or "")[:10]
+            conv_id  = h.get("conv_id") or ""
+            excerpt  = h.get("text", "")[:400].strip()
+            conv_lines.append(f"[{title} / {created}]\n{excerpt}")
+            if conv_id and conv_id not in seen_convs:
+                seen_convs.add(conv_id)
+                sources.append({
+                    "type": "conversation",
+                    "title": title,
+                    "id": conv_id,
+                    "created_at": h.get("created_at"),
+                })
+        sections.append("**Past conversations:**\n" + "\n---\n".join(conv_lines))
+
+    context_block = "\n\n".join(sections)
+    synth_prompt = (
+        f'Answer this recall question: "{user_text[:250]}"\n\n'
+        f"Using only the context below, write a concise grounded answer "
+        f"(2–4 paragraphs). Cite conversation sources as [title / date]. "
+        f"If a fact changed (previously vs now), mention both. "
+        f"If evidence is incomplete, say so explicitly.\n\n"
+        f"{context_block}"
+    )
+
+    from orivellum.capabilities.cognition import _call_sync
+    try:
+        reply = _call_sync(
+            [{"role": "user", "content": synth_prompt}],
+            base_url=base_url, model=model, timeout=25,
+        ) or _UNAVAILABLE
+    except Exception:
+        reply = _UNAVAILABLE
+
+    meta: dict = {"intent": "recall", "query": user_text}
+    if sources:
+        meta["sources"] = sources
+    return reply, meta
 
 
 def _maybe_auto_title(db: Any, conv: dict, first_user_text: str) -> None:

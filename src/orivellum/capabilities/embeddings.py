@@ -254,7 +254,11 @@ def cosine(a: list[float], b: list[float]) -> float:
 
 
 def backfill_embeddings(db: "OrivellumDB", max_items: int = 200) -> int:
-    """Embed chunks and knowledge items that don't have vectors yet.
+    """Embed chunks, knowledge items, and conversation chunks that lack vectors.
+
+    Extends to cover ``conversation_chunks`` so exchanges stored during an
+    embedding-endpoint outage are automatically back-filled once the endpoint
+    recovers — ensuring semantic recall works even for older conversations.
 
     Returns the number of new vectors stored (0 when endpoint unavailable).
     """
@@ -269,6 +273,10 @@ def backfill_embeddings(db: "OrivellumDB", max_items: int = 200) -> int:
             LEFT JOIN vectors v ON v.object_id = k.id AND v.object_type='knowledge'
             WHERE v.id IS NULL AND k.review_status != 'rejected'
               AND length(k.text) > 20 LIMIT ?"""),
+        ("conv_chunk",
+         """SELECT cc.id, cc.text FROM conversation_chunks cc
+            LEFT JOIN vectors v ON v.object_id = cc.id AND v.object_type='conv_chunk'
+            WHERE v.id IS NULL AND length(cc.text) > 30 LIMIT ?"""),
     ):
         with db._lock:
             rows = db._conn.execute(sql, (max_items,)).fetchall()
@@ -347,6 +355,17 @@ def semantic_search(query: str, db: "OrivellumDB", object_type: str = "knowledge
                      FROM vectors v JOIN knowledge k ON k.id = v.object_id
                      WHERE v.object_type='knowledge'
                        AND k.review_status != 'rejected'"""
+    elif object_type == "conv_chunk":
+        # Conversation exchange chunks — each row is one user+assistant turn.
+        # Use LEFT JOIN for conversations so chunks from deleted or test conversations
+        # remain searchable (conv_title will be NULL in that case).
+        all_sql = """SELECT v.object_id, v.embedding, v.dim,
+                            cc.text, cc.conv_id, c.title AS conv_title,
+                            cc.created_at
+                     FROM vectors v
+                     JOIN conversation_chunks cc ON cc.id = v.object_id
+                     LEFT JOIN conversations c ON c.id = cc.conv_id
+                     WHERE v.object_type='conv_chunk'"""
     else:
         all_sql = """SELECT v.object_id, v.embedding, v.dim,
                             c.text, c.doc_id, d.title AS doc_title, d.work_id
@@ -428,6 +447,50 @@ def hybrid_search_chunks(query: str, db: "OrivellumDB", limit: int = 10,
         hit["match_type"] = "both" if len(e["sources"]) == 2 else next(iter(e["sources"]))
         results.append(hit)
     return results
+
+
+def embed_conversation_exchange(
+    conv_id: str,
+    user_text: str,
+    assistant_text: str,
+    db: "OrivellumDB",
+) -> str | None:
+    """Embed one user+assistant exchange and store it as a conversation chunk.
+
+    Combines both sides of the exchange into a single text unit, embeds it,
+    stores the chunk in ``conversation_chunks``, and writes the vector to
+    ``vectors`` with ``object_type='conv_chunk'``.
+
+    Returns the new chunk_id on success, or None when the embeddings endpoint
+    is unavailable (the chunk is still stored in conversation_chunks for future
+    backfill via the nightly nightshift pass).
+    """
+    combined = f"User: {user_text[:600].strip()}\n\nAssistant: {assistant_text[:600].strip()}"
+    # Always persist the chunk so it is available for keyword recall and future
+    # embedding backfill — even for very short exchanges.
+    chunk_id = db.add_conversation_chunk(conv_id, combined)
+    # Attempt to embed; skip only when the text is too short to produce a
+    # meaningful vector (embedding is best-effort, persistence is always done).
+    if len(combined) >= 10:
+        vec = embed_text(combined)
+        if vec is not None:
+            db.store_vector(chunk_id, "conv_chunk", pack_vector(vec), len(vec))
+            logger.debug("Embedded conv_chunk %s for conv %s", chunk_id[:8], conv_id[:8])
+    return chunk_id
+
+
+def semantic_search_conversations(
+    query: str,
+    db: "OrivellumDB",
+    limit: int = 5,
+) -> list[dict]:
+    """Semantic search over conversation chunks.
+
+    Delegates to :func:`semantic_search` with ``object_type='conv_chunk'``.
+    Falls back to [] when embeddings are unavailable (caller should then call
+    ``db.search_conversation_chunks`` for keyword-based degraded search).
+    """
+    return semantic_search(query, db, object_type="conv_chunk", limit=limit)
 
 
 def hybrid_search_knowledge(query: str, db: "OrivellumDB", limit: int = 10,

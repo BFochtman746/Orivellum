@@ -2442,6 +2442,127 @@ class OrivellumDB:
         return row["n"] if row else 0
 
     # -------------------------------------------------------------------------
+    # User memory — temporal versioning (v65+)
+    # -------------------------------------------------------------------------
+
+    def upsert_memory_fact(self, key: str, value: str,
+                           source_conv_id: str | None = None) -> bool:
+        """Insert or update a durable fact (one row per key).
+
+        Single-row-per-key design: when the value changes the existing row is
+        updated, the old value is preserved in ``prev_value``, and
+        ``superseded_at`` records the timestamp of the change.
+
+        Returns True if a change was written, False if the fact was a no-op
+        (value identical to the stored one).
+        """
+        key   = str(key).strip()[:80]
+        value = str(value).strip()[:500]
+        if not key or not value:
+            return False
+        now = _now()
+        with self._lock:
+            existing = self._conn.execute(
+                "SELECT id, value FROM user_memory WHERE key=?",
+                (key,),
+            ).fetchone()
+            if existing:
+                if existing["value"] == value:
+                    return False  # no-op — fact unchanged
+                # Update in-place, carrying the old value as prev_value
+                self._conn.execute(
+                    """UPDATE user_memory
+                       SET value=?, prev_value=?, superseded_at=?,
+                           source_conv_id=?, created_at=?
+                       WHERE id=?""",
+                    (value, existing["value"], now, source_conv_id, now,
+                     existing["id"]),
+                )
+            else:
+                self._conn.execute(
+                    """INSERT INTO user_memory(id, key, value, prev_value,
+                           source_conv_id, created_at)
+                       VALUES(?,?,?,?,?,?)""",
+                    (_uuid(), key, value, None, source_conv_id, now),
+                )
+            self._conn.commit()
+        return True
+
+    def get_current_memory_facts(self, limit: int = 20) -> list[dict]:
+        """Return all memory facts (one per key), newest-updated first."""
+        with self._lock:
+            rows = self._conn.execute(
+                """SELECT key, value, prev_value, source_conv_id, created_at
+                   FROM user_memory
+                   ORDER BY created_at DESC LIMIT ?""",
+                (limit,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_memory_history(self, key: str) -> list[dict]:
+        """Return the single stored fact for a key (with prev_value for history)."""
+        with self._lock:
+            rows = self._conn.execute(
+                """SELECT id, key, value, prev_value, source_conv_id,
+                          created_at, superseded_at
+                   FROM user_memory WHERE key=?
+                   ORDER BY created_at DESC""",
+                (key,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    # -------------------------------------------------------------------------
+    # Conversation chunks (v65+) — for semantic recall
+    # -------------------------------------------------------------------------
+
+    def add_conversation_chunk(self, conv_id: str, text: str) -> str:
+        """Store a text chunk representing one exchange in a conversation.
+
+        Returns the new chunk_id so the caller can embed and store a vector.
+        """
+        chunk_id = _uuid()
+        with self._lock:
+            self._conn.execute(
+                """INSERT INTO conversation_chunks(id, conv_id, text, created_at)
+                   VALUES(?,?,?,?)""",
+                (chunk_id, conv_id, text[:8000], _now()),
+            )
+            self._conn.commit()
+        return chunk_id
+
+    def search_conversation_chunks(
+        self, query: str, limit: int = 5
+    ) -> list[dict]:
+        """Keyword search over conversation chunks (FTS/LIKE fallback).
+
+        Returns hits with conv_id, conv_title, text, created_at.
+        Semantic search over vectors is the primary path (handled in
+        embeddings.py); this is the degraded fallback when vectors are
+        unavailable.
+        """
+        words = query.strip().split()[:6]
+        if not words:
+            return []
+        # Build a simple LIKE condition ORing the top words
+        conditions = " OR ".join("cc.text LIKE ?" for _ in words)
+        params = [f"%{w}%" for w in words]
+        params.append(limit)
+        try:
+            with self._lock:
+                rows = self._conn.execute(
+                    f"""SELECT cc.id, cc.conv_id, cc.text, cc.created_at,
+                               c.title AS conv_title
+                        FROM conversation_chunks cc
+                        LEFT JOIN conversations c ON c.id = cc.conv_id
+                        WHERE ({conditions})
+                        ORDER BY cc.created_at DESC LIMIT ?""",
+                    params,
+                ).fetchall()
+            return [dict(r) for r in rows]
+        except Exception:
+            return []
+
+    # -------------------------------------------------------------------------
     # Document versions (#146)
     # -------------------------------------------------------------------------
 
