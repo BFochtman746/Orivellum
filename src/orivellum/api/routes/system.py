@@ -621,6 +621,42 @@ def set_vision_model_setting(body: VisionModelUpdate):
     return {"model": body.model.strip(), "ok": True}
 
 
+@router.get("/system/embeddings/status")
+def embeddings_status():
+    """Return the circuit-breaker state for the embeddings endpoint.
+
+    Does not make a network call — just reads the in-process cooldown
+    timestamp so the UI can show whether semantic search is degraded.
+    """
+    from orivellum.capabilities.embeddings import _unavailable_until
+    import time
+    circuit_open = _unavailable_until > time.monotonic()
+    return {
+        "circuit_open": circuit_open,
+        "available_at": _unavailable_until if circuit_open else None,
+    }
+
+
+@router.post("/system/embeddings/probe")
+def probe_embeddings():
+    """Run a live test embed call and return ok/fail + dimensions.
+
+    A successful probe resets the circuit breaker so subsequent searches
+    immediately benefit from semantic ranking again.
+    """
+    from orivellum.capabilities.embeddings import embed_texts, _reset_circuit_breaker
+    try:
+        vecs = embed_texts(["semantic search health probe"], timeout=8)
+        if vecs and len(vecs) > 0:
+            _reset_circuit_breaker()
+            return {"ok": True, "dims": len(vecs[0]),
+                    "detail": f"Embedding returned {len(vecs[0])}-dimensional vector — semantic search is active."}
+        return {"ok": False, "status": "empty",
+                "detail": "Embedding call returned no vectors. Semantic search falls back to keyword-only."}
+    except Exception as exc:
+        return {"ok": False, "status": "error", "detail": str(exc)}
+
+
 @router.post("/system/vision/probe")
 def probe_vision_model():
     """Test whether the configured vision model accepts image inputs.

@@ -327,6 +327,105 @@ function useSetAiExtractionSetting() {
   });
 }
 
+// ─── Semantic search / embeddings card ───────────────────────────────────────
+
+type EmbedProbeResult = { ok: boolean; dims?: number; status?: string; detail: string };
+
+function SemanticSearchCard() {
+  const [probeResult, setProbeResult] = useState<EmbedProbeResult | null>(null);
+  const [probing, setProbing] = useState(false);
+
+  const { data, refetch } = useQuery({
+    queryKey: ["system", "embeddings-status"],
+    queryFn: async () => {
+      const r = await apiFetch(`${API_BASE}/api/system/embeddings/status`);
+      if (!r.ok) return null;
+      return r.json() as Promise<{ circuit_open: boolean; available_at: number | null }>;
+    },
+    refetchInterval: 30_000,
+    staleTime: 20_000,
+  });
+
+  async function probe() {
+    setProbing(true);
+    setProbeResult(null);
+    try {
+      const r = await apiFetch(`${API_BASE}/api/system/embeddings/probe`, { method: "POST" });
+      const json = await r.json() as EmbedProbeResult;
+      setProbeResult(json);
+      if (json.ok) refetch();
+    } catch {
+      setProbeResult({ ok: false, detail: "Probe request failed — check server logs." });
+    } finally {
+      setProbing(false);
+    }
+  }
+
+  const circuitOpen = data?.circuit_open ?? false;
+
+  return (
+    <Card>
+      <CardContent className="p-6">
+        <div className="flex items-start gap-3">
+          <Brain className="w-5 h-5 text-primary mt-0.5 shrink-0" />
+          <div className="flex-1 space-y-2">
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <div>
+                <h3 className="font-medium text-sm">Semantic Search (Embeddings)</h3>
+                <p className="text-sm text-muted-foreground mt-0.5 max-w-xl">
+                  When the embedding endpoint is reachable, searches use vector similarity in
+                  addition to keyword matching. When unavailable, results are keyword-only (BM25).
+                </p>
+              </div>
+              <Button
+                size="sm" variant="outline" className="text-xs gap-1.5 shrink-0"
+                onClick={probe} disabled={probing}
+              >
+                {probing
+                  ? <><Loader2 className="w-3 h-3 animate-spin" />Testing…</>
+                  : <><Brain className="w-3 h-3" />Test Embeddings</>}
+              </Button>
+            </div>
+
+            {/* Status indicator */}
+            {!probeResult && (
+              circuitOpen ? (
+                <div className="flex items-start gap-2 rounded-lg px-3 py-2 bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-400">
+                  <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                  <span className="text-xs">
+                    Embedding endpoint is in cooldown after a recent failure.
+                    Searches are keyword-only until the endpoint recovers.
+                    Click <span className="font-medium">Test Embeddings</span> to retry now.
+                  </span>
+                </div>
+              ) : (
+                <p className="text-xs text-emerald-700 dark:text-emerald-400 font-mono flex items-center gap-1.5">
+                  <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                  Circuit breaker closed — semantic search active
+                </p>
+              )
+            )}
+
+            {/* Probe result */}
+            {probeResult && (
+              <div className={`flex items-start gap-2 text-xs rounded-lg px-3 py-2 ${
+                probeResult.ok
+                  ? "bg-emerald-500/10 border border-emerald-500/30 text-emerald-700 dark:text-emerald-400"
+                  : "bg-destructive/10 border border-destructive/30 text-destructive"
+              }`}>
+                {probeResult.ok
+                  ? <CheckCircle2 className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                  : <XCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />}
+                <span>{probeResult.detail}</span>
+              </div>
+            )}
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 // ─── Vision model card ────────────────────────────────────────────────────────
 
 type VisionProbeResult = { ok: boolean; model: string; response?: string; error?: string };
@@ -671,6 +770,9 @@ export default function System() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Semantic / Embedding Search */}
+      <SemanticSearchCard />
 
       {/* Vision Model Setting */}
       <VisionModelCard />
