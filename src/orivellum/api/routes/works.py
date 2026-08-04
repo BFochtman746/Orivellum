@@ -258,6 +258,34 @@ def works_update_task(work_id: str, task_id: str, body: TaskUpdate):
     return {"task": task}
 
 
+class KnowledgeCreate(BaseModel):
+    text: str
+    kind: str = "claim"
+    subject: str | None = None
+    predicate: str | None = None
+    obj: str | None = None
+
+
+@router.post("/works/{work_id}/knowledge")
+def works_create_knowledge(work_id: str, body: KnowledgeCreate):
+    db = get_db()
+    if not db.get_work(work_id):
+        raise HTTPException(404, f"Work {work_id!r} not found")
+    item_id = db.create_knowledge_item(
+        work_id=work_id,
+        kind=body.kind,
+        text=body.text.strip(),
+        subject=body.subject,
+        predicate=body.predicate,
+        obj=body.obj,
+        confidence=1.0,
+        review_status="approved",
+    )
+    with db._lock:
+        row = db._conn.execute("SELECT * FROM knowledge WHERE id=?", (item_id,)).fetchone()
+    return {"item": dict(row) if row else {"id": item_id}}
+
+
 @router.delete("/works/{work_id}/tasks/{task_id}", status_code=204)
 def works_delete_task(work_id: str, task_id: str):
     db = get_db()

@@ -879,6 +879,11 @@ function KnowledgeTab({ workId }: { workId: string }) {
   const [kindFilter, setKindFilter] = useState<KnowledgeKindFilter>("all");
   const [confFilter, setConfFilter] = useState<KnowledgeConfFilter>("all");
   const [searchText, setSearchText] = useState("");
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [newKText, setNewKText] = useState("");
+  const [newKKind, setNewKKind] = useState("claim");
+  const [addingK, setAddingK] = useState(false);
+  const WORK_API = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
   // API search state — hooks must be unconditional, before any early return
   const [apiSearchResults, setApiSearchResults] = useState<any[]>([]);
   const [apiSearchLoading, setApiSearchLoading] = useState(false);
@@ -1046,11 +1051,63 @@ function KnowledgeTab({ workId }: { workId: string }) {
     { key: "low",  label: "Low" },
   ];
 
+  const handleAddKnowledge = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newKText.trim() || addingK) return;
+    setAddingK(true);
+    try {
+      const r = await apiFetch(`${WORK_API}/works/${workId}/knowledge`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: newKText.trim(), kind: newKKind }),
+      });
+      if (!r.ok) throw new Error("Failed");
+      setNewKText("");
+      setShowAddForm(false);
+      queryClient.invalidateQueries({ queryKey: getGetWorkKnowledgeQueryKey(workId, {}) });
+      queryClient.invalidateQueries({ queryKey: getGetWorkStatsQueryKey(workId) });
+      toast.success("Knowledge item added");
+    } catch {
+      toast.error("Could not add knowledge item");
+    } finally {
+      setAddingK(false);
+    }
+  };
+
   return (
     <div className="space-y-4">
+      {showAddForm && (
+        <form onSubmit={handleAddKnowledge} className="flex gap-2 p-3 rounded-lg border border-primary/20 bg-primary/[0.02]">
+          <select
+            value={newKKind}
+            onChange={(e) => setNewKKind(e.target.value)}
+            className="h-9 rounded-md border border-input bg-background px-2 text-xs font-mono text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring shrink-0"
+          >
+            {["claim", "entity", "relationship", "summary"].map((k) => (
+              <option key={k} value={k}>{k}</option>
+            ))}
+          </select>
+          <Input
+            autoFocus
+            placeholder="Enter knowledge statement…"
+            value={newKText}
+            onChange={(e) => setNewKText(e.target.value)}
+            className="flex-1 bg-background/50 text-sm"
+          />
+          <Button type="submit" size="sm" disabled={!newKText.trim() || addingK}>
+            {addingK ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Add"}
+          </Button>
+          <Button type="button" size="sm" variant="ghost" onClick={() => setShowAddForm(false)}>
+            <X className="w-3.5 h-3.5" />
+          </Button>
+        </form>
+      )}
       <div className="flex items-start justify-between flex-wrap gap-3">
         <h3 className="text-xl font-serif font-medium">Structured Knowledge</h3>
         <div className="flex items-center gap-2 flex-wrap justify-end">
+          <Button size="sm" variant="outline" className="gap-1.5 h-7 text-xs" onClick={() => setShowAddForm((v) => !v)}>
+            <Plus className="w-3 h-3" /> Add manually
+          </Button>
           {allKnowledge.length > 10 && (
             <div className="relative flex items-center">
               {apiSearchLoading

@@ -21,6 +21,62 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useGetDocument, useListWorks } from '@workspace/api-client-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
+// ── Chunks collapsible section ──────────────────────────────────────────────
+
+function ChunksSection({ docId, domain, colors }: {
+  docId: string;
+  domain: string;
+  colors: ReturnType<typeof import('@/hooks/useColors').useColors>;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const { data, isLoading } = useQuery<{ chunks: Array<{ id: string; page: number; text: string }>; count: number }>({
+    queryKey: ['doc-chunks-mobile', docId],
+    queryFn: async () => {
+      const res = await mobileFetch(`https://${domain}/api/library/${docId}/chunks`);
+      if (!res.ok) throw new Error('Failed to load chunks');
+      return res.json();
+    },
+    enabled: !!docId && expanded,
+    staleTime: 60_000,
+  });
+  const count = data?.count ?? 0;
+  return (
+    <View style={[{ borderWidth: 1, borderRadius: 8, overflow: 'hidden', marginBottom: 12 }, { borderColor: colors.border }]}>
+      <Pressable
+        onPress={() => setExpanded((v) => !v)}
+        style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 12, backgroundColor: colors.muted + '33' }}
+      >
+        <Text style={{ fontSize: 11, fontFamily: 'Inter_600SemiBold', color: colors.mutedForeground, letterSpacing: 0.8 }}>
+          CHUNKS {count > 0 ? `(${count})` : ''}
+        </Text>
+        <Feather name={expanded ? 'chevron-up' : 'chevron-down'} size={14} color={colors.mutedForeground} />
+      </Pressable>
+      {expanded && (
+        <ScrollView style={{ maxHeight: 400 }} nestedScrollEnabled>
+          {isLoading ? (
+            <ActivityIndicator color={colors.primary} style={{ margin: 16 }} />
+          ) : (data?.chunks ?? []).length === 0 ? (
+            <Text style={{ padding: 12, fontSize: 12, color: colors.mutedForeground }}>No chunks extracted yet.</Text>
+          ) : (
+            (data?.chunks ?? []).map((chunk) => (
+              <View key={chunk.id} style={{ padding: 12, borderTopWidth: 1, borderTopColor: colors.border }}>
+                {chunk.page > 0 && (
+                  <View style={{ alignSelf: 'flex-start', backgroundColor: colors.primary + '22', borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2, marginBottom: 4 }}>
+                    <Text style={{ fontSize: 10, fontFamily: 'Inter_600SemiBold', color: colors.primary }}>p.{chunk.page}</Text>
+                  </View>
+                )}
+                <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: colors.foreground, lineHeight: 18 }} numberOfLines={4}>
+                  {chunk.text}
+                </Text>
+              </View>
+            ))
+          )}
+        </ScrollView>
+      )}
+    </View>
+  );
+}
+
 // ── Extracted text collapsible section ───────────────────────────────────────
 
 function ExtractedTextSection({ text, colors }: { text: string; colors: ReturnType<typeof import('@/hooks/useColors').useColors> }) {
@@ -458,6 +514,9 @@ export default function LibraryDocDetail() {
         {doc.extracted_text ? (
           <ExtractedTextSection text={doc.extracted_text as string} colors={colors} />
         ) : null}
+
+        {/* Chunks — collapsible section */}
+        <ChunksSection docId={id ?? ''} domain={domain} colors={colors} />
 
         {/* Knowledge — AI review items first */}
         <View style={[styles.section, { borderColor: colors.border }]}>
