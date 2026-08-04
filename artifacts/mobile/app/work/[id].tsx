@@ -86,26 +86,38 @@ function TabBar({ active, onSelect, colors, badges = {} }: { active: Tab; onSele
   );
 }
 
-function DocItem({ doc }: { doc: Document }) {
+function DocItem({ doc, onReprocess }: { doc: Document; onReprocess?: (docId: string) => void }) {
   const colors = useColors();
   const router = useRouter();
+  const isStuck = doc.readiness === 'error' || doc.readiness === 'no_text' || doc.readiness === 'imported';
   return (
     <Pressable
       onPress={() => router.push(`/library/${doc.id}` as any)}
-      style={({ pressed }) => [styles.listItem, { borderColor: colors.border, opacity: pressed ? 0.7 : 1 }]}
+      style={({ pressed }) => [styles.listItem, { borderColor: colors.border, opacity: pressed ? 0.7 : 1, flexDirection: 'column', gap: 0 }]}
     >
-      <View style={[styles.itemIcon, { backgroundColor: colors.muted }]}>
-        <Feather name="file-text" size={14} color={colors.primary} />
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
+        <View style={[styles.itemIcon, { backgroundColor: colors.muted }]}>
+          <Feather name="file-text" size={14} color={colors.primary} />
+        </View>
+        <View style={styles.itemBody}>
+          <Text style={[styles.itemTitle, { color: colors.foreground }]} numberOfLines={1}>
+            {doc.title ?? doc.source ?? 'Document'}
+          </Text>
+          <Text style={[styles.itemMeta, { color: colors.mutedForeground }]}>
+            {doc.kind ?? 'file'} · {doc.readiness ?? 'pending'}
+          </Text>
+        </View>
+        <Feather name="chevron-right" size={14} color={colors.mutedForeground} />
       </View>
-      <View style={styles.itemBody}>
-        <Text style={[styles.itemTitle, { color: colors.foreground }]} numberOfLines={1}>
-          {doc.title ?? doc.source ?? 'Document'}
-        </Text>
-        <Text style={[styles.itemMeta, { color: colors.mutedForeground }]}>
-          {doc.kind ?? 'file'} · {doc.readiness ?? 'pending'}
-        </Text>
-      </View>
-      <Feather name="chevron-right" size={14} color={colors.mutedForeground} />
+      {isStuck && onReprocess && (
+        <Pressable
+          onPress={(e) => { e.stopPropagation?.(); onReprocess(doc.id ?? ''); }}
+          style={{ flexDirection: 'row', alignItems: 'center', gap: 4, alignSelf: 'flex-end', marginTop: 6, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, backgroundColor: '#f59e0b15', borderWidth: 1, borderColor: '#f59e0b44' }}
+        >
+          <Feather name="refresh-cw" size={11} color="#d97706" />
+          <Text style={{ fontSize: 11, fontFamily: 'Inter_600SemiBold', color: '#d97706' }}>Re-extract</Text>
+        </Pressable>
+      )}
     </Pressable>
   );
 }
@@ -1224,7 +1236,12 @@ export default function WorkDetailScreen() {
             <FlatList
               data={docs}
               keyExtractor={(d) => d.id ?? ''}
-              renderItem={({ item }) => <DocItem doc={item} />}
+              renderItem={({ item }) => <DocItem doc={item} onReprocess={async (docId) => {
+                try {
+                  await mobileFetch(`https://${domain}/api/library/${docId}/reprocess`, { method: 'POST' });
+                  refetchDocs();
+                } catch { /* non-fatal */ }
+              }} />}
               contentContainerStyle={styles.listPad}
               refreshControl={
                 <RefreshControl refreshing={docsLoading} onRefresh={refetchDocs} tintColor={colors.primary} />

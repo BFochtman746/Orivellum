@@ -13,6 +13,7 @@ import {
   Share,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
@@ -183,6 +184,24 @@ export default function LibraryDocDetail() {
   const doc = (docData as any)?.document;
   const knowledge = (knData as any)?.knowledge ?? [];
   const works = (worksData as any)?.works ?? [];
+
+  // Inline title editing
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState('');
+
+  const saveTitleEdit = async () => {
+    setEditingTitle(false);
+    const trimmed = titleDraft.trim();
+    if (!trimmed || trimmed === doc?.title) return;
+    try {
+      await mobileFetch(`https://${domain}/api/library/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: trimmed }),
+      });
+      refetchDoc();
+    } catch { /* non-fatal */ }
+  };
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -373,9 +392,24 @@ export default function LibraryDocDetail() {
           <Feather name="arrow-left" size={18} color={colors.primary} />
           <Text style={[styles.backLabel, { color: colors.primary }]}>Library</Text>
         </Pressable>
-        <Text style={[styles.title, { color: colors.foreground }]} numberOfLines={2}>
-          {docTitle}
-        </Text>
+        {editingTitle ? (
+          <TextInput
+            autoFocus
+            style={[styles.title, { color: colors.foreground, borderBottomWidth: 2, borderBottomColor: colors.primary }]}
+            value={titleDraft}
+            onChangeText={setTitleDraft}
+            onBlur={saveTitleEdit}
+            onSubmitEditing={saveTitleEdit}
+            returnKeyType="done"
+            multiline={false}
+          />
+        ) : (
+          <Pressable onLongPress={() => { setTitleDraft(docTitle); setEditingTitle(true); }} delayLongPress={500}>
+            <Text style={[styles.title, { color: colors.foreground }]} numberOfLines={2}>
+              {docTitle}
+            </Text>
+          </Pressable>
+        )}
         <View style={styles.metaRow}>
           <View style={[styles.badge, { backgroundColor: colors.muted }]}>
             <Text style={[styles.badgeText, { color: colors.foreground }]}>
