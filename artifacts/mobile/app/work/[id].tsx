@@ -37,7 +37,7 @@ import { OfflineBanner, ErrorScreen } from '@/components/OfflineBanner';
 
 type Tab = 'overview' | 'docs' | 'knowledge' | 'tasks' | 'conversations' | 'learn' | 'gaps' | 'book';
 
-function TabBar({ active, onSelect, colors }: { active: Tab; onSelect: (t: Tab) => void; colors: any }) {
+function TabBar({ active, onSelect, colors, badges = {} }: { active: Tab; onSelect: (t: Tab) => void; colors: any; badges?: Partial<Record<Tab, number>> }) {
   const tabs: { key: Tab; label: string }[] = [
     { key: 'overview', label: 'Overview' },
     { key: 'docs', label: 'Docs' },
@@ -50,7 +50,9 @@ function TabBar({ active, onSelect, colors }: { active: Tab; onSelect: (t: Tab) 
   ];
   return (
     <View style={[styles.tabBar, { borderBottomColor: colors.border, backgroundColor: colors.background }]}>
-      {tabs.map((t) => (
+      {tabs.map((t) => {
+        const badge = badges[t.key];
+        return (
         <Pressable
           key={t.key}
           onPress={() => onSelect(t.key)}
@@ -59,19 +61,27 @@ function TabBar({ active, onSelect, colors }: { active: Tab; onSelect: (t: Tab) 
             active === t.key && { borderBottomColor: colors.primary, borderBottomWidth: 2 },
           ]}
         >
-          <Text
-            style={[
-              styles.tabLabel,
-              {
-                color: active === t.key ? colors.primary : colors.mutedForeground,
-                fontFamily: active === t.key ? 'Inter_600SemiBold' : 'Inter_400Regular',
-              },
-            ]}
-          >
-            {t.label}
-          </Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+            <Text
+              style={[
+                styles.tabLabel,
+                {
+                  color: active === t.key ? colors.primary : colors.mutedForeground,
+                  fontFamily: active === t.key ? 'Inter_600SemiBold' : 'Inter_400Regular',
+                },
+              ]}
+            >
+              {t.label}
+            </Text>
+            {badge != null && badge > 0 && (
+              <View style={{ backgroundColor: colors.primary, borderRadius: 8, minWidth: 16, paddingHorizontal: 3, alignItems: 'center' }}>
+                <Text style={{ color: colors.primaryForeground, fontSize: 9, fontFamily: 'Inter_700Bold', lineHeight: 14 }}>{badge}</Text>
+              </View>
+            )}
+          </View>
         </Pressable>
-      ))}
+        );
+      })}
     </View>
   );
 }
@@ -1039,6 +1049,23 @@ export default function WorkDetailScreen() {
     }
   }, [work?.title, navigation, id, router, colors.primary]);
 
+  // Work title inline editing
+  const [editingWorkTitle, setEditingWorkTitle] = useState(false);
+  const [workTitleDraft, setWorkTitleDraft] = useState('');
+  const { mutate: updateWorkTitle } = useUpdateWork();
+
+  const saveWorkTitle = () => {
+    setEditingWorkTitle(false);
+    const trimmed = workTitleDraft.trim();
+    if (!trimmed || trimmed === work?.title) return;
+    updateWorkTitle({ workId: id, data: { title: trimmed, description: (work as any)?.description ?? null } }, {
+      onSuccess: () => queryClient.invalidateQueries({ queryKey: [id] }),
+    });
+  };
+
+  // Tasks search state
+  const [taskSearch, setTaskSearch] = useState('');
+
   // Task #13 — start a conversation linked to this work
   const handleStartDiscussion = async () => {
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -1257,6 +1284,22 @@ export default function WorkDetailScreen() {
             {tasksError && tasks.length > 0 && (
               <OfflineBanner message="Showing cached tasks — server unreachable" onRetry={refetchTasks} />
             )}
+            {/* Search tasks */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 6, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border, backgroundColor: colors.background, gap: 6 }}>
+              <Feather name="search" size={13} color={colors.mutedForeground} />
+              <TextInput
+                style={{ flex: 1, fontSize: 13, fontFamily: 'Inter_400Regular', color: colors.foreground }}
+                placeholder="Search tasks…"
+                placeholderTextColor={colors.mutedForeground}
+                value={taskSearch}
+                onChangeText={setTaskSearch}
+              />
+              {taskSearch.length > 0 && (
+                <Pressable onPress={() => setTaskSearch('')} hitSlop={8}>
+                  <Feather name="x" size={13} color={colors.mutedForeground} />
+                </Pressable>
+              )}
+            </View>
             {/* Add task input */}
             <View style={[styles.taskInputRow, { borderBottomColor: colors.border, backgroundColor: colors.background }]}>
               <TextInput
@@ -1305,7 +1348,7 @@ export default function WorkDetailScreen() {
               })}
             </View>
             <FlatList
-              data={tasks}
+              data={taskSearch.trim() ? tasks.filter((t: any) => (t.text ?? '').toLowerCase().includes(taskSearch.toLowerCase())) : tasks}
               keyExtractor={(t) => t.id ?? ''}
               renderItem={({ item }) => (
                 <TaskRow
@@ -1321,7 +1364,9 @@ export default function WorkDetailScreen() {
               ListEmptyComponent={
                 <View style={styles.centered}>
                   <Feather name="check-square" size={36} color={colors.mutedForeground} />
-                  <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>No tasks yet — add one above</Text>
+                  <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
+                    {taskSearch.trim() ? `No tasks matching "${taskSearch}"` : 'No tasks yet — add one above'}
+                  </Text>
                 </View>
               }
             />
@@ -1521,9 +1566,23 @@ export default function WorkDetailScreen() {
     <View style={[styles.screen, { backgroundColor: colors.background, paddingTop: topPad }]}>
       {/* Work title + type badge */}
       <View style={[styles.workHeader, { paddingHorizontal: 16, paddingBottom: 10 }]}>
-        <Text style={[styles.workTitle, { color: colors.foreground }]} numberOfLines={2}>
-          {work?.title ?? ''}
-        </Text>
+        {editingWorkTitle ? (
+          <TextInput
+            autoFocus
+            style={[styles.workTitle, { color: colors.foreground, borderBottomWidth: 2, borderBottomColor: colors.primary, marginBottom: 6 }]}
+            value={workTitleDraft}
+            onChangeText={setWorkTitleDraft}
+            onBlur={saveWorkTitle}
+            onSubmitEditing={saveWorkTitle}
+            returnKeyType="done"
+          />
+        ) : (
+          <Pressable onLongPress={() => { setWorkTitleDraft(work?.title ?? ''); setEditingWorkTitle(true); }} delayLongPress={500}>
+            <Text style={[styles.workTitle, { color: colors.foreground }]} numberOfLines={2}>
+              {work?.title ?? ''}
+            </Text>
+          </Pressable>
+        )}
         <View style={[styles.typeBadge, { backgroundColor: colors.muted }]}>
           <Text style={[styles.typeBadgeText, { color: colors.mutedForeground }]}>
             {work?.work_type ?? 'research'}
@@ -1531,7 +1590,15 @@ export default function WorkDetailScreen() {
         </View>
       </View>
 
-      <TabBar active={activeTab} onSelect={setActiveTab} colors={colors} />
+      <TabBar
+        active={activeTab}
+        onSelect={setActiveTab}
+        colors={colors}
+        badges={{
+          tasks: (tasksData?.tasks ?? []).filter((t: any) => t.status !== 'completed').length || undefined,
+          conversations: (convsData?.conversations ?? []).length || undefined,
+        }}
+      />
 
       <View style={{ flex: 1 }}>{renderTabContent()}</View>
 
