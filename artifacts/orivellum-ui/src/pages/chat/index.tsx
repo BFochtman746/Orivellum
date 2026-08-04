@@ -116,6 +116,17 @@ const INTENT_LABELS: Record<string, { icon: string; label: string }> = {
   image_gen:  { icon: "🎨", label: "Image gen" },
 };
 
+// ─── Activity types ────────────────────────────────────────────────────────────
+
+interface ActivityStep {
+  id: string;
+  label: string;
+  icon: "search" | "read" | "think" | "write";
+  startMs: number;
+  endMs?: number;
+  done: boolean;
+}
+
 // ─── Models hook (generated) ──────────────────────────────────────────────────
 
 function useModels() {
@@ -252,52 +263,207 @@ function SourcesFooter({ sources }: { sources: KnowledgeSource[] }) {
     return null;
   };
 
-  // Distinguish "Sources" label when there are web results vs. pure knowledge
   const hasWeb = unique.some((s) => s.isWeb);
 
   return (
-    <div className="mt-1.5">
+    <>
+      {/* Chip button — meets 44pt touch target via .chat-icon-btn on coarse-pointer */}
       <button
-        onClick={() => setOpen(v => !v)}
-        className="flex items-center gap-1.5 text-[10px] font-mono text-muted-foreground/50 hover:text-muted-foreground/80 transition-colors"
+        onClick={() => setOpen(true)}
+        className="chat-icon-btn mt-1.5 flex items-center gap-1.5 text-[11px] font-mono text-muted-foreground/50 hover:text-muted-foreground/80 transition-colors"
       >
-        {hasWeb ? <Globe className="w-2.5 h-2.5" /> : <BookOpen className="w-2.5 h-2.5" />}
+        {hasWeb ? <Globe className="w-3 h-3" /> : <BookOpen className="w-3 h-3" />}
         <span>Sources ({unique.length})</span>
-        <ChevronDown className={`w-2.5 h-2.5 transition-transform duration-200 ${open ? "rotate-180" : ""}`} />
+        <ChevronRight className="w-3 h-3 opacity-60" />
       </button>
-      {open && (
-        <div className="mt-1.5 flex flex-col gap-1.5 pl-1 border-l border-border/30">
-          {groups.map((g, gi) => (
-            <div key={gi} className="flex flex-col gap-0.5">
-              <span className="text-[9px] font-mono uppercase tracking-wider text-muted-foreground/40 pl-1.5">
-                {g.title}
-              </span>
-              {g.items.map((s, i) => {
-                const target = link(s);
-                const Icon = s.isWeb ? Globe : FileText;
-                return target ? (
-                  <a
-                    key={i}
-                    href={target.href}
-                    target={target.external ? "_blank" : undefined}
-                    rel={target.external ? "noopener noreferrer" : undefined}
-                    className="flex items-center gap-1.5 text-[10px] font-mono text-primary/60 hover:text-primary/90 transition-colors truncate max-w-xs pl-1.5"
-                  >
-                    <Icon className="w-2.5 h-2.5 shrink-0" />
-                    <span className="truncate">{s.title}</span>
-                  </a>
-                ) : (
-                  <span
-                    key={i}
-                    className="flex items-center gap-1.5 text-[10px] font-mono text-muted-foreground/60 truncate max-w-xs pl-1.5"
-                  >
-                    <Icon className="w-2.5 h-2.5 shrink-0" />
-                    <span className="truncate">{s.title}</span>
+
+      {/* Bottom sheet for source details */}
+      <Sheet open={open} onOpenChange={setOpen}>
+        <SheetContent side="bottom" className="px-0 max-h-[70vh] flex flex-col">
+          <SheetHeader className="px-6 pb-3 border-b border-border/40 shrink-0">
+            <SheetTitle className="text-sm font-serif flex items-center gap-2">
+              {hasWeb ? <Globe className="w-4 h-4 text-primary" /> : <BookOpen className="w-4 h-4 text-primary" />}
+              Sources ({unique.length})
+            </SheetTitle>
+          </SheetHeader>
+          <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3 space-y-4">
+            {groups.map((g, gi) => (
+              <div key={gi} className="space-y-0.5">
+                <p className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground/50 px-2 mb-1">
+                  {g.title}
+                </p>
+                {g.items.map((s, i) => {
+                  const target = link(s);
+                  const Icon = s.isWeb ? Globe : FileText;
+                  return target ? (
+                    <a
+                      key={i}
+                      href={target.href}
+                      target={target.external ? "_blank" : undefined}
+                      rel={target.external ? "noopener noreferrer" : undefined}
+                      onClick={!target.external ? () => setOpen(false) : undefined}
+                      className="flex items-center gap-2.5 px-2 py-2.5 rounded-lg hover:bg-muted/50 transition-colors min-h-[44px]"
+                    >
+                      <Icon className="w-4 h-4 text-primary/60 shrink-0" />
+                      <span className="text-sm flex-1 truncate">{s.title}</span>
+                      <ChevronRight className="w-3.5 h-3.5 text-muted-foreground/40 shrink-0" />
+                    </a>
+                  ) : (
+                    <div key={i} className="flex items-center gap-2.5 px-2 py-2.5 min-h-[44px]">
+                      <Icon className="w-4 h-4 text-muted-foreground/40 shrink-0" />
+                      <span className="text-sm text-muted-foreground truncate">{s.title}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+        </SheetContent>
+      </Sheet>
+    </>
+  );
+}
+
+// ─── Activity strip ────────────────────────────────────────────────────────────
+
+/** Compact status bar shown above the composer while the AI is generating.
+ *  Tapping the chevron opens a detail sheet listing each inferred step. */
+function ActivityStrip({
+  steps, fading, onExpand,
+}: {
+  steps: ActivityStep[];
+  fading: boolean;
+  onExpand: () => void;
+}) {
+  // Re-render every second to keep elapsed counters live
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setTick(t => t + 1), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  const active = steps.find(s => !s.done);
+  const label = active?.label ?? steps.at(-1)?.label ?? "Working…";
+  const elapsedS = active ? Math.floor((Date.now() - active.startMs) / 1000) : 0;
+
+  return (
+    <div
+      className={`px-4 shrink-0 border-t border-primary/10 bg-primary/5
+        flex items-center gap-3 ${fading ? "activity-strip-fading" : ""}`}
+      style={{ minHeight: 44 }}
+    >
+      <div className="flex items-center gap-2 flex-1 min-w-0">
+        <span className="w-2 h-2 rounded-full bg-primary/70 animate-pulse shrink-0" />
+        <span className="text-xs font-mono text-primary/80 truncate">{label}</span>
+        {elapsedS > 0 && (
+          <span className="text-[10px] font-mono text-muted-foreground/50 shrink-0">{elapsedS}s</span>
+        )}
+      </div>
+      <button
+        onClick={onExpand}
+        title="Show activity detail"
+        className="chat-icon-btn rounded text-muted-foreground/60 hover:text-muted-foreground transition-colors shrink-0"
+      >
+        <ChevronDown className="w-4 h-4" />
+      </button>
+    </div>
+  );
+}
+
+// ─── Activity sheet ────────────────────────────────────────────────────────────
+
+const ACTIVITY_STEP_ICONS: Record<ActivityStep["icon"], React.ReactNode> = {
+  search: <Search className="w-3.5 h-3.5" />,
+  read:   <FileText className="w-3.5 h-3.5" />,
+  think:  <Brain className="w-3.5 h-3.5" />,
+  write:  <Bot className="w-3.5 h-3.5" />,
+};
+
+function ActivitySheet({
+  open, onOpenChange, steps,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  steps: ActivityStep[];
+}) {
+  // Re-render every second while sheet is open so elapsed times update
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (!open) return;
+    const id = setInterval(() => setTick(t => t + 1), 1000);
+    return () => clearInterval(id);
+  }, [open]);
+
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent side="bottom" className="px-0">
+        <SheetHeader className="px-6 pb-3 border-b border-border/40">
+          <SheetTitle className="text-sm font-serif">Activity</SheetTitle>
+        </SheetHeader>
+        <div className="px-6 py-4 space-y-3">
+          {steps.length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center py-4">No activity recorded</p>
+          ) : (
+            steps.map(step => {
+              const elapsed = step.done && step.endMs
+                ? Math.floor((step.endMs - step.startMs) / 1000)
+                : Math.floor((Date.now() - step.startMs) / 1000);
+              return (
+                <div key={step.id} className="flex items-center gap-3 min-h-[44px]">
+                  <div className={`w-7 h-7 rounded-md flex items-center justify-center shrink-0 ${
+                    step.done
+                      ? "bg-primary/10 text-primary"
+                      : "bg-muted/60 text-muted-foreground"
+                  }`}>
+                    {step.done
+                      ? <Check className="w-3.5 h-3.5" />
+                      : <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    }
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm">{step.label}</p>
+                    <p className="text-[10px] font-mono text-muted-foreground/60">
+                      {ACTIVITY_STEP_ICONS[step.icon]}
+                    </p>
+                  </div>
+                  <span className="text-[11px] font-mono text-muted-foreground/50 shrink-0">
+                    {elapsed > 0 ? `${elapsed}s` : "—"}
                   </span>
-                );
-              })}
-            </div>
-          ))}
+                </div>
+              );
+            })
+          )}
+        </div>
+      </SheetContent>
+    </Sheet>
+  );
+}
+
+// ─── Read-more wrapper (progressive disclosure) ────────────────────────────────
+
+/** Collapses long AI responses behind a "Show full response" toggle.
+ *  Uses a CSS mask fade on the truncated version for a smooth visual cut-off.
+ *  Always renders the full markdown so code blocks, tables, etc. are preserved
+ *  in the DOM — only the viewport height is restricted. */
+function ReadMore({ text, streaming }: { text: string; streaming?: boolean }) {
+  const THRESHOLD = 1200; // chars; short messages show in full
+  const [expanded, setExpanded] = useState(false);
+  const isLong = text.length > THRESHOLD && !streaming;
+
+  return (
+    <div>
+      <div className={isLong && !expanded ? "chat-readmore-collapsed" : undefined}>
+        <MarkdownContent text={text} />
+      </div>
+      {isLong && !expanded && (
+        <div className="mt-2 pt-1">
+          <button
+            onClick={() => setExpanded(true)}
+            className="chat-icon-btn flex items-center gap-1 text-xs font-mono text-primary/70 hover:text-primary transition-colors"
+          >
+            <ChevronDown className="w-3.5 h-3.5" />
+            Show full response
+          </button>
         </div>
       )}
     </div>
@@ -768,6 +934,16 @@ export default function Chat() {
   const [scopeAll,   setScopeAll]   = useState(false); // false = "This work", true = "All works"
   const [dragOver,   setDragOver]   = useState(false);
   const [importing,  setImporting]  = useState(false);
+
+  // ── Activity panel state ─────────────────────────────────────────────────
+  const [activitySteps,      setActivitySteps]      = useState<ActivityStep[]>([]);
+  const [activitySheetOpen,  setActivitySheetOpen]  = useState(false);
+  const [activityFading,     setActivityFading]     = useState(false);
+  // Tracks which generation the current activity belongs to.
+  // The fade-out timeout captures this value; if a new send starts before the
+  // timer fires, the IDs won't match and the timeout is a no-op.
+  const activityGenRef      = useRef(0);
+  const activityFadeTimer   = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [newConvModel, setNewConvModel] = useState<string>(() => {
     try { return localStorage.getItem("orivellum:lastModel") ?? ""; } catch { return ""; }
   });
@@ -958,8 +1134,26 @@ export default function Chat() {
       lastSentRef.current = text;
       // Capture convId now — activeId may change before the stream finishes
       const convId = activeId;
+      // Capture work context for activity label (closed over at call time)
+      const workIdForActivity = activeConv?.conversation?.work_id ?? undefined;
       setSending(true);
       sendingRef.current = true;
+
+      // ── Initialise activity steps (cancel any prior fade timer first) ────
+      if (activityFadeTimer.current !== null) {
+        clearTimeout(activityFadeTimer.current);
+        activityFadeTimer.current = null;
+      }
+      activityGenRef.current += 1;
+      const thisGen = activityGenRef.current;
+      setActivityFading(false);
+      setActivitySteps([{
+        id: "s1",
+        label: workIdForActivity ? "Searching project files" : "Thinking…",
+        icon: workIdForActivity ? "search" : "think",
+        startMs: Date.now(),
+        done: false,
+      }]);
 
       const controller = new AbortController();
       abortRef.current = controller;
@@ -1008,6 +1202,7 @@ export default function Chat() {
       // On the first token we upgrade the user message from "sending" → "acknowledged"
       // so the "Sending…" indicator disappears as soon as the server starts responding.
       let userAcknowledged = false;
+      let firstTextToken = true; // used to advance activity step to "Writing response"
       try {
         for await (const token of streamChat(convId, text, controller.signal, deepMode, scopeAll ? "all" : "work", capturedImage?.data, capturedImage?.type)) {
           if (!userAcknowledged) {
@@ -1015,6 +1210,17 @@ export default function Chat() {
             setLocalMessages((prev) => prev.map((m) =>
               m.id === userMsgId ? { ...m, status: "acknowledged" as const } : m
             ));
+            // Activity: step 1 done → advance to "Reading context / Preparing answer"
+            setActivitySteps(prev => [
+              { ...prev[0], done: true, endMs: Date.now() },
+              {
+                id: "s2",
+                label: workIdForActivity ? "Reading context" : "Preparing answer",
+                icon: workIdForActivity ? "read" : "think" as const,
+                startMs: Date.now(),
+                done: false,
+              },
+            ]);
           }
           if (token.startsWith(SOURCES_PREFIX) && token.endsWith(SOURCES_PREFIX) && token.length > SOURCES_PREFIX.length * 2) {
             try {
@@ -1046,6 +1252,14 @@ export default function Chat() {
             thinkingAccRef.current += token.slice(THINKING_PREFIX.length);
           } else {
             accumulatorRef.current += token;
+            // Activity: first real text token → advance to "Writing response"
+            if (firstTextToken) {
+              firstTextToken = false;
+              setActivitySteps(prev => [
+                ...prev.slice(0, -1).map(s => s.done ? s : { ...s, done: true, endMs: Date.now() }),
+                { id: "s3", label: "Writing response", icon: "write" as const, startMs: Date.now(), done: false },
+              ]);
+            }
           }
         }
         const finalText = accumulatorRef.current;
@@ -1101,6 +1315,18 @@ export default function Chat() {
         sendingRef.current = false;
         abortRef.current = null;
         setSending(false);
+        // ── Activity: mark all steps done then fade out the strip ──────────
+        // Guard with thisGen so a stale timeout from a prior request can never
+        // clear activity state that belongs to a newer in-flight request.
+        setActivitySteps(prev => prev.map(s => ({ ...s, done: true, endMs: s.endMs ?? Date.now() })));
+        setActivityFading(true);
+        activityFadeTimer.current = setTimeout(() => {
+          if (activityGenRef.current === thisGen) {
+            setActivityFading(false);
+            setActivitySteps([]);
+          }
+          activityFadeTimer.current = null;
+        }, 600);
         // Invalidate using the captured convId, not the potentially-changed activeId
         queryClient.invalidateQueries({ queryKey: getGetConversationQueryKey(convId) });
         queryClient.invalidateQueries({ queryKey: getListConversationsQueryKey() });
@@ -1535,7 +1761,7 @@ export default function Chat() {
                             </button>
                           </div>
                         )}
-                        <div className={`px-4 py-3 rounded-lg text-sm break-words
+                        <div className={`px-4 py-3 rounded-lg text-base break-words chat-msg-bubble
                           ${msg.status === "failed" && msg.role === "assistant"
                             ? "bg-destructive/5 border border-destructive/30 text-destructive"
                             : msg.isClarification
@@ -1552,7 +1778,7 @@ export default function Chat() {
                                     streaming={!!msg.thinkingStreaming}
                                   />
                                 )}
-                                <MarkdownContent text={msg.text} />
+                                <ReadMore text={msg.text} streaming={!!msg.streaming} />
                                 {msg.streaming && <span className="inline-block w-0.5 h-3.5 bg-current ml-0.5 animate-pulse align-text-bottom" />}
                                 {msg.incomplete && (() => {
                                   return (
@@ -1617,7 +1843,7 @@ export default function Chat() {
                               onClick={() => {
                                 copyToClipboard(msg.text ?? "").then(() => toast.success("Copied"));
                               }}
-                              className="text-muted-foreground/30 hover:text-muted-foreground/70 transition-colors"
+                              className="chat-icon-btn text-muted-foreground/30 hover:text-muted-foreground/70 transition-colors"
                               title="Copy response"
                             >
                               <Copy className="w-3 h-3" />
@@ -1641,6 +1867,15 @@ export default function Chat() {
                 <div ref={messagesEndRef} />
               </div>
             </div>
+
+            {/* ── Activity strip — shown while AI is generating ─────────────── */}
+            {(sending || activityFading) && activitySteps.length > 0 && (
+              <ActivityStrip
+                steps={activitySteps}
+                fading={activityFading}
+                onExpand={() => setActivitySheetOpen(true)}
+              />
+            )}
 
             {/* Input — bottom padding accounts for the home indicator safe area so the
                 composer never sits below the swipe zone. Task #288 will add full
@@ -1678,7 +1913,7 @@ export default function Chat() {
                       <button
                         type="button"
                         onClick={() => setPendingImage(null)}
-                        className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-destructive text-destructive-foreground flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                        className="touch-target-sm absolute -top-1 -right-1 w-4 h-4 rounded-full bg-destructive text-destructive-foreground flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
                       >
                         <XIcon className="w-2.5 h-2.5" />
                       </button>
@@ -1686,56 +1921,69 @@ export default function Chat() {
                     <span className="text-xs text-muted-foreground font-mono">Image attached — ask anything about it</span>
                   </div>
                 )}
-                <Textarea
-                  value={draft}
-                  onChange={(e) => setDraft(e.target.value)}
-                  placeholder={dragOver ? "Drop files to import…" : importing ? "Importing…" : aiOnline ? "Ask anything… or drop a file (Enter to send, Shift+Enter for newline)" : "AI offline — messages saved locally"}
-                  className="pr-32 resize-none py-3 text-sm"
-                  rows={2}
-                  disabled={sending || importing}
-                  onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(e); } }}
-                  onPaste={(e) => {
-                    const files = Array.from(e.clipboardData.files).filter(f => f.type.startsWith("image/"));
-                    if (files.length > 0) { e.preventDefault(); handleImageSelect(files[0]); }
-                  }}
-                />
-                {/* Image attach button */}
-                <button
-                  type="button"
-                  onClick={() => imgInputRef.current?.click()}
-                  title="Attach an image"
-                  disabled={sending || importing}
-                  className={`absolute right-20 top-2 h-8 w-8 rounded flex items-center justify-center transition-colors
-                    ${pendingImage ? "text-primary bg-primary/10 border border-primary/30" : "text-muted-foreground/50 hover:text-muted-foreground"}`}
-                >
-                  <ImageIcon className="w-4 h-4" />
-                </button>
-                {/* Deep/Fast toggle */}
-                <button
-                  type="button"
-                  onClick={() => setDeepMode(v => !v)}
-                  title={deepMode ? "Deep mode — 3-pass council (click for Fast)" : "Fast mode — single call (click for Deep)"}
-                  className={`absolute right-11 top-2 h-8 px-2 rounded flex items-center gap-1 text-xs font-mono transition-colors
-                    ${deepMode ? "bg-primary/15 text-primary border border-primary/30" : "text-muted-foreground/50 hover:text-muted-foreground"}`}
-                >
-                  {deepMode ? <Brain className="w-3.5 h-3.5" /> : <Zap className="w-3.5 h-3.5" />}
-                  <span className="hidden sm:inline">{deepMode ? "Deep" : "Fast"}</span>
-                </button>
-                {sending ? (
-                  <Button
+                {/* ── Textarea row ────────────────────────────────────────────
+                    Wrapped in its own relative container so the action-button
+                    flex box anchors to THIS row only, not to the whole form
+                    (which grows when the pending-image preview strip is shown). */}
+                <div className="relative">
+                  <Textarea
+                    value={draft}
+                    onChange={(e) => setDraft(e.target.value)}
+                    placeholder={dragOver ? "Drop files to import…" : importing ? "Importing…" : aiOnline ? "Ask anything… or drop a file (Enter to send, Shift+Enter for newline)" : "AI offline — messages saved locally"}
+                    className="pr-40 resize-none py-3 text-base"
+                    rows={2}
+                    disabled={sending || importing}
+                    onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(e); } }}
+                    onPaste={(e) => {
+                      const files = Array.from(e.clipboardData.files).filter(f => f.type.startsWith("image/"));
+                      if (files.length > 0) { e.preventDefault(); handleImageSelect(files[0]); }
+                    }}
+                  />
+                {/* ── Composer action buttons ─────────────────────────────────
+                    Flex container inside the textarea row so top-1/2 centers
+                    within the textarea only, and min-44px expansion on mobile
+                    is absorbed by the flex gap rather than causing overlap.   */}
+                <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-0.5">
+                  {/* Image attach */}
+                  <button
                     type="button"
-                    size="icon"
-                    onClick={() => abortRef.current?.abort()}
-                    className="absolute right-2 top-2 h-8 w-8 bg-destructive hover:bg-destructive/90 text-destructive-foreground"
-                    title="Stop generating"
+                    onClick={() => imgInputRef.current?.click()}
+                    title="Attach an image"
+                    disabled={sending || importing}
+                    className={`chat-icon-btn h-8 w-8 rounded flex items-center justify-center transition-colors
+                      ${pendingImage ? "text-primary bg-primary/10 border border-primary/30" : "text-muted-foreground/50 hover:text-muted-foreground"}`}
                   >
-                    <Square className="w-3.5 h-3.5 fill-current" />
-                  </Button>
-                ) : (
-                  <Button type="submit" size="icon" disabled={!draft.trim() && !pendingImage} className="absolute right-2 top-2 h-8 w-8">
-                    <Send className="w-4 h-4" />
-                  </Button>
-                )}
+                    <ImageIcon className="w-4 h-4" />
+                  </button>
+                  {/* Deep/Fast toggle */}
+                  <button
+                    type="button"
+                    onClick={() => setDeepMode(v => !v)}
+                    title={deepMode ? "Deep mode — 3-pass council (click for Fast)" : "Fast mode — single call (click for Deep)"}
+                    className={`chat-icon-btn h-8 px-2 rounded flex items-center gap-1 text-xs font-mono transition-colors
+                      ${deepMode ? "bg-primary/15 text-primary border border-primary/30" : "text-muted-foreground/50 hover:text-muted-foreground"}`}
+                  >
+                    {deepMode ? <Brain className="w-3.5 h-3.5" /> : <Zap className="w-3.5 h-3.5" />}
+                    <span className="hidden sm:inline">{deepMode ? "Deep" : "Fast"}</span>
+                  </button>
+                  {/* Send / Stop */}
+                  {sending ? (
+                    <Button
+                      type="button"
+                      size="icon"
+                      onClick={() => abortRef.current?.abort()}
+                      className="chat-icon-btn h-8 w-8 bg-destructive hover:bg-destructive/90 text-destructive-foreground"
+                      title="Stop generating"
+                    >
+                      <Square className="w-3.5 h-3.5 fill-current" />
+                    </Button>
+                  ) : (
+                    <Button type="submit" size="icon" disabled={!draft.trim() && !pendingImage} className="chat-icon-btn h-8 w-8">
+                      <Send className="w-4 h-4" />
+                    </Button>
+                  )}
+                </div>
+                </div>{/* end textarea-row relative wrapper */}
               </form>
             </div>
           </>
@@ -1779,6 +2027,13 @@ export default function Chat() {
           </div>
         )}
       </Card>
+
+      {/* Activity detail sheet — accessible any time during/after generation */}
+      <ActivitySheet
+        open={activitySheetOpen}
+        onOpenChange={setActivitySheetOpen}
+        steps={activitySteps}
+      />
     </div>
   );
 }

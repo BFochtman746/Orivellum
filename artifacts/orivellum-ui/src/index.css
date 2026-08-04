@@ -116,7 +116,7 @@
   --input: 40 15% 85%;
   --ring: 150 40% 25%;
 
-  --app-font-sans: 'Bricolage Grotesque', sans-serif;
+  --app-font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
   --app-font-serif: 'Fraunces', serif;
   --app-font-mono: 'Space Mono', monospace;
   
@@ -189,12 +189,19 @@ html {
   height: 100%;
   overflow: hidden;
   overscroll-behavior: none; /* prevent iOS rubber-band on the root */
+  /* Prevent Safari from resizing text on orientation change */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 body {
   height: 100%;
   overflow: hidden;
   overscroll-behavior: none;
+  /* Base reading size close to iOS San Francisco default; line-height matches
+     HIG recommendation of 1.4–1.5 for body copy.                          */
+  font-size: 17px;
+  line-height: 1.45;
 }
 
 #root {
@@ -212,6 +219,93 @@ body {
   h1, h2, h3, h4, h5, h6 {
     @apply font-serif tracking-tight;
   }
+}
+
+/* ── iOS input font-size guard ────────────────────────────────────────────────
+   iOS Safari zooms the viewport when an input is focused if its computed
+   font-size is < 16px.  This rule enforces the minimum on all small screens
+   without touching the desktop size scale.                                    */
+@media (max-width: 1023px) {
+  input:not([type='hidden']):not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file']),
+  select,
+  textarea {
+    font-size: max(1rem, 16px) !important;
+  }
+}
+
+/* ── Chat message body ────────────────────────────────────────────────────────
+   Applies reading-optimised line-height and prettier line-breaks to the
+   message bubble.  17px is specified by the iOS HIG for body copy.           */
+.chat-msg-bubble {
+  font-size: 1rem; /* 1rem = 17px given body font-size above */
+  line-height: 1.45;
+  text-wrap: pretty;
+}
+
+/* ── Touch target expansion for icon-only buttons ─────────────────────────────
+   Two strategies, picked by context:
+
+   .chat-icon-btn  — used for inline / flex-row buttons (copy, send, attach, …).
+     Grows the element itself to 44×44 so the expanded area stays in-flow and
+     adjacent buttons in the same flex container don't overlap.
+
+   .touch-target-sm — used for small absolute-positioned badges (e.g. the image-
+     dismiss ×).  The element stays visually tiny; a centred ::after overlay
+     supplies the 44×44 touch zone without affecting layout.
+
+   Both are no-ops on desktop (pointer: fine).                                 */
+@media (pointer: coarse) {
+  .chat-icon-btn {
+    min-width: 44px;
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    touch-action: manipulation;
+  }
+
+  .touch-target-sm {
+    position: relative;
+    touch-action: manipulation;
+  }
+  .touch-target-sm::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    /* Expand to at least 44×44 centred over any size badge */
+    width: max(100%, 44px);
+    height: max(100%, 44px);
+  }
+}
+
+/* ── Activity strip fade-out ──────────────────────────────────────────────────
+   The strip fades+slides down when the AI finishes generating.
+   Skipped when prefers-reduced-motion is set.                                 */
+@keyframes activity-strip-out {
+  from { opacity: 1; transform: translateY(0); }
+  to   { opacity: 0; transform: translateY(4px); }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .activity-strip-fading {
+    animation: activity-strip-out 400ms ease-out forwards;
+    pointer-events: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .activity-strip-fading { display: none; }
+}
+
+/* ── Progressive disclosure — long AI messages ────────────────────────────────
+   .chat-readmore-collapsed limits the visible height and fades the bottom
+   edge so the "Show full response" toggle appears above a clean gradient.
+   The mask-image approach works regardless of the bubble background colour.  */
+.chat-readmore-collapsed {
+  max-height: 520px;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(to bottom, black 70%, transparent 100%);
+  mask-image: linear-gradient(to bottom, black 70%, transparent 100%);
 }
 
 /* ── Mobile page-enter slide animation ────────────────────────────────────────
