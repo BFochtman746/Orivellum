@@ -616,3 +616,85 @@ def patch_compass(work_id: str, body: CompassUpdate):
         next_step=body.next_step,
     )
     return {"work_id": work_id, "compass": read_compass(db, work_id)}
+
+
+# ─── Book Pipeline ──────────────────────────────────────────────────────────────
+
+class PipelineCreateRequest(BaseModel):
+    title: str | None = None
+
+
+@router.post("/works/{work_id}/pipeline")
+def create_pipeline(work_id: str, body: PipelineCreateRequest = Body(default=PipelineCreateRequest())):
+    """Create (or return existing) book pipeline for a Work, initialised at B0.
+
+    Idempotent — calling multiple times returns the same pipeline.
+    Orphan book_chapters already extracted for this Work are linked
+    to the new pipeline automatically.
+    """
+    db = get_db()
+    work = db.get_work(work_id)
+    if not work:
+        raise HTTPException(404, f"Work {work_id!r} not found")
+    title = (body.title or "").strip() or work.get("title") or "Book Pipeline"
+    pipeline = db.create_book_pipeline(work_id, title)
+    return {"pipeline": pipeline}
+
+
+@router.get("/works/{work_id}/pipeline")
+def get_pipeline(work_id: str):
+    """Return the current book pipeline state for a Work, or null if none exists."""
+    db = get_db()
+    if not db.get_work(work_id):
+        raise HTTPException(404, f"Work {work_id!r} not found")
+    pipeline = db.get_book_pipeline_for_work(work_id)
+    return {"pipeline": pipeline}
+
+
+@router.post("/works/{work_id}/pipeline/advance")
+def advance_pipeline(work_id: str):
+    """Advance the book pipeline one stage forward through the B0–B17 lifecycle.
+
+    Uses the M0.2 BOOK_SM state machine.  Returns 409 if open high/critical
+    findings block the transition, with a ``blockers`` list in the body.
+    Returns 422 if the pipeline is already at a terminal state.
+    """
+    db = get_db()
+    if not db.get_work(work_id):
+        raise HTTPException(404, f"Work {work_id!r} not found")
+
+    pipeline = db.get_book_pipeline_for_work(work_id)
+    if not pipeline:
+        raise HTTPException(404, "No pipeline for this Work — call POST /pipeline first")
+
+    from orivellum.capabilities.state_machine import (
+        BOOK_SM, apply_transition, InvalidTransitionError, BlockedTransitionError,
+    )
+
+    current = pipeline["status"]
+    allowed = BOOK_SM.allowed_from(current)
+    if not allowed:
+        raise HTTPException(422, f"Pipeline is at terminal state {current!r} — no further transitions")
+
+    # BOOK_SM is strictly sequential; exactly one next state
+    next_state = next(iter(allowed))
+
+    try:
+        apply_transition(
+            db,
+            BOOK_SM,
+            object_id=pipeline["id"],
+            object_type="book_pipeline",
+            table="book_pipelines",
+            state_col="status",
+            from_state=current,
+            to_state=next_state,
+            actor="user",
+            detail=f"Manual advance: {current}→{next_state}",
+        )
+    except InvalidTransitionError as exc:
+        raise HTTPException(422, str(exc))
+    except BlockedTransitionError as exc:
+        raise HTTPException(409, {"detail": str(exc), "blockers": exc.blockers})
+
+    return {"pipeline": db.get_book_pipeline_for_work(work_id)}

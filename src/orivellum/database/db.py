@@ -1858,6 +1858,80 @@ class OrivellumDB:
         return result
 
     # -------------------------------------------------------------------------
+    # Book pipelines
+    # -------------------------------------------------------------------------
+
+    def create_book_pipeline(self, work_id: str, title: str,
+                              config: dict | None = None) -> dict:
+        """Create a book pipeline for a Work at state B0.
+
+        Idempotent: if a non-deleted pipeline already exists for the Work,
+        the existing record is returned unchanged.  Orphan book_chapters
+        rows (pipeline_id IS NULL, work_id matches) are linked to the new
+        pipeline so they appear in the chapter count immediately.
+        """
+        import json as _json
+        existing = self.get_book_pipeline_for_work(work_id)
+        if existing:
+            return existing
+
+        oid = _uuid()
+        now = _now()
+        cfg = _json.dumps(config or {})
+
+        with self.governed_write(
+            operation="book_pipeline.created",
+            event_type="book_pipeline.created",
+            object_id=oid,
+            object_type="book_pipeline",
+            actor="user",
+            detail=f"Pipeline '{title}' initialised at B0",
+        ):
+            self._conn.execute(
+                """INSERT INTO objects(id,type,version,lifecycle,provenance,permissions,
+                   created_at,updated_at,created_by) VALUES(?,?,1,'active','{}','{}',?,?,'user')""",
+                (oid, "book_pipeline", now, now),
+            )
+            self._conn.execute(
+                """INSERT INTO book_pipelines(id,work_id,title,status,config,meta,
+                   created_at,updated_at) VALUES(?,?,?,'B0',?,'{}',?,?)""",
+                (oid, work_id, title, cfg, now, now),
+            )
+            # Link any already-extracted chapters that haven't been assigned yet
+            self._conn.execute(
+                "UPDATE book_chapters SET pipeline_id=? WHERE work_id=? AND pipeline_id IS NULL",
+                (oid, work_id),
+            )
+        return self.get_book_pipeline_for_work(work_id)  # type: ignore[return-value]
+
+    def get_book_pipeline_for_work(self, work_id: str) -> dict | None:
+        """Return the most-recent active book pipeline for a Work.
+
+        The returned dict includes aggregated chapter counts broken down by
+        status (extracted / drafted / approved) and a total.
+        """
+        with self._lock:
+            row = self._conn.execute(
+                """SELECT bp.id, bp.work_id, bp.title, bp.status, bp.config, bp.meta,
+                          bp.created_at, bp.updated_at,
+                          (SELECT COUNT(*) FROM book_chapters bc
+                           WHERE bc.pipeline_id=bp.id) as chapter_count,
+                          (SELECT COUNT(*) FROM book_chapters bc
+                           WHERE bc.pipeline_id=bp.id AND bc.status='extracted') as chapters_extracted,
+                          (SELECT COUNT(*) FROM book_chapters bc
+                           WHERE bc.pipeline_id=bp.id AND bc.status='drafted') as chapters_drafted,
+                          (SELECT COUNT(*) FROM book_chapters bc
+                           WHERE bc.pipeline_id=bp.id AND bc.status='approved') as chapters_approved
+                   FROM book_pipelines bp JOIN objects o ON o.id=bp.id
+                   WHERE bp.work_id=? AND o.lifecycle != 'deleted'
+                   ORDER BY bp.created_at DESC LIMIT 1""",
+                (work_id,),
+            ).fetchone()
+        if not row:
+            return None
+        return dict(row)
+
+    # -------------------------------------------------------------------------
     # Knowledge items
     # -------------------------------------------------------------------------
 

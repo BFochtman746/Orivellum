@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link } from "wouter";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/auth";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -16,10 +16,38 @@ import {
   CheckCircle2,
   CircleDashed,
   CircleAlert,
+  ChevronRight,
+  Play,
+  ShieldAlert,
 } from "lucide-react";
 import { toast } from "sonner";
 
 const BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
+
+// ─── Book stage metadata ──────────────────────────────────────────────────────
+
+const BOOK_STAGES: { state: string; label: string; desc: string }[] = [
+  { state: "B0",  label: "Intake",               desc: "Manuscripts and source material collected" },
+  { state: "B1",  label: "Outline",              desc: "Chapter structure and scope approved" },
+  { state: "B2",  label: "Research",             desc: "Supporting research and sources complete" },
+  { state: "B3",  label: "First Draft",          desc: "Full manuscript drafted" },
+  { state: "B4",  label: "Self-Review",          desc: "Author review and first round of revisions" },
+  { state: "B5",  label: "Peer Review",          desc: "External review and feedback received" },
+  { state: "B6",  label: "Revision",             desc: "Revisions complete, manuscript stable" },
+  { state: "B7",  label: "Copy Edit",            desc: "Line-by-line language and style edit" },
+  { state: "B8",  label: "Proof",                desc: "Typeset proof checked" },
+  { state: "B9",  label: "Layout",               desc: "Final layout and design complete" },
+  { state: "B10", label: "Final Check",          desc: "Last quality gate passed" },
+  { state: "B11", label: "Production Approval",  desc: "Approved for production" },
+  { state: "B12", label: "Published",            desc: "Released" },
+  { state: "B13", label: "Distributed",          desc: "Available through distribution channels" },
+  { state: "B14", label: "Errata Period",        desc: "Active errata window" },
+  { state: "B15", label: "Revision Open",        desc: "New revision in progress" },
+  { state: "B16", label: "Archived",             desc: "Superseded or archived" },
+];
+
+const STAGE_MAP = Object.fromEntries(BOOK_STAGES.map((s, i) => [s.state, { ...s, index: i }]));
+const TERMINAL_STATES = new Set(["B16"]);
 
 // ─── Types (endpoint is not in the generated client) ─────────────────────────
 
@@ -95,6 +123,159 @@ const SEV_CLS: Record<BookGap["severity"], string> = {
   low: "border-border/60 bg-muted/30 text-muted-foreground",
 };
 
+// ─── Pipeline panel ───────────────────────────────────────────────────────────
+
+interface Pipeline {
+  id: string; work_id: string; title: string; status: string;
+  chapter_count: number; chapters_extracted: number;
+  chapters_drafted: number; chapters_approved: number;
+  created_at: string; updated_at: string;
+}
+
+function PipelinePanel({ workId }: { workId: string }) {
+  const queryClient = useQueryClient();
+  const [blockerMsg, setBlockerMsg] = useState<string | null>(null);
+
+  const { data, isLoading } = useQuery({
+    queryKey: ["pipeline", workId],
+    queryFn: async () => {
+      const r = await apiFetch(`${BASE}/works/${workId}/pipeline`);
+      if (!r.ok) throw new Error();
+      return r.json() as Promise<{ pipeline: Pipeline | null }>;
+    },
+    staleTime: 30_000,
+  });
+
+  const createMutation = useMutation({
+    mutationFn: async () => {
+      const r = await apiFetch(`${BASE}/works/${workId}/pipeline`, { method: "POST",
+        headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
+      if (!r.ok) throw new Error("Could not initialise pipeline");
+      return r.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["pipeline", workId] });
+      toast.success("Pipeline initialised at B0 — Intake");
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const advanceMutation = useMutation({
+    mutationFn: async () => {
+      const r = await apiFetch(`${BASE}/works/${workId}/pipeline/advance`, { method: "POST" });
+      const json = await r.json().catch(() => ({}));
+      if (r.status === 409) {
+        const detail = (json as any).detail ?? "Transition blocked by open findings";
+        setBlockerMsg(detail);
+        throw new Error(detail);
+      }
+      if (!r.ok) throw new Error((json as any).detail ?? "Advance failed");
+      return json;
+    },
+    onSuccess: () => {
+      setBlockerMsg(null);
+      queryClient.invalidateQueries({ queryKey: ["pipeline", workId] });
+      queryClient.invalidateQueries({ queryKey: ["book-intelligence", workId] });
+      const updated = data?.pipeline;
+      if (updated) {
+        const next = STAGE_MAP[updated.status];
+        if (next) toast.success(`Advanced to ${next.label}`);
+      }
+    },
+    onError: (e: Error) => {
+      if (!blockerMsg) toast.error(e.message);
+    },
+  });
+
+  if (isLoading) return <Skeleton className="h-16 w-full" />;
+
+  const pipeline = data?.pipeline ?? null;
+
+  if (!pipeline) {
+    return (
+      <Card className="border-dashed border-primary/30">
+        <CardContent className="p-4 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <Play className="w-4 h-4 text-primary/60 shrink-0" />
+            <div>
+              <div className="text-xs font-mono uppercase tracking-widest text-muted-foreground">Production Pipeline</div>
+              <p className="text-sm text-muted-foreground mt-0.5">No pipeline started yet. Initialise to begin tracking this book through the B0–B16 lifecycle.</p>
+            </div>
+          </div>
+          <Button size="sm" variant="outline" className="shrink-0 gap-1.5"
+            onClick={() => createMutation.mutate()} disabled={createMutation.isPending}>
+            {createMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
+            Start Pipeline
+          </Button>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const current = STAGE_MAP[pipeline.status];
+  const nextIdx  = (current?.index ?? -1) + 1;
+  const next     = BOOK_STAGES[nextIdx] ?? null;
+  const isTerminal = TERMINAL_STATES.has(pipeline.status);
+  const progressPct = current ? Math.round(((current.index + 1) / BOOK_STAGES.length) * 100) : 0;
+
+  return (
+    <Card className="border-primary/20 bg-primary/[0.02]">
+      <CardContent className="p-4 space-y-3">
+        {/* Header row */}
+        <div className="flex items-start justify-between gap-3 flex-wrap">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="flex items-center justify-center w-8 h-8 rounded-full bg-primary/10 border border-primary/20 shrink-0">
+              <span className="text-[10px] font-mono font-bold text-primary">{pipeline.status}</span>
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <span className="font-medium text-sm">{current?.label ?? pipeline.status}</span>
+                <Badge variant="outline" className="text-[9px] font-mono h-4 px-1">
+                  {pipeline.chapter_count} ch
+                </Badge>
+              </div>
+              <p className="text-xs text-muted-foreground leading-snug">{current?.desc}</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            {!isTerminal && next && (
+              <Button size="sm" variant="default" className="gap-1.5 h-7 text-xs"
+                onClick={() => advanceMutation.mutate()} disabled={advanceMutation.isPending}>
+                {advanceMutation.isPending
+                  ? <Loader2 className="w-3 h-3 animate-spin" />
+                  : <ChevronRight className="w-3 h-3" />}
+                Advance to {next.label}
+              </Button>
+            )}
+            {isTerminal && (
+              <Badge className="bg-emerald-500/10 text-emerald-700 border-emerald-300">Complete</Badge>
+            )}
+          </div>
+        </div>
+
+        {/* Progress bar */}
+        <div className="h-1 bg-muted rounded-full overflow-hidden">
+          <div className="h-full bg-primary/50 rounded-full transition-all duration-700"
+               style={{ width: `${progressPct}%` }} />
+        </div>
+        <div className="flex justify-between text-[10px] font-mono text-muted-foreground">
+          <span>B0 Intake</span>
+          <span>{progressPct}% through lifecycle</span>
+          <span>B16 Archived</span>
+        </div>
+
+        {/* Blocker warning */}
+        {blockerMsg && (
+          <div className="flex items-start gap-2 rounded-lg px-3 py-2 bg-destructive/10 border border-destructive/30 text-destructive text-xs">
+            <ShieldAlert className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+            <span>{blockerMsg}</span>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 // ─── Book tab ─────────────────────────────────────────────────────────────────
 
 export function BookTab({ workId }: { workId: string }) {
@@ -151,6 +332,9 @@ export function BookTab({ workId }: { workId: string }) {
 
   return (
     <div className="space-y-8">
+      {/* Production pipeline lifecycle tracker */}
+      <PipelinePanel workId={workId} />
+
       {/* Next action */}
       <Card className="border-primary/30 bg-primary/[0.03]">
         <CardContent className="p-4 flex items-start gap-3">
