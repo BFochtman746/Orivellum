@@ -226,10 +226,12 @@ function GapsTab({
   workId,
   colors,
   onResearch,
+  onCreateTask,
 }: {
   workId: string;
   colors: any;
   onResearch: (gapTitle: string) => void;
+  onCreateTask: (taskText: string) => void;
 }) {
   const domain = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
   const [data, setData] = useState<any>(null);
@@ -344,25 +346,34 @@ function GapsTab({
                 </Text>
               ) : null}
               {isHigh && (
-                <Pressable
-                  onPress={() => onResearch(gapTitle)}
-                  style={({ pressed }) => ({
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    gap: 4,
-                    marginTop: 4,
-                    paddingHorizontal: 10,
-                    paddingVertical: 5,
-                    borderRadius: 6,
-                    backgroundColor: colors.primary,
-                    opacity: pressed ? 0.7 : 1,
-                  })}
-                >
-                  <Feather name="search" size={12} color={colors.primaryForeground} />
-                  <Text style={{ fontSize: 12, color: colors.primaryForeground, fontFamily: 'Inter_600SemiBold' }}>
-                    Research →
-                  </Text>
-                </Pressable>
+                <View style={{ flexDirection: 'row', gap: 8, marginTop: 4 }}>
+                  <Pressable
+                    onPress={() => onCreateTask(`Research gap: ${gapTitle}`)}
+                    style={({ pressed }) => ({
+                      flexDirection: 'row', alignItems: 'center', gap: 4,
+                      paddingHorizontal: 10, paddingVertical: 5, borderRadius: 6,
+                      backgroundColor: colors.muted, opacity: pressed ? 0.7 : 1,
+                    })}
+                  >
+                    <Feather name="plus" size={12} color={colors.primary} />
+                    <Text style={{ fontSize: 12, color: colors.primary, fontFamily: 'Inter_600SemiBold' }}>
+                      Add Task
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => onResearch(gapTitle)}
+                    style={({ pressed }) => ({
+                      flexDirection: 'row', alignItems: 'center', gap: 4,
+                      paddingHorizontal: 10, paddingVertical: 5, borderRadius: 6,
+                      backgroundColor: colors.primary, opacity: pressed ? 0.7 : 1,
+                    })}
+                  >
+                    <Feather name="search" size={12} color={colors.primaryForeground} />
+                    <Text style={{ fontSize: 12, color: colors.primaryForeground, fontFamily: 'Inter_600SemiBold' }}>
+                      Research →
+                    </Text>
+                  </Pressable>
+                </View>
               )}
             </View>
           );
@@ -941,6 +952,16 @@ export default function WorkDetailScreen() {
     }
   };
 
+  // Add Task from Gap: create a Work task pre-filled with the gap title.
+  const handleCreateTaskFromGap = async (taskText: string) => {
+    try {
+      await createTask({ workId: id, data: { text: taskText } });
+      queryClient.invalidateQueries({ queryKey: getGetWorkTasksQueryKey(id) });
+    } catch {
+      Alert.alert('Error', 'Could not create task');
+    }
+  };
+
   // Research → : open a work-linked conversation pre-seeded with the gap title.
   const handleResearchGap = async (gapTitle: string) => {
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -1122,7 +1143,7 @@ export default function WorkDetailScreen() {
           </>
         );
       case 'gaps':
-        return <GapsTab workId={id} colors={colors} onResearch={handleResearchGap} />;
+        return <GapsTab workId={id} colors={colors} onResearch={handleResearchGap} onCreateTask={handleCreateTaskFromGap} />;
       case 'learn':
         return <MobileLearnTab workId={id} colors={colors} />;
       case 'book':

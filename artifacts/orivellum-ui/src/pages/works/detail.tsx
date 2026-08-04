@@ -1705,6 +1705,8 @@ const GAP_DOT: Record<string, string> = {
 function GapsTab({ workId }: { workId: string }) {
   const [, navigate] = useLocation();
   const [actionPending, setActionPending] = useState<string | null>(null);
+  const queryClient = useQueryClient();
+  const createTask = useCreateWorkTask();
 
   const [forceRefresh, setForceRefresh] = useState(false);
   const { data, isLoading, error, refetch, isFetching } = useQuery<GapReport>({
@@ -1718,6 +1720,21 @@ function GapsTab({ workId }: { workId: string }) {
       }),
     staleTime: forceRefresh ? 0 : 120_000,
   });
+
+  /** Turn a gap into a Work task so it shows up in the Tasks tab. */
+  const createTaskFromGap = (gapTitle: string) => {
+    createTask.mutate(
+      { workId, data: { text: `Research gap: ${gapTitle}` } },
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: getGetWorkTasksQueryKey(workId) });
+          queryClient.invalidateQueries({ queryKey: getGetWorkStatsQueryKey(workId) });
+          toast.success("Task added");
+        },
+        onError: () => toast.error("Could not add task"),
+      }
+    );
+  };
 
   /** Create a work-linked conversation pre-set to research a chapter topic. */
   const createResearchChat = async (chapterTitle: string) => {
@@ -1835,7 +1852,15 @@ function GapsTab({ workId }: { workId: string }) {
                       <p className="text-[12px] leading-relaxed opacity-80">{g.description}</p>
                       {/* One-click action */}
                       {(g.kind === "uncovered_chapter" || g.kind === "weak_coverage") && (
-                        <div className="flex justify-end mt-2 pt-2 border-t border-current/10">
+                        <div className="flex items-center justify-end gap-3 mt-2 pt-2 border-t border-current/10">
+                          <button
+                            disabled={createTask.isPending}
+                            onClick={() => createTaskFromGap(chapTitle)}
+                            className="flex items-center gap-1.5 text-[11px] font-mono opacity-70 hover:opacity-100 disabled:opacity-30 transition-opacity"
+                          >
+                            <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12h14"/></svg>
+                            Add task
+                          </button>
                           <button
                             disabled={!!actionPending}
                             onClick={() => createResearchChat(chapTitle)}

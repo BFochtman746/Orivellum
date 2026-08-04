@@ -47,7 +47,7 @@ const KIND_ICON: Record<string, string> = {
   image: 'image',
 };
 
-function DocItem({ doc, colors, onPress }: { doc: any; colors: any; onPress: () => void }) {
+function DocItem({ doc, colors, onPress, onReprocess }: { doc: any; colors: any; onPress: () => void; onReprocess?: () => void }) {
   const readiness: string = doc.readiness ?? 'imported';
   const statusColor = READINESS_COLOR[readiness] ?? colors.mutedForeground;
   const statusLabel = READINESS_LABEL[readiness] ?? readiness;
@@ -94,6 +94,21 @@ function DocItem({ doc, colors, onPress }: { doc: any; colors: any; onPress: () 
           ) : null}
         </View>
       </View>
+      {onReprocess && (doc.readiness === 'error' || doc.readiness === 'no_text') && (
+        <Pressable
+          onPress={(e) => { e.stopPropagation?.(); onReprocess(); }}
+          hitSlop={8}
+          style={({ pressed }) => ({
+            padding: 6,
+            borderRadius: 6,
+            backgroundColor: colors.muted,
+            opacity: pressed ? 0.6 : 1,
+            marginLeft: 4,
+          })}
+        >
+          <Feather name="refresh-cw" size={14} color={colors.primary} />
+        </Pressable>
+      )}
       <Feather name="chevron-right" size={16} color={colors.mutedForeground} />
     </Pressable>
   );
@@ -382,6 +397,19 @@ export default function LibraryScreen() {
               doc={item}
               colors={colors}
               onPress={() => router.push(`/library/${item.id}`)}
+              onReprocess={
+                item.readiness === 'error' || item.readiness === 'no_text'
+                  ? async () => {
+                      try {
+                        const domain = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
+                        await mobileFetch(`https://${domain}/api/library/${item.id}/reprocess`, { method: 'POST' });
+                        refetchList();
+                      } catch {
+                        Alert.alert('Error', 'Could not queue reprocess');
+                      }
+                    }
+                  : undefined
+              }
             />
           )}
           refreshControl={
