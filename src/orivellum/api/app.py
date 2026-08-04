@@ -168,9 +168,16 @@ def create_app() -> FastAPI:
                 return JSONResponse({"detail": "Service unavailable"}, status_code=503)
 
         if not expected_key:
-            # Key not configured yet (startup window); let through so health
-            # checks still work.
-            return await call_next(request)
+            # No key is available even after startup completed — this should
+            # never happen in normal operation (lifespan generates one).
+            # Fail CLOSED: return 503 rather than opening the API to anyone.
+            # Health/auth exempt paths are already handled above.
+            import logging as _log
+            _log.getLogger(__name__).error(
+                "auth_middleware: no API key found after startup — request denied (503). "
+                "Set SESSION_SECRET or check database accessibility."
+            )
+            return JSONResponse({"detail": "Service not ready — no API key configured"}, status_code=503)
 
         token: str = ""
         auth_header = request.headers.get("authorization", "")

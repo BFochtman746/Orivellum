@@ -3,7 +3,7 @@ import { apiFetch } from "@/lib/auth";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
-import { Activity, Database, Cpu, CheckCircle2, XCircle, AlertCircle, Terminal, Sparkles, Moon, Brain, Trash2, ScrollText, User, Settings, Image as ImageIcon, Eye, Loader2 } from "lucide-react";
+import { Activity, Database, Cpu, CheckCircle2, XCircle, AlertCircle, AlertTriangle, Terminal, Sparkles, Moon, Brain, Trash2, ScrollText, User, Settings, Image as ImageIcon, Eye, Loader2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -432,9 +432,16 @@ function VisionModelCard() {
               ) : effectiveModel ? (
                 <p className="text-xs font-mono bg-muted/40 rounded px-2 py-1 truncate">{effectiveModel}</p>
               ) : (
-                <p className="text-xs text-muted-foreground/60 font-mono">
-                  Not set — falls back to workhorse model
-                </p>
+                <div className="flex items-start gap-2 rounded-lg px-3 py-2 bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-400">
+                  <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                  <div className="text-xs leading-snug">
+                    <span className="font-medium">No vision model configured.</span>{" "}
+                    Image attachments in chat and image file imports will use your workhorse model,
+                    which may not support images and will silently return no description.
+                    Click <span className="font-medium">Set Model</span> to configure a multimodal model
+                    (e.g. <code className="font-mono">llava</code>, <code className="font-mono">qwen2-vl</code>).
+                  </div>
+                </div>
               )
             )}
 
