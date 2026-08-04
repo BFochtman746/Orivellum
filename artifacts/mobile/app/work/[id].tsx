@@ -25,6 +25,7 @@ import {
   useListConversations,
   getListConversationsQueryKey,
   getGetWorkTasksQueryKey,
+  getGetWorkStatsQueryKey,
 } from '@workspace/api-client-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
@@ -179,11 +180,22 @@ function KnowledgeRow({ item, onReviewed }: { item: KnowledgeItem; onReviewed?: 
   );
 }
 
-function TaskRow({ task }: { task: Task }) {
+function TaskRow({ task, onDelete }: { task: Task; onDelete?: () => void }) {
   const colors = useColors();
   const done = task.status === 'done' || task.status === 'complete' || task.status === 'completed';
+  const handleLongPress = () => {
+    if (!onDelete) return;
+    Alert.alert('Delete Task', `Remove "${task.text}"?`, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Delete', style: 'destructive', onPress: onDelete },
+    ]);
+  };
   return (
-    <View style={[styles.listItem, { borderColor: colors.border }]}>
+    <Pressable
+      onLongPress={handleLongPress}
+      style={[styles.listItem, { borderColor: colors.border }]}
+      delayLongPress={400}
+    >
       <Feather
         name={done ? 'check-circle' : 'circle'}
         size={18}
@@ -202,10 +214,14 @@ function TaskRow({ task }: { task: Task }) {
           {task.text}
         </Text>
         <Text style={[styles.itemMeta, { color: colors.mutedForeground }]}>
-          {task.status} · priority {task.priority}
+          {task.status} · {
+            task.priority === 1 ? 'P1' :
+            task.priority === 2 ? 'P2' :
+            task.priority === 3 ? 'P3' : 'No priority'
+          }
         </Text>
       </View>
-    </View>
+    </Pressable>
   );
 }
 
@@ -953,6 +969,18 @@ export default function WorkDetailScreen() {
     }
   };
 
+  // Delete a task by id (called from TaskRow long-press).
+  const handleDeleteTask = async (taskId: string) => {
+    try {
+      await mobileFetch(`https://${domain}/api/works/${id}/tasks/${taskId}`, { method: 'DELETE' });
+      queryClient.invalidateQueries({ queryKey: getGetWorkTasksQueryKey(id) });
+      queryClient.invalidateQueries({ queryKey: getGetWorkStatsQueryKey(id) });
+      refetchTasks();
+    } catch {
+      Alert.alert('Error', 'Could not delete task');
+    }
+  };
+
   // Add Task from Gap: create a Work task pre-filled with the gap title.
   const handleCreateTaskFromGap = async (taskText: string) => {
     try {
@@ -1154,7 +1182,12 @@ export default function WorkDetailScreen() {
             <FlatList
               data={tasks}
               keyExtractor={(t) => t.id ?? ''}
-              renderItem={({ item }) => <TaskRow task={item} />}
+              renderItem={({ item }) => (
+                <TaskRow
+                  task={item}
+                  onDelete={() => handleDeleteTask((item as any).id)}
+                />
+              )}
               contentContainerStyle={styles.listPad}
               refreshControl={
                 <RefreshControl refreshing={tasksLoading} onRefresh={refetchTasks} tintColor={colors.primary} />

@@ -258,6 +258,14 @@ def works_update_task(work_id: str, task_id: str, body: TaskUpdate):
     return {"task": task}
 
 
+@router.delete("/works/{work_id}/tasks/{task_id}", status_code=204)
+def works_delete_task(work_id: str, task_id: str):
+    db = get_db()
+    ok = db.delete_task(task_id)
+    if not ok:
+        raise HTTPException(404, f"Task {task_id!r} not found")
+
+
 @router.get("/works/{work_id}/conversations")
 def works_conversations(work_id: str):
     db = get_db()

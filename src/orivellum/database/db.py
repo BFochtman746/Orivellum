@@ -1670,6 +1670,20 @@ class OrivellumDB:
             row = self._conn.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
         return dict(row) if row else None
 
+    def delete_task(self, task_id: str) -> bool:
+        """Delete a task by id. Returns True if a row was deleted."""
+        with self.governed_write(
+            operation="task.deleted",
+            event_type="task.deleted",
+            object_id=task_id,
+            object_type="task",
+            payload={},
+            actor="user",
+            detail="task deleted",
+        ):
+            cur = self._conn.execute("DELETE FROM tasks WHERE id=?", (task_id,))
+        return cur.rowcount > 0
+
     # -------------------------------------------------------------------------
     # Chunks (extracted text segments, FTS-indexed)
     # -------------------------------------------------------------------------
