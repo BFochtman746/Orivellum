@@ -5,6 +5,7 @@ import logging
 from typing import Any
 
 from fastapi import APIRouter, Body, HTTPException, Query
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from orivellum.api._deps import get_db
@@ -736,12 +737,138 @@ def get_pipeline(work_id: str):
     return {"pipeline": pipeline}
 
 
+def _check_stage_gate(current: str, next_state: str, work_id: str, db) -> dict | None:
+    """Return a structured gate-fail dict, or None when the gate is satisfied.
+
+    Gates are evaluated inline against live DB data; no HTTP self-calls.
+    If gate data is unavailable (e.g. capability import fails) the gate is
+    silently skipped so a transient dependency failure never permanently blocks
+    a user.
+    """
+    gate_key = (current, next_state)
+
+    # ── B0 → B1: Work must have at least one active (non-deleted) document ───────
+    if gate_key == ("B0", "B1"):
+        try:
+            with db._lock:
+                doc_count = db._conn.execute(
+                    """SELECT COUNT(*) FROM documents d
+                       JOIN objects o ON o.id = d.id
+                       WHERE d.work_id = ? AND o.lifecycle != 'deleted'""",
+                    (work_id,),
+                ).fetchone()[0]
+            if doc_count < 1:
+                return {
+                    "gate": f"{current}→{next_state}",
+                    "metric": "doc_count",
+                    "threshold": 1,
+                    "actual": 0,
+                    "detail": "B0→B1 requires at least 1 active document in the Work (none imported yet).",
+                }
+        except Exception:
+            pass
+        return None
+
+    # ── Completeness-based gates ───────────────────────────────────────────────
+    # threshold is a percentage (0-100); op is ">" or ">="
+    _COMPLETENESS_GATES: dict[tuple, tuple] = {
+        ("B1", "B2"):  ("structural_pct",  ">",  0,  "at least 1 chapter extracted"),
+        ("B2", "B3"):  ("research_pct",   ">=", 40, "40% research coverage"),
+        ("B3", "B4"):  ("research_pct",   ">=", 60, "60% research coverage"),
+        ("B4", "B5"):  ("structural_pct", ">=", 80, "80% chapter extraction"),
+        ("B6", "B7"):  ("content_pct",    ">=", 50, "50% content coverage"),
+        ("B7", "B8"):  ("editorial_pct",  ">=", 30, "30% editorial review"),
+        ("B16","B17"): ("editorial_pct",  ">=", 80, "80% editorial review"),
+    }
+
+    if gate_key not in _COMPLETENESS_GATES:
+        return None  # no readiness gate for this transition
+
+    metric, op, threshold, label = _COMPLETENESS_GATES[gate_key]
+
+    # Fetch completeness data from book_intelligence (already computed elsewhere)
+    actual: float = 0.0
+    try:
+        from orivellum.capabilities.book_intelligence import build_book_intelligence
+        intel = build_book_intelligence(work_id, db)
+        actual = float(intel.get("completeness", {}).get(metric, 0))
+    except Exception:
+        return None  # data unavailable — skip gate rather than block
+
+    gate_met = (actual > threshold) if op == ">" else (actual >= threshold)
+
+    if not gate_met:
+        return {
+            "gate": f"{current}→{next_state}",
+            "metric": metric,
+            "threshold": threshold,
+            "actual": round(actual, 1),
+            "detail": (
+                f"{current}→{next_state} requires {label} — "
+                f"currently at {round(actual, 1)}%."
+            ),
+        }
+
+    # ── Additional "no high gaps" check for B3→B4 and B16→B17 ────────────────
+    if gate_key in {("B3", "B4"), ("B16", "B17")}:
+        gaps: list = []
+        evaluated = False
+        try:
+            from orivellum.capabilities.gaps import detect_gaps
+
+            # Try a fresh-enough cache entry first (avoids a slow LLM call when
+            # results are recent), then fall back to live detection.
+            cached = db.get_cached_gaps(work_id, max_age_seconds=3600)
+            if cached is not None:
+                gaps = cached.get("gaps", [])
+                evaluated = True
+            else:
+                # No cache or stale — run detection now so the gate is authoritative.
+                report = detect_gaps(work_id, db)
+                gaps = [
+                    {"kind": g.kind, "severity": g.severity,
+                     "title": g.title, "description": g.description}
+                    for g in report.gaps
+                ]
+                # Write result back to cache for subsequent requests.
+                try:
+                    db.cache_work_gaps(work_id, gaps, report.coverage_pct)
+                except Exception:
+                    pass
+                evaluated = True
+        except Exception as exc:
+            # Genuine evaluation failure — log and skip (fail-open).
+            # This must not be used as a bypass: log so it is visible.
+            logger.warning(
+                "Gap detection failed for work %s during gate check %s→%s: %s",
+                work_id[:8], current, next_state, exc,
+            )
+
+        if evaluated:
+            high_gaps = [g for g in gaps if (g.get("severity") or "").lower() == "high"]
+            if high_gaps:
+                return {
+                    "gate": f"{current}→{next_state}",
+                    "metric": "high_gaps",
+                    "threshold": 0,
+                    "actual": len(high_gaps),
+                    "detail": (
+                        f"{current}→{next_state} requires no high-severity gaps — "
+                        f"{len(high_gaps)} open. Resolve them in the Gaps view first."
+                    ),
+                }
+
+    return None
+
+
 @router.post("/works/{work_id}/pipeline/advance")
 def advance_pipeline(work_id: str):
     """Advance the book pipeline one stage forward through the B0–B17 lifecycle.
 
-    Uses the M0.2 BOOK_SM state machine.  Returns 409 if open high/critical
-    findings block the transition, with a ``blockers`` list in the body.
+    Checks stage-specific readiness gates (completeness, gap severity, document
+    count) before allowing the transition.  Returns 409 with a structured body
+    ``{detail, gate, metric, threshold, actual}`` when a gate is not met.
+    Returns 409 with ``{detail, blockers}`` when MONARCH findings block it.
     Returns 422 if the pipeline is already at a terminal state.
     """
     db = get_db()
@@ -764,6 +891,13 @@ def advance_pipeline(work_id: str):
     # BOOK_SM is strictly sequential; exactly one next state
     next_state = next(iter(allowed))
 
+    # ── Stage gate check ───────────────────────────────────────────────────────
+    # Use JSONResponse so the body is a flat dict — HTTPException(409, dict) would
+    # nest it under {"detail": dict} which the frontend cannot destructure cleanly.
+    gate_fail = _check_stage_gate(current, next_state, work_id, db)
+    if gate_fail:
+        return JSONResponse(status_code=409, content=gate_fail)
+
     try:
         apply_transition(
             db,
@@ -780,7 +914,11 @@ def advance_pipeline(work_id: str):
     except InvalidTransitionError as exc:
         raise HTTPException(422, str(exc))
     except BlockedTransitionError as exc:
-        raise HTTPException(409, {"detail": str(exc), "blockers": exc.blockers})
+        # Flat JSON so frontend can read body.detail (string) + body.blockers (list)
+        return JSONResponse(
+            status_code=409,
+            content={"detail": str(exc), "blockers": exc.blockers},
+        )
 
     return {"pipeline": db.get_book_pipeline_for_work(work_id)}
 

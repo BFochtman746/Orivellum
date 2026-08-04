@@ -125,6 +125,16 @@ const SEV_CLS: Record<BookGap["severity"], string> = {
   low: "border-border/60 bg-muted/30 text-muted-foreground",
 };
 
+/** Human-readable labels for gate metric keys returned by the backend. */
+const METRIC_LABELS: Record<string, string> = {
+  doc_count:      "Documents",
+  structural_pct: "Chapter extraction",
+  research_pct:   "Research coverage",
+  content_pct:    "Content coverage",
+  editorial_pct:  "Editorial review",
+  high_gaps:      "High-severity gaps",
+};
+
 // ─── Pipeline panel ───────────────────────────────────────────────────────────
 
 interface Pipeline {
@@ -137,6 +147,7 @@ interface Pipeline {
 function PipelinePanel({ workId }: { workId: string }) {
   const queryClient = useQueryClient();
   const [blockerMsg, setBlockerMsg] = useState<string | null>(null);
+  const [gateDetail, setGateDetail] = useState<{ gate: string; metric: string; threshold: number; actual: number } | null>(null);
 
   const { data, isLoading } = useQuery({
     queryKey: ["pipeline", workId],
@@ -167,7 +178,14 @@ function PipelinePanel({ workId }: { workId: string }) {
       const r = await apiFetch(`${BASE}/works/${workId}/pipeline/advance`, { method: "POST" });
       const json = await r.json().catch(() => ({}));
       if (r.status === 409) {
-        const detail = (json as any).detail ?? "Transition blocked by open findings";
+        const body = json as any;
+        const detail: string = body.detail ?? "Transition blocked by open findings";
+        // Structured gate blocker: {gate, metric, threshold, actual}
+        if (body.gate && body.metric !== undefined) {
+          setGateDetail({ gate: body.gate, metric: body.metric, threshold: body.threshold ?? 0, actual: body.actual ?? 0 });
+        } else {
+          setGateDetail(null);
+        }
         setBlockerMsg(detail);
         throw new Error(detail);
       }
@@ -176,6 +194,7 @@ function PipelinePanel({ workId }: { workId: string }) {
     },
     onSuccess: (json: any) => {
       setBlockerMsg(null);
+      setGateDetail(null);
       queryClient.invalidateQueries({ queryKey: ["pipeline", workId] });
       queryClient.invalidateQueries({ queryKey: ["book-intelligence", workId] });
       // Use the mutation response (not stale cached data) to get the new stage label
@@ -268,9 +287,34 @@ function PipelinePanel({ workId }: { workId: string }) {
 
         {/* Blocker warning */}
         {blockerMsg && (
-          <div className="flex items-start gap-2 rounded-lg px-3 py-2 bg-destructive/10 border border-destructive/30 text-destructive text-xs">
-            <ShieldAlert className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-            <span>{blockerMsg}</span>
+          <div className="rounded-lg border border-destructive/30 bg-destructive/10 text-destructive text-xs overflow-hidden">
+            <div className="flex items-start gap-2 px-3 py-2">
+              <ShieldAlert className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+              <span className="flex-1">{blockerMsg}</span>
+            </div>
+            {gateDetail && (
+              <div className="flex items-center gap-3 px-3 py-1.5 border-t border-destructive/20 bg-destructive/5">
+                {/* Progress bar showing actual vs threshold */}
+                <div className="flex-1 min-w-0">
+                  <div className="flex justify-between text-[10px] font-mono mb-0.5 opacity-80">
+                    <span>{METRIC_LABELS[gateDetail.metric] ?? gateDetail.metric}</span>
+                    <span>{gateDetail.actual}{gateDetail.metric !== "doc_count" && gateDetail.metric !== "high_gaps" ? "%" : ""} / need {gateDetail.threshold}{gateDetail.metric !== "doc_count" && gateDetail.metric !== "high_gaps" ? "%" : ""}</span>
+                  </div>
+                  <div className="h-1 rounded-full bg-destructive/20 overflow-hidden">
+                    <div
+                      className="h-full rounded-full bg-destructive/50 transition-all"
+                      style={{ width: `${Math.min(100, gateDetail.threshold > 0 ? (gateDetail.actual / gateDetail.threshold) * 100 : 0)}%` }}
+                    />
+                  </div>
+                </div>
+                <Link
+                  href={`/works/${workId}`}
+                  className="text-[10px] font-mono underline underline-offset-2 opacity-70 hover:opacity-100 shrink-0"
+                >
+                  Intelligence ↗
+                </Link>
+              </div>
+            )}
           </div>
         )}
       </CardContent>
