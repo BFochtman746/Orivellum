@@ -64,15 +64,24 @@ function NativeTabLayout() {
         <Label>Dashboard</Label>
       </NativeTabs.Trigger>
       <NativeTabs.Trigger name="conversations">
-        <Icon sf={{ default: 'bubble.left', selected: 'bubble.left.fill' }} />
+        <View style={{ position: 'relative' }}>
+          <Icon sf={{ default: 'bubble.left', selected: 'bubble.left.fill' }} />
+          <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: dotColor, position: 'absolute', top: -1, right: -4 }} />
+        </View>
         <Label>Chats</Label>
       </NativeTabs.Trigger>
       <NativeTabs.Trigger name="works">
-        <Icon sf={{ default: 'books.vertical', selected: 'books.vertical.fill' }} />
+        <View style={{ position: 'relative' }}>
+          <Icon sf={{ default: 'books.vertical', selected: 'books.vertical.fill' }} />
+          <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: dotColor, position: 'absolute', top: -1, right: -4 }} />
+        </View>
         <Label>Works</Label>
       </NativeTabs.Trigger>
       <NativeTabs.Trigger name="library">
-        <Icon sf={{ default: 'folder', selected: 'folder.fill' }} />
+        <View style={{ position: 'relative' }}>
+          <Icon sf={{ default: 'folder', selected: 'folder.fill' }} />
+          <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: dotColor, position: 'absolute', top: -1, right: -4 }} />
+        </View>
         <Label>Library</Label>
       </NativeTabs.Trigger>
     </NativeTabs>

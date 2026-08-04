@@ -1712,6 +1712,23 @@ function SearchTab({ workId }: { workId: string }) {
   // Monotonic counter so a slow earlier response can't clobber a newer one.
   const searchSeq = useRef(0);
 
+  // Embeddings circuit-breaker status (#203)
+  const { data: embedStatus } = useQuery<{ circuit_open: boolean; available_at: number | null } | null>({
+    queryKey: ["system", "embeddings", "status"],
+    queryFn: async () => {
+      const base = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
+      try {
+        const res = await apiFetch(`${base}/system/embeddings/status`);
+        if (!res.ok) return null;
+        return res.json();
+      } catch {
+        return null;
+      }
+    },
+    staleTime: 30_000,
+    refetchInterval: 30_000,
+  });
+
   // Focus the input when the tab is first activated (mount). Deferred so it
   // runs after Radix Tabs' own focus management (which focuses the trigger).
   useEffect(() => {
@@ -1782,6 +1799,14 @@ function SearchTab({ workId }: { workId: string }) {
           {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Search"}
         </Button>
       </form>
+
+      {/* Semantic search readiness banner (#203) */}
+      {embedStatus?.circuit_open && (
+        <div className="flex items-center gap-2 px-3 py-2 rounded-md border border-amber-200 bg-amber-50 text-amber-800 text-xs font-mono">
+          <Search className="w-3.5 h-3.5 shrink-0" />
+          <span>Semantic search is temporarily unavailable — showing keyword results only. The embeddings service will retry automatically.</span>
+        </div>
+      )}
 
       {error && (
         <p className="text-sm text-destructive">{error}</p>

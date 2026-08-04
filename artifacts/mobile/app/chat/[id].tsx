@@ -39,7 +39,7 @@ const LAST_MODEL_KEY = 'orivellum:lastModel';
 
 type LocalMessage = Message & { isError?: boolean; localImageUri?: string };
 
-function MessageBubble({ message, colors, isDark }: { message: LocalMessage; colors: any; isDark: boolean }) {
+function MessageBubble({ message, colors, isDark, onResend }: { message: LocalMessage; colors: any; isDark: boolean; onResend?: () => void }) {
   const isUser = message.role === 'user';
   const isErr = (message as any).isError;
   const textColor = isUser ? colors.primaryForeground : isErr ? colors.mutedForeground : colors.foreground;
@@ -202,8 +202,24 @@ function MessageBubble({ message, colors, isDark }: { message: LocalMessage; col
             </>
           )}
         </View>
-        {/* Model attribution — shown on assistant messages when meta.model is set */}
-        {!isUser && !isErr && (message as any).meta?.model && (
+        {/* Truncation indicator + re-send (#91) */}
+        {!isUser && !isErr && (message as any).meta?.cut_short && (
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 6 }}>
+            <Text style={{ fontSize: 10, fontFamily: 'Inter_400Regular', color: colors.mutedForeground, fontStyle: 'italic' }}>
+              Response was cut short.
+            </Text>
+            {onResend && (
+              <Pressable
+                onPress={onResend}
+                style={{ paddingHorizontal: 8, paddingVertical: 3, borderRadius: 4, backgroundColor: colors.primary + '22', borderWidth: 1, borderColor: colors.primary + '44' }}
+              >
+                <Text style={{ fontSize: 10, fontFamily: 'Inter_500Medium', color: colors.primary }}>Re-send →</Text>
+              </Pressable>
+            )}
+          </View>
+        )}
+        {/* Model attribution — always shown on assistant messages; fallback to "—" when model unknown (#82) */}
+        {!isUser && !isErr && (
           <Text style={{
             fontSize: 9,
             fontFamily: 'Inter_400Regular',
@@ -212,7 +228,9 @@ function MessageBubble({ message, colors, isDark }: { message: LocalMessage; col
             opacity: 0.6,
             letterSpacing: 0.2,
           }}>
-            {String((message as any).meta.model).split('/').pop()}
+            {(message as any).meta?.model
+              ? String((message as any).meta.model).split('/').pop()
+              : '—'}
           </Text>
         )}
         {copied && (
@@ -478,13 +496,13 @@ export default function ChatScreen() {
   };
 
   // ── Send message (with optional image) ────────────────────────────────────
-  const handleSend = async () => {
-    const trimmed = text.trim();
+  const handleSend = async (forceText?: string) => {
+    const trimmed = (forceText ?? text).trim();
     // Allow send with image even when text is empty
     if ((!trimmed && !pendingImage) || sending) return;
 
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    setText('');
+    if (!forceText) setText('');
     setSendFailed(false);
 
     // Capture and clear pending image before the async path
@@ -723,7 +741,21 @@ export default function ChatScreen() {
         <FlatList
           data={displayMessages}
           keyExtractor={(m) => m.id ?? ''}
-          renderItem={({ item }) => <MessageBubble message={item} colors={colors} isDark={isDark} />}
+          renderItem={({ item }) => {
+            const isCutShort = !!(item as any).meta?.cut_short;
+            return (
+              <MessageBubble
+                message={item}
+                colors={colors}
+                isDark={isDark}
+                onResend={isCutShort ? () => {
+                  const allMsgs = [...(data?.messages ?? []), ...localMessages];
+                  const lastUser = [...allMsgs].reverse().find((m) => m.role === 'user');
+                  if (lastUser?.text) handleSend(lastUser.text);
+                } : undefined}
+              />
+            );
+          }}
           inverted
           contentContainerStyle={styles.listContent}
           keyboardDismissMode="interactive"
@@ -829,7 +861,7 @@ export default function ChatScreen() {
             editable={!isError || initialized}
           />
           <Pressable
-            onPress={handleSend}
+            onPress={() => handleSend()}
             disabled={(!text.trim() && !pendingImage) || sending || (isError && !initialized)}
             style={({ pressed }) => [
               styles.sendBtn,

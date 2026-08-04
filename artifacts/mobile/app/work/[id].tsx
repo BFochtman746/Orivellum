@@ -1625,8 +1625,13 @@ export default function WorkDetailScreen() {
                     <Text style={[styles.itemTitle, { color: colors.foreground }]} numberOfLines={1}>
                       {(c as any).title || 'Untitled'}
                     </Text>
-                    <Text style={[styles.itemMeta, { color: colors.mutedForeground }]}>
-                      {(c as any).message_count ?? 0} messages
+                    {(c as any).last_message ? (
+                      <Text style={[styles.itemMeta, { color: colors.mutedForeground }]} numberOfLines={1}>
+                        {(c as any).last_message}
+                      </Text>
+                    ) : null}
+                    <Text style={[styles.itemMeta, { color: colors.mutedForeground, opacity: 0.7 }]}>
+                      {(c as any).message_count ?? 0} msg{((c as any).message_count ?? 0) === 1 ? '' : 's'}
                       {(c as any).updated_at ? ` · ${new Date((c as any).updated_at).toLocaleDateString()}` : ''}
                     </Text>
                   </View>

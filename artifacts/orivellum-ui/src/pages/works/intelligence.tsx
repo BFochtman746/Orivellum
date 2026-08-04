@@ -384,11 +384,22 @@ export default function WorkIntelligence() {
                   {item.kind}
                 </Badge>
                 <p className="text-sm leading-snug flex-1">{item.text}</p>
-                {item.confidence != null && (
-                  <span className="text-[10px] font-mono text-muted-foreground/50 shrink-0 mt-0.5">
-                    {Math.round(item.confidence * 100)}%
-                  </span>
-                )}
+                {item.confidence != null && (() => {
+                  const pct = item.confidence * 100;
+                  const tier = pct >= 80
+                    ? { label: 'High', cls: 'text-emerald-700 bg-emerald-50 border-emerald-200' }
+                    : pct >= 50
+                    ? { label: 'Med', cls: 'text-amber-700 bg-amber-50 border-amber-200' }
+                    : { label: 'Low', cls: 'text-red-700 bg-red-50 border-red-200' };
+                  return (
+                    <span
+                      className={`text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded border shrink-0 mt-0.5 ${tier.cls}`}
+                      title={`Confidence: ${pct.toFixed(1)}% — ${tier.label === 'High' ? 'Strong signal, likely accurate' : tier.label === 'Med' ? 'Moderate signal, worth verifying' : 'Weak signal, treat with caution'}`}
+                    >
+                      {pct.toFixed(0)}% {tier.label}
+                    </span>
+                  );
+                })()}
               </div>
             ))}
             {knData.knowledge.length > 10 && (
