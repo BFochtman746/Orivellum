@@ -78,8 +78,12 @@ function TabBar({ active, onSelect, colors }: { active: Tab; onSelect: (t: Tab) 
 
 function DocItem({ doc }: { doc: Document }) {
   const colors = useColors();
+  const router = useRouter();
   return (
-    <View style={[styles.listItem, { borderColor: colors.border }]}>
+    <Pressable
+      onPress={() => router.push(`/library/${doc.id}` as any)}
+      style={({ pressed }) => [styles.listItem, { borderColor: colors.border, opacity: pressed ? 0.7 : 1 }]}
+    >
       <View style={[styles.itemIcon, { backgroundColor: colors.muted }]}>
         <Feather name="file-text" size={14} color={colors.primary} />
       </View>
@@ -91,7 +95,8 @@ function DocItem({ doc }: { doc: Document }) {
           {doc.kind ?? 'file'} · {doc.readiness ?? 'pending'}
         </Text>
       </View>
-    </View>
+      <Feather name="chevron-right" size={14} color={colors.mutedForeground} />
+    </Pressable>
   );
 }
 

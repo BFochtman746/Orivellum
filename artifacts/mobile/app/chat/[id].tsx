@@ -25,7 +25,7 @@ import {
   useGetSystemModels,
   useUpdateConversation,
 } from '@workspace/api-client-react';
-import { useLocalSearchParams, useNavigation } from 'expo-router';
+import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useEffect } from 'react';
@@ -297,6 +297,7 @@ export default function ChatScreen() {
   const isDark = colorScheme === 'dark';
   const { id, draft } = useLocalSearchParams<{ id: string; draft?: string }>();
   const navigation = useNavigation();
+  const router = useRouter();
   const inputRef = useRef<TextInput>(null);
 
   const [text, setText] = useState('');
@@ -681,6 +682,29 @@ export default function ChatScreen() {
             {models.length > 0 && (
               <Feather name="chevron-down" size={11} color={colors.mutedForeground} />
             )}
+          </Pressable>
+        )}
+
+        {/* Work badge — shown when conversation is linked to a Work */}
+        {conversation && (conversation as any).work_id && (
+          <Pressable
+            onPress={() => router.push(`/work/${(conversation as any).work_id}` as any)}
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 5,
+              paddingHorizontal: 12,
+              paddingVertical: 5,
+              borderBottomWidth: StyleSheet.hairlineWidth,
+              borderBottomColor: colors.border,
+              backgroundColor: colors.primary + '0a',
+            }}
+          >
+            <Feather name="book-open" size={11} color={colors.primary} />
+            <Text style={{ fontSize: 11, fontFamily: 'Inter_500Medium', color: colors.primary, flex: 1 }} numberOfLines={1}>
+              {(conversation as any).work_title ?? 'Work'}
+            </Text>
+            <Feather name="chevron-right" size={11} color={colors.primary} />
           </Pressable>
         )}
 

@@ -1117,6 +1117,19 @@ export default function DocumentDetail() {
           <Button
             variant="outline"
             size="sm"
+            title="Copy link to this document"
+            onClick={() => {
+              navigator.clipboard.writeText(window.location.href).then(
+                () => toast.success("Link copied"),
+                () => toast.error("Could not copy link"),
+              );
+            }}
+          >
+            <Link2 className="w-3.5 h-3.5 mr-1.5" /> Copy Link
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
             asChild
             title="Download original file"
           >
