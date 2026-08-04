@@ -1034,6 +1034,148 @@ async def run_pipeline_stage(work_id: str):
     return {"stage": stage, "status": "done", "artifact": artifact}
 
 
+# ─── Divergent Thinking (Brainstorm) ─────────────────────────────────────────
+
+@router.get("/works/{work_id}/brainstorm")
+async def list_brainstorm_sessions(work_id: str, limit: int = 20):
+    """Return the brainstorm session history for a Work (newest first)."""
+    db = get_db()
+    if not db.get_work(work_id):
+        raise HTTPException(404, f"Work {work_id!r} not found")
+    sessions = db.list_brainstorm_sessions(work_id, limit=limit)
+    return sessions
+
+
+@router.post("/works/{work_id}/brainstorm")
+async def run_brainstorm(
+    work_id: str,
+    payload: dict = Body(default={}),
+):
+    """Start and complete a divergent thinking brainstorm session.
+
+    Runs ``n_domains`` (default 5) parallel domain-shift LLM workers, scores
+    originality against the Work's knowledge baseline, rates usefulness with a
+    secondary LLM judge, and returns the Pareto-front ideas.
+
+    Blocks until complete (up to ~45 s). The session is persisted so history
+    is available via ``GET /api/works/{id}/brainstorm``.
+    """
+    from starlette.concurrency import run_in_threadpool
+    from orivellum.api._deps import get_config
+    from orivellum.capabilities.brainstorm import run_brainstorm_session
+    from datetime import datetime, timezone
+
+    seed_prompt  = (payload.get("seed_prompt") or "").strip()
+    context_type = payload.get("context_type") or "general"
+    n_domains    = int(payload.get("n_domains") or 5)
+
+    if not seed_prompt:
+        raise HTTPException(422, "seed_prompt is required")
+
+    db  = get_db()
+    cfg = get_config()
+
+    if not db.get_work(work_id):
+        raise HTTPException(404, f"Work {work_id!r} not found")
+
+    # Create the session record immediately (status='running')
+    session = db.create_brainstorm_session(
+        work_id=work_id,
+        seed_prompt=seed_prompt,
+        context_type=context_type,
+        n_domains=n_domains,
+    )
+    session_id = session["id"]
+
+    try:
+        ideas = await run_in_threadpool(
+            run_brainstorm_session,
+            session_id, work_id, seed_prompt, context_type, db, cfg, n_domains,
+        )
+        db.update_brainstorm_session(
+            session_id,
+            status="done",
+            ideas=ideas,
+            completed_at=datetime.now(timezone.utc).isoformat(),
+        )
+    except Exception as exc:
+        db.update_brainstorm_session(session_id, status="failed", ideas=[])
+        raise HTTPException(502, f"Brainstorm failed: {exc}")
+
+    return db.get_brainstorm_session(session_id)
+
+
+@router.get("/works/{work_id}/brainstorm/{session_id}")
+async def get_brainstorm_session(work_id: str, session_id: str):
+    """Return a specific brainstorm session."""
+    db = get_db()
+    session = db.get_brainstorm_session(session_id)
+    if not session or session["work_id"] != work_id:
+        raise HTTPException(404, "Brainstorm session not found")
+    return session
+
+
+@router.post("/works/{work_id}/brainstorm/{session_id}/ideas/{idea_id}/approve")
+async def approve_brainstorm_idea(work_id: str, session_id: str, idea_id: str):
+    """Promote an idea from a brainstorm session into a knowledge item.
+
+    Idempotent: if the idea already has a knowledge_item_id, returns it as-is.
+    The knowledge item is created with review_status='approved' so it appears
+    in the standard knowledge list immediately.
+    """
+    import json as _json
+    from datetime import datetime, timezone
+
+    db = get_db()
+    if not db.get_work(work_id):
+        raise HTTPException(404, f"Work {work_id!r} not found")
+
+    session = db.get_brainstorm_session(session_id)
+    if not session or session["work_id"] != work_id:
+        raise HTTPException(404, "Brainstorm session not found")
+
+    # Find the idea
+    ideas = session["ideas"]
+    idea  = next((i for i in ideas if i["id"] == idea_id), None)
+    if not idea:
+        raise HTTPException(404, f"Idea {idea_id!r} not found in session")
+
+    # Idempotent — already promoted
+    if idea.get("knowledge_item_id"):
+        return {"knowledge_item_id": idea["knowledge_item_id"]}
+
+    # Create knowledge item
+    ki_id = db.create_knowledge_item(
+        work_id=work_id,
+        text=idea["text"],
+        kind="insight",
+        review_status="approved",
+        confidence=round(min(1.0, (idea.get("originality", 0.5) + idea.get("usefulness", 3) / 5) / 2 + 0.25), 2),
+        meta={
+            "source":                "brainstorm",
+            "brainstorm_session_id": session_id,
+            "brainstorm_idea_id":    idea_id,
+            "domain":                idea.get("domain", ""),
+            "originality":           idea.get("originality", 0.5),
+            "usefulness":            idea.get("usefulness", 3),
+        },
+    )
+
+    # Update the ideas list in the session with the new knowledge_item_id
+    updated_ideas = [
+        {**i, "knowledge_item_id": ki_id} if i["id"] == idea_id else i
+        for i in ideas
+    ]
+    db.update_brainstorm_session(
+        session_id,
+        status=session["status"],
+        ideas=updated_ideas,
+        completed_at=session.get("completed_at"),
+    )
+
+    return {"knowledge_item_id": ki_id, "session_id": session_id, "idea_id": idea_id}
+
+
 # ─── Evidence rescore ─────────────────────────────────────────────────────────
 
 @router.post("/works/{work_id}/evidence/rescore")

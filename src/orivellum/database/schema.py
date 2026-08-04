@@ -1096,4 +1096,22 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         CREATE INDEX IF NOT EXISTS pa_pipeline ON pipeline_artifacts(pipeline_id);
         CREATE INDEX IF NOT EXISTS pa_stage    ON pipeline_artifacts(stage)
     """),
+
+    # v64 — Brainstorm sessions: divergent thinking engine outputs per Work
+    (64, "Brainstorm sessions for divergent thinking engine", """
+        CREATE TABLE IF NOT EXISTS brainstorm_sessions (
+            id            TEXT PRIMARY KEY,
+            work_id       TEXT NOT NULL REFERENCES works(id) ON DELETE CASCADE,
+            seed_prompt   TEXT NOT NULL,
+            context_type  TEXT NOT NULL DEFAULT 'general',
+            status        TEXT NOT NULL DEFAULT 'running',
+            ideas         TEXT NOT NULL DEFAULT '[]',
+            domain_count  INTEGER NOT NULL DEFAULT 5,
+            created_at    TEXT NOT NULL,
+            completed_at  TEXT
+        );
+        CREATE INDEX IF NOT EXISTS brs_work   ON brainstorm_sessions(work_id);
+        CREATE INDEX IF NOT EXISTS brs_status ON brainstorm_sessions(status);
+        CREATE INDEX IF NOT EXISTS brs_created ON brainstorm_sessions(created_at)
+    """),
 ]

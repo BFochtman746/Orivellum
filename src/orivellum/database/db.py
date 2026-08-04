@@ -1947,6 +1947,83 @@ class OrivellumDB:
         return dict(row)
 
     # -------------------------------------------------------------------------
+    # Brainstorm sessions (divergent thinking engine)
+    # -------------------------------------------------------------------------
+
+    def create_brainstorm_session(
+        self,
+        work_id: str,
+        seed_prompt: str,
+        context_type: str = "general",
+        n_domains: int = 5,
+    ) -> dict:
+        """Create a new brainstorm session record (status='running')."""
+        sid = _uuid()
+        now = _now()
+        with self._lock:
+            self._conn.execute(
+                """INSERT INTO brainstorm_sessions
+                   (id, work_id, seed_prompt, context_type, status, ideas, domain_count, created_at)
+                   VALUES (?,?,?,?,'running','[]',?,?)""",
+                (sid, work_id, seed_prompt, context_type, n_domains, now),
+            )
+            self._conn.commit()
+        return self.get_brainstorm_session(sid)  # type: ignore[return-value]
+
+    def update_brainstorm_session(
+        self,
+        session_id: str,
+        status: str,
+        ideas: list,
+        completed_at: str | None = None,
+    ) -> None:
+        """Persist brainstorm results (status='done' or 'failed')."""
+        import json as _json
+        now = _now()
+        ca = completed_at or now
+        with self._lock:
+            self._conn.execute(
+                """UPDATE brainstorm_sessions
+                   SET status=?, ideas=?, completed_at=?
+                   WHERE id=?""",
+                (status, _json.dumps(ideas), ca, session_id),
+            )
+            self._conn.commit()
+
+    def get_brainstorm_session(self, session_id: str) -> dict | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM brainstorm_sessions WHERE id=?",
+                (session_id,),
+            ).fetchone()
+        if not row:
+            return None
+        import json as _json
+        d = dict(row)
+        d["ideas"] = _json.loads(d.get("ideas") or "[]")
+        return d
+
+    def list_brainstorm_sessions(
+        self,
+        work_id: str,
+        limit: int = 20,
+    ) -> list[dict]:
+        import json as _json
+        with self._lock:
+            rows = self._conn.execute(
+                """SELECT * FROM brainstorm_sessions
+                   WHERE work_id=?
+                   ORDER BY created_at DESC LIMIT ?""",
+                (work_id, limit),
+            ).fetchall()
+        result = []
+        for r in rows:
+            d = dict(r)
+            d["ideas"] = _json.loads(d.get("ideas") or "[]")
+            result.append(d)
+        return result
+
+    # -------------------------------------------------------------------------
     # Pipeline artifacts (B0-B17 stage AI outputs)
     # -------------------------------------------------------------------------
 

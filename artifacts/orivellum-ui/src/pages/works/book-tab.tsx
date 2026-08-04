@@ -24,6 +24,7 @@ import {
   X,
 } from "lucide-react";
 import { toast } from "sonner";
+import { BrainstormB3Panel } from "./brainstorm-tab";
 
 const BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
 
@@ -549,6 +550,13 @@ function PipelinePanel({ workId }: { workId: string }) {
           <span>{progressPct}% through lifecycle</span>
           <span>B17 Published</span>
         </div>
+
+        {/* Brainstorm panel — shown at Architecture (B3) to encourage exploration before advancing */}
+        {pipeline.status === "B3" && (
+          <div className="pt-1 border-t border-border/30">
+            <BrainstormB3Panel workId={workId} />
+          </div>
+        )}
 
         {/* AI stage worker section — shown for B0–B5 */}
         {hasWorker && (

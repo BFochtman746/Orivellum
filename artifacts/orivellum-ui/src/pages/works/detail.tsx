@@ -79,7 +79,8 @@ import {
   Share2,
 } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
-import { BookTab } from "./book-tab";
+import { BookTab }       from "./book-tab";
+import { BrainstormTab } from "./brainstorm-tab";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { toast } from "sonner";
 
@@ -407,6 +408,7 @@ export default function WorkDetail() {
               { value: "search",       icon: Search,        label: "Search",       badge: null },
               { value: "quiz",         icon: GraduationCap, label: "Quiz",         badge: null },
               { value: "learn",        icon: BookOpen,      label: "Learn",        badge: null },
+              { value: "brainstorm",   icon: Lightbulb,     label: "Brainstorm",   badge: null },
             ].map(({ value, icon: Icon, label, badge }) => (
               <TabsTrigger
                 key={value}
@@ -435,6 +437,7 @@ export default function WorkDetail() {
             <TabsContent value="search"><ErrorBoundary label="search tab"><SearchTab workId={workId!} initialQuery={_initialSearchQuery} /></ErrorBoundary></TabsContent>
             <TabsContent value="quiz"><ErrorBoundary label="quiz tab"><QuizTab workId={workId!} workTitle={(work as any)?.title ?? "this Work"} /></ErrorBoundary></TabsContent>
             <TabsContent value="learn"><ErrorBoundary label="learn tab"><LearnTab workId={workId!} /></ErrorBoundary></TabsContent>
+            <TabsContent value="brainstorm"><ErrorBoundary label="brainstorm tab"><BrainstormTab workId={workId!} /></ErrorBoundary></TabsContent>
           </div>
         </Tabs>
       </div>
