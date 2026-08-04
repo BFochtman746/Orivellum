@@ -1492,6 +1492,31 @@ export default function WorkDetailScreen() {
       <TabBar active={activeTab} onSelect={setActiveTab} colors={colors} />
 
       <View style={{ flex: 1 }}>{renderTabContent()}</View>
+
+      {/* Floating quick-add task button — visible from all tabs except Tasks */}
+      {activeTab !== 'tasks' && (
+        <Pressable
+          onPress={() => setActiveTab('tasks')}
+          style={{
+            position: 'absolute',
+            bottom: insets.bottom + 20,
+            right: 20,
+            width: 50,
+            height: 50,
+            borderRadius: 25,
+            backgroundColor: colors.primary,
+            alignItems: 'center',
+            justifyContent: 'center',
+            shadowColor: '#000',
+            shadowOffset: { width: 0, height: 2 },
+            shadowOpacity: 0.25,
+            shadowRadius: 4,
+            elevation: 5,
+          }}
+        >
+          <Feather name="plus" size={22} color="#fff" />
+        </Pressable>
+      )}
     </View>
   );
 }

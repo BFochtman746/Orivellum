@@ -124,6 +124,9 @@ export default function WorkDetail() {
     );
   };
 
+  // Tab state — controlled so Overview stat chips can navigate to a tab
+  const [activeTab, setActiveTab] = useState("book");
+
   // Inline editing state
   const [editing, setEditing] = useState(false);
   const [editTitle, setEditTitle] = useState("");
@@ -299,12 +302,26 @@ export default function WorkDetail() {
                   label: "Conversations",
                   value: stats.conversation_count ?? 0,
                 },
-              ].map(({ label, value }) => (
-                <div key={label} className="text-center">
-                  <div className="text-lg font-semibold font-mono leading-none">{value}</div>
-                  <div className="text-[10px] font-mono uppercase text-muted-foreground mt-0.5">{label}</div>
-                </div>
-              ))}
+              ].map(({ label, value }) => {
+                const tabMap: Record<string, string> = {
+                  "Documents": "docs",
+                  "Knowledge": "knowledge",
+                  "Pending tasks": "tasks",
+                  "Conversations": "conversations",
+                };
+                const target = tabMap[label];
+                return (
+                  <button
+                    key={label}
+                    className={`text-center group ${target ? "cursor-pointer hover:opacity-70 transition-opacity" : ""}`}
+                    onClick={target ? () => setActiveTab(target as typeof activeTab) : undefined}
+                    title={target ? `Go to ${label}` : undefined}
+                  >
+                    <div className={`text-lg font-semibold font-mono leading-none ${target ? "text-primary group-hover:underline" : ""}`}>{value}</div>
+                    <div className="text-[10px] font-mono uppercase text-muted-foreground mt-0.5">{label}</div>
+                  </button>
+                );
+              })}
               {/* Mastery bar — shown when concepts exist for this work */}
               {(stats as any).concept_count > 0 && (
                 <div className="flex items-center gap-3 ml-2 pl-4 border-l border-border/50">
@@ -350,7 +367,7 @@ export default function WorkDetail() {
 
       {/* Tabs */}
       <div className="pt-8">
-        <Tabs defaultValue="book" className="w-full">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
           <TabsList className="w-full justify-start border-b border-border/50 rounded-none bg-transparent h-auto p-0 space-x-6">
             {[
               { value: "book",         icon: BookOpen,      label: "Book",         badge: null },

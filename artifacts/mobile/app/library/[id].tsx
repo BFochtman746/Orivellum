@@ -21,6 +21,35 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useGetDocument, useListWorks } from '@workspace/api-client-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
+// ── Extracted text collapsible section ───────────────────────────────────────
+
+function ExtractedTextSection({ text, colors }: { text: string; colors: ReturnType<typeof import('@/hooks/useColors').useColors> }) {
+  const [expanded, setExpanded] = useState(false);
+  const preview = text.slice(0, 400);
+  const hasMore = text.length > 400;
+  return (
+    <View style={[{ borderWidth: 1, borderRadius: 8, overflow: 'hidden', marginBottom: 12 }, { borderColor: colors.border }]}>
+      <Pressable
+        onPress={() => setExpanded((v) => !v)}
+        style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 12, backgroundColor: colors.muted + '33' }}
+      >
+        <Text style={{ fontSize: 11, fontFamily: 'Inter_600SemiBold', color: colors.mutedForeground, letterSpacing: 0.8 }}>EXTRACTED TEXT</Text>
+        <Feather name={expanded ? 'chevron-up' : 'chevron-down'} size={14} color={colors.mutedForeground} />
+      </Pressable>
+      {expanded ? (
+        <ScrollView style={{ maxHeight: 320, padding: 12 }} nestedScrollEnabled>
+          <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: colors.foreground, lineHeight: 18 }}>{text}</Text>
+        </ScrollView>
+      ) : (
+        <View style={{ padding: 12 }}>
+          <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: colors.foreground + 'bb', lineHeight: 18 }}>{preview}</Text>
+          {hasMore && <Text style={{ fontSize: 11, color: colors.primary, marginTop: 4 }}>Tap to expand…</Text>}
+        </View>
+      )}
+    </View>
+  );
+}
+
 const READINESS_COLOR: Record<string, string> = {
   ready: '#4A8C65',
   error: '#dc2626',
@@ -424,6 +453,11 @@ export default function LibraryDocDetail() {
             </Pressable>
           </View>
         </View>
+
+        {/* Extracted text — collapsible section */}
+        {doc.extracted_text ? (
+          <ExtractedTextSection text={doc.extracted_text as string} colors={colors} />
+        ) : null}
 
         {/* Knowledge — AI review items first */}
         <View style={[styles.section, { borderColor: colors.border }]}>

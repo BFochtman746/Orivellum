@@ -27,7 +27,7 @@ import type { Conversation } from '@workspace/api-client-react';
 import { OfflineBanner, ErrorScreen } from '@/components/OfflineBanner';
 import { stripMarkdown } from '@/lib/stripMarkdown';
 
-function ConversationItem({ item, onArchive }: { item: Conversation; onArchive?: (id: string) => void }) {
+function ConversationItem({ item, onArchive, onDelete }: { item: Conversation; onArchive?: (id: string) => void; onDelete?: (id: string) => void }) {
   const colors = useColors();
   const router = useRouter();
 
@@ -43,6 +43,7 @@ function ConversationItem({ item, onArchive }: { item: Conversation; onArchive?:
       '',
       [
         { text: archived ? 'Unarchive' : 'Archive', onPress: () => onArchive?.(item.id ?? '') },
+        { text: 'Delete', style: 'destructive', onPress: () => onDelete?.(item.id ?? '') },
         { text: 'Cancel', style: 'cancel' },
       ]
     );
@@ -135,6 +136,19 @@ export default function ConversationsScreen() {
 
   const { mutateAsync: createConversation, isPending: creating } = useCreateConversation();
   const queryClient = useQueryClient();
+
+  const handleDelete = async (convId: string) => {
+    try {
+      const domain = process.env.EXPO_PUBLIC_DOMAIN;
+      const r = await mobileFetch(`https://${domain}/api/conversations/${convId}`, { method: 'DELETE' });
+      if (r.ok) {
+        queryClient.invalidateQueries({ queryKey: getListConversationsQueryKey({ archived: false, limit: 200 }) });
+        refetch();
+      }
+    } catch {
+      Alert.alert('Could not delete', 'Check your connection and try again.', [{ text: 'OK' }]);
+    }
+  };
 
   const handleArchive = async (convId: string) => {
     try {
@@ -272,7 +286,7 @@ export default function ConversationsScreen() {
         <FlatList
           data={conversations}
           keyExtractor={(item) => item.id ?? ''}
-          renderItem={({ item }) => <ConversationItem item={item} onArchive={handleArchive} />}
+          renderItem={({ item }) => <ConversationItem item={item} onArchive={handleArchive} onDelete={handleDelete} />}
           refreshControl={
             <RefreshControl refreshing={isLoading} onRefresh={refetch} tintColor={colors.primary} />
           }
