@@ -163,7 +163,7 @@ async def generate_quiz(work_id: str, count: int = 5):
         result = await run_in_threadpool(
             llm_call,
             [{"role": "user", "content": prompt}],
-            base_url=cfg.serving.base_url, model=cfg.serving.model,
+            base_url=cfg.serving.base_url, model=cfg.serving.workhorse_model,
             timeout=60, purpose="works", db=db,
         )
         if not result.ok or result.text is None:

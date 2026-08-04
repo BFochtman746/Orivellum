@@ -312,7 +312,7 @@ def ai_assist(doc_id: str, body: AIAssistRequest):
                 "POST",
                 f"{cfg.serving.base_url}/chat/completions",
                 json={
-                    "model":       cfg.serving.model,
+                    "model":       cfg.serving.workhorse_model,
                     "messages":    [
                         {"role": "system",
                          "content": "You are an expert writing assistant. Follow instructions precisely. Return only what was requested — no preamble, no meta-commentary."},
@@ -337,10 +337,10 @@ def ai_assist(doc_id: str, body: AIAssistRequest):
             _ok = False
             _err = f"{type(exc).__name__}: {exc}"[:500]
             import json as _j
-            yield f"data: {_j.dumps({'choices':[{'delta':{'content':f'AI error: {exc}'}}]})}\n\ndata: [DONE]\n\n"
+            yield f"data: {_j.dumps({'error': str(exc)[:500]})}\n\ndata: [DONE]\n\n"
         finally:
             record_llm_call(
-                db, purpose="write", model=cfg.serving.model,
+                db, purpose="write", model=cfg.serving.workhorse_model,
                 latency_ms=int((_time.monotonic() - _started) * 1000),
                 prompt_tokens=None, completion_tokens=None,
                 ok=_ok, error=_err,

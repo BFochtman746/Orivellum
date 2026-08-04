@@ -1,6 +1,12 @@
 {
   "platform": "Sovereign Platform",
-  "last_updated": "2026-08-03",
+  "last_updated": "2026-08-04",
+  "filesystem_upgrade": {
+    "FS-1": {"id":"FS-1","test":"test_classify","status":"pass","notes":"4/4 tests. Data-tier classifier landed at capabilities/classify.py. Zero third-party deps."},
+    "FS-2": {"id":"FS-2","test":"test_serving_contract","status":"pass","notes":"2/2 tests. ServingConfig.model back-compat property added. write.py + works.py now use workhorse_model explicitly. Error stream yields structured {error:} event, not AI prose."},
+    "FS-3": {"id":"FS-3","test":"schema_v62","status":"pass","notes":"documents.tier TEXT NOT NULL DEFAULT 'source' + docs_tier index. Migration v62 appended."},
+    "FS-4": {"id":"FS-4","test":"test_pipeline_tier_gate","status":"pass","notes":"4/4 tests. CANON-only Work proposals. Child tier stamped on create_document. ARTIFACT/SYSTEM children skip harvest thread."}
+  },
   "milestones": {
     "M0.1": {
       "name": "Canonical objects + concurrency + audit",

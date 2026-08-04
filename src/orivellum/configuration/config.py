@@ -36,6 +36,13 @@ class ServingConfig:
     # service never blocks the pipeline for the full chat timeout.
     extraction_timeout_sec: int = 30
 
+    @property
+    def model(self) -> str:
+        """Back-compat alias. Any caller reading `.model` gets the workhorse
+        model instead of raising AttributeError. New code should name the
+        model it wants (workhorse_model / reasoner_model / …) explicitly."""
+        return self.workhorse_model
+
 
 @dataclass
 class ServerConfig:
