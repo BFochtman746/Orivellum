@@ -105,14 +105,19 @@ def _get_concept(db: Any, concept_id: str) -> dict | None:
 
 
 def _get_mastery(db: Any, concept_id: str) -> dict:
-    """Latest mastery record for the concept, or defaults."""
+    """Latest mastery record for the concept, or defaults.
+
+    Includes ``last_practised`` (ISO-8601 string or None) so callers can display
+    when the user last answered a question for this concept.
+    """
     with db._lock:
         row = db._conn.execute(
-            """SELECT score, consecutive_passes FROM work_mastery
+            """SELECT score, consecutive_passes, created_at AS last_practised
+               FROM work_mastery
                WHERE concept_id=? ORDER BY created_at DESC LIMIT 1""",
             (concept_id,),
         ).fetchone()
-    return dict(row) if row else {"score": 0.0, "consecutive_passes": 0}
+    return dict(row) if row else {"score": 0.0, "consecutive_passes": 0, "last_practised": None}
 
 
 def _is_graduated(db: Any, concept_id: str) -> bool:
@@ -241,6 +246,7 @@ def list_concepts(db: Any, work_id: str) -> list[dict]:
         c["score"]              = m["score"]
         c["consecutive_passes"] = m["consecutive_passes"]
         c["graduated"]          = m["consecutive_passes"] >= _PASSES_TO_GRAD
+        c["last_practised"]     = m.get("last_practised")   # ISO-8601 or None
         result.append(c)
     return result
 

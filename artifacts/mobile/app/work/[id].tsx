@@ -1240,6 +1240,18 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
     } catch { /* non-fatal */ } finally { setConceptsLoading(false); }
   }, [apiBase, workId]);
 
+  /** Tap on a concept row → load a focused question for that concept and switch to study view. */
+  const focusOnConcept = useCallback(async (conceptId: string) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setLearnView('study');
+    try {
+      await loadQuestion(conceptId);
+    } catch (e: any) {
+      setErrorMsg(e.message ?? 'Error loading question');
+      setPhase('error');
+    }
+  }, [loadQuestion]); // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
     if (learnView === 'concepts') loadConcepts();
   }, [learnView, loadConcepts]);
@@ -1465,51 +1477,91 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
             </Text>
           </View>
         ) : (
-          concepts.map((c: any) => {
-            const pct = Math.round((c.score ?? 0) * 100);
-            const col = c.graduated ? '#16a34a' : pct >= 60 ? colors.primary : pct >= 30 ? '#d97706' : colors.mutedForeground;
-            return (
-              <View
-                key={c.id}
-                style={{
-                  borderWidth: 1, borderRadius: 10, padding: 12, marginBottom: 8,
-                  borderColor: c.graduated ? '#16a34a44' : colors.border,
-                  backgroundColor: c.graduated ? '#16a34a08' : 'transparent',
-                }}
-              >
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: c.description ? 6 : 4 }}>
-                  <Feather
-                    name={c.graduated ? 'award' : 'circle'}
-                    size={14}
-                    color={col}
-                  />
-                  <Text style={{ flex: 1, fontSize: 14, fontWeight: '600', color: colors.foreground }}>
-                    {c.subject}
-                  </Text>
-                  <View style={{
-                    paddingHorizontal: 7, paddingVertical: 2, borderRadius: 8,
-                    backgroundColor: c.graduated ? '#16a34a18' : colors.muted,
-                  }}>
-                    <Text style={{ fontSize: 11, fontWeight: '700', color: col }}>
-                      {c.graduated ? '✓ Mastered' : `${pct}%`}
+          <>
+            <Text style={{ fontSize: 11, fontFamily: 'Inter_600SemiBold', color: colors.mutedForeground, letterSpacing: 0.6, textTransform: 'uppercase', marginBottom: 10 }}>
+              {concepts.length} concept{concepts.length !== 1 ? 's' : ''} · tap to study
+            </Text>
+            {concepts.map((c: any) => {
+              // Mastery tier
+              const passes = c.consecutive_passes ?? 0;
+              const tier: 'graduated' | 'in_progress' | 'not_started' =
+                c.graduated ? 'graduated' : passes > 0 ? 'in_progress' : 'not_started';
+              const tierLabel = tier === 'graduated' ? 'Graduated' : tier === 'in_progress' ? 'In progress' : 'Not started';
+              const tierCol   = tier === 'graduated' ? '#16a34a' : tier === 'in_progress' ? colors.primary : colors.mutedForeground;
+              const tierBg    = tier === 'graduated' ? '#16a34a18' : tier === 'in_progress' ? colors.primary + '18' : colors.muted;
+              const borderCol = tier === 'graduated' ? '#16a34a44' : tier === 'in_progress' ? colors.primary + '33' : colors.border;
+              const barPct    = tier === 'graduated' ? 100 : Math.min(99, Math.round((passes / 3) * 100));
+
+              // Last-practised label
+              let lastPractisedLabel = 'Never practised';
+              if (c.last_practised) {
+                const ms = Date.now() - new Date(c.last_practised).getTime();
+                const days = Math.floor(ms / 86_400_000);
+                if (days === 0)       lastPractisedLabel = 'Practised today';
+                else if (days === 1)  lastPractisedLabel = 'Practised yesterday';
+                else if (days < 7)   lastPractisedLabel = `Practised ${days}d ago`;
+                else if (days < 30)  lastPractisedLabel = `Practised ${Math.floor(days / 7)}w ago`;
+                else                 lastPractisedLabel = `Practised ${Math.floor(days / 30)}mo ago`;
+              }
+
+              return (
+                <Pressable
+                  key={c.id}
+                  onPress={() => focusOnConcept(c.id)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Study ${c.subject}`}
+                  style={({ pressed }: { pressed: boolean }) => ({
+                    borderWidth: 1, borderRadius: 10, padding: 12, marginBottom: 8,
+                    borderColor: borderCol,
+                    backgroundColor: tier === 'graduated' ? '#16a34a08' : 'transparent',
+                    opacity: pressed ? 0.75 : 1,
+                  })}
+                >
+                  {/* Header row: icon + subject + tier badge + chevron */}
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <Feather
+                      name={tier === 'graduated' ? 'award' : tier === 'in_progress' ? 'trending-up' : 'circle'}
+                      size={14}
+                      color={tierCol}
+                    />
+                    <Text style={{ flex: 1, fontSize: 14, fontFamily: 'Inter_600SemiBold', color: colors.foreground }} numberOfLines={1}>
+                      {c.subject}
+                    </Text>
+                    <View style={{ paddingHorizontal: 7, paddingVertical: 2, borderRadius: 8, backgroundColor: tierBg }}>
+                      <Text style={{ fontSize: 11, fontFamily: 'Inter_700Bold', color: tierCol }}>
+                        {tier === 'graduated' ? '✓ ' : ''}{tierLabel}
+                      </Text>
+                    </View>
+                    <Feather name="chevron-right" size={13} color={colors.mutedForeground} />
+                  </View>
+
+                  {/* Description */}
+                  {c.description ? (
+                    <Text style={{ fontSize: 12, color: colors.mutedForeground, marginLeft: 22, marginTop: 4 }} numberOfLines={2}>
+                      {c.description}
+                    </Text>
+                  ) : null}
+
+                  {/* Progress bar — full for graduated, proportional for in-progress */}
+                  {tier !== 'not_started' && (
+                    <View style={{ marginTop: 8, marginLeft: 22, height: 3, backgroundColor: colors.muted, borderRadius: 1.5, overflow: 'hidden' }}>
+                      <View style={{ height: '100%', width: `${barPct}%` as any, backgroundColor: tierCol, borderRadius: 1.5 }} />
+                    </View>
+                  )}
+
+                  {/* Footer: pass count + last-practised */}
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 5, marginLeft: 22 }}>
+                    <Text style={{ fontSize: 10, fontFamily: 'Inter_400Regular', color: colors.mutedForeground }}>
+                      {passes} pass{passes !== 1 ? 'es' : ''} in a row
+                    </Text>
+                    <Text style={{ fontSize: 10, fontFamily: 'Inter_400Regular', color: colors.mutedForeground }}>
+                      {lastPractisedLabel}
                     </Text>
                   </View>
-                </View>
-                {c.description ? (
-                  <Text style={{ fontSize: 12, color: colors.mutedForeground, marginLeft: 22 }} numberOfLines={2}>
-                    {c.description}
-                  </Text>
-                ) : null}
-                {/* Mastery bar */}
-                <View style={{ marginTop: 8, marginLeft: 22, height: 3, backgroundColor: colors.muted, borderRadius: 1.5, overflow: 'hidden' }}>
-                  <View style={{ height: '100%', width: `${pct}%` as any, backgroundColor: col, borderRadius: 1.5 }} />
-                </View>
-                <Text style={{ fontSize: 10, color: colors.mutedForeground, marginTop: 3, marginLeft: 22 }}>
-                  {c.consecutive_passes} pass{c.consecutive_passes !== 1 ? 'es' : ''} in a row
-                </Text>
-              </View>
-            );
-          })
+                </Pressable>
+              );
+            })}
+          </>
         )
       )}
 
