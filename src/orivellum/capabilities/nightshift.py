@@ -16,6 +16,10 @@ Passes (in order):
   8. Evidence rescoring     — update confidence + detect contradictions
   9. Embedding backfill     — embed up to 300 new knowledge items
  10. Work stats refresh     — recompute cached stats for every active Work
+ 11. MCOS benchmark evals  — run any due benchmark suites
+ 12. Outbox drain           — dispatch queued transactional events
+ 13. Audit-chain verify     — check governance audit chain integrity
+ 14. Version suggestions    — surface likely version pairs across each Work
 """
 from __future__ import annotations
 
@@ -653,6 +657,105 @@ def _pass_verify_audit_chain(db: "OrivellumDB", report: list[str]) -> None:
         logger.warning("Nightshift audit-chain check error: %s", exc)
 
 
+def _pass_version_suggestions(db: "OrivellumDB", report: list[str]) -> None:
+    """Cross-check document pairs in every Work for similar filename stems and
+    create version-relationship suggestions for any new matches found.
+
+    Mirrors the same logic run at upload time (_maybe_suggest_version in library.py)
+    so that documents imported before the feature was introduced also get covered.
+    """
+    import re as _re
+    import json as _json
+    import uuid as _uuid_mod
+    import datetime as _dt
+    from difflib import SequenceMatcher
+    from pathlib import Path as _Path
+
+    _VER = _re.compile(
+        r"[_\s\-]*(v\d+[\d.]*|draft\d*|rev\d*|copy\d*|\d+|final|interim|updated?)$",
+        _re.I,
+    )
+
+    def _similar(a: str, b: str) -> bool:
+        if not a or not b:
+            return False
+        a = a.lower().strip()
+        b = b.lower().strip()
+        if a == b:
+            return True
+        a_base = _VER.sub("", a).strip()
+        b_base = _VER.sub("", b).strip()
+        if a_base and b_base and a_base == b_base:
+            return True
+        return SequenceMatcher(None, a, b).ratio() >= 0.75
+
+    try:
+        works = db.list_works()
+    except Exception as exc:
+        logger.debug("Version suggestions pass: could not list works: %s", exc)
+        return
+
+    created = 0
+    for work in works:
+        wid = work["id"]
+        try:
+            docs = db.list_documents(work_id=wid, limit=500)
+        except Exception:
+            continue
+        if len(docs) < 2:
+            continue
+        for i, doc_a in enumerate(docs):
+            stem_a = _Path(doc_a.get("title") or "").stem
+            if not stem_a:
+                continue
+            for doc_b in docs[i + 1:]:
+                stem_b = _Path(doc_b.get("title") or "").stem
+                if not stem_b:
+                    continue
+                if not _similar(stem_a, stem_b):
+                    continue
+                with db._lock:
+                    already = db._conn.execute(
+                        """SELECT id FROM suggestions
+                           WHERE work_id=? AND kind='version_relationship'
+                           AND (
+                               (json_extract(meta,'$.doc_a_id')=? AND json_extract(meta,'$.doc_b_id')=?)
+                            OR (json_extract(meta,'$.doc_a_id')=? AND json_extract(meta,'$.doc_b_id')=?)
+                           )""",
+                        (wid, doc_a["id"], doc_b["id"], doc_b["id"], doc_a["id"]),
+                    ).fetchone()
+                    if already:
+                        continue
+                    now_iso = _dt.datetime.now(_dt.timezone.utc).isoformat()
+                    meta_payload = _json.dumps({
+                        "doc_a_id": doc_a["id"],
+                        "doc_b_id": doc_b["id"],
+                        "doc_a_title": doc_a.get("title", ""),
+                        "doc_b_title": doc_b.get("title", ""),
+                        "similarity_basis": "filename_stem",
+                    })
+                    text_label = (
+                        f'"{doc_a.get("title") or stem_a}" and '
+                        f'"{doc_b.get("title") or stem_b}" '
+                        f"may be versions of the same document"
+                    )
+                    db._conn.execute(
+                        """INSERT INTO suggestions(id, work_id, kind, text, meta, created_at)
+                           VALUES(?,?,?,?,?,?)""",
+                        (
+                            str(_uuid_mod.uuid4()), wid, "version_relationship",
+                            text_label, meta_payload, now_iso,
+                        ),
+                    )
+                    db._conn.commit()
+                    created += 1
+
+    if created:
+        report.append(f"Version suggestions: created {created} new pair suggestion(s)")
+    else:
+        report.append("Version suggestions: no new version pairs found")
+
+
 def _run_nightshift_passes(db: "OrivellumDB", cfg: "OrivellumConfig") -> None:
     date_str = datetime.now().strftime("%Y-%m-%d")
     start_ts = time.time()
@@ -708,8 +811,12 @@ def _run_nightshift_passes(db: "OrivellumDB", cfg: "OrivellumConfig") -> None:
     _pass_dispatch_outbox(db, report)
 
     # 13 — Verify audit-chain integrity
-    logger.info("Nightshift pass 13/13: audit-chain verification")
+    logger.info("Nightshift pass 13/14: audit-chain verification")
     _pass_verify_audit_chain(db, report)
+
+    # 14 — Version relationship suggestions
+    logger.info("Nightshift pass 14/14: version-relationship suggestions")
+    _pass_version_suggestions(db, report)
 
     elapsed = time.time() - start_ts
     report.append(f"Completed in {elapsed:.0f}s")
