@@ -32,6 +32,7 @@ class LLMResult:
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
     error: str | None = None
+    finish_reason: str | None = None
 
 
 def record_llm_call(
@@ -109,7 +110,9 @@ def llm_call(
             resp = client.post(f"{base_url}/chat/completions", json=payload)
             resp.raise_for_status()
             data = resp.json()
-            text = data["choices"][0]["message"]["content"]
+            choice = data["choices"][0]
+            text = choice["message"]["content"]
+            finish_reason = choice.get("finish_reason")
             usage = data.get("usage") or {}
             p_tok = usage.get("prompt_tokens")
             c_tok = usage.get("completion_tokens")
@@ -123,4 +126,5 @@ def llm_call(
         db, purpose=purpose, model=model, latency_ms=latency_ms,
         prompt_tokens=p_tok, completion_tokens=c_tok, ok=ok, error=err,
     )
-    return LLMResult(text, ok, model, latency_ms, p_tok, c_tok, err)
+    return LLMResult(text, ok, model, latency_ms, p_tok, c_tok, err,
+                     finish_reason=finish_reason if err is None else None)

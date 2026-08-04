@@ -495,6 +495,62 @@ export default function ChatScreen() {
     }
   };
 
+  // ── Continue a cut-short reply ───────────────────────────────────────────
+  const handleContinue = async (messageId: string) => {
+    if (!messageId || sending) return;
+    setSending(true);
+
+    // Find the base (clean) partial text in the current message list
+    const allMsgs = data?.messages ?? [];
+    const targetMsg = allMsgs.find((m) => m.id === messageId);
+    const rawText = targetMsg?.text ?? '';
+    const SUFFIX = '\n\n*(Response was cut short — re-send to continue.)*';
+    const partialBase = rawText.endsWith(SUFFIX) ? rawText.slice(0, -SUFFIX.length) : rawText;
+
+    // Optimistically update the bubble to show it's loading
+    setLocalMessages((prev) => {
+      const base = allMsgs.map((m) => ({ ...m, isError: false } as LocalMessage));
+      return base.map((m) =>
+        m.id === messageId ? { ...m, text: partialBase } as LocalMessage : m as LocalMessage
+      );
+    });
+
+    try {
+      const domain = process.env.EXPO_PUBLIC_DOMAIN;
+      const url = `https://${domain}/api/conversations/${id}/continue`;
+      const resp = await mobileFetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stream: false }),
+      });
+      if (!resp.ok) {
+        const errBody = await resp.json().catch(() => ({}));
+        throw new Error(errBody?.detail ?? `Server returned ${resp.status}`);
+      }
+      const body = await resp.json();
+      const updatedMsg = body.message;
+      if (updatedMsg) {
+        setLocalMessages((prev) =>
+          prev.map((m) => m.id === messageId ? { ...updatedMsg, isError: false } as LocalMessage : m)
+        );
+      }
+      // Refetch to sync with server state
+      refetch();
+    } catch (err) {
+      const errMsg: LocalMessage = {
+        id: Date.now().toString() + 'cont-err',
+        conversation_id: id,
+        role: 'assistant',
+        text: 'Could not continue — please try again.',
+        created_at: new Date().toISOString(),
+        isError: true,
+      };
+      setLocalMessages((prev) => [...prev, errMsg]);
+    } finally {
+      setSending(false);
+    }
+  };
+
   // ── Send message (with optional image) ────────────────────────────────────
   const handleSend = async (forceText?: string) => {
     const trimmed = (forceText ?? text).trim();
@@ -748,11 +804,7 @@ export default function ChatScreen() {
                 message={item}
                 colors={colors}
                 isDark={isDark}
-                onResend={isCutShort ? () => {
-                  const allMsgs = [...(data?.messages ?? []), ...localMessages];
-                  const lastUser = [...allMsgs].reverse().find((m) => m.role === 'user');
-                  if (lastUser?.text) handleSend(lastUser.text);
-                } : undefined}
+                onResend={isCutShort ? () => handleContinue(item.id ?? '') : undefined}
               />
             );
           }}

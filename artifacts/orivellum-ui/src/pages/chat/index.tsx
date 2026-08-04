@@ -1041,6 +1041,107 @@ export default function Chat() {
     [draft, pendingImage, sendText]
   );
 
+  // ── Continue a cut-short reply (append mode) ─────────────────────────────
+  const handleContinue = useCallback(async (messageId: string) => {
+    if (!activeId || sendingRef.current) return;
+    const convId = activeId;
+    setSending(true);
+    sendingRef.current = true;
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    // Seed local state from server messages so we can mutate the target bubble
+    const serverMsgs: LocalMessage[] = (activeConv?.messages ?? []).map((m) => ({
+      id: m.id ?? "",
+      role: m.role as "user" | "assistant",
+      text: m.role === "assistant" && (m as any).meta?.cut_short
+        ? ((m.text ?? "").endsWith(TRUNCATION_SUFFIX)
+            ? (m.text ?? "").slice(0, -TRUNCATION_SUFFIX.length)
+            : (m.text ?? ""))
+        : (m.text ?? ""),
+      created_at: m.created_at ?? "",
+      meta: (m as any).meta as Record<string, unknown> | undefined,
+      incomplete: !!(m as any).meta?.cut_short,
+      isClarification: !!(m as any).meta?.isClarification,
+      intent: (m as any).meta?.intent as string | undefined,
+      thinking: (m as any).meta?.thinking as string | undefined,
+    }));
+
+    // Find the base (clean) text for the target message
+    const targetBase = serverMsgs.find((m) => m.id === messageId)?.text ?? "";
+    setLocalMessages(serverMsgs.map((m) =>
+      m.id === messageId ? { ...m, incomplete: false, streaming: true } : m
+    ));
+
+    let continueTargetId = messageId;
+    let accumulated = "";
+    let stillCutShort = false;
+
+    try {
+      const resp = await fetch(`${API_BASE}/conversations/${convId}/continue`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...buildAuthHeaders() },
+        body: JSON.stringify({ stream: true }),
+        credentials: "same-origin",
+        signal: controller.signal,
+      });
+      if (!resp.ok || !resp.body) throw new Error(`Continue failed: ${resp.status}`);
+
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split("\n");
+        buf = lines.pop() ?? "";
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          const data = line.slice(6).trim();
+          if (data === "[DONE]") break;
+          try {
+            const parsed = JSON.parse(data);
+            if (parsed.continue_message_id) continueTargetId = parsed.continue_message_id;
+            if (parsed.cut_short) stillCutShort = true;
+            if (parsed.error === "continuation_failed") {
+              // Server produced nothing (transport/model error) — keep the
+              // Continue affordance so the user can retry.
+              stillCutShort = true;
+              toast.error("Continuation failed — please try again");
+            }
+            if (parsed.token) {
+              accumulated += parsed.token;
+              const snap = accumulated;
+              setLocalMessages((prev) => prev.map((m) =>
+                m.id === continueTargetId
+                  ? { ...m, text: targetBase + snap, streaming: true }
+                  : m
+              ));
+            }
+          } catch { /* ignore */ }
+        }
+      }
+    } catch (err: any) {
+      if (err?.name !== "AbortError") toast.error("Could not continue — please try again");
+    } finally {
+      sendingRef.current = false;
+      abortRef.current = null;
+      setSending(false);
+      setLocalMessages((prev) => prev.map((m) =>
+        m.id === continueTargetId
+          ? { ...m, streaming: false, incomplete: stillCutShort || undefined }
+          : m
+      ));
+      // Give the final local state a moment to render, then hand off to server data
+      setTimeout(() => {
+        queryClient.invalidateQueries({ queryKey: getGetConversationQueryKey(convId) });
+        queryClient.invalidateQueries({ queryKey: getListConversationsQueryKey() });
+        setLocalMessages([]);
+      }, 600);
+    }
+  }, [activeId, activeConv?.messages, queryClient]);
+
   const handleImageSelect = useCallback((file: File) => {
     if (!file.type.startsWith("image/")) return;
     const reader = new FileReader();
@@ -1333,9 +1434,6 @@ export default function Chat() {
                                 <MarkdownContent text={msg.text} />
                                 {msg.streaming && <span className="inline-block w-0.5 h-3.5 bg-current ml-0.5 animate-pulse align-text-bottom" />}
                                 {msg.incomplete && (() => {
-                                  // Find the user message that triggered this incomplete reply
-                                  const prevUser = displayMessages.slice(0, msgIdx).reverse().find(m => m.role === "user");
-                                  const resendText = prevUser?.text || lastSentRef.current;
                                   return (
                                     <div className="mt-2 flex items-center justify-between gap-2 border-t border-amber-200/40 pt-2">
                                       <div className="flex items-center gap-1.5 text-xs text-amber-600">
@@ -1343,8 +1441,8 @@ export default function Chat() {
                                         <span>Response was cut short.</span>
                                       </div>
                                       <button
-                                        onClick={() => resendText && sendText(resendText)}
-                                        disabled={!resendText || sending}
+                                        onClick={() => handleContinue(msg.id)}
+                                        disabled={sending}
                                         className="text-xs font-mono text-amber-700 hover:text-amber-900 underline underline-offset-2 shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
                                       >
                                         Continue

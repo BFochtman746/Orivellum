@@ -68,6 +68,10 @@ class MessageSend(BaseModel):
     image_media_type: str = "image/jpeg"
 
 
+class ContinueBody(BaseModel):
+    stream: bool = True
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Image thumbnail helper
 # ──────────────────────────────────────────────────────────────────────────────
@@ -357,6 +361,95 @@ async def send_message(conv_id: str, body: MessageSend):
     msg = db.add_message(conv_id, "assistant", reply, meta=ns_meta)
     _maybe_auto_title(db, conv, body.text)
     return {"message": msg}
+
+
+@router.post("/conversations/{conv_id}/continue")
+async def continue_message(conv_id: str, body: ContinueBody):
+    """Continue a cut-short assistant reply instead of regenerating from scratch.
+
+    Finds the last assistant message with ``meta.cut_short == True``, prepends
+    its partial text as an assistant turn, and streams (or returns) only the
+    continuation.  The original message is updated in-place so history is clean.
+    """
+    db = get_db()
+    conv = db.get_conversation(conv_id)
+    if not conv:
+        raise HTTPException(404, f"Conversation {conv_id!r} not found")
+
+    # Find the last cut-short assistant message
+    messages_list = db.get_messages(conv_id)
+    cut_short_msg: dict | None = None
+    for m in reversed(messages_list):
+        if m.get("role") != "assistant":
+            continue
+        raw_meta = m.get("meta")
+        if isinstance(raw_meta, str):
+            try:
+                raw_meta = json.loads(raw_meta)
+            except Exception:
+                raw_meta = {}
+        if (raw_meta or {}).get("cut_short"):
+            cut_short_msg = m
+            cut_short_msg = {**m, "meta": raw_meta}
+        break  # only look at the last assistant message
+
+    if not cut_short_msg:
+        raise HTTPException(409, "No cut-short message found to continue")
+
+    if body.stream:
+        return StreamingResponse(
+            _stream_continuation(db, conv, cut_short_msg),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    # Non-streaming path (mobile)
+    cfg = get_config()
+    model = _model_for(conv)
+    meta = cut_short_msg.get("meta") or {}
+    partial_text: str = meta.get("partial_text") or cut_short_msg.get("text", "")
+    partial_text = partial_text.removesuffix(
+        "\n\n*(Response was cut short — re-send to continue.)*"
+    )
+
+    system_prompt = _build_system_prompt(db, conv, scope="work", user_query=None)
+    history = db.get_messages(conv_id, limit=_HISTORY_LIMIT + 5)
+    prior = [m for m in history if m.get("id") != cut_short_msg["id"]][-_HISTORY_LIMIT:]
+    msgs: list[dict] = [{"role": "system", "content": system_prompt}]
+    for m in prior:
+        role = m["role"] if m["role"] in ("user", "assistant") else "user"
+        msgs.append({"role": role, "content": m.get("text") or ""})
+    msgs.append({"role": "assistant", "content": partial_text})
+
+    from starlette.concurrency import run_in_threadpool
+    from orivellum.capabilities.llm import llm_call
+    result = await run_in_threadpool(
+        llm_call, msgs,
+        base_url=cfg.serving.base_url, model=model,
+        timeout=cfg.serving.timeout_sec, purpose="chat.continue", db=db,
+    )
+    continuation = result.text or ""
+    if not result.ok or not continuation:
+        # LLM call failed or returned nothing — preserve the cut-short state so
+        # the client can retry.  Do NOT clear partial_text or cut_short.
+        raise HTTPException(502, "Continuation failed — model returned no content; please try again")
+
+    new_text = partial_text + continuation
+    new_meta = {k: v for k, v in meta.items() if k not in ("cut_short", "partial_text")}
+    still_cut = result.finish_reason in ("length", "max_tokens")
+    if still_cut:
+        new_meta["cut_short"] = True
+        new_meta["partial_text"] = new_text
+
+    with db._lock:
+        db._conn.execute(
+            "UPDATE messages SET text=?, meta=? WHERE id=?",
+            (new_text, json.dumps(new_meta), cut_short_msg["id"]),
+        )
+        db._conn.commit()
+
+    updated_msg = {**cut_short_msg, "text": new_text, "meta": new_meta}
+    return {"message": updated_msg, "cut_short": still_cut}
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -948,6 +1041,7 @@ async def _stream_response(
                                       meta=_assist_meta)
         _assist_id = _assist_stub["id"]
         yield f"data: {json.dumps({'message_id': _assist_id, 'state': 'queued'})}\n\n"
+        _finish_reason: str | None = None
 
         # ── Transition to 'running' — AI call is about to begin ───────────────
         try:
@@ -990,7 +1084,12 @@ async def _stream_response(
                             break
                         try:
                             d = json.loads(chunk)
-                            delta = d["choices"][0]["delta"]
+                            choice0 = d["choices"][0]
+                            # Capture finish_reason — set on the final chunk
+                            fr = choice0.get("finish_reason")
+                            if fr:
+                                _finish_reason = fr
+                            delta = choice0["delta"]
                             # Some providers (e.g. DeepSeek via OpenRouter) emit
                             # reasoning in a separate field rather than inside content.
                             reasoning = delta.get("reasoning_content") or ""
@@ -1079,11 +1178,17 @@ async def _stream_response(
         # Normal completion path (also reached after AI failure fallback)
         # Use finalize_message instead of add_message — the stub already exists.
         _final_state = "done" if _stream_ok else "failed"
+        # Detect token-limit truncation from the provider's finish_reason.
+        # "length" = OpenAI/Ollama, "max_tokens" = some Anthropic-compat servers.
+        _cut_short = _stream_ok and _finish_reason in ("length", "max_tokens")
         meta: dict = {"model": model}
         if thinking_text:
             meta["thinking"] = thinking_text
         if sources:
             meta["sources"] = sources
+        if _cut_short:
+            meta["cut_short"] = True
+            meta["partial_text"] = full_reply  # clean text; no suffix appended
         if full_reply:
             # Update text + metadata on the stub, then set terminal state
             with db._lock:
@@ -1125,6 +1230,8 @@ async def _stream_response(
         if sources:
             import json as _json
             yield f"data: {_json.dumps({'sources': sources})}\n\n"
+        if _cut_short:
+            yield f"data: {json.dumps({'cut_short': True, 'message_id': _assist_id})}\n\n"
         yield "data: [DONE]\n\n"
 
     except GeneratorExit:
@@ -1137,7 +1244,12 @@ async def _stream_response(
             try:
                 if full_reply:
                     truncated = full_reply + "\n\n*(Response was cut short — re-send to continue.)*"
-                    _meta: dict = {"model": model, "cut_short": True}
+                    _meta: dict = {
+                        "model": model,
+                        "cut_short": True,
+                        # Store clean partial so /continue can resume without re-parsing the suffix
+                        "partial_text": full_reply,
+                    }
                     if thinking_text:
                         _meta["thinking"] = thinking_text
                     if sources:
@@ -1166,6 +1278,131 @@ async def _stream_response(
             prompt_tokens=None, completion_tokens=None,
             ok=_stream_ok, error=_stream_err,
         )
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Continuation streaming generator
+# ──────────────────────────────────────────────────────────────────────────────
+
+async def _stream_continuation(db: Any, conv: dict, cut_short_msg: dict):
+    """SSE generator that continues a cut-short assistant message.
+
+    Prepends the partial reply as an assistant turn so the model resumes
+    exactly where it stopped.  Tokens are appended to the original message
+    in-place so conversation history stays clean.
+    """
+    import asyncio
+    import time as _time
+    from orivellum.capabilities.llm import record_llm_call
+
+    cfg = get_config()
+    conv_id = conv["id"]
+    orig_id = cut_short_msg["id"]
+    meta = cut_short_msg.get("meta") or {}
+    model = _model_for(conv)
+
+    # Recover the clean partial text (stored without the UI truncation suffix)
+    partial_text: str = meta.get("partial_text") or cut_short_msg.get("text", "")
+    partial_text = partial_text.removesuffix(
+        "\n\n*(Response was cut short — re-send to continue.)*"
+    )
+
+    # Tell the client which message bubble to append to
+    yield f"data: {json.dumps({'continue_message_id': orig_id})}\n\n"
+
+    # Build messages: system + history (excluding cut-short stub) + partial as assistant turn
+    system_prompt = _build_system_prompt(db, conv, scope="work", user_query=None)
+    history = db.get_messages(conv_id, limit=_HISTORY_LIMIT + 5)
+    prior = [m for m in history if m.get("id") != orig_id][-_HISTORY_LIMIT:]
+    messages: list[dict] = [{"role": "system", "content": system_prompt}]
+    for m in prior:
+        role = m["role"] if m["role"] in ("user", "assistant") else "user"
+        messages.append({"role": role, "content": m.get("text") or ""})
+    # Append partial as the last assistant turn — model continues from here
+    messages.append({"role": "assistant", "content": partial_text})
+
+    continuation = ""
+    _finish_reason: str | None = None
+    _stream_started = _time.monotonic()
+    _stream_ok = True
+    _stream_err: str | None = None
+
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=cfg.serving.timeout_sec) as client:
+            async with client.stream(
+                "POST",
+                f"{cfg.serving.base_url}/chat/completions",
+                json={"model": model, "messages": messages, "stream": True},
+            ) as resp:
+                resp.raise_for_status()
+                async for line in resp.aiter_lines():
+                    if not line.startswith("data: "):
+                        continue
+                    chunk = line[6:]
+                    if chunk.strip() == "[DONE]":
+                        break
+                    try:
+                        d = json.loads(chunk)
+                        choice0 = d["choices"][0]
+                        fr = choice0.get("finish_reason")
+                        if fr:
+                            _finish_reason = fr
+                        raw = (choice0.get("delta") or {}).get("content") or ""
+                        if raw:
+                            continuation += raw
+                            yield f"data: {json.dumps({'token': raw})}\n\n"
+                    except Exception:
+                        pass
+    except Exception as exc:
+        _stream_ok = False
+        _stream_err = f"{type(exc).__name__}: {exc}"[:500]
+        logger.warning("Continuation stream failed: %s", _stream_err)
+
+    record_llm_call(
+        db, purpose="chat.continue", model=model,
+        latency_ms=int((_time.monotonic() - _stream_started) * 1000),
+        prompt_tokens=None, completion_tokens=None,
+        ok=_stream_ok, error=_stream_err,
+    )
+
+    if not continuation:
+        # Nothing was produced (transport/model failure, zero tokens).
+        # Preserve the original cut-short state so the client retains the
+        # Continue affordance for retry — do not touch the DB.
+        yield f"data: {json.dumps({'error': 'continuation_failed', 'cut_short': True})}\n\n"
+        yield "data: [DONE]\n\n"
+        return
+
+    # Update the original message: full text = partial + continuation
+    new_text = partial_text + continuation
+    new_meta = {k: v for k, v in meta.items() if k not in ("cut_short", "partial_text")}
+
+    # Mark still cut-short if the provider hit the token limit OR if the stream
+    # broke mid-way (tokens arrived but no clean finish_reason).  In both cases
+    # the user should be able to press Continue again to get the remainder.
+    stream_broke_mid = not _stream_ok and bool(continuation)
+    still_cut = stream_broke_mid or (_finish_reason in ("length", "max_tokens"))
+    if still_cut:
+        new_meta["cut_short"] = True
+        new_meta["partial_text"] = new_text
+    try:
+        with db._lock:
+            db._conn.execute(
+                "UPDATE messages SET text=?, meta=? WHERE id=?",
+                (new_text, json.dumps(new_meta), orig_id),
+            )
+            db._conn.commit()
+    except Exception as exc:
+        logger.warning("Could not persist continuation: %s", exc)
+
+    if stream_broke_mid:
+        # Distinguish a mid-stream break from a clean token-limit truncation so
+        # the client can show an appropriate message.
+        yield f"data: {json.dumps({'error': 'continuation_failed', 'cut_short': True})}\n\n"
+    elif still_cut:
+        yield f"data: {json.dumps({'cut_short': True})}\n\n"
+    yield "data: [DONE]\n\n"
 
 
 # ──────────────────────────────────────────────────────────────────────────────
