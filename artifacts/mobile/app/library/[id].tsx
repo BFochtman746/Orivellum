@@ -48,6 +48,7 @@ export default function LibraryDocDetail() {
   const [reviewing, setReviewing] = useState<string | null>(null);
   const [showWorkPicker, setShowWorkPicker] = useState(false);
   const [linkingWork, setLinkingWork] = useState(false);
+  const [lifecycleUpdating, setLifecycleUpdating] = useState(false);
 
   // ── Read Aloud (TTS) ────────────────────────────────────────────────────────
   type TtsState = 'idle' | 'loading' | 'playing' | 'paused' | 'error';
@@ -144,6 +145,57 @@ export default function LibraryDocDetail() {
     }
   };
 
+  const LIFECYCLE_OPTIONS = [
+    { value: 'draft',      label: 'Draft',      color: '#d97706' },
+    { value: 'canonical',  label: 'Canonical',  color: '#059669' },
+    { value: 'superseded', label: 'Superseded', color: '#6b7280' },
+    { value: 'reference',  label: 'Reference',  color: '#2563eb' },
+  ] as const;
+
+  const handleSetLifecycle = (lc: string) => {
+    Alert.alert(
+      'Set Lifecycle',
+      `Change lifecycle to "${lc}"?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Confirm',
+          onPress: async () => {
+            setLifecycleUpdating(true);
+            try {
+              const res = await mobileFetch(`https://${domain}/api/library/${id}/lifecycle`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ lifecycle: lc }),
+              });
+              if (!res.ok) throw new Error('Update failed');
+              await refetchDoc();
+              qc.invalidateQueries({ queryKey: ['getGetDocument', id] });
+            } catch {
+              Alert.alert('Error', 'Could not update lifecycle');
+            } finally {
+              setLifecycleUpdating(false);
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const showLifecyclePicker = () => {
+    Alert.alert(
+      'Document Lifecycle',
+      'Choose the authority state for this document.',
+      [
+        ...LIFECYCLE_OPTIONS.map((o) => ({
+          text: o.label,
+          onPress: () => handleSetLifecycle(o.value),
+        })),
+        { text: 'Cancel', style: 'cancel' as const },
+      ]
+    );
+  };
+
   const handleLinkWork = async (workId: string | null) => {
     setLinkingWork(true);
     try {
@@ -234,6 +286,32 @@ export default function LibraryDocDetail() {
             </Text>
           ) : null}
         </View>
+        {/* Lifecycle picker row */}
+        {(() => {
+          const lc = (doc as any).lifecycle ?? 'draft';
+          const opt = LIFECYCLE_OPTIONS.find((o) => o.value === lc);
+          return (
+            <Pressable
+              onPress={showLifecyclePicker}
+              disabled={lifecycleUpdating}
+              style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 8 }}
+            >
+              <View style={{
+                paddingHorizontal: 8, paddingVertical: 3, borderRadius: 5,
+                backgroundColor: (opt?.color ?? colors.mutedForeground) + '18',
+                borderWidth: 1, borderColor: (opt?.color ?? colors.mutedForeground) + '44',
+              }}>
+                <Text style={{ fontSize: 11, fontFamily: 'Inter_600SemiBold', color: opt?.color ?? colors.mutedForeground, letterSpacing: 0.4 }}>
+                  {(opt?.label ?? lc).toUpperCase()}
+                </Text>
+              </View>
+              {lifecycleUpdating
+                ? <ActivityIndicator size="small" color={colors.mutedForeground} />
+                : <Feather name="chevron-down" size={12} color={colors.mutedForeground} />}
+            </Pressable>
+          );
+        })()}
+
         {doc.readiness === 'ready' && (
           <Pressable
             onPress={handleListen}

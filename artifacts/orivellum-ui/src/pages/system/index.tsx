@@ -426,6 +426,64 @@ function SemanticSearchCard() {
   );
 }
 
+// ─── Database statistics card ─────────────────────────────────────────────────
+
+function DatabaseStatsCard() {
+  const { data, isLoading } = useQuery({
+    queryKey: ["system", "stats"],
+    queryFn: async () => {
+      const r = await apiFetch(`${API_BASE}/api/system/stats`);
+      if (!r.ok) return null;
+      return r.json() as Promise<{
+        document_count: number; knowledge_count: number;
+        work_count: number; db_size_bytes: number;
+      }>;
+    },
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+  });
+
+  const fmt = (n: number) => n.toLocaleString();
+  const fmtBytes = (b: number) => {
+    if (b >= 1_073_741_824) return `${(b / 1_073_741_824).toFixed(1)} GB`;
+    if (b >= 1_048_576)     return `${(b / 1_048_576).toFixed(1)} MB`;
+    if (b >= 1_024)         return `${(b / 1_024).toFixed(0)} KB`;
+    return `${b} B`;
+  };
+
+  return (
+    <Card>
+      <CardContent className="p-6">
+        <div className="flex items-start gap-3">
+          <Database className="w-5 h-5 text-primary mt-0.5 shrink-0" />
+          <div className="flex-1 space-y-2">
+            <h3 className="font-medium text-sm">Database</h3>
+            {isLoading ? (
+              <p className="text-sm text-muted-foreground">Loading…</p>
+            ) : !data ? (
+              <p className="text-sm text-muted-foreground">Could not load stats.</p>
+            ) : (
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1">
+                {[
+                  { label: "Works",     value: fmt(data.work_count) },
+                  { label: "Documents", value: fmt(data.document_count) },
+                  { label: "Knowledge", value: fmt(data.knowledge_count) },
+                  { label: "DB Size",   value: fmtBytes(data.db_size_bytes) },
+                ].map(({ label, value }) => (
+                  <div key={label} className="flex flex-col gap-0.5">
+                    <span className="text-xs text-muted-foreground">{label}</span>
+                    <span className="text-sm font-semibold tabular-nums">{value}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 // ─── Vision model card ────────────────────────────────────────────────────────
 
 type VisionProbeResult = { ok: boolean; model: string; response?: string; error?: string };
@@ -770,6 +828,9 @@ export default function System() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Database statistics */}
+      <DatabaseStatsCard />
 
       {/* Semantic / Embedding Search */}
       <SemanticSearchCard />

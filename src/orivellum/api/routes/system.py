@@ -657,6 +657,24 @@ def probe_embeddings():
         return {"ok": False, "status": "error", "detail": str(exc)}
 
 
+@router.get("/system/stats")
+def system_stats():
+    """Return high-level database statistics for the System settings page."""
+    import os
+    db = get_db()
+    summary = db.dashboard_summary()
+    try:
+        db_size = os.path.getsize(db._path) if db._path else 0
+    except Exception:
+        db_size = 0
+    return {
+        "document_count":  summary.get("document_count", 0),
+        "knowledge_count": summary.get("knowledge_count", 0),
+        "work_count":      summary.get("work_count", 0),
+        "db_size_bytes":   db_size,
+    }
+
+
 @router.post("/system/vision/probe")
 def probe_vision_model():
     """Test whether the configured vision model accepts image inputs.
