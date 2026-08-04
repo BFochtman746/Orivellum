@@ -4,10 +4,17 @@
  * The MONARCH "single-view" dashboard for a Work: completeness, gap analysis,
  * chapter structure, key knowledge items, and research suggestions — all
  * without navigating through individual files.
+ *
+ * Every section now carries actionable CTAs:
+ *  • Gap cards       → "Find sources" deep-links to the Search tab pre-filled
+ *  • Missing chapters → "Go to document" links to Library for that doc
+ *  • Low research     → "Import more sources" opens Library import dialog
+ *  • Knowledge header → "Rescore evidence" runs the evidence-rescore endpoint
+ *  • Pipeline banner  → shows current stage + advance readiness
  */
 import { useState } from "react";
 import { useParams, useLocation } from "wouter";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/auth";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -16,10 +23,14 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
   ArrowLeft, BarChart2, AlertTriangle, Lightbulb, CheckCircle2,
   RefreshCw, ChevronDown, ChevronRight, Layers, Brain,
-  BookOpen, FileText,
+  BookOpen, FileText, Loader2, Zap, ArrowRight, TrendingUp,
+  Search, UploadCloud, RotateCw, ExternalLink,
 } from "lucide-react";
+import { toast } from "sonner";
 
 const BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
+const LIB  = `${import.meta.env.BASE_URL}library`.replace(/\/+/g, "/").replace(/\/$/, "");
+const WORKS_BASE = `${import.meta.env.BASE_URL}works`.replace(/\/+/g, "/").replace(/\/$/, "");
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -56,6 +67,12 @@ interface WorkStats {
   avg_mastery_pct: number;
   concept_count: number;
 }
+interface PipelineData {
+  id: string; status: string; stage_label?: string; next_status?: string | null;
+  chapter_count: number;
+  stage_artifact?: { status: string; artifact_type?: string } | null;
+  open_findings?: Array<{ id: string; severity: string; description: string }>;
+}
 
 // ── Colour helpers ─────────────────────────────────────────────────────────────
 
@@ -78,12 +95,18 @@ const GAP_DOT: Record<string, string> = {
   high: "bg-red-500", medium: "bg-amber-400", low: "bg-blue-400",
 };
 
+// ── Stages with AI workers ────────────────────────────────────────────────────
+
+const WORKER_STAGES = new Set(["B0","B1","B2","B3","B4","B5"]);
+
 // ── Main page ──────────────────────────────────────────────────────────────────
 
 export default function WorkIntelligence() {
   const { workId } = useParams<{ workId: string }>();
-  const [, navigate]    = useLocation();
+  const [, navigate] = useLocation();
+  const queryClient  = useQueryClient();
   const [open, setOpen] = useState<Set<string>>(new Set(["completeness", "gaps"]));
+  const [lastRescored, setLastRescored] = useState<string | null>(null);
 
   const toggle = (s: string) =>
     setOpen((prev) => { const n = new Set(prev); n.has(s) ? n.delete(s) : n.add(s); return n; });
@@ -124,6 +147,28 @@ export default function WorkIntelligence() {
     enabled: !!workId, staleTime: 120_000,
   });
 
+  const { data: pipelineResp } = useQuery<{ pipeline: PipelineData | null }>({
+    queryKey: ["pipeline", workId],
+    queryFn: () => apiFetch(`${BASE}/works/${workId}/pipeline`).then((r) => r.json()),
+    enabled: !!workId, staleTime: 30_000,
+  });
+
+  // Evidence rescore mutation
+  const rescoreMutation = useMutation({
+    mutationFn: async () => {
+      const r = await apiFetch(`${BASE}/works/${workId}/evidence/rescore`, { method: "POST" });
+      if (!r.ok) throw new Error("Rescore failed");
+      return r.json();
+    },
+    onSuccess: (data: any) => {
+      const ts = new Date().toLocaleTimeString();
+      setLastRescored(ts);
+      queryClient.invalidateQueries({ queryKey: ["work-knowledge-top", workId] });
+      toast.success(`Evidence rescored — ${data.rescored_count ?? 0} items updated`);
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
   const title = (work?.work as any)?.title ?? "Work Intelligence";
 
   // Derived counts
@@ -137,14 +182,36 @@ export default function WorkIntelligence() {
   const lowGaps   = gaps?.gaps.filter(g => g.severity === "low")     ?? [];
   const totalGaps = gaps?.gaps.length ?? 0;
 
+  // Research dimension
+  const researchDim = compl?.dimensions.find(d => d.name === "research");
+  const researchLow = researchDim != null && researchDim.score < 40;
+
+  // Pipeline state
+  const pipeline = pipelineResp?.pipeline ?? null;
+  const pipelineStage = pipeline?.status ?? null;
+  const pipelineArtifact = pipeline?.stage_artifact ?? null;
+  const pipelineFindings = pipeline?.open_findings ?? [];
+  const artifactDone = pipelineArtifact?.status === "done";
+  const needsArtifact = pipelineStage && WORKER_STAGES.has(pipelineStage) && !artifactDone;
+  const hasBlockers = pipelineFindings.length > 0;
+  const readyToAdvance = pipeline && !WORKER_STAGES.has(pipelineStage ?? "") && !hasBlockers;
+  // For B0-B5: ready if artifact done and no blockers
+  const readyToAdvanceWorker = pipeline && WORKER_STAGES.has(pipelineStage ?? "") && artifactDone && !hasBlockers;
+
   const allReady = !complLoading && !gapsLoading;
+
+  // Navigation helpers
+  const goSearch = (q: string) =>
+    navigate(`${WORKS_BASE}/${workId}?tab=search&q=${encodeURIComponent(q)}`);
+  const goBook = () =>
+    navigate(`${WORKS_BASE}/${workId}?tab=book`);
 
   return (
     <div className="space-y-6 animate-in fade-in duration-300 max-w-4xl">
 
       {/* Header */}
       <div className="flex items-center justify-between">
-        <Button variant="ghost" size="sm" onClick={() => navigate(`/works/${workId}`)} className="-ml-2">
+        <Button variant="ghost" size="sm" onClick={() => navigate(`${WORKS_BASE}/${workId}`)} className="-ml-2">
           <ArrowLeft className="w-4 h-4 mr-1.5" /> {title}
         </Button>
         <Button variant="outline" size="sm"
@@ -205,11 +272,29 @@ export default function WorkIntelligence() {
             value={String(totalDocs)}
             sub={`${readyDocs} ready`}
           />
-          <MetricCard
-            label="Knowledge"
-            value={String(totalKn)}
-            sub={`${Object.keys(statsData.knowledge_by_kind).length} kind${Object.keys(statsData.knowledge_by_kind).length !== 1 ? "s" : ""}`}
-          />
+          {/* Knowledge card with inline rescore action */}
+          <Card className="border-border/50">
+            <CardContent className="p-4 space-y-1">
+              <p className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">Knowledge</p>
+              <p className="text-2xl font-mono font-bold text-foreground">{totalKn}</p>
+              <div className="flex items-center justify-between gap-1">
+                <p className="text-[11px] font-mono text-muted-foreground">
+                  {lastRescored ? `rescored ${lastRescored}` : `${Object.keys(statsData.knowledge_by_kind).length} kind${Object.keys(statsData.knowledge_by_kind).length !== 1 ? "s" : ""}`}
+                </p>
+                <button
+                  className="flex items-center gap-0.5 text-[10px] font-mono text-primary/70 hover:text-primary transition-colors disabled:opacity-40"
+                  onClick={() => rescoreMutation.mutate()}
+                  disabled={rescoreMutation.isPending}
+                  title="Re-score confidence and detect contradictions across all knowledge items"
+                >
+                  {rescoreMutation.isPending
+                    ? <Loader2 className="w-3 h-3 animate-spin" />
+                    : <Zap className="w-3 h-3" />}
+                  Rescore
+                </button>
+              </div>
+            </CardContent>
+          </Card>
           <MetricCard
             label="Tasks"
             value={String(statsData.pending_task_count)}
@@ -221,6 +306,41 @@ export default function WorkIntelligence() {
             value={String(statsData.conversation_count)}
             sub="conversations"
           />
+        </div>
+      )}
+
+      {/* ── Pipeline advance banner ───────────────────────────────────────────── */}
+      {pipeline ? (
+        <PipelineBanner
+          pipeline={pipeline}
+          needsArtifact={!!needsArtifact}
+          readyToAdvance={!!(readyToAdvance || readyToAdvanceWorker)}
+          hasBlockers={hasBlockers}
+          onGoBook={goBook}
+        />
+      ) : pipelineResp !== undefined ? (
+        /* Pipeline not started */
+        <div className="flex items-center justify-between gap-3 px-4 py-3 rounded-lg border border-dashed border-border/60 bg-muted/10">
+          <p className="text-xs text-muted-foreground">No production pipeline started for this Work yet.</p>
+          <Button size="sm" variant="outline" className="gap-1.5 h-7 text-xs shrink-0" onClick={goBook}>
+            Start pipeline <ArrowRight className="w-3 h-3" />
+          </Button>
+        </div>
+      ) : null}
+
+      {/* ── Low research coverage CTA ─────────────────────────────────────────── */}
+      {researchLow && (
+        <div className="flex items-center justify-between gap-3 px-4 py-3 rounded-lg border border-amber-200 bg-amber-50/50">
+          <div className="flex items-center gap-2 text-amber-800 text-sm">
+            <TrendingUp className="w-4 h-4 shrink-0" />
+            <span>Research coverage is low ({researchDim!.score}%). Import more primary sources to strengthen this Work.</span>
+          </div>
+          <Button size="sm" variant="outline"
+            className="gap-1.5 h-7 text-xs shrink-0 border-amber-300 text-amber-800 hover:bg-amber-100"
+            onClick={() => navigate(`${LIB}?import=1`)}>
+            <UploadCloud className="w-3 h-3" />
+            Import sources
+          </Button>
         </div>
       )}
 
@@ -246,7 +366,19 @@ export default function WorkIntelligence() {
                       {Number(d.current).toLocaleString()} / {Number(d.target).toLocaleString()} {d.unit}
                     </span>
                   </div>
-                  <span className={`font-mono font-semibold text-sm ${scoreColor(d.score)}`}>{d.score}%</span>
+                  <div className="flex items-center gap-2">
+                    <span className={`font-mono font-semibold text-sm ${scoreColor(d.score)}`}>{d.score}%</span>
+                    {/* Import CTA on the research bar */}
+                    {d.name === "research" && d.score < 40 && (
+                      <button
+                        className="flex items-center gap-1 text-[10px] font-mono text-amber-700 hover:text-amber-900 transition-colors"
+                        onClick={() => navigate(`${LIB}?import=1`)}
+                      >
+                        <UploadCloud className="w-3 h-3" />
+                        Import more sources
+                      </button>
+                    )}
+                  </div>
                 </div>
                 <div className="h-1.5 bg-muted rounded-full overflow-hidden">
                   <div
@@ -310,6 +442,17 @@ export default function WorkIntelligence() {
                         </p>
                       )}
                     </div>
+                    {/* "Find sources" action for high/medium gaps */}
+                    {(severity === "high" || severity === "medium") && (
+                      <button
+                        className="shrink-0 flex items-center gap-1 text-[10px] font-mono text-primary/70 hover:text-primary transition-colors whitespace-nowrap mt-0.5"
+                        onClick={() => goSearch(g.title)}
+                        title={`Search this Work for: ${g.title}`}
+                      >
+                        <Search className="w-3 h-3" />
+                        Find sources
+                      </button>
+                    )}
                   </div>
                 ))}
               </div>
@@ -331,30 +474,48 @@ export default function WorkIntelligence() {
           open={open.has("chapters")} onToggle={() => toggle("chapters")}
           badge={String(chaptersData.total_chapters)}>
           <div className="space-y-4">
-            {chaptersData.documents.map((docGroup) => (
-              <div key={docGroup.doc_id}>
-                <div className="flex items-center gap-2 py-1.5 mb-1.5 border-b border-border/30">
-                  <FileText className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                  <span className="text-xs font-mono font-semibold text-muted-foreground truncate">{docGroup.doc_title}</span>
-                  <Badge variant="outline" className="text-[9px] font-mono ml-auto shrink-0">
-                    {docGroup.chapters.length} ch
-                  </Badge>
+            {chaptersData.documents.map((docGroup) => {
+              const missingChapters = docGroup.chapters.filter(ch => ch.status === "missing");
+              return (
+                <div key={docGroup.doc_id}>
+                  <div className="flex items-center gap-2 py-1.5 mb-1.5 border-b border-border/30">
+                    <FileText className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                    <span className="text-xs font-mono font-semibold text-muted-foreground truncate flex-1">{docGroup.doc_title}</span>
+                    <Badge variant="outline" className="text-[9px] font-mono shrink-0">
+                      {docGroup.chapters.length} ch
+                    </Badge>
+                    {/* Reprocess CTA when there are missing chapters */}
+                    {missingChapters.length > 0 && (
+                      <button
+                        className="flex items-center gap-1 text-[10px] font-mono text-amber-700 hover:text-amber-900 transition-colors shrink-0"
+                        onClick={() => navigate(`${LIB}/${docGroup.doc_id}`)}
+                        title={`${missingChapters.length} missing chapter${missingChapters.length !== 1 ? "s" : ""} — view document in Library`}
+                      >
+                        <RotateCw className="w-3 h-3" />
+                        Reprocess ({missingChapters.length} missing)
+                      </button>
+                    )}
+                  </div>
+                  <div className="pl-5 space-y-1">
+                    {docGroup.chapters.map((ch) => (
+                      <div key={ch.id}
+                        className={`flex items-center gap-2 text-xs py-0.5 ${ch.status === "missing" ? "text-red-600/80" : "text-muted-foreground"}`}>
+                        <span className="font-mono w-5 text-right shrink-0 opacity-50">{ch.seq}.</span>
+                        <span className={`truncate flex-1 ${ch.level > 1 ? "pl-" + ((ch.level - 1) * 2) : ""}`}>
+                          {ch.title || "(untitled)"}
+                        </span>
+                        {ch.status === "missing" && (
+                          <span className="text-[9px] font-mono uppercase bg-red-100 text-red-600 px-1 rounded shrink-0">missing</span>
+                        )}
+                        {ch.word_count > 0 && (
+                          <span className="font-mono opacity-40 shrink-0">{ch.word_count.toLocaleString()}w</span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
                 </div>
-                <div className="pl-5 space-y-1">
-                  {docGroup.chapters.map((ch) => (
-                    <div key={ch.id} className="flex items-center gap-2 text-xs py-0.5 text-muted-foreground">
-                      <span className="font-mono w-5 text-right shrink-0 opacity-50">{ch.seq}.</span>
-                      <span className={`truncate flex-1 ${ch.level > 1 ? "pl-" + ((ch.level - 1) * 2) : ""}`}>
-                        {ch.title || "(untitled)"}
-                      </span>
-                      {ch.word_count > 0 && (
-                        <span className="font-mono opacity-40 shrink-0">{ch.word_count.toLocaleString()}w</span>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </Section>
       )}
@@ -365,9 +526,20 @@ export default function WorkIntelligence() {
           open={open.has("suggestions")} onToggle={() => toggle("suggestions")}>
           <div className="flex flex-wrap gap-2">
             {gaps.suggested_queries.map((q, i) => (
-              <Badge key={i} variant="outline" className="font-mono text-xs cursor-default">{q}</Badge>
+              <button
+                key={i}
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-border/60 bg-muted/20 font-mono text-xs text-muted-foreground hover:bg-primary/5 hover:border-primary/30 hover:text-primary transition-colors"
+                onClick={() => goSearch(q)}
+                title={`Search this Work for: ${q}`}
+              >
+                <Search className="w-3 h-3" />
+                {q}
+              </button>
             ))}
           </div>
+          <p className="text-[10px] font-mono text-muted-foreground/50 mt-3">
+            Click a query to search this Work's knowledge and documents.
+          </p>
         </Section>
       )}
 
@@ -375,7 +547,20 @@ export default function WorkIntelligence() {
       {knData && knData.knowledge.length > 0 && (
         <Section id="knowledge" label="Knowledge Highlights" icon={Layers}
           open={open.has("knowledge")} onToggle={() => toggle("knowledge")}
-          badge={String(knData.knowledge.length)}>
+          badge={String(knData.knowledge.length)}
+          headerAction={
+            <button
+              className="flex items-center gap-1 text-[10px] font-mono text-muted-foreground/60 hover:text-primary transition-colors disabled:opacity-40"
+              onClick={(e) => { e.stopPropagation(); rescoreMutation.mutate(); }}
+              disabled={rescoreMutation.isPending}
+              title="Re-score confidence and detect contradictions"
+            >
+              {rescoreMutation.isPending
+                ? <Loader2 className="w-3 h-3 animate-spin" />
+                : <Zap className="w-3 h-3" />}
+              {lastRescored ? `Rescored ${lastRescored}` : "Rescore evidence"}
+            </button>
+          }>
           <div className="space-y-2">
             {knData.knowledge.slice(0, 10).map((item) => (
               <div key={item.id} className="flex items-start gap-3 p-3 rounded-lg border border-border/40 bg-muted/10">
@@ -394,7 +579,7 @@ export default function WorkIntelligence() {
                   return (
                     <span
                       className={`text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded border shrink-0 mt-0.5 ${tier.cls}`}
-                      title={`Confidence: ${pct.toFixed(1)}% (estimated) — ${tier.label === 'High' ? 'Well-evidenced: corroborated by multiple sources, recent, reviewed' : tier.label === 'Med' ? 'Partially evidenced: some corroboration or review present' : 'Thin evidence: single source, unreviewed, or old — verify before relying on this'}`}
+                      title={`Confidence: ${pct.toFixed(1)}% (estimated)`}
                     >
                       {pct.toFixed(0)}% {tier.label}
                     </span>
@@ -416,10 +601,109 @@ export default function WorkIntelligence() {
         <span>Orivellum Knowledge Intelligence</span>
         <Button variant="link" size="sm"
           className="text-[11px] font-mono text-muted-foreground/50 h-auto p-0"
-          onClick={() => navigate(`/works/${workId}`)}>
+          onClick={() => navigate(`${WORKS_BASE}/${workId}`)}>
           Full Work detail →
         </Button>
       </div>
+    </div>
+  );
+}
+
+// ── Pipeline banner ────────────────────────────────────────────────────────────
+
+function PipelineBanner({
+  pipeline, needsArtifact, readyToAdvance, hasBlockers, onGoBook,
+}: {
+  pipeline: PipelineData;
+  needsArtifact: boolean;
+  readyToAdvance: boolean;
+  hasBlockers: boolean;
+  onGoBook: () => void;
+}) {
+  const isTerminal = pipeline.status === "B17";
+
+  if (isTerminal) {
+    return (
+      <div className="flex items-center gap-2 px-4 py-2.5 rounded-lg border border-emerald-200 bg-emerald-50/50 text-emerald-700 text-xs">
+        <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+        <span className="font-medium">Pipeline complete</span>
+        <span className="opacity-70">— this Work has reached B17 (Published).</span>
+      </div>
+    );
+  }
+
+  const stageLabel = pipeline.stage_label ?? pipeline.status;
+  const nextLabel  = pipeline.next_status ? pipeline.next_status : null;
+
+  if (readyToAdvance && nextLabel) {
+    return (
+      <div className="flex items-center justify-between gap-3 px-4 py-2.5 rounded-lg border border-emerald-200 bg-emerald-50/60">
+        <div className="flex items-center gap-2 text-emerald-800 text-xs">
+          <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+          <span>
+            <span className="font-medium">Ready to advance</span>
+            {" — "}current stage <span className="font-mono">{pipeline.status}</span> ({stageLabel}) is complete.
+          </span>
+        </div>
+        <Button size="sm" variant="outline"
+          className="gap-1.5 h-7 text-xs shrink-0 border-emerald-300 text-emerald-800 hover:bg-emerald-100"
+          onClick={onGoBook}>
+          Advance to {nextLabel} <ArrowRight className="w-3 h-3" />
+        </Button>
+      </div>
+    );
+  }
+
+  if (hasBlockers) {
+    const high = (pipeline.open_findings ?? []).filter(f => f.severity === "high" || f.severity === "critical");
+    return (
+      <div className="flex items-center justify-between gap-3 px-4 py-2.5 rounded-lg border border-red-200 bg-red-50/40">
+        <div className="flex items-center gap-2 text-red-800 text-xs">
+          <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+          <span>
+            <span className="font-mono">{pipeline.status}</span> {stageLabel} has{" "}
+            <span className="font-medium">{high.length} open finding{high.length !== 1 ? "s" : ""}</span>
+            {" "}blocking advance.
+          </span>
+        </div>
+        <Button size="sm" variant="outline"
+          className="gap-1.5 h-7 text-xs shrink-0 border-red-300 text-red-800 hover:bg-red-100"
+          onClick={onGoBook}>
+          Resolve in Book tab <ExternalLink className="w-3 h-3" />
+        </Button>
+      </div>
+    );
+  }
+
+  if (needsArtifact) {
+    return (
+      <div className="flex items-center justify-between gap-3 px-4 py-2.5 rounded-lg border border-amber-200 bg-amber-50/40">
+        <div className="flex items-center gap-2 text-amber-800 text-xs">
+          <Zap className="w-3.5 h-3.5 shrink-0" />
+          <span>
+            Stage <span className="font-mono">{pipeline.status}</span> ({stageLabel}) needs its AI work run before you can advance.
+          </span>
+        </div>
+        <Button size="sm" variant="outline"
+          className="gap-1.5 h-7 text-xs shrink-0 border-amber-300 text-amber-800 hover:bg-amber-100"
+          onClick={onGoBook}>
+          Run stage work <ArrowRight className="w-3 h-3" />
+        </Button>
+      </div>
+    );
+  }
+
+  // Neutral info
+  return (
+    <div className="flex items-center justify-between gap-3 px-4 py-2 rounded-lg border border-border/40 bg-muted/10">
+      <div className="flex items-center gap-2 text-muted-foreground text-xs">
+        <span className="font-mono text-[10px] bg-muted/60 border border-border/50 px-1.5 py-0.5 rounded">{pipeline.status}</span>
+        <span>{stageLabel}</span>
+      </div>
+      <button className="text-[10px] font-mono text-muted-foreground hover:text-foreground transition-colors"
+        onClick={onGoBook}>
+        Book tab →
+      </button>
     </div>
   );
 }
@@ -443,10 +727,12 @@ function MetricCard({ label, value, sub, loading, color = "text-foreground" }: {
 }
 
 function Section({
-  id, label, icon: Icon, open, onToggle, badge, badgeVariant = "secondary", children,
+  id, label, icon: Icon, open, onToggle, badge, badgeVariant = "secondary",
+  headerAction, children,
 }: {
   id: string; label: string; icon: React.ElementType; open: boolean;
   onToggle: () => void; badge?: string; badgeVariant?: "secondary" | "destructive";
+  headerAction?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
@@ -460,7 +746,12 @@ function Section({
             <Badge variant={badgeVariant} className="text-[10px] font-mono">{badge}</Badge>
           )}
         </div>
-        {open ? <ChevronDown className="w-4 h-4 text-muted-foreground" /> : <ChevronRight className="w-4 h-4 text-muted-foreground" />}
+        <div className="flex items-center gap-3">
+          {headerAction && (
+            <span onClick={e => e.stopPropagation()}>{headerAction}</span>
+          )}
+          {open ? <ChevronDown className="w-4 h-4 text-muted-foreground" /> : <ChevronRight className="w-4 h-4 text-muted-foreground" />}
+        </div>
       </button>
       {open && <div className="px-5 py-4">{children}</div>}
     </div>

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { useParams, Link, useLocation } from "wouter";
+import { useParams, Link, useLocation, useSearch } from "wouter";
 import { ErrorBoundary } from "@/components/error-boundary";
 import {
   useGetWork,
@@ -124,8 +124,12 @@ export default function WorkDetail() {
     );
   };
 
-  // Tab state — controlled so Overview stat chips can navigate to a tab
-  const [activeTab, setActiveTab] = useState("book");
+  // Tab state — initialised from ?tab= URL param so deep-links from the
+  // Intelligence page work (e.g. ?tab=search&q=gap+title).
+  const _searchStr   = useSearch();
+  const _urlParams   = new URLSearchParams(_searchStr);
+  const [activeTab, setActiveTab] = useState(() => _urlParams.get("tab") ?? "book");
+  const _initialSearchQuery = _urlParams.get("q") ?? "";
 
   // Inline editing state
   const [editing, setEditing] = useState(false);
@@ -428,7 +432,7 @@ export default function WorkDetail() {
             <TabsContent value="gaps"><ErrorBoundary label="gaps tab"><GapsTab workId={workId!} /></ErrorBoundary></TabsContent>
             <TabsContent value="tasks"><ErrorBoundary label="tasks tab"><TasksTab workId={workId!} /></ErrorBoundary></TabsContent>
             <TabsContent value="conversations"><ErrorBoundary label="conversations tab"><ConversationsTab workId={workId!} /></ErrorBoundary></TabsContent>
-            <TabsContent value="search"><ErrorBoundary label="search tab"><SearchTab workId={workId!} /></ErrorBoundary></TabsContent>
+            <TabsContent value="search"><ErrorBoundary label="search tab"><SearchTab workId={workId!} initialQuery={_initialSearchQuery} /></ErrorBoundary></TabsContent>
             <TabsContent value="quiz"><ErrorBoundary label="quiz tab"><QuizTab workId={workId!} workTitle={(work as any)?.title ?? "this Work"} /></ErrorBoundary></TabsContent>
             <TabsContent value="learn"><ErrorBoundary label="learn tab"><LearnTab workId={workId!} /></ErrorBoundary></TabsContent>
           </div>
@@ -1747,9 +1751,9 @@ function ConversationsTab({ workId }: { workId: string }) {
 
 // ─── Search tab ───────────────────────────────────────────────────────────────
 
-function SearchTab({ workId }: { workId: string }) {
+function SearchTab({ workId, initialQuery = "" }: { workId: string; initialQuery?: string }) {
   const [, navigate] = useLocation();
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(initialQuery);
   const [submitted, setSubmitted] = useState("");
   const [results, setResults] = useState<{ knowledge: any[]; chunks: any[] } | null>(null);
   const [loading, setLoading] = useState(false);

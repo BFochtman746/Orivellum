@@ -12,6 +12,7 @@ import { Input } from '@/components/ui/input';
 import Dashboard from '@/pages/dashboard';
 import WorksList from '@/pages/works/index';
 import WorkDetail from '@/pages/works/detail';
+import WorkIntelligence from '@/pages/works/intelligence';
 import { useParams, useLocation } from 'wouter';
 import Chat from '@/pages/chat/index';
 import Library from '@/pages/library/index';
@@ -37,13 +38,6 @@ const queryClient = new QueryClient({
   },
 });
 
-/** Redirect /works/:workId/intelligence → /works/:workId (Book tab is now the canonical view). */
-function WorkIntelligenceRedirect() {
-  const { workId } = useParams<{ workId: string }>();
-  const [, navigate] = useLocation();
-  useEffect(() => { navigate(`/works/${workId}`, { replace: true }); }, [workId]);
-  return null;
-}
 
 function RouteWithBoundary({ component: Page }: { component: React.ComponentType }) {
   return (
@@ -62,7 +56,7 @@ function Router() {
         <Route path="/">{() => <RouteWithBoundary component={Dashboard} />}</Route>
         <Route path="/works">{() => <RouteWithBoundary component={WorksList} />}</Route>
         <Route path="/works/:workId">{() => <RouteWithBoundary component={WorkDetail} />}</Route>
-        <Route path="/works/:workId/intelligence">{() => <WorkIntelligenceRedirect />}</Route>
+        <Route path="/works/:workId/intelligence">{() => <RouteWithBoundary component={WorkIntelligence} />}</Route>
         <Route path="/chat">{() => <RouteWithBoundary component={Chat} />}</Route>
         <Route path="/library">{() => <RouteWithBoundary component={Library} />}</Route>
         <Route path="/library/:docId">{() => <RouteWithBoundary component={DocumentDetail} />}</Route>
