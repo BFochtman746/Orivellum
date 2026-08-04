@@ -1,35 +1,39 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-  Start Orivellum on Windows -- API server + web UI (optionally + Expo mobile).
+  Start Orivellum on Windows — builds the UI then starts the API (production mode).
 
 .DESCRIPTION
-  Equivalent of ./start.sh for Windows.
-  Starts the FastAPI backend, waits for it to pass its health check, then
-  launches the Vite frontend. Both processes are stopped when you press Ctrl+C.
+  Equivalent of ./start.sh for Windows — production/headless mode.
+  1. Builds the Vite UI bundle (pnpm build) — skipped with -SkipBuild.
+  2. Starts the FastAPI backend, which serves BOTH the API (/api/*) and the
+     built UI (/orivellum-ui/*) from a single process.
+  No Vite dev server is launched. After boot, open:
+    http://<host>:<ApiPort>/orivellum-ui/   in Safari → Add to Home Screen.
+
+.PARAMETER SkipBuild
+  Skip the UI build step (use existing dist/public). Useful for fast restarts
+  when the UI source hasn't changed.
 
 .PARAMETER Mobile
-  Also start the Expo React Native dev server.
+  Also start the Expo React Native dev server (still needs pnpm).
 
 .PARAMETER ApiPort
   API server port (default 8080).
 
-.PARAMETER WebPort
-  Vite dev-server port (default 5173).
-
 .EXAMPLE
   .\scripts\start.ps1
+  .\scripts\start.ps1 -SkipBuild
   .\scripts\start.ps1 -Mobile
-  .\scripts\start.ps1 -ApiPort 9000 -WebPort 4000
+  .\scripts\start.ps1 -ApiPort 9000
 #>
 
 param(
+  [switch]$SkipBuild,
   [switch]$Mobile,
-  [int]$ApiPort = $(if ($env:API_PORT) { [int]$env:API_PORT } else { 8080 }),
-  [int]$WebPort = $(if ($env:WEB_PORT) { [int]$env:WEB_PORT } else { 5173 })
+  [int]$ApiPort = $(if ($env:API_PORT) { [int]$env:API_PORT } else { 8080 })
 )
 
-# Strict mode OFF -- makes null/missing property checks much simpler
 $ErrorActionPreference = "Stop"
 
 $Cyan  = "Cyan"
@@ -44,11 +48,11 @@ $env:PATH    = "$userPath;$machinePath"
 
 Write-Host ""
 Write-Host "---------------------------------------" -ForegroundColor $Cyan
-Write-Host "  Orivellum -- starting services" -ForegroundColor $Cyan
+Write-Host "  Orivellum — starting (production)" -ForegroundColor $Cyan
 Write-Host "---------------------------------------" -ForegroundColor $Cyan
 Write-Host ""
 
-# ---- Locate executables (handles tools not yet on session PATH) -------------
+# ---- Locate executables ----------------------------------------------------
 function Find-Exe {
   param([string]$name, [string[]]$candidates)
   $found = Get-Command $name -ErrorAction SilentlyContinue
@@ -81,11 +85,10 @@ if (-not $pnpmExe) {
   exit 1
 }
 
-# ---- Kill any leftover processes on our ports ------------------------------
+# ---- Kill any leftover process on our API port -----------------------------
 function Clear-Port {
   param([int]$port)
   try {
-    # netstat works without admin rights unlike Get-NetTCPConnection
     $lines = netstat -ano 2>$null | Select-String ":$port\s"
     foreach ($line in $lines) {
       if ($line -match 'LISTENING') {
@@ -98,14 +101,13 @@ function Clear-Port {
   } catch {}
 }
 Clear-Port $ApiPort
-Clear-Port $WebPort
 
-# ---- Ensure log dir exists --------------------------------------------------
+# ---- Ensure log dir exists -------------------------------------------------
 $root = if ($PSScriptRoot) { Split-Path $PSScriptRoot -Parent } else { Get-Location }
 $logsDir = Join-Path $root "logs"
 New-Item -ItemType Directory -Force -Path $logsDir | Out-Null
 
-# ---- Track child processes --------------------------------------------------
+# ---- Track child processes -------------------------------------------------
 $children = [System.Collections.Generic.List[System.Diagnostics.Process]]::new()
 
 function Stop-All {
@@ -115,33 +117,40 @@ function Stop-All {
       try { $p.Kill($true) } catch {}
     }
   }
-  # Also kill whatever is still listening on our ports (handles detached Vite)
   Clear-Port $ApiPort
-  Clear-Port $WebPort
 }
 
-# Launch an executable (or .cmd/.bat wrapper) via a temp batch file so that
-# paths with spaces and shim wrappers work reliably with Start-Process.
-function Start-Via-Batch {
-  param(
-    [string]$Exe,
-    [string]$CmdArgs,
-    [string]$WorkDir,
-    [string]$OutLog,
-    [string]$ErrLog
-  )
-  $tmp = [System.IO.Path]::GetTempFileName() -replace '\.tmp$', '.cmd'
-  $batch = "@echo off`r`ncd /d `"$WorkDir`"`r`n`"$Exe`" $CmdArgs`r`n"
-  [System.IO.File]::WriteAllText($tmp, $batch, [System.Text.Encoding]::ASCII)
-  return Start-Process -FilePath "cmd.exe" `
-    -ArgumentList "/c `"$tmp`"" `
+# ---- Step 1: Build the UI --------------------------------------------------
+$uiDir   = Join-Path $root "artifacts\orivellum-ui"
+$uiDist  = Join-Path $uiDir "dist\public"
+
+if ($SkipBuild -and (Test-Path $uiDist)) {
+  Write-Host "[ui]   Skipping build (dist/public already exists, -SkipBuild set)" -ForegroundColor $Gray
+} else {
+  Write-Host "[ui]   Building production UI bundle ..." -ForegroundColor $Cyan
+  $buildLog = Join-Path $logsDir "ui-build.log"
+  # pnpm build runs predev (generate-build-info) then vite build
+  $buildProc = Start-Process -FilePath "powershell.exe" `
+    -ArgumentList "-NoProfile", "-Command", "& '$pnpmExe' --filter '@workspace/orivellum-ui' build" `
+    -WorkingDirectory $root `
     -PassThru -NoNewWindow `
-    -WorkingDirectory $WorkDir `
-    -RedirectStandardOutput $OutLog `
-    -RedirectStandardError $ErrLog
+    -RedirectStandardOutput $buildLog `
+    -RedirectStandardError  (Join-Path $logsDir "ui-build-err.log") `
+    -Wait
+
+  if ($buildProc.ExitCode -ne 0) {
+    Write-Host "[ui]   ERROR: UI build failed (exit $($buildProc.ExitCode)). See logs\ui-build.log" -ForegroundColor $Red
+    exit 1
+  }
+
+  if (-not (Test-Path (Join-Path $uiDist "sw.js"))) {
+    Write-Host "[ui]   ERROR: Build succeeded but sw.js not found in dist/public." -ForegroundColor $Red
+    exit 1
+  }
+  Write-Host "[ui]   Build complete [OK]" -ForegroundColor $Green
 }
 
-# ---- API server -------------------------------------------------------------
+# ---- Step 2: Start API (serves both /api/* and /orivellum-ui/*) -----------
 Write-Host "[api]  Starting API server on port $ApiPort ..." -ForegroundColor $Cyan
 $env:PORT = "$ApiPort"
 $apiProc = Start-Process -FilePath $uvExe `
@@ -152,7 +161,7 @@ $apiProc = Start-Process -FilePath $uvExe `
   -RedirectStandardError  (Join-Path $logsDir "api-err.log")
 $children.Add($apiProc)
 
-# ---- Wait for health check --------------------------------------------------
+# ---- Step 3: Wait for health check -----------------------------------------
 Write-Host "[api]  Waiting for API to be ready ..." -ForegroundColor $Cyan
 $maxWait = 60
 $elapsed = 0
@@ -176,22 +185,7 @@ if (-not $healthy) {
 }
 Write-Host "[api]  Ready [OK]" -ForegroundColor $Green
 
-# ---- Web UI -----------------------------------------------------------------
-Write-Host "[web]  Starting web UI on port $WebPort ..." -ForegroundColor $Cyan
-$env:PORT              = "$WebPort"
-$env:BASE_PATH         = "/"
-$env:ORIVELLUM_API_URL = "http://127.0.0.1:$ApiPort"
-# pnpm silently skips launching Vite when stdout is redirected (non-TTY).
-# Open a dedicated window so pnpm gets a real console — same as running manually.
-$uiDir = Join-Path $root "artifacts\orivellum-ui"
-# pnpm on this machine is a .ps1 wrapper — must use powershell.exe, not cmd.exe
-$webProc = Start-Process -FilePath "powershell.exe" `
-  -ArgumentList "-NoProfile", "-Command", "& '$pnpmExe' run dev" `
-  -WorkingDirectory $uiDir `
-  -PassThru
-$children.Add($webProc)
-
-# ---- Mobile (optional) ------------------------------------------------------
+# ---- Step 4: Mobile (optional) ---------------------------------------------
 if ($Mobile) {
   Write-Host "[mob]  Starting Expo ..." -ForegroundColor $Cyan
   $mobDir = Join-Path $root "artifacts\mobile"
@@ -202,56 +196,22 @@ if ($Mobile) {
   $children.Add($mobProc)
 }
 
-# ---- Wait for Vite to be ready (port check, not process check) --------------
-# pnpm on Windows may detach Vite as a child process and exit itself (code 0).
-# We verify Vite is actually serving before declaring success.
-Write-Host "[web]  Waiting for web UI to be ready ..." -ForegroundColor $Cyan
-$webMaxWait = 45
-$webElapsed = 0
-$webReady   = $false
-while ($webElapsed -lt $webMaxWait) {
-  try {
-    $wr = Invoke-WebRequest -Uri "http://127.0.0.1:$WebPort/" `
-      -UseBasicParsing -TimeoutSec 2 -ErrorAction Stop
-    if ($wr.StatusCode -lt 500) { $webReady = $true; break }
-  } catch {}
-  Start-Sleep -Seconds 1
-  $webElapsed++
-}
-if (-not $webReady) {
-  Write-Host "[web]  ERROR: Web UI not responding after ${webMaxWait}s. Check logs\web.log" -ForegroundColor $Red
-  Stop-All; exit 1
-}
-Write-Host "[web]  Ready [OK]" -ForegroundColor $Green
-
 Write-Host ""
-Write-Host "  API  -> http://localhost:$ApiPort" -ForegroundColor White
-Write-Host "  Web  -> http://localhost:$WebPort" -ForegroundColor White
+Write-Host "  App  -> http://localhost:$ApiPort/orivellum-ui/" -ForegroundColor White
+Write-Host "         Open in Safari on your iPhone and tap Share → Add to Home Screen" -ForegroundColor $Gray
+Write-Host "  API  -> http://localhost:$ApiPort/api/" -ForegroundColor White
 if ($Mobile) { Write-Host "  Expo -> http://localhost:19000" -ForegroundColor White }
 Write-Host ""
+Write-Host "  Use -SkipBuild to restart without rebuilding the UI." -ForegroundColor $Gray
 Write-Host "  Press Ctrl+C to stop all services." -ForegroundColor $Gray
 Write-Host "---------------------------------------" -ForegroundColor $Cyan
 
-# ---- Keep alive; clean up on Ctrl+C ----------------------------------------
-# Monitor the API process (must stay alive) and the web port (Vite may be
-# a detached child, so we check the port rather than the pnpm process).
-$webFailCount = 0
+# ---- Keep alive — monitor API process only ---------------------------------
 try {
   while ($true) {
     if ($apiProc.HasExited) {
       Write-Host "  API stopped unexpectedly. Shutting down." -ForegroundColor $Red
       Stop-All; exit 1
-    }
-    try {
-      Invoke-WebRequest -Uri "http://127.0.0.1:$WebPort/" `
-        -UseBasicParsing -TimeoutSec 2 -ErrorAction Stop | Out-Null
-      $webFailCount = 0
-    } catch {
-      $webFailCount++
-      if ($webFailCount -ge 3) {
-        Write-Host "  Web UI stopped responding. Shutting down." -ForegroundColor $Red
-        Stop-All; exit 1
-      }
     }
     Start-Sleep -Seconds 5
   }

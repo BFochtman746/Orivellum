@@ -148,8 +148,21 @@ def create_app() -> FastAPI:
 
     @app.middleware("http")
     async def auth_middleware(request: Request, call_next):
+        path = request.url.path
+
+        # PWA API calls arrive with BASE_URL prefix (/orivellum-ui/api/…).
+        # Strip it so the exempt-list and API-path checks both work correctly.
+        effective_path = (
+            path[len("/orivellum-ui"):] if path.startswith("/orivellum-ui/api/") else path
+        )
+
         # CORS preflight and explicitly exempt paths skip auth.
-        if request.method == "OPTIONS" or request.url.path in _AUTH_EXEMPT:
+        if request.method == "OPTIONS" or effective_path in _AUTH_EXEMPT:
+            return await call_next(request)
+
+        # Static UI assets (served by the StaticFiles mount) need no auth.
+        # Only enforce auth on /api/* requests (both bare and /orivellum-ui/-prefixed).
+        if not effective_path.startswith("/api/"):
             return await call_next(request)
 
         # ── Session cookie (web browser) ──────────────────────────────────
@@ -191,6 +204,16 @@ def create_app() -> FastAPI:
 
         return JSONResponse({"detail": "Unauthorized"}, status_code=401)
 
+    # ── Path normalizer ───────────────────────────────────────────────────────
+    # PWA requests arrive with the BASE_URL prefix (/orivellum-ui/api/…).
+    # Strip it once here so every policy check (rate-limit, body-size, auth)
+    # works identically regardless of whether the caller is the PWA or a
+    # direct API client.
+    def _canonical_path(raw: str) -> str:
+        if raw.startswith("/orivellum-ui/api/"):
+            return raw[len("/orivellum-ui"):]
+        return raw
+
     # ── In-memory sliding-window rate limiter ─────────────────────────────────
     # Keyed by (client_ip, route_prefix) → deque of request timestamps.
     # Limits are intentionally generous for a single-user local workspace.
@@ -207,7 +230,7 @@ def create_app() -> FastAPI:
 
     @app.middleware("http")
     async def rate_limit(request: Request, call_next):
-        path = request.url.path
+        path = _canonical_path(request.url.path)
         if request.method in ("POST", "PUT", "PATCH"):
             for prefix, (limit, window) in _RATE_LIMITS.items():
                 if path.startswith(prefix):
@@ -236,7 +259,7 @@ def create_app() -> FastAPI:
     @app.middleware("http")
     async def limit_body_size(request: Request, call_next):
         if (request.headers.get("content-length")
-                and request.url.path not in _BODY_LIMIT_EXEMPT):
+                and _canonical_path(request.url.path) not in _BODY_LIMIT_EXEMPT):
             try:
                 cfg = _deps.get_config()
                 size = int(request.headers["content-length"])
@@ -255,10 +278,18 @@ def create_app() -> FastAPI:
         projects, backups, studio, files, system, dashboard, learning, write,
         mcos, review, claims, pklos,
     )
-    for module in [auth, health, works, conversations, library, knowledge,
-                   projects, backups, studio, files, system, dashboard, learning, write,
-                   mcos, review, claims, pklos]:
+    _route_modules = [
+        auth, health, works, conversations, library, knowledge,
+        projects, backups, studio, files, system, dashboard, learning, write,
+        mcos, review, claims, pklos,
+    ]
+    for module in _route_modules:
         app.include_router(module.router)
+        # Also mount under /orivellum-ui so requests from the installed PWA —
+        # which prefix every API call with BASE_URL (/orivellum-ui/) — resolve
+        # to the right handlers.  include_in_schema=False avoids duplicate
+        # operation IDs in the OpenAPI schema.
+        app.include_router(module.router, prefix="/orivellum-ui", include_in_schema=False)
 
     # ── Governed-core exception handlers ─────────────────────────────────────
     from orivellum.database.db import VersionConflictError
@@ -334,6 +365,32 @@ def create_app() -> FastAPI:
     @app.exception_handler(404)
     async def not_found(request: Request, exc):
         return JSONResponse({"detail": "Not found"}, status_code=404)
+
+    # ── Static UI serving (production PWA) ───────────────────────────────────
+    # When the built UI exists (production / self-hosted mode), serve it from
+    # the API so a single process handles everything — no Vite dev server needed.
+    # SPAStaticFiles serves index.html for any path that doesn't match a real
+    # file, which is required for client-side routing (wouter deep links).
+    # Falls back gracefully when dist/public doesn't exist (Replit dev mode).
+    _ui_dist = Path(__file__).resolve().parents[3] / "artifacts" / "orivellum-ui" / "dist" / "public"
+    if _ui_dist.exists():
+        from fastapi.staticfiles import StaticFiles as _StaticFiles
+        from starlette.exceptions import HTTPException as _HTTPException
+
+        class _SPAStaticFiles(_StaticFiles):
+            """Static file handler that falls back to index.html for SPA routing."""
+            async def get_response(self, path: str, scope):
+                try:
+                    return await super().get_response(path, scope)
+                except _HTTPException as exc:
+                    if exc.status_code == 404:
+                        # Any path that isn't a real asset gets the SPA shell,
+                        # then the client-side router (wouter) takes over.
+                        return await super().get_response("index.html", scope)
+                    raise
+
+        app.mount("/orivellum-ui", _SPAStaticFiles(directory=str(_ui_dist), html=True), name="ui")
+        logger.info("Serving built UI from %s", _ui_dist)
 
     # ── Session middleware ────────────────────────────────────────────────────
     # Added LAST so it ends up OUTERMOST in the chain (processes requests
