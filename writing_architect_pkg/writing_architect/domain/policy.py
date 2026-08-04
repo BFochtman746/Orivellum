@@ -256,3 +256,117 @@ def release_gate_report(conn, book_id: str) -> dict:
         "research_questions": research_questions(conn, book_id),
         "book_defined": book_defined(conn, book_id),
     }
+
+
+# ---------------------------------------------------------------------------
+# WR-04: plan tree gate (spec §6)
+# ---------------------------------------------------------------------------
+
+def check_plan_node_gate(conn, node_id: str) -> tuple[bool, str]:
+    """Can this plan_node be approved?
+
+    Rules (spec §6):
+      1. The node must exist and must not already be CHANGE_REQUESTED.
+      2. If the node has a parent, the parent must already be APPROVED.
+         ("No silent edit of an approved ancestor" / top-down approval chain.)
+
+    Returns (ok, message).
+    """
+    row = conn.execute(
+        "SELECT id, parent_id, state, node_type FROM plan_node WHERE id=?",
+        (node_id,),
+    ).fetchone()
+    if not row:
+        return False, f"plan_node {node_id!r} not found"
+    if row["state"] == "CHANGE_REQUESTED":
+        return (
+            False,
+            "node is in CHANGE_REQUESTED state — resolve the change request "
+            "and re-approve before approving children",
+        )
+    if row["parent_id"]:
+        parent = conn.execute(
+            "SELECT state FROM plan_node WHERE id=?", (row["parent_id"],)
+        ).fetchone()
+        if not parent:
+            return False, f"parent node {row['parent_id']!r} not found in plan_node"
+        if parent["state"] != "APPROVED":
+            return (
+                False,
+                f"parent node {row['parent_id']!r} is in state "
+                f"'{parent['state']}' — parent must be APPROVED before this child "
+                "can be approved (spec §6: top-down approval chain)",
+            )
+    return True, "ok"
+
+
+def check_chapter_contract_gate(conn, contract_id: str) -> tuple[bool, str]:
+    """Can a draft_unit be created against this chapter_contract?
+
+    Enforces two gates:
+      1. The contract must be approved (approved=1).
+      2. If the contract is linked to a plan_node, that plan_node must be APPROVED
+         (so the plan-approval chain is respected end-to-end).
+
+    The DB trigger trg_draft_requires_approved_contract catches (1) at the SQL
+    level; this function gives a human-readable pre-flight message.
+    """
+    row = conn.execute(
+        "SELECT id, approved, plan_node_id FROM chapter_contract WHERE id=?",
+        (contract_id,),
+    ).fetchone()
+    if not row:
+        return False, f"chapter_contract {contract_id!r} not found"
+    if not row["approved"]:
+        return (
+            False,
+            "POLICY FM-09: contract is not yet approved — run "
+            "'wa contract-approve' before drafting",
+        )
+    if row["plan_node_id"]:
+        pn = conn.execute(
+            "SELECT state FROM plan_node WHERE id=?", (row["plan_node_id"],)
+        ).fetchone()
+        if pn and pn["state"] != "APPROVED":
+            return (
+                False,
+                f"linked plan_node {row['plan_node_id']!r} is in state "
+                f"'{pn['state']}' — plan-approval chain must reach APPROVED "
+                "before drafting (spec §6)",
+            )
+    return True, "ok"
+
+
+def check_contract_evidence_gate(conn, contract_id: str) -> tuple[bool, str]:
+    """Does this contract have ≥1 accepted claim in its evidence packet?
+
+    Required before the contract can be approved (spec §6: evidence packet
+    must be non-empty so the drafter has at least one authoritative fact).
+    """
+    n = _count(
+        conn,
+        """SELECT COUNT(*) FROM contract_evidence ce
+             JOIN claim c ON c.id = ce.claim_id
+            WHERE ce.contract_id=? AND c.accepted=1""",
+        (contract_id,),
+    )
+    if n == 0:
+        return (
+            False,
+            "POLICY FM-CE: contract has no accepted claims in its evidence "
+            "packet — add at least one accepted claim via 'wa contract-evidence' "
+            "before approving (spec §6)",
+        )
+    return True, "ok"
+
+
+def count_plan_nodes(conn, book_id: str) -> int:
+    return _count(conn, "SELECT COUNT(*) FROM plan_node WHERE book_id=?", (book_id,))
+
+
+def approved_plan_nodes(conn, book_id: str) -> int:
+    return _count(
+        conn,
+        "SELECT COUNT(*) FROM plan_node WHERE book_id=? AND state='APPROVED'",
+        (book_id,),
+    )

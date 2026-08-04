@@ -55,6 +55,26 @@ WR-03 commands (canon & continuity):
                                           Register a name used for an entity in a contract
     wa continuity-check DB BOOK_ID [--validator NAME]
                                           Run continuity validators and print JSON report
+
+WR-04 commands (architecture: plan tree + chapter contracts):
+    wa plan-add DB BOOK_ID --type TYPE --purpose "..." [--parent NID --actor "..."]
+                                          Add a plan_node (PROPOSED); TYPE one of
+                                          promise/part/chapter/scene/beat/claim
+    wa plan-approve DB NODE_ID --actor "..."
+                                          Approve a plan_node (parent must be APPROVED first)
+    wa plan-status DB BOOK_ID             Show the plan tree with states and contract summary
+    wa plan-change-request DB NODE_ID --actor "..." --reason "..."
+                                          Request a change on an APPROVED node; sets node
+                                          and all APPROVED descendants to CHANGE_REQUESTED
+    wa contract-new DB BOOK_ID --purpose "..." [--plan-node NID
+                             --required-beats "..." --forbidden-content "..."]
+                                          Create a chapter_contract (starts unapproved)
+    wa contract-evidence DB CONTRACT_ID --claim CID [--actor "..."]
+                                          Add an accepted claim to the contract's evidence packet
+    wa contract-approve DB CONTRACT_ID --actor "..."
+                                          Approve contract (requires ≥1 accepted claim in
+                                          evidence packet; linked plan_node must be APPROVED)
+    wa demo-wr04 DB BOOK_ID               Demonstrate the WR-04 exit condition end-to-end
 """
 from __future__ import annotations
 
@@ -992,6 +1012,522 @@ def cmd_continuity_check(args):
     return 0 if result["clean"] else 1
 
 
+# ─── WR-04 commands ──────────────────────────────────────────────────────────
+
+def cmd_plan_add(args):
+    """Create a plan_node (starts in PROPOSED state)."""
+    conn = dbm.init_db(args.db)
+    if not conn.execute("SELECT id FROM book_project WHERE id=?",
+                        (args.book,)).fetchone():
+        print(f"error: book {args.book!r} not found", file=sys.stderr)
+        conn.close()
+        return 2
+    if args.parent:
+        prow = conn.execute(
+            "SELECT id, state FROM plan_node WHERE id=?", (args.parent,)
+        ).fetchone()
+        if not prow:
+            print(f"error: parent plan_node {args.parent!r} not found", file=sys.stderr)
+            conn.close()
+            return 2
+        if prow["state"] == "CHANGE_REQUESTED":
+            print(
+                f"REFUSED: parent {args.parent!r} is CHANGE_REQUESTED — resolve it first",
+                file=sys.stderr,
+            )
+            conn.close()
+            return 1
+    nid = dbm.new_id("pn_")
+    now = dbm.now_utc()
+    conn.execute(
+        "INSERT INTO plan_node(id,book_id,parent_id,node_type,purpose,state,created_utc)"
+        " VALUES (?,?,?,?,?,?,?)",
+        (nid, args.book, args.parent, args.type, args.purpose, "PROPOSED", now),
+    )
+    conn.commit()
+    dbm.audit(
+        conn, actor=args.actor or "operator", action="PLAN_NODE_CREATED",
+        object_type="plan_node", object_id=nid,
+        detail={"type": args.type, "parent": args.parent, "purpose": (args.purpose or "")[:80]},
+    )
+    conn.close()
+    print(f"created plan_node {nid}  type={args.type}  parent={args.parent or 'none'}  state=PROPOSED")
+    return 0
+
+
+def cmd_plan_approve(args):
+    """Approve a plan_node (parent must be APPROVED first)."""
+    conn = dbm.init_db(args.db)
+    row = conn.execute("SELECT * FROM plan_node WHERE id=?", (args.node,)).fetchone()
+    if not row:
+        print(f"error: plan_node {args.node!r} not found", file=sys.stderr)
+        conn.close()
+        return 2
+    if row["state"] == "APPROVED":
+        print(f"plan_node {args.node} is already APPROVED")
+        conn.close()
+        return 0
+    ok, msg = policy.check_plan_node_gate(conn, args.node)
+    if not ok:
+        print(f"REFUSED: {msg}", file=sys.stderr)
+        conn.close()
+        return 1
+    conn.execute("UPDATE plan_node SET state='APPROVED' WHERE id=?", (args.node,))
+    conn.commit()
+    dbm.audit(
+        conn, actor=args.actor, action="PLAN_NODE_APPROVED",
+        object_type="plan_node", object_id=args.node,
+        detail={"actor": args.actor},
+    )
+    conn.close()
+    print(f"plan_node {args.node} APPROVED")
+    return 0
+
+
+def cmd_plan_status(args):
+    """Show the full plan tree for a book."""
+    conn = dbm.init_db(args.db)
+    book_row = conn.execute(
+        "SELECT id,title,state FROM book_project WHERE id=?", (args.book,)
+    ).fetchone()
+    if not book_row:
+        print(f"error: book {args.book!r} not found", file=sys.stderr)
+        conn.close()
+        return 2
+    nodes = conn.execute(
+        "SELECT * FROM plan_node WHERE book_id=? ORDER BY created_utc",
+        (args.book,),
+    ).fetchall()
+
+    # build id → node map and collect children
+    by_id: dict = {r["id"]: dict(r) for r in nodes}
+    children: dict = {r["id"]: [] for r in nodes}
+    roots: list = []
+    for r in nodes:
+        pid = r["parent_id"]
+        if pid and pid in children:
+            children[pid].append(r["id"])
+        else:
+            roots.append(r["id"])
+
+    def _tree(nid: str, depth: int = 0) -> list:
+        n = by_id[nid]
+        prefix = "  " * depth
+        lines = [f"{prefix}[{n['state'][:2]}] {n['node_type'].upper()} {nid}  \"{n['purpose'] or ''}\""]
+        for cid in children.get(nid, []):
+            lines.extend(_tree(cid, depth + 1))
+        return lines
+
+    # counts
+    total = len(nodes)
+    approved = sum(1 for n in nodes if n["state"] == "APPROVED")
+    change_req = sum(1 for n in nodes if n["state"] == "CHANGE_REQUESTED")
+    contracts = conn.execute(
+        "SELECT COUNT(*) FROM chapter_contract WHERE book_id=?", (args.book,)
+    ).fetchone()[0]
+    approved_contracts = conn.execute(
+        "SELECT COUNT(*) FROM chapter_contract WHERE book_id=? AND approved=1",
+        (args.book,),
+    ).fetchone()[0]
+
+    report = {
+        "book_id": book_row["id"],
+        "title": book_row["title"],
+        "lifecycle_state": book_row["state"],
+        "plan_nodes": {"total": total, "approved": approved, "change_requested": change_req},
+        "contracts": {"total": contracts, "approved": approved_contracts},
+        "tree": [],
+    }
+    for rid in roots:
+        report["tree"].extend(_tree(rid))
+    conn.close()
+    _p({k: v for k, v in report.items() if k != "tree"})
+    if report["tree"]:
+        print("\nPlan tree:")
+        for line in report["tree"]:
+            print(line)
+    return 0
+
+
+def cmd_plan_change_request(args):
+    """Record a change request on an APPROVED plan_node; blocks all descendants.
+
+    Sets the node (and any APPROVED descendants) to CHANGE_REQUESTED, records
+    an audit entry, and prevents further approvals until re-approved.
+    """
+    conn = dbm.init_db(args.db)
+    row = conn.execute("SELECT * FROM plan_node WHERE id=?", (args.node,)).fetchone()
+    if not row:
+        print(f"error: plan_node {args.node!r} not found", file=sys.stderr)
+        conn.close()
+        return 2
+    if row["state"] != "APPROVED":
+        print(
+            f"REFUSED: change requests can only be applied to APPROVED nodes "
+            f"(current state={row['state']!r})",
+            file=sys.stderr,
+        )
+        conn.close()
+        return 1
+
+    # Mark this node CHANGE_REQUESTED
+    conn.execute(
+        "UPDATE plan_node SET state='CHANGE_REQUESTED' WHERE id=?", (args.node,)
+    )
+    # Cascade: set all APPROVED descendants to CHANGE_REQUESTED
+    conn.execute(
+        """WITH RECURSIVE desc(id) AS (
+             SELECT id FROM plan_node WHERE parent_id=?
+             UNION ALL
+             SELECT p.id FROM plan_node p JOIN desc d ON p.parent_id=d.id
+           )
+           UPDATE plan_node SET state='CHANGE_REQUESTED'
+           WHERE id IN (SELECT id FROM desc) AND state='APPROVED'""",
+        (args.node,),
+    )
+    conn.commit()
+    dbm.audit(
+        conn, actor=args.actor, action="PLAN_NODE_CHANGE_REQUESTED",
+        object_type="plan_node", object_id=args.node,
+        detail={"reason": (args.reason or "")[:200], "actor": args.actor},
+    )
+    conn.close()
+    print(
+        f"plan_node {args.node} set to CHANGE_REQUESTED  (descendants also blocked)\n"
+        f"reason: {args.reason}"
+    )
+    return 0
+
+
+def cmd_contract_new(args):
+    """Create a chapter_contract (starts unapproved)."""
+    conn = dbm.init_db(args.db)
+    if not conn.execute("SELECT id FROM book_project WHERE id=?",
+                        (args.book,)).fetchone():
+        print(f"error: book {args.book!r} not found", file=sys.stderr)
+        conn.close()
+        return 2
+    if args.plan_node:
+        if not conn.execute("SELECT id FROM plan_node WHERE id=?",
+                            (args.plan_node,)).fetchone():
+            print(f"error: plan_node {args.plan_node!r} not found", file=sys.stderr)
+            conn.close()
+            return 2
+    cid = dbm.new_id("cc_")
+    now = dbm.now_utc()
+    conn.execute(
+        "INSERT INTO chapter_contract"
+        "(id,book_id,plan_node_id,purpose,required_beats,forbidden_content,"
+        " approved,created_utc)"
+        " VALUES (?,?,?,?,?,?,0,?)",
+        (
+            cid, args.book, args.plan_node, args.purpose,
+            args.required_beats, args.forbidden_content, now,
+        ),
+    )
+    conn.commit()
+    dbm.audit(
+        conn, actor=args.actor or "operator", action="CONTRACT_CREATED",
+        object_type="chapter_contract", object_id=cid,
+        detail={
+            "plan_node": args.plan_node or "none",
+            "purpose": (args.purpose or "")[:80],
+        },
+    )
+    conn.close()
+    print(
+        f"created chapter_contract {cid}  plan_node={args.plan_node or 'none'}  approved=False\n"
+        f"  next: add accepted claims with 'wa contract-evidence', "
+        f"then 'wa contract-approve'"
+    )
+    return 0
+
+
+def cmd_contract_evidence(args):
+    """Add an accepted claim to a chapter_contract's evidence packet."""
+    conn = dbm.init_db(args.db)
+    if not conn.execute("SELECT id FROM chapter_contract WHERE id=?",
+                        (args.contract,)).fetchone():
+        print(f"error: chapter_contract {args.contract!r} not found", file=sys.stderr)
+        conn.close()
+        return 2
+    claim_row = conn.execute(
+        "SELECT id, accepted FROM claim WHERE id=?", (args.claim,)
+    ).fetchone()
+    if not claim_row:
+        print(f"error: claim {args.claim!r} not found", file=sys.stderr)
+        conn.close()
+        return 2
+    if not claim_row["accepted"]:
+        print(
+            f"REFUSED: claim {args.claim!r} is not accepted — run 'wa accept-claim' first",
+            file=sys.stderr,
+        )
+        conn.close()
+        return 1
+    try:
+        conn.execute(
+            "INSERT INTO contract_evidence(contract_id,claim_id) VALUES (?,?)",
+            (args.contract, args.claim),
+        )
+        conn.commit()
+    except Exception as exc:
+        print(f"REFUSED: {exc}", file=sys.stderr)
+        conn.close()
+        return 1
+    dbm.audit(
+        conn, actor=args.actor or "operator", action="CONTRACT_EVIDENCE_ADDED",
+        object_type="contract_evidence", object_id=f"{args.contract}:{args.claim}",
+        detail={"contract": args.contract, "claim": args.claim},
+    )
+    conn.close()
+    print(f"added claim {args.claim} to evidence packet of contract {args.contract}")
+    return 0
+
+
+def cmd_contract_approve(args):
+    """Approve a chapter_contract (requires ≥1 accepted claim in evidence packet,
+    and linked plan_node must be APPROVED if present)."""
+    conn = dbm.init_db(args.db)
+    row = conn.execute(
+        "SELECT * FROM chapter_contract WHERE id=?", (args.contract,)
+    ).fetchone()
+    if not row:
+        print(f"error: chapter_contract {args.contract!r} not found", file=sys.stderr)
+        conn.close()
+        return 2
+    if row["approved"]:
+        print(f"chapter_contract {args.contract} is already approved")
+        conn.close()
+        return 0
+    # Gate 1: evidence packet must be non-empty
+    ok, msg = policy.check_contract_evidence_gate(conn, args.contract)
+    if not ok:
+        print(f"REFUSED: {msg}", file=sys.stderr)
+        conn.close()
+        return 1
+    # Gate 2: linked plan_node (if any) must be APPROVED
+    if row["plan_node_id"]:
+        pn = conn.execute(
+            "SELECT state FROM plan_node WHERE id=?", (row["plan_node_id"],)
+        ).fetchone()
+        if pn and pn["state"] != "APPROVED":
+            print(
+                f"REFUSED: linked plan_node {row['plan_node_id']!r} is in state "
+                f"'{pn['state']}' — approve the plan_node first (spec §6)",
+                file=sys.stderr,
+            )
+            conn.close()
+            return 1
+    conn.execute("UPDATE chapter_contract SET approved=1 WHERE id=?", (args.contract,))
+    now = dbm.now_utc()
+    apv_id = dbm.new_id("apv_")
+    conn.execute(
+        "INSERT INTO approval(id,object_type,object_id,decision,authority,decided_utc)"
+        " VALUES (?,?,?,?,?,?)",
+        (apv_id, "chapter_contract", args.contract, "approve", args.actor, now),
+    )
+    conn.commit()
+    dbm.audit(
+        conn, actor=args.actor, action="CONTRACT_APPROVED",
+        object_type="chapter_contract", object_id=args.contract,
+        detail={"actor": args.actor, "approval_id": apv_id},
+    )
+    conn.close()
+    print(
+        f"chapter_contract {args.contract} APPROVED  (approval record {apv_id})\n"
+        f"  drafting is now permitted against this contract"
+    )
+    return 0
+
+
+def cmd_demo_wr04(args):
+    """Demonstrate the full WR-04 exit condition for 'Ash and Silence'.
+
+    Builds and approves a plan tree (promise → part → chapter), creates a
+    chapter_contract against the chapter node, links an accepted claim as
+    evidence, approves the contract, and confirms that drafting is gated.
+
+    Requires a book to already exist (run demo-wr02 first to get the book_id
+    and an accepted claim, or pass a book that already has accepted claims).
+    """
+    conn = dbm.init_db(args.db)
+    book_row = conn.execute(
+        "SELECT id, title FROM book_project WHERE id=?", (args.book,)
+    ).fetchone()
+    if not book_row:
+        print(f"error: book {args.book!r} not found", file=sys.stderr)
+        conn.close()
+        return 2
+
+    print(f"WR-04 demo — plan tree + chapter contract for '{book_row['title']}'")
+    now = dbm.now_utc()
+
+    # ── 1. Plan tree: promise → part → chapter ────────────────────────────
+    promise_id = dbm.new_id("pn_")
+    conn.execute(
+        "INSERT INTO plan_node(id,book_id,parent_id,node_type,purpose,state,created_utc)"
+        " VALUES (?,?,NULL,'promise',?,?,?)",
+        (
+            promise_id, args.book,
+            "A woman reclaims her prophetic voice in a world that silenced her",
+            "PROPOSED", now,
+        ),
+    )
+    dbm.audit(conn, actor="demo", action="PLAN_NODE_CREATED",
+              object_type="plan_node", object_id=promise_id,
+              detail={"type": "promise", "demo": True})
+
+    part_id = dbm.new_id("pn_")
+    conn.execute(
+        "INSERT INTO plan_node(id,book_id,parent_id,node_type,purpose,state,created_utc)"
+        " VALUES (?,?,?,'part',?,?,?)",
+        (
+            part_id, args.book, promise_id,
+            "Part I — The Silence Before the Word",
+            "PROPOSED", now,
+        ),
+    )
+    dbm.audit(conn, actor="demo", action="PLAN_NODE_CREATED",
+              object_type="plan_node", object_id=part_id,
+              detail={"type": "part", "demo": True})
+
+    chapter_id = dbm.new_id("pn_")
+    conn.execute(
+        "INSERT INTO plan_node(id,book_id,parent_id,node_type,purpose,state,created_utc)"
+        " VALUES (?,?,?,'chapter',?,?,?)",
+        (
+            chapter_id, args.book, part_id,
+            "Chapter 1 — Miriam at the grain jar, dawn before the battle",
+            "PROPOSED", now,
+        ),
+    )
+    dbm.audit(conn, actor="demo", action="PLAN_NODE_CREATED",
+              object_type="plan_node", object_id=chapter_id,
+              detail={"type": "chapter", "demo": True})
+
+    conn.commit()
+    print(f"  promise   {promise_id}")
+    print(f"  part      {part_id}")
+    print(f"  chapter   {chapter_id}")
+
+    # ── 2. Top-down approval chain ─────────────────────────────────────────
+    for nid, label in [(promise_id, "promise"), (part_id, "part"), (chapter_id, "chapter")]:
+        ok, msg = policy.check_plan_node_gate(conn, nid)
+        if not ok:
+            print(f"ERROR: gate failed for {label}: {msg}", file=sys.stderr)
+            conn.close()
+            return 1
+        conn.execute("UPDATE plan_node SET state='APPROVED' WHERE id=?", (nid,))
+        conn.commit()
+        dbm.audit(conn, actor="demo", action="PLAN_NODE_APPROVED",
+                  object_type="plan_node", object_id=nid,
+                  detail={"demo": True})
+
+    print("  plan tree approved top-down ✓")
+
+    # ── 3. Reject approval of chapter node if we reset it to PROPOSED and
+    #       parent is still APPROVED (demonstrates gate pass-through)         ──
+    # (We skip that negative path in the demo to keep output clean; the test
+    #  suite covers it in test_wr04.py.)
+
+    # ── 4. Chapter contract ────────────────────────────────────────────────
+    contract_id = dbm.new_id("cc_")
+    conn.execute(
+        "INSERT INTO chapter_contract"
+        "(id,book_id,plan_node_id,purpose,required_beats,forbidden_content,"
+        " approved,created_utc)"
+        " VALUES (?,?,?,?,?,?,0,?)",
+        (
+            contract_id, args.book, chapter_id,
+            "Establish Miriam's domestic world and inner silence before the call",
+            "grain-jar routine; neighbour's whisper about troop movements; "
+            "Miriam's private prayer at the threshold",
+            "No explicit prophecy text; no battle imagery; no named general",
+            now,
+        ),
+    )
+    conn.commit()
+    dbm.audit(conn, actor="demo", action="CONTRACT_CREATED",
+              object_type="chapter_contract", object_id=contract_id,
+              detail={"demo": True})
+    print(f"  contract  {contract_id}  approved=False")
+
+    # ── 5. Try to approve with no evidence — must be refused ──────────────
+    ok, msg = policy.check_contract_evidence_gate(conn, contract_id)
+    if ok:
+        print("ERROR: evidence gate should have refused an empty evidence packet",
+              file=sys.stderr)
+        conn.close()
+        return 1
+    print("  evidence gate correctly refused unapproved contract ✓")
+
+    # ── 6. Find an accepted claim from this book, add to evidence packet ──
+    claim_row = conn.execute(
+        "SELECT id FROM claim WHERE book_id=? AND accepted=1 LIMIT 1", (args.book,)
+    ).fetchone()
+    if not claim_row:
+        print(
+            "error: no accepted claim found for this book — "
+            "run 'wa demo-wr02' first to seed one",
+            file=sys.stderr,
+        )
+        conn.close()
+        return 2
+    conn.execute(
+        "INSERT INTO contract_evidence(contract_id,claim_id) VALUES (?,?)",
+        (contract_id, claim_row["id"]),
+    )
+    conn.commit()
+    dbm.audit(conn, actor="demo", action="CONTRACT_EVIDENCE_ADDED",
+              object_type="contract_evidence",
+              object_id=f"{contract_id}:{claim_row['id']}",
+              detail={"demo": True})
+    print(f"  evidence  claim {claim_row['id']} → contract {contract_id}")
+
+    # ── 7. Approve the contract ────────────────────────────────────────────
+    ok, msg = policy.check_contract_evidence_gate(conn, contract_id)
+    if not ok:
+        print(f"ERROR: evidence gate failed: {msg}", file=sys.stderr)
+        conn.close()
+        return 1
+    conn.execute("UPDATE chapter_contract SET approved=1 WHERE id=?", (contract_id,))
+    now2 = dbm.now_utc()
+    apv_id = dbm.new_id("apv_")
+    conn.execute(
+        "INSERT INTO approval(id,object_type,object_id,decision,authority,decided_utc)"
+        " VALUES (?,?,?,?,?,?)",
+        (apv_id, "chapter_contract", contract_id, "approve", "demo", now2),
+    )
+    conn.commit()
+    dbm.audit(conn, actor="demo", action="CONTRACT_APPROVED",
+              object_type="chapter_contract", object_id=contract_id,
+              detail={"demo": True})
+    print(f"  contract {contract_id} APPROVED ✓")
+
+    # ── 8. Verify drafting gate now passes ─────────────────────────────────
+    ok, msg = policy.check_chapter_contract_gate(conn, contract_id)
+    if not ok:
+        print(f"ERROR: chapter_contract_gate refused after approval: {msg}",
+              file=sys.stderr)
+        conn.close()
+        return 1
+    print("  drafting gate (check_chapter_contract_gate) passes ✓")
+
+    # ── 9. Verify audit chain integrity ───────────────────────────────────
+    chain_ok, chain_msg = dbm.verify_audit_chain(conn)
+    conn.close()
+    if not chain_ok:
+        print(f"ERROR: audit chain broken: {chain_msg}", file=sys.stderr)
+        return 1
+    print("  audit chain integrity verified ✓")
+    print()
+    print("WR-04 exit condition: plan tree approved top-down, chapter contract "
+          "with evidence packet approved, drafting gate passes. All policy "
+          "constraints enforced.")
+    return 0
+
+
 # ─── Parser ──────────────────────────────────────────────────────────────────
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1203,6 +1739,70 @@ def build_parser() -> argparse.ArgumentParser:
                              "knowledge_leak","name_drift","object_resurrection"],
                     help="run only this validator (default: all five)")
     cc.set_defaults(func=cmd_continuity_check)
+
+    # WR-04 ── ────────────────────────────────────────────────────────────────
+
+    pa = sub.add_parser("plan-add", help="add a plan_node to the architecture tree")
+    pa.add_argument("db"); pa.add_argument("book")
+    pa.add_argument("--type", required=True, dest="type",
+                    choices=["promise","part","chapter","scene","beat","claim"])
+    pa.add_argument("--purpose", default=None,
+                    help="narrative purpose of this node")
+    pa.add_argument("--parent", default=None,
+                    help="parent plan_node ID (omit for root nodes)")
+    pa.add_argument("--actor", default=None)
+    pa.set_defaults(func=cmd_plan_add)
+
+    pap = sub.add_parser("plan-approve",
+                         help="approve a plan_node (parent must already be APPROVED)")
+    pap.add_argument("db"); pap.add_argument("node")
+    pap.add_argument("--actor", required=True)
+    pap.set_defaults(func=cmd_plan_approve)
+
+    pst = sub.add_parser("plan-status",
+                         help="show the full plan tree for a book")
+    pst.add_argument("db"); pst.add_argument("book")
+    pst.set_defaults(func=cmd_plan_status)
+
+    pcr = sub.add_parser("plan-change-request",
+                         help="request a change on an APPROVED node; blocks descendants")
+    pcr.add_argument("db"); pcr.add_argument("node")
+    pcr.add_argument("--actor", required=True)
+    pcr.add_argument("--reason", required=True,
+                     help="describe what needs to change and why")
+    pcr.set_defaults(func=cmd_plan_change_request)
+
+    cn = sub.add_parser("contract-new",
+                        help="create a chapter_contract (starts unapproved)")
+    cn.add_argument("db"); cn.add_argument("book")
+    cn.add_argument("--plan-node", default=None, dest="plan_node",
+                    help="plan_node ID this contract maps to (recommended)")
+    cn.add_argument("--purpose", required=True)
+    cn.add_argument("--required-beats", default=None, dest="required_beats")
+    cn.add_argument("--forbidden-content", default=None, dest="forbidden_content")
+    cn.add_argument("--actor", default=None)
+    cn.set_defaults(func=cmd_contract_new)
+
+    cen = sub.add_parser("contract-evidence",
+                         help="add an accepted claim to a contract's evidence packet")
+    cen.add_argument("db"); cen.add_argument("contract")
+    cen.add_argument("--claim", required=True,
+                     help="accepted claim ID to add to the evidence packet")
+    cen.add_argument("--actor", default=None)
+    cen.set_defaults(func=cmd_contract_evidence)
+
+    cap = sub.add_parser("contract-approve",
+                         help="approve a chapter_contract (evidence packet required)")
+    cap.add_argument("db"); cap.add_argument("contract")
+    cap.add_argument("--actor", required=True)
+    cap.set_defaults(func=cmd_contract_approve)
+
+    demo4 = sub.add_parser(
+        "demo-wr04",
+        help="demonstrate WR-04 exit condition: approved plan tree + contract",
+    )
+    demo4.add_argument("db"); demo4.add_argument("book")
+    demo4.set_defaults(func=cmd_demo_wr04)
 
     return p
 
