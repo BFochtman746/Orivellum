@@ -1,6 +1,7 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   Platform,
   Pressable,
@@ -13,7 +14,8 @@ import {
 import { Swipeable } from 'react-native-gesture-handler';
 import { useColors } from '@/hooks/useColors';
 import { Feather } from '@expo/vector-icons';
-import { useListWorks, useCreateConversation } from '@workspace/api-client-react';
+import { useListWorks, useCreateConversation, useDeleteWork } from '@workspace/api-client-react';
+import { useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
@@ -30,7 +32,7 @@ const TYPE_ICONS: Record<string, string> = {
   writing: 'edit-3',
 };
 
-function WorkCard({ work, onStartChat }: { work: Work; onStartChat: () => void }) {
+function WorkCard({ work, onStartChat, onDelete }: { work: Work; onStartChat: () => void; onDelete?: (id: string) => void }) {
   const colors = useColors();
   const router = useRouter();
   const icon = TYPE_ICONS[work.work_type ?? ''] ?? 'file';
@@ -87,9 +89,25 @@ function WorkCard({ work, onStartChat }: { work: Work; onStartChat: () => void }
     </View>
   );
 
+  const handleLongPress = () => {
+    triggerHaptic();
+    Alert.alert(work.title ?? 'Work', '', [
+      { text: 'Rename (open detail)', onPress: () => router.push(`/work/${work.id}`) },
+      { text: 'Delete', style: 'destructive', onPress: () => {
+        Alert.alert('Delete Work', `Delete "${work.title}"? This cannot be undone.`, [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Delete', style: 'destructive', onPress: () => onDelete?.(work.id ?? '') },
+        ]);
+      }},
+      { text: 'Cancel', style: 'cancel' },
+    ]);
+  };
+
   const cardInner = (
     <Pressable
       onPress={() => router.push(`/work/${work.id}`)}
+      onLongPress={handleLongPress}
+      delayLongPress={450}
       style={({ pressed }) => [
         styles.card,
         {
@@ -217,6 +235,8 @@ export default function WorksScreen() {
   const router = useRouter();
 
   const createConv = useCreateConversation();
+  const { mutate: deleteMutate } = useDeleteWork();
+  const queryClient = useQueryClient();
 
   const handleStartChat = (workId: string, workTitle: string) => {
     createConv.mutate(
@@ -250,6 +270,16 @@ export default function WorksScreen() {
     );
   }, [allWorks, search]);
   const hasData = allWorks.length > 0;
+
+  const handleDeleteWork = useCallback((workId: string) => {
+    deleteMutate({ workId }, {
+      onSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: ['getListWorks'] });
+        refetch();
+      },
+      onError: () => Alert.alert('Error', 'Could not delete work'),
+    });
+  }, [deleteMutate, queryClient, refetch]);
 
   const topPad = isWeb ? 67 : insets.top;
 
@@ -322,7 +352,11 @@ export default function WorksScreen() {
           data={works}
           keyExtractor={(item) => item.id ?? ''}
           renderItem={({ item }) => (
-            <WorkCard work={item} onStartChat={() => handleStartChat(item.id ?? '', item.title ?? '')} />
+            <WorkCard
+              work={item}
+              onStartChat={() => handleStartChat(item.id ?? '', item.title ?? '')}
+              onDelete={handleDeleteWork}
+            />
           )}
           refreshControl={
             <RefreshControl refreshing={isLoading} onRefresh={refetch} tintColor={colors.primary} />
