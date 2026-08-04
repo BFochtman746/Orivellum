@@ -196,6 +196,85 @@ def _explode_zip_into_documents(
     return children
 
 
+def _suggest_version_relationships(
+    doc_id: str,
+    hits: list[tuple[str, float, str]],
+    db: "OrivellumDB",
+) -> None:
+    """Create version_relationship suggestions for likely_revision pairs.
+
+    Near-duplicate pairs (≥0.85 Jaccard) are already surfaced in the Review
+    Queue as duplicate alerts.  The 0.60–0.85 band is a different signal: the
+    documents share substantial text but are not copies.  They are more likely
+    versions — draft vs final, chapter vs complete manuscript, etc. — and should
+    become version_relationship suggestions so users can declare a DERIVED_FROM
+    link in one click.
+
+    Dedup guard: checks both (a,b) and (b,a) orderings so a pair is never
+    proposed twice regardless of which document was processed first.
+    """
+    import json as _json
+    import uuid as _uuid_mod
+    from datetime import datetime as _dt, timezone as _tz
+
+    for other_id, sim, kind in hits:
+        if kind != "likely_revision":
+            continue
+        try:
+            doc_a_row = db.get_document(doc_id)
+            doc_b_row = db.get_document(other_id)
+            title_a = (doc_a_row or {}).get("title") or doc_id[:8]
+            title_b = (doc_b_row or {}).get("title") or other_id[:8]
+
+            with db._lock:
+                exists = db._conn.execute(
+                    """SELECT 1 FROM suggestions
+                       WHERE kind='version_relationship'
+                         AND (
+                           (json_extract(meta,'$.doc_a_id')=?
+                            AND json_extract(meta,'$.doc_b_id')=?)
+                           OR
+                           (json_extract(meta,'$.doc_a_id')=?
+                            AND json_extract(meta,'$.doc_b_id')=?)
+                         )""",
+                    (doc_id, other_id, other_id, doc_id),
+                ).fetchone()
+                if not exists:
+                    db._conn.execute(
+                        """INSERT INTO suggestions(id, work_id, kind, text, meta, created_at)
+                           VALUES(?,?,?,?,?,?)""",
+                        (
+                            str(_uuid_mod.uuid4()),
+                            None,
+                            "version_relationship",
+                            (
+                                f"\u201c{title_a}\u201d and \u201c{title_b}\u201d "
+                                f"share {round(sim * 100)}\u202f% of content. "
+                                "Is one derived from the other?"
+                            ),
+                            _json.dumps({
+                                "doc_a_id": doc_id,
+                                "doc_b_id": other_id,
+                                "doc_a_title": title_a,
+                                "doc_b_title": title_b,
+                                "confidence": round(sim, 4),
+                                "similarity": round(sim, 4),
+                            }),
+                            _dt.now(_tz.utc).isoformat(),
+                        ),
+                    )
+                    db._conn.commit()
+                    logger.info(
+                        "version_relationship suggestion created: %s \u2194 %s  sim=%.2f",
+                        doc_id[:8], other_id[:8], sim,
+                    )
+        except Exception as exc:  # noqa: BLE001 — suggestion is best-effort
+            logger.debug(
+                "version_relationship suggestion failed %s\u2194%s: %s",
+                doc_id[:8], other_id[:8], exc,
+            )
+
+
 def resolve_file_path(file_path: str, doc_id: str, db: "OrivellumDB") -> Path | None:
     """Return the file as a Path, falling back to content_path from the DB.
 
@@ -364,6 +443,8 @@ def process_document(doc_id: str, file_path: str, kind: str,
 
         # Step 4.6: near-duplicate detection — compare against all stored sketches.
         # Completely non-fatal; results land in doc_dupes for the UI to surface.
+        # likely_revision pairs (0.60–0.85) are also promoted to version_relationship
+        # suggestions in the Review Queue so users can declare DERIVED_FROM links.
         try:
             from orivellum.capabilities.dedup import compute_and_store, find_and_record_near_duplicates
             _text_for_dedup = result.full_text
@@ -373,6 +454,7 @@ def process_document(doc_id: str, file_path: str, kind: str,
                     _hits = find_and_record_near_duplicates(doc_id, _sig, db, work_id=work_id)
                     if _hits:
                         logger.info("Doc %s: %d near-duplicate(s) found", doc_id, len(_hits))
+                        _suggest_version_relationships(doc_id, _hits, db)
         except Exception as _dd_exc:
             logger.debug("Dedup step non-fatal for %s: %s", doc_id, _dd_exc)
 
