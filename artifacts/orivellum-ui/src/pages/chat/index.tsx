@@ -334,6 +334,44 @@ function ReasoningBlock({ text, streaming }: { text: string; streaming?: boolean
   );
 }
 
+// ─── Code block with copy button ─────────────────────────────────────────────
+
+function CodeBlock({ lang, className, children }: { lang: string; className?: string; children: React.ReactNode }) {
+  const codeRef = useRef<HTMLElement>(null);
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = () => {
+    const text = codeRef.current?.textContent ?? "";
+    copyToClipboard(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1800);
+    });
+  };
+
+  return (
+    <span className="block my-3 rounded-lg overflow-hidden border border-white/10 shadow-md">
+      <span className="flex items-center justify-between px-3 py-1.5 bg-zinc-800 border-b border-white/10">
+        <span className="text-[10px] font-mono uppercase tracking-wide text-zinc-400">{lang || " "}</span>
+        <button
+          type="button"
+          onClick={handleCopy}
+          title="Copy code"
+          className="flex items-center gap-1 text-[10px] font-mono text-zinc-500 hover:text-zinc-300 transition-colors"
+        >
+          {copied ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+          <span>{copied ? "Copied" : "Copy"}</span>
+        </button>
+      </span>
+      <code
+        ref={codeRef}
+        className={`block bg-zinc-900 text-zinc-100 px-4 py-3 text-xs font-mono whitespace-pre-wrap leading-relaxed overflow-x-auto ${className ?? ""}`}
+      >
+        {children}
+      </code>
+    </span>
+  );
+}
+
 // ─── Markdown renderer ────────────────────────────────────────────────────────
 
 function MarkdownContent({ text }: { text: string }) {
@@ -347,18 +385,9 @@ function MarkdownContent({ text }: { text: string }) {
           const lang = className?.replace("language-", "").replace(/\s*hljs.*/, "") ?? "";
           const isBlock = className?.startsWith("language-") || className?.startsWith("hljs");
           return isBlock ? (
-            <span className="block my-3 rounded-lg overflow-hidden border border-white/10 shadow-md">
-              {lang && (
-                <span className="flex items-center justify-between px-3 py-1.5 bg-zinc-800 border-b border-white/10">
-                  <span className="text-[10px] font-mono uppercase tracking-wide text-zinc-400">{lang}</span>
-                </span>
-              )}
-              <code
-                className={`block bg-zinc-900 text-zinc-100 px-4 py-3 text-xs font-mono whitespace-pre-wrap leading-relaxed overflow-x-auto ${className ?? ""}`}
-              >
-                {children}
-              </code>
-            </span>
+            <CodeBlock lang={lang} className={className}>
+              {children}
+            </CodeBlock>
           ) : (
             <code className="bg-zinc-800 text-zinc-200 rounded px-1.5 py-0.5 text-[0.8em] font-mono">
               {children}
@@ -1582,6 +1611,10 @@ export default function Chat() {
                   rows={2}
                   disabled={sending || importing}
                   onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(e); } }}
+                  onPaste={(e) => {
+                    const files = Array.from(e.clipboardData.files).filter(f => f.type.startsWith("image/"));
+                    if (files.length > 0) { e.preventDefault(); handleImageSelect(files[0]); }
+                  }}
                 />
                 {/* Image attach button */}
                 <button
