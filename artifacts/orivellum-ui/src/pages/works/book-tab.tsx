@@ -17,8 +17,11 @@ import {
   CircleDashed,
   CircleAlert,
   ChevronRight,
+  ChevronDown,
   Play,
   ShieldAlert,
+  Sparkles,
+  X,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -133,16 +136,244 @@ const METRIC_LABELS: Record<string, string> = {
   content_pct:    "Content coverage",
   editorial_pct:  "Editorial review",
   high_gaps:      "High-severity gaps",
+  stage_artifact: "Stage AI work",
 };
 
-// ─── Pipeline panel ───────────────────────────────────────────────────────────
+/** Button / heading labels for each stage's AI worker. */
+const STAGE_WORKER_LABELS: Record<string, string> = {
+  B0: "Generate Project Brief",
+  B1: "Generate Chapter Outline",
+  B2: "Build Research Agenda",
+  B3: "Design Architecture",
+  B4: "Run Continuity Check",
+  B5: "Run Fact Check",
+};
+
+/** Human-readable artifact type labels for the display panel. */
+const ARTIFACT_TYPE_LABELS: Record<string, string> = {
+  project_brief:     "Project Brief",
+  chapter_outline:   "Chapter Outline",
+  research_agenda:   "Research Agenda",
+  architecture:      "Architecture",
+  continuity_report: "Continuity Report",
+  fact_check_report: "Fact-Check Report",
+};
+
+// ─── Pipeline panel supporting types ─────────────────────────────────────────
+
+interface PipelineArtifact {
+  id: string;
+  stage: string;
+  artifact_type: string;
+  content: Record<string, unknown>;
+  status: "pending" | "running" | "done" | "failed";
+  error?: string | null;
+}
+
+interface PipelineFinding {
+  id: string;
+  kind: string;
+  severity: string;
+  description: string;
+  state: string;
+}
 
 interface Pipeline {
   id: string; work_id: string; title: string; status: string;
   chapter_count: number; chapters_extracted: number;
   chapters_drafted: number; chapters_approved: number;
   created_at: string; updated_at: string;
+  stage_artifact?: PipelineArtifact | null;
+  open_findings?: PipelineFinding[];
 }
+
+// ─── Artifact display components ─────────────────────────────────────────────
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function ArtifactSummary({ type, content }: { type: string; content: Record<string, any> }) {
+  if (type === "project_brief") {
+    const goals = (content.goals as string[] | undefined) ?? [];
+    return (
+      <div className="space-y-1.5 pt-2">
+        {content.title && <div><span className="opacity-60">Title: </span>{String(content.title)}</div>}
+        {content.premise && <div className="normal-case font-sans opacity-80">{String(content.premise).slice(0, 200)}</div>}
+        {goals.slice(0, 3).map((g, i) => (
+          <div key={i}><span className="opacity-60">Goal {i + 1}: </span>{String(g).slice(0, 120)}</div>
+        ))}
+      </div>
+    );
+  }
+  if (type === "chapter_outline") {
+    const chapters = (content.chapters as Array<Record<string, unknown>> | undefined) ?? [];
+    return (
+      <div className="space-y-1.5 pt-2">
+        <div><span className="opacity-60">Chapters: </span>{chapters.length}</div>
+        {chapters.slice(0, 4).map((c, i) => (
+          <div key={i}>{String(c.seq ?? i + 1)}. {String(c.title ?? "—").slice(0, 80)}</div>
+        ))}
+        {chapters.length > 4 && <div className="opacity-50">…{chapters.length - 4} more</div>}
+      </div>
+    );
+  }
+  if (type === "research_agenda") {
+    const qs = (content.open_questions as unknown[] | undefined) ?? [];
+    const gaps = (content.knowledge_gaps as unknown[] | undefined) ?? [];
+    return (
+      <div className="space-y-1.5 pt-2">
+        <div>{qs.length} open question{qs.length !== 1 ? "s" : ""}</div>
+        <div>{gaps.length} knowledge gap{gaps.length !== 1 ? "s" : ""}</div>
+        {content.coverage_assessment && (
+          <div className="normal-case font-sans opacity-80">{String(content.coverage_assessment).slice(0, 200)}</div>
+        )}
+      </div>
+    );
+  }
+  if (type === "architecture") {
+    return (
+      <div className="space-y-1.5 pt-2">
+        {content.arc_type && <div><span className="opacity-60">Arc: </span>{String(content.arc_type)}</div>}
+        {content.rationale && <div className="normal-case font-sans opacity-80">{String(content.rationale).slice(0, 200)}</div>}
+      </div>
+    );
+  }
+  if (type === "continuity_report") {
+    const issues = (content.issues as unknown[] | undefined) ?? [];
+    return (
+      <div className="space-y-1.5 pt-2">
+        <div className={issues.length > 0 ? "text-destructive" : "text-emerald-600"}>
+          {issues.length === 0 ? "✓ No continuity issues found" : `${issues.length} issue${issues.length !== 1 ? "s" : ""} detected`}
+        </div>
+        {content.summary && <div className="normal-case font-sans opacity-80">{String(content.summary)}</div>}
+      </div>
+    );
+  }
+  if (type === "fact_check_report") {
+    const claims = (content.unverified_claims as unknown[] | undefined) ?? [];
+    return (
+      <div className="space-y-1.5 pt-2">
+        {content.overall_confidence && (
+          <div><span className="opacity-60">Confidence: </span>{String(content.overall_confidence)}</div>
+        )}
+        {claims.length > 0 && (
+          <div className="text-amber-600">{claims.length} unverified claim{claims.length !== 1 ? "s" : ""}</div>
+        )}
+        {content.summary && <div className="normal-case font-sans opacity-80">{String(content.summary)}</div>}
+      </div>
+    );
+  }
+  return (
+    <pre className="whitespace-pre-wrap text-[10px] normal-case">
+      {JSON.stringify(content, null, 2).slice(0, 400)}
+    </pre>
+  );
+}
+
+function ArtifactDisplay({ artifact }: { artifact: PipelineArtifact }) {
+  const [open, setOpen] = useState(false);
+
+  if (artifact.status === "pending") return null;
+
+  if (artifact.status === "running") {
+    return (
+      <div className="flex items-center gap-2 text-xs text-muted-foreground py-1">
+        <Loader2 className="w-3 h-3 animate-spin" />
+        AI is working on this stage…
+      </div>
+    );
+  }
+
+  if (artifact.status === "failed") {
+    return (
+      <div className="flex items-start gap-1.5 text-xs text-destructive">
+        <CircleAlert className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+        <span>Stage work failed: {artifact.error ?? "unknown error"}</span>
+      </div>
+    );
+  }
+
+  // status === "done"
+  const typeLabel = ARTIFACT_TYPE_LABELS[artifact.artifact_type] ?? artifact.artifact_type;
+  return (
+    <div className="rounded-lg border border-border/50 bg-muted/20 overflow-hidden text-xs font-mono">
+      <button
+        className="w-full flex items-center justify-between px-3 py-2 text-left hover:bg-muted/30 transition-colors"
+        onClick={() => setOpen(!open)}
+      >
+        <span className="flex items-center gap-1.5 text-emerald-700 uppercase tracking-widest text-[10px]">
+          <CheckCircle2 className="w-3 h-3" />
+          {typeLabel}
+        </span>
+        {open
+          ? <ChevronDown className="w-3 h-3 text-muted-foreground" />
+          : <ChevronRight className="w-3 h-3 text-muted-foreground" />}
+      </button>
+      {open && (
+        <div className="px-3 pb-3 text-[11px] border-t border-border/30">
+          <ArtifactSummary type={artifact.artifact_type} content={artifact.content} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Findings list (B4/B5 pipeline governance findings) ──────────────────────
+
+function FindingsList({ findings, workId }: { findings: PipelineFinding[]; workId: string }) {
+  const queryClient = useQueryClient();
+  const [dismissing, setDismissing] = useState<string | null>(null);
+
+  if (findings.length === 0) return null;
+
+  const handleDismiss = async (id: string) => {
+    setDismissing(id);
+    try {
+      const r = await apiFetch(`${BASE}/governance/findings/${id}/resolve`, { method: "PATCH" });
+      if (!r.ok) throw new Error("Failed to resolve finding");
+      queryClient.invalidateQueries({ queryKey: ["pipeline", workId] });
+      toast.success("Finding resolved");
+    } catch {
+      toast.error("Could not resolve finding");
+    } finally {
+      setDismissing(null);
+    }
+  };
+
+  const SEV: Record<string, string> = {
+    critical: "border-red-300 bg-red-50/70 text-red-800",
+    high:     "border-red-200 bg-red-50/50 text-red-700",
+    medium:   "border-amber-200 bg-amber-50/50 text-amber-700",
+    low:      "border-border/50 bg-muted/20 text-muted-foreground",
+  };
+
+  return (
+    <div className="space-y-1.5">
+      <div className="text-[10px] font-mono uppercase tracking-widest text-muted-foreground flex items-center gap-1.5">
+        <AlertTriangle className="w-3 h-3" />
+        {findings.length} open finding{findings.length !== 1 ? "s" : ""} — resolve to advance
+      </div>
+      {findings.map((f) => (
+        <div
+          key={f.id}
+          className={`flex items-start gap-2 px-2.5 py-2 rounded-lg border text-xs ${SEV[f.severity] ?? SEV.medium}`}
+        >
+          <span className="flex-1 leading-snug">{f.description}</span>
+          <button
+            className="shrink-0 opacity-60 hover:opacity-100 transition-opacity mt-0.5"
+            title="Resolve finding"
+            onClick={() => handleDismiss(f.id)}
+            disabled={dismissing === f.id}
+          >
+            {dismissing === f.id
+              ? <Loader2 className="w-3 h-3 animate-spin" />
+              : <X className="w-3 h-3" />}
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ─── Pipeline panel ───────────────────────────────────────────────────────────
 
 function PipelinePanel({ workId }: { workId: string }) {
   const queryClient = useQueryClient();
@@ -156,13 +387,22 @@ function PipelinePanel({ workId }: { workId: string }) {
       if (!r.ok) throw new Error();
       return r.json() as Promise<{ pipeline: Pipeline | null }>;
     },
-    staleTime: 30_000,
+    staleTime: 15_000,
+    // Poll every 3 s while the artifact worker is running so the UI picks up
+    // the completed result even if the mutation call returns before the DB write.
+    refetchInterval: (query) => {
+      const pipeline = (query.state.data as { pipeline: Pipeline | null } | undefined)?.pipeline;
+      return pipeline?.stage_artifact?.status === "running" ? 3000 : false;
+    },
   });
 
   const createMutation = useMutation({
     mutationFn: async () => {
-      const r = await apiFetch(`${BASE}/works/${workId}/pipeline`, { method: "POST",
-        headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
+      const r = await apiFetch(`${BASE}/works/${workId}/pipeline`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
       if (!r.ok) throw new Error("Could not initialise pipeline");
       return r.json();
     },
@@ -178,9 +418,8 @@ function PipelinePanel({ workId }: { workId: string }) {
       const r = await apiFetch(`${BASE}/works/${workId}/pipeline/advance`, { method: "POST" });
       const json = await r.json().catch(() => ({}));
       if (r.status === 409) {
-        const body = json as any;
+        const body = json as { detail?: string; gate?: string; metric?: string; threshold?: number; actual?: number };
         const detail: string = body.detail ?? "Transition blocked by open findings";
-        // Structured gate blocker: {gate, metric, threshold, actual}
         if (body.gate && body.metric !== undefined) {
           setGateDetail({ gate: body.gate, metric: body.metric, threshold: body.threshold ?? 0, actual: body.actual ?? 0 });
         } else {
@@ -189,15 +428,14 @@ function PipelinePanel({ workId }: { workId: string }) {
         setBlockerMsg(detail);
         throw new Error(detail);
       }
-      if (!r.ok) throw new Error((json as any).detail ?? "Advance failed");
+      if (!r.ok) throw new Error((json as { detail?: string }).detail ?? "Advance failed");
       return json;
     },
-    onSuccess: (json: any) => {
+    onSuccess: (json: { pipeline?: { status?: string } }) => {
       setBlockerMsg(null);
       setGateDetail(null);
       queryClient.invalidateQueries({ queryKey: ["pipeline", workId] });
       queryClient.invalidateQueries({ queryKey: ["book-intelligence", workId] });
-      // Use the mutation response (not stale cached data) to get the new stage label
       const newStatus = json?.pipeline?.status;
       const next = newStatus ? STAGE_MAP[newStatus] : null;
       if (next) toast.success(`Advanced to ${next.state} — ${next.label}`);
@@ -205,6 +443,26 @@ function PipelinePanel({ workId }: { workId: string }) {
     },
     onError: (e: Error) => {
       if (!blockerMsg) toast.error(e.message);
+    },
+  });
+
+  const runStageMutation = useMutation({
+    mutationFn: async () => {
+      const r = await apiFetch(`${BASE}/works/${workId}/pipeline/run-stage`, { method: "POST" });
+      const json = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        const detail = (json as { detail?: string }).detail ?? "Stage worker failed";
+        throw new Error(detail);
+      }
+      return json;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["pipeline", workId] });
+      toast.success("Stage work completed");
+    },
+    onError: (e: Error) => {
+      queryClient.invalidateQueries({ queryKey: ["pipeline", workId] });
+      toast.error(e.message);
     },
   });
 
@@ -238,6 +496,13 @@ function PipelinePanel({ workId }: { workId: string }) {
   const next     = BOOK_STAGES[nextIdx] ?? null;
   const isTerminal = TERMINAL_STATES.has(pipeline.status);
   const progressPct = current ? Math.round(((current.index + 1) / BOOK_STAGES.length) * 100) : 0;
+
+  const hasWorker = pipeline.status in STAGE_WORKER_LABELS;
+  const artifact = pipeline.stage_artifact ?? null;
+  const artifactDone = artifact?.status === "done";
+  const artifactRunning = artifact?.status === "running";
+  const workerLabel = STAGE_WORKER_LABELS[pipeline.status];
+  const openFindings = (pipeline.open_findings ?? []).filter(f => f.state === "open");
 
   return (
     <Card className="border-primary/20 bg-primary/[0.02]">
@@ -285,6 +550,55 @@ function PipelinePanel({ workId }: { workId: string }) {
           <span>B17 Published</span>
         </div>
 
+        {/* AI stage worker section — shown for B0–B5 */}
+        {hasWorker && (
+          <div className="space-y-2 pt-1 border-t border-border/30">
+            {/* Run button — shown when no artifact, failed, or to retry */}
+            {(!artifact || artifact.status === "failed") && (
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="gap-1.5 h-7 text-xs border-primary/30 text-primary hover:bg-primary/5"
+                  onClick={() => runStageMutation.mutate()}
+                  disabled={runStageMutation.isPending || artifactRunning}
+                >
+                  {runStageMutation.isPending
+                    ? <Loader2 className="w-3 h-3 animate-spin" />
+                    : <Sparkles className="w-3 h-3" />}
+                  {artifact?.status === "failed" ? `Retry: ${workerLabel}` : workerLabel}
+                </Button>
+                <span className="text-[10px] text-muted-foreground">
+                  Required before advancing
+                </span>
+              </div>
+            )}
+
+            {/* Artifact display */}
+            {artifact && artifact.status !== "pending" && (
+              <ArtifactDisplay artifact={artifact} />
+            )}
+
+            {/* Rerun button when done */}
+            {artifactDone && (
+              <button
+                className="text-[10px] font-mono text-muted-foreground hover:text-foreground transition-colors underline underline-offset-2"
+                onClick={() => runStageMutation.mutate()}
+                disabled={runStageMutation.isPending}
+              >
+                {runStageMutation.isPending ? "Regenerating…" : "↺ Regenerate"}
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* Open findings (B4 / B5 continuity & fact-check issues) */}
+        {openFindings.length > 0 && (
+          <div className="pt-1 border-t border-border/30">
+            <FindingsList findings={openFindings} workId={workId} />
+          </div>
+        )}
+
         {/* Blocker warning */}
         {blockerMsg && (
           <div className="rounded-lg border border-destructive/30 bg-destructive/10 text-destructive text-xs overflow-hidden">
@@ -292,13 +606,18 @@ function PipelinePanel({ workId }: { workId: string }) {
               <ShieldAlert className="w-3.5 h-3.5 mt-0.5 shrink-0" />
               <span className="flex-1">{blockerMsg}</span>
             </div>
-            {gateDetail && (
+            {gateDetail && gateDetail.metric !== "stage_artifact" && (
               <div className="flex items-center gap-3 px-3 py-1.5 border-t border-destructive/20 bg-destructive/5">
-                {/* Progress bar showing actual vs threshold */}
                 <div className="flex-1 min-w-0">
                   <div className="flex justify-between text-[10px] font-mono mb-0.5 opacity-80">
                     <span>{METRIC_LABELS[gateDetail.metric] ?? gateDetail.metric}</span>
-                    <span>{gateDetail.actual}{gateDetail.metric !== "doc_count" && gateDetail.metric !== "high_gaps" ? "%" : ""} / need {gateDetail.threshold}{gateDetail.metric !== "doc_count" && gateDetail.metric !== "high_gaps" ? "%" : ""}</span>
+                    <span>
+                      {gateDetail.actual}
+                      {gateDetail.metric !== "doc_count" && gateDetail.metric !== "high_gaps" ? "%" : ""}
+                      {" / need "}
+                      {gateDetail.threshold}
+                      {gateDetail.metric !== "doc_count" && gateDetail.metric !== "high_gaps" ? "%" : ""}
+                    </span>
                   </div>
                   <div className="h-1 rounded-full bg-destructive/20 overflow-hidden">
                     <div

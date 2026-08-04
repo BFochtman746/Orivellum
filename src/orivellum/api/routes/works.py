@@ -720,8 +720,9 @@ def create_pipeline(work_id: str, body: PipelineCreateRequest = Body(default=Pip
 def get_pipeline(work_id: str):
     """Return the current book pipeline state for a Work, or null if none exists.
 
-    Enriches the DB row with computed ``stage_label``, ``next_status``, and
-    ``chapters_total`` so clients don't need to hard-code the B-stage list.
+    Enriches the DB row with computed ``stage_label``, ``next_status``,
+    ``chapters_total``, the current stage's AI artifact (or null), and any
+    open governance findings on the pipeline so clients don't need extra calls.
     """
     db = get_db()
     if not db.get_work(work_id):
@@ -734,10 +735,23 @@ def get_pipeline(work_id: str):
         allowed = BOOK_SM.allowed_from(status)
         pipeline["next_status"] = next(iter(allowed)) if allowed else None
         pipeline["chapters_total"] = pipeline.get("chapter_count", 0)
+        # Enrich with current-stage artifact (None when not yet run)
+        pipeline["stage_artifact"] = db.get_pipeline_artifact(pipeline["id"], status)
+        # Open findings block state-machine transitions; surface them so the UI
+        # can explain why Advance is unavailable without a 409 round-trip.
+        pipeline["open_findings"] = db.list_findings(
+            object_id=pipeline["id"], state="open", limit=20
+        )
     return {"pipeline": pipeline}
 
 
-def _check_stage_gate(current: str, next_state: str, work_id: str, db) -> dict | None:
+def _check_stage_gate(
+    current: str,
+    next_state: str,
+    work_id: str,
+    db,
+    pipeline_id: str | None = None,
+) -> dict | None:
     """Return a structured gate-fail dict, or None when the gate is satisfied.
 
     Gates are evaluated inline against live DB data; no HTTP self-calls.
@@ -746,6 +760,37 @@ def _check_stage_gate(current: str, next_state: str, work_id: str, db) -> dict |
     a user.
     """
     gate_key = (current, next_state)
+
+    # ── B0–B5: AI stage artifact must be completed before advancing ──────────────
+    # Workers are defined for B0–B5; each stage's artifact must be status='done'.
+    _ARTIFACT_REQUIRED_FOR = {"B0", "B1", "B2", "B3", "B4", "B5"}
+    if current in _ARTIFACT_REQUIRED_FOR and pipeline_id:
+        try:
+            artifact = db.get_pipeline_artifact(pipeline_id, current)
+            if not artifact or artifact.get("status") != "done":
+                status_desc = (artifact or {}).get("status", "not started")
+                try:
+                    from orivellum.capabilities.pipeline_workers import _STAGE_CFG
+                    _, _, stage_label = _STAGE_CFG.get(current, ("", "", current))
+                except Exception:
+                    stage_label = current
+                return {
+                    "gate": f"{current}→{next_state}",
+                    "metric": "stage_artifact",
+                    "threshold": 1,
+                    "actual": 0,
+                    "detail": (
+                        f"{current}→{next_state} requires the {stage_label} AI work "
+                        f"to be completed first (current status: {status_desc}). "
+                        f"Click \"{stage_label}\" to generate it."
+                    ),
+                }
+        except Exception as exc:
+            logger.warning(
+                "Artifact gate check failed for pipeline %s stage %s: %s",
+                pipeline_id[:8] if pipeline_id else "?", current, exc,
+            )
+            # Fail-open: skip the artifact gate if the check itself errors
 
     # ── B0 → B1: Work must have at least one active (non-deleted) document ───────
     if gate_key == ("B0", "B1"):
@@ -894,7 +939,7 @@ def advance_pipeline(work_id: str):
     # ── Stage gate check ───────────────────────────────────────────────────────
     # Use JSONResponse so the body is a flat dict — HTTPException(409, dict) would
     # nest it under {"detail": dict} which the frontend cannot destructure cleanly.
-    gate_fail = _check_stage_gate(current, next_state, work_id, db)
+    gate_fail = _check_stage_gate(current, next_state, work_id, db, pipeline_id=pipeline["id"])
     if gate_fail:
         return JSONResponse(status_code=409, content=gate_fail)
 
@@ -921,6 +966,72 @@ def advance_pipeline(work_id: str):
         )
 
     return {"pipeline": db.get_book_pipeline_for_work(work_id)}
+
+
+# ─── Pipeline stage worker ────────────────────────────────────────────────────
+
+@router.post("/works/{work_id}/pipeline/run-stage")
+async def run_pipeline_stage(work_id: str):
+    """Run the AI stage worker for the pipeline's current stage.
+
+    Compiles context from the Work's documents and knowledge, calls the LLM,
+    stores the result as a ``pipeline_artifact``, and returns it.
+
+    For B4 (Continuity Review) and B5 (Fact Check), also creates governance
+    findings on the pipeline for each detected issue; those findings will block
+    ``advance_pipeline`` via the state-machine blocker check until resolved.
+
+    Returns 409 when the current stage has no worker (B6 and later).
+    The endpoint blocks until the LLM call completes (up to 45 s).
+    """
+    from starlette.concurrency import run_in_threadpool
+    from orivellum.api._deps import get_config
+
+    db = get_db()
+    if not db.get_work(work_id):
+        raise HTTPException(404, f"Work {work_id!r} not found")
+
+    pipeline = db.get_book_pipeline_for_work(work_id)
+    if not pipeline:
+        raise HTTPException(404, "No pipeline for this Work — call POST /pipeline first")
+
+    stage = pipeline["status"]
+
+    try:
+        from orivellum.capabilities.pipeline_workers import (
+            run_stage_worker as _run_worker,
+            _STAGE_CFG,
+        )
+    except ImportError as exc:
+        raise HTTPException(500, f"Pipeline workers module unavailable: {exc}")
+
+    if stage not in _STAGE_CFG:
+        raise HTTPException(
+            409,
+            f"No AI worker defined for stage {stage!r}. "
+            "Workers are available for B0–B5.",
+        )
+
+    cfg = get_config()
+
+    try:
+        await run_in_threadpool(_run_worker, pipeline["id"], stage, db, cfg)
+    except Exception as exc:
+        # Artifact is already stored with status='failed'; return 422 so the
+        # frontend can show the error without clobbering previous state.
+        artifact = db.get_pipeline_artifact(pipeline["id"], stage)
+        return JSONResponse(
+            status_code=422,
+            content={
+                "detail": f"Stage worker failed: {exc}",
+                "stage": stage,
+                "status": "failed",
+                "artifact": artifact,
+            },
+        )
+
+    artifact = db.get_pipeline_artifact(pipeline["id"], stage)
+    return {"stage": stage, "status": "done", "artifact": artifact}
 
 
 # ─── Evidence rescore ─────────────────────────────────────────────────────────

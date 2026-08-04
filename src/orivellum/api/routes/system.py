@@ -1144,6 +1144,29 @@ def get_audit_log(
     return {"entries": entries, "count": len(entries)}
 
 
+@router.get("/system/diagnostics")
+async def run_diagnostics(vacuum: bool = False):
+    """Run a full system diagnostic and return a structured report.
+
+    Checks database integrity, orphaned records, stuck documents, configuration,
+    service connectivity, data quality, nightshift status, and pipeline health.
+
+    Pass ``?vacuum=true`` to also run SQLite VACUUM (compacts the database;
+    takes a few seconds on large databases but is safe).
+
+    The response includes a ``markdown_report`` field — a pre-formatted Markdown
+    document you can copy and send to an AI assistant for a complete evaluation.
+    """
+    from starlette.concurrency import run_in_threadpool
+    from orivellum.capabilities.diagnostics import run_full_diagnostic
+
+    db = get_db()
+    cfg = get_config()
+
+    result = await run_in_threadpool(run_full_diagnostic, db, cfg, vacuum)
+    return result
+
+
 @router.get("/briefing")
 def get_briefing():
     import datetime

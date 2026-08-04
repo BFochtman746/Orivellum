@@ -1078,4 +1078,22 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         ALTER TABLE documents ADD COLUMN tier TEXT NOT NULL DEFAULT 'source';
         CREATE INDEX IF NOT EXISTS docs_tier ON documents(tier);
     """),
+
+    # v63 — Pipeline artifacts: per-stage AI outputs for the B0-B17 book pipeline
+    (63, "Pipeline artifacts table for book stage AI outputs", """
+        CREATE TABLE IF NOT EXISTS pipeline_artifacts (
+            id            TEXT PRIMARY KEY,
+            pipeline_id   TEXT NOT NULL REFERENCES book_pipelines(id) ON DELETE CASCADE,
+            stage         TEXT NOT NULL,
+            artifact_type TEXT NOT NULL,
+            content       TEXT NOT NULL DEFAULT '{}',
+            status        TEXT NOT NULL DEFAULT 'pending',
+            error         TEXT,
+            created_at    TEXT NOT NULL,
+            updated_at    TEXT NOT NULL,
+            UNIQUE(pipeline_id, stage)
+        );
+        CREATE INDEX IF NOT EXISTS pa_pipeline ON pipeline_artifacts(pipeline_id);
+        CREATE INDEX IF NOT EXISTS pa_stage    ON pipeline_artifacts(stage)
+    """),
 ]

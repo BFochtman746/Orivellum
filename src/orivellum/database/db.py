@@ -1947,6 +1947,61 @@ class OrivellumDB:
         return dict(row)
 
     # -------------------------------------------------------------------------
+    # Pipeline artifacts (B0-B17 stage AI outputs)
+    # -------------------------------------------------------------------------
+
+    def get_pipeline_artifact(self, pipeline_id: str, stage: str) -> dict | None:
+        """Return the artifact for a specific stage of a pipeline, or None."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM pipeline_artifacts WHERE pipeline_id=? AND stage=?",
+                (pipeline_id, stage),
+            ).fetchone()
+        if not row:
+            return None
+        r = dict(row)
+        r["content"] = _jload(r.get("content"), {})
+        return r
+
+    def upsert_pipeline_artifact(
+        self,
+        pipeline_id: str,
+        stage: str,
+        artifact_type: str,
+        content: dict,
+        status: str = "done",
+        error: str | None = None,
+    ) -> str:
+        """Create or replace the artifact for a pipeline stage.
+
+        The UNIQUE(pipeline_id, stage) constraint means calling this twice for
+        the same stage replaces the previous result (e.g. when re-running a
+        failed worker).  Returns the artifact id.
+        """
+        now = _now()
+        with self._lock:
+            existing = self._conn.execute(
+                "SELECT id FROM pipeline_artifacts WHERE pipeline_id=? AND stage=?",
+                (pipeline_id, stage),
+            ).fetchone()
+            artifact_id = existing["id"] if existing else _uuid()
+            self._conn.execute(
+                """INSERT INTO pipeline_artifacts(id, pipeline_id, stage, artifact_type,
+                   content, status, error, created_at, updated_at)
+                   VALUES(?,?,?,?,?,?,?,?,?)
+                   ON CONFLICT(pipeline_id, stage) DO UPDATE SET
+                       artifact_type=excluded.artifact_type,
+                       content=excluded.content,
+                       status=excluded.status,
+                       error=excluded.error,
+                       updated_at=excluded.updated_at""",
+                (artifact_id, pipeline_id, stage, artifact_type,
+                 _jdump(content), status, error, now, now),
+            )
+            self._conn.commit()
+        return artifact_id
+
+    # -------------------------------------------------------------------------
     # Knowledge items
     # -------------------------------------------------------------------------
 

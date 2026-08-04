@@ -3,7 +3,7 @@ import { apiFetch } from "@/lib/auth";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
-import { Activity, Database, Cpu, CheckCircle2, XCircle, AlertCircle, AlertTriangle, Terminal, Sparkles, Moon, Brain, Trash2, ScrollText, User, Settings, Image as ImageIcon, Eye, Loader2 } from "lucide-react";
+import { Activity, Database, Cpu, CheckCircle2, XCircle, AlertCircle, AlertTriangle, Terminal, Sparkles, Moon, Brain, Trash2, ScrollText, User, Settings, Image as ImageIcon, Eye, Loader2, FileSearch, ClipboardCopy, ChevronDown, ChevronRight } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -28,6 +28,209 @@ function relativeTime(iso: string | null | undefined): string {
   const day = Math.round(hr / 24);
   if (day < 30) return `${day} day${day === 1 ? "" : "s"} ago`;
   return new Date(iso).toLocaleDateString();
+}
+
+// ─── Diagnostics card ─────────────────────────────────────────────────────────
+
+type DiagCheck = { name: string; status: "ok" | "warn" | "error" | "info"; value: string | number; detail: string };
+type DiagSection = { title: string; checks: DiagCheck[] };
+type DiagResult = {
+  generated_at: string;
+  schema_version: string;
+  elapsed_ms: number;
+  summary: { ok: number; warn: number; error: number; info: number; total: number; health: string };
+  sections: DiagSection[];
+  all_checks: DiagCheck[];
+  markdown_report: string;
+  vacuum_ran: boolean;
+};
+
+const STATUS_ICON: Record<string, string> = { ok: "✅", warn: "⚠️", error: "❌", info: "ℹ️" };
+const STATUS_CLS: Record<string, string> = {
+  ok:    "text-emerald-600",
+  warn:  "text-amber-600",
+  error: "text-destructive",
+  info:  "text-muted-foreground",
+};
+
+function DiagnosticsCard() {
+  const [result, setResult] = useState<DiagResult | null>(null);
+  const [openSections, setOpenSections] = useState<Set<string>>(new Set(["🔴 Issues"]));
+  const [copied, setCopied] = useState(false);
+
+  const runMutation = useMutation({
+    mutationFn: async (vacuum: boolean) => {
+      const r = await apiFetch(`${API_BASE}/api/system/diagnostics?vacuum=${vacuum}`);
+      if (!r.ok) throw new Error("Diagnostic failed");
+      return r.json() as Promise<DiagResult>;
+    },
+    onSuccess: (data) => {
+      setResult(data);
+      // Auto-expand issues section if problems found
+      if (data.summary.error > 0 || data.summary.warn > 0) {
+        setOpenSections(new Set(["🔴 Issues Requiring Attention"]));
+      }
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const handleCopy = async () => {
+    if (!result?.markdown_report) return;
+    try {
+      await navigator.clipboard.writeText(result.markdown_report);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+      toast.success("Report copied to clipboard — paste it to an AI for evaluation");
+    } catch {
+      toast.error("Copy failed — try selecting the text manually");
+    }
+  };
+
+  const toggleSection = (title: string) => {
+    setOpenSections(prev => {
+      const next = new Set(prev);
+      if (next.has(title)) next.delete(title); else next.add(title);
+      return next;
+    });
+  };
+
+  const issues = result?.all_checks.filter(c => c.status === "error" || c.status === "warn") ?? [];
+
+  return (
+    <Card>
+      <CardContent className="p-5 space-y-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <FileSearch className="w-5 h-5 text-primary/70 shrink-0" />
+            <div>
+              <div className="font-medium text-sm">System Diagnostic</div>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Full health check across database, services, config, and data quality.
+                Run this and copy the report to share with an AI for a complete evaluation.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            {result && (
+              <Button size="sm" variant="outline" className="gap-1.5 h-8 text-xs"
+                onClick={handleCopy}>
+                <ClipboardCopy className="w-3 h-3" />
+                {copied ? "Copied!" : "Copy Report"}
+              </Button>
+            )}
+            <Button size="sm" variant="default" className="gap-1.5 h-8 text-xs"
+              onClick={() => runMutation.mutate(false)}
+              disabled={runMutation.isPending}>
+              {runMutation.isPending
+                ? <Loader2 className="w-3 h-3 animate-spin" />
+                : <FileSearch className="w-3 h-3" />}
+              Run Diagnostic
+            </Button>
+            <Button size="sm" variant="outline" className="gap-1.5 h-8 text-xs"
+              onClick={() => runMutation.mutate(true)}
+              disabled={runMutation.isPending}
+              title="Run diagnostic AND compact the database with VACUUM">
+              {runMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Database className="w-3 h-3" />}
+              + VACUUM
+            </Button>
+          </div>
+        </div>
+
+        {result && (
+          <div className="space-y-3">
+            {/* Summary bar */}
+            <div className="flex items-center gap-4 p-3 rounded-lg bg-muted/30 border border-border/50 flex-wrap">
+              <span className="text-[10px] font-mono text-muted-foreground">
+                {result.schema_version} · {result.elapsed_ms}ms · {new Date(result.generated_at).toLocaleTimeString()}
+              </span>
+              <div className="flex items-center gap-3 ml-auto">
+                {(["ok", "warn", "error", "info"] as const).map(s => (
+                  <span key={s} className={`text-xs font-mono font-semibold ${STATUS_CLS[s]}`}>
+                    {STATUS_ICON[s]} {result.summary[s]}
+                  </span>
+                ))}
+                <span className="text-[10px] font-mono text-muted-foreground">/ {result.summary.total}</span>
+              </div>
+            </div>
+
+            {/* Issues shortlist */}
+            {issues.length > 0 && (
+              <div className="space-y-1.5">
+                <div className="text-[10px] font-mono uppercase tracking-widest text-muted-foreground flex items-center gap-1.5">
+                  <AlertTriangle className="w-3 h-3" />
+                  {issues.length} issue{issues.length !== 1 ? "s" : ""} found
+                </div>
+                {issues.map((c, i) => (
+                  <div key={i}
+                    className={`flex items-start gap-2 text-xs px-3 py-2 rounded-lg border ${
+                      c.status === "error"
+                        ? "border-destructive/30 bg-destructive/5 text-destructive"
+                        : "border-amber-200 bg-amber-50/50 text-amber-800"
+                    }`}>
+                    <span className="shrink-0">{STATUS_ICON[c.status]}</span>
+                    <div className="min-w-0">
+                      <span className="font-medium">{c.name}:</span>{" "}
+                      <code className="text-[11px]">{String(c.value)}</code>
+                      {c.detail && <span className="opacity-80"> — {c.detail}</span>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            {issues.length === 0 && (
+              <div className="flex items-center gap-2 text-xs text-emerald-700 px-3 py-2 rounded-lg border border-emerald-200 bg-emerald-50/50">
+                <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                All {result.summary.total} checks passed — system is healthy
+              </div>
+            )}
+
+            {/* Collapsible sections */}
+            <div className="space-y-1">
+              {result.sections.map(sec => {
+                const isOpen = openSections.has(sec.title);
+                const secIssues = sec.checks.filter(c => c.status !== "ok" && c.status !== "info").length;
+                return (
+                  <div key={sec.title} className="rounded-lg border border-border/40 overflow-hidden">
+                    <button
+                      className="w-full flex items-center justify-between px-3 py-2 hover:bg-muted/20 transition-colors text-left"
+                      onClick={() => toggleSection(sec.title)}>
+                      <span className="text-xs font-mono font-medium flex items-center gap-2">
+                        {sec.title}
+                        {secIssues > 0 && (
+                          <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-amber-100 text-amber-700 leading-none">
+                            {secIssues}
+                          </span>
+                        )}
+                      </span>
+                      {isOpen
+                        ? <ChevronDown className="w-3 h-3 text-muted-foreground" />
+                        : <ChevronRight className="w-3 h-3 text-muted-foreground" />}
+                    </button>
+                    {isOpen && (
+                      <div className="border-t border-border/30 divide-y divide-border/20">
+                        {sec.checks.map((c, i) => (
+                          <div key={i} className="flex items-start gap-3 px-3 py-1.5 text-xs hover:bg-muted/10">
+                            <span className="shrink-0 mt-px">{STATUS_ICON[c.status]}</span>
+                            <span className={`shrink-0 w-28 font-mono text-[10px] mt-0.5 ${STATUS_CLS[c.status]}`}>
+                              {c.status.toUpperCase()}
+                            </span>
+                            <span className="font-medium min-w-0 flex-1">{c.name}</span>
+                            <code className="shrink-0 text-[10px] text-muted-foreground max-w-[140px] truncate" title={String(c.value)}>
+                              {String(c.value)}
+                            </code>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
 }
 
 // ─── Maintenance card (Run Maintenance Now + Last Night Report) ─────────────────
@@ -961,6 +1164,9 @@ $env:ORIVELLUM_AI_URL="http://127.0.0.1:11434/v1"`}
 
       {/* Maintenance */}
       <MaintenanceCard />
+
+      {/* System Diagnostics */}
+      <DiagnosticsCard />
 
       {/* User Memory */}
       <UserMemoryCard />
