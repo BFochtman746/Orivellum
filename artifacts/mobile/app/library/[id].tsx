@@ -20,7 +20,6 @@ import { useColors } from '@/hooks/useColors';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useGetDocument, useListWorks } from '@workspace/api-client-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect } from 'react';
 
 const READINESS_COLOR: Record<string, string> = {
   ready: '#4A8C65',
@@ -97,7 +96,7 @@ export default function LibraryDocDetail() {
     }
     setTtsState('loading');
     try {
-      await setAudioModeAsync({ playsInSilentModeIOS: true });
+      await setAudioModeAsync({ playsInSilentMode: true });
       const res = await mobileFetch(`https://${domain}/api/studio/tts/document`, {
         method: 'POST',
         body: JSON.stringify({ doc_id: id, return_url: true }),
@@ -113,7 +112,14 @@ export default function LibraryDocDetail() {
       ttsPlayerRef.current = player;
       player.play();
       setTtsState('playing');
-      player.addListener('playToEnd', () => { setTtsState('idle'); ttsPlayerRef.current = null; });
+      player.addListener('playbackStatusUpdate', (status) => {
+        // Detect natural end-of-playback: not playing after content has started
+        if (!status.playing && status.currentTime > 0 && status.duration > 0
+            && status.currentTime >= status.duration - 0.5) {
+          setTtsState('idle');
+          ttsPlayerRef.current = null;
+        }
+      });
     } catch (e: any) {
       setTtsState('error');
       Alert.alert('Read Aloud failed', e?.message ?? 'Could not generate audio');
