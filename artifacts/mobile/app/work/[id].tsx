@@ -903,11 +903,13 @@ function GapsTab({
 
 // ─── Overview tab with "Start Discussion" CTA ────────────────────────────────
 
-function OverviewTab({ workId, onStartDiscussion, starting, onNavigateToTab }: {
+function OverviewTab({ workId, onStartDiscussion, starting, onNavigateToTab, bookIntel, onOpenBook }: {
   workId: string;
   onStartDiscussion: () => void;
   starting: boolean;
   onNavigateToTab?: (tab: Tab) => void;
+  bookIntel?: any;
+  onOpenBook?: () => void;
 }) {
   const colors = useColors();
   const { data: workData, isLoading, isError, refetch } = useGetWork(workId);
@@ -916,15 +918,6 @@ function OverviewTab({ workId, onStartDiscussion, starting, onNavigateToTab }: {
   const [editingDesc, setEditingDesc] = useState(false);
   const [descDraft, setDescDraft] = useState('');
   const { mutate: updateWork } = useUpdateWork();
-  const [bookIntel, setBookIntel] = useState<any>(null);
-
-  const domain = process.env.EXPO_PUBLIC_DOMAIN ?? '';
-  useEffect(() => {
-    mobileFetch(`https://${domain}/api/works/${workId}/book-intelligence`)
-      .then(r => r.ok ? r.json() : null)
-      .then(data => { if (data) setBookIntel(data); })
-      .catch(() => { /* non-fatal — card simply stays hidden */ });
-  }, [workId, domain]);
 
   const startDescEdit = () => {
     setDescDraft(work?.description ?? '');
@@ -1031,100 +1024,100 @@ function OverviewTab({ workId, onStartDiscussion, starting, onNavigateToTab }: {
         ))}
       </View>
 
-      {/* Book health card — rendered when book-intelligence is available */}
-      {bookIntel && (
-        <View style={{
-          marginTop: 16, borderWidth: 1, borderRadius: 10,
-          borderColor: colors.border, overflow: 'hidden',
-        }}>
-          {/* Header row */}
+      {/* Book health card — compact overview; full view is in the Book tab */}
+      {bookIntel && (() => {
+        const c = bookIntel.completeness ?? {};
+        const avgPct = Math.round(
+          ((c.structural_pct ?? 0) + (c.content_pct ?? 0) +
+           (c.research_pct ?? 0) + (c.editorial_pct ?? 0)) / 4,
+        );
+        const avgColor = avgPct >= 70 ? '#16a34a' : avgPct >= 40 ? '#d97706' : '#dc2626';
+        return (
           <View style={{
-            flexDirection: 'row', alignItems: 'center', gap: 8,
-            paddingHorizontal: 14, paddingVertical: 10,
-            borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border,
-            backgroundColor: colors.muted + '44',
+            marginTop: 16, borderWidth: 1, borderRadius: 10,
+            borderColor: colors.border, overflow: 'hidden',
           }}>
-            <Feather name="book" size={14} color={colors.primary} />
-            <Text style={{ fontSize: 12, fontWeight: '600', color: colors.foreground, flex: 1 }}>
-              Book Health
-            </Text>
-            {bookIntel.completeness?.overall != null && (
+            {/* Header */}
+            <View style={{
+              flexDirection: 'row', alignItems: 'center', gap: 8,
+              paddingHorizontal: 14, paddingVertical: 10,
+              borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border,
+              backgroundColor: colors.muted + '44',
+            }}>
+              <Feather name="book" size={14} color={colors.primary} />
+              <Text style={{ fontSize: 12, fontWeight: '600', color: colors.foreground, flex: 1 }}>
+                Book Health
+              </Text>
               <View style={{
                 paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10,
-                backgroundColor: bookIntel.completeness.overall >= 70
-                  ? '#16a34a18' : bookIntel.completeness.overall >= 40
-                  ? '#d9770618' : '#dc262618',
-                borderWidth: 1,
-                borderColor: bookIntel.completeness.overall >= 70
-                  ? '#16a34a44' : bookIntel.completeness.overall >= 40
-                  ? '#d9770644' : '#dc262644',
+                backgroundColor: avgColor + '18', borderWidth: 1, borderColor: avgColor + '44',
               }}>
-                <Text style={{
-                  fontSize: 11, fontWeight: '700',
-                  color: bookIntel.completeness.overall >= 70
-                    ? '#16a34a' : bookIntel.completeness.overall >= 40
-                    ? '#d97706' : '#dc2626',
-                }}>
-                  {bookIntel.completeness.overall}%
-                </Text>
+                <Text style={{ fontSize: 11, fontWeight: '700', color: avgColor }}>{avgPct}%</Text>
               </View>
-            )}
-          </View>
+            </View>
 
-          {/* Stats */}
-          <View style={{ paddingHorizontal: 14, paddingVertical: 10, gap: 8 }}>
-            {bookIntel.completeness?.readiness && (
-              <Text style={{ fontSize: 12, color: colors.mutedForeground }}>
-                Readiness: <Text style={{ color: colors.foreground, fontWeight: '500' }}>
-                  {bookIntel.completeness.readiness}
+            <View style={{ paddingHorizontal: 14, paddingVertical: 10, gap: 8 }}>
+              {/* Knowledge reviewed bar */}
+              {bookIntel.knowledge_total > 0 && (
+                <View>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
+                    <Text style={{ fontSize: 12, color: colors.mutedForeground }}>Knowledge reviewed</Text>
+                    <Text style={{ fontSize: 12, fontWeight: '600', color: colors.foreground }}>
+                      {bookIntel.knowledge_reviewed}/{bookIntel.knowledge_total}
+                    </Text>
+                  </View>
+                  <View style={{ height: 4, backgroundColor: colors.muted, borderRadius: 2, overflow: 'hidden' }}>
+                    <View style={{
+                      height: '100%', borderRadius: 2, backgroundColor: colors.primary,
+                      width: `${Math.round(100 * bookIntel.knowledge_reviewed / bookIntel.knowledge_total)}%` as any,
+                    }} />
+                  </View>
+                </View>
+              )}
+
+              {/* Gaps */}
+              {Array.isArray(bookIntel.gaps) && bookIntel.gaps.length > 0 && (
+                <Text style={{ fontSize: 12, color: '#d97706' }}>
+                  ⚠ {bookIntel.gaps.length} gap{bookIntel.gaps.length !== 1 ? 's' : ''} detected
                 </Text>
-              </Text>
-            )}
+              )}
 
-            {/* Knowledge reviewed ratio */}
-            {bookIntel.knowledge_total > 0 && (
-              <View>
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
-                  <Text style={{ fontSize: 12, color: colors.mutedForeground }}>Knowledge reviewed</Text>
-                  <Text style={{ fontSize: 12, fontWeight: '600', color: colors.foreground }}>
-                    {bookIntel.knowledge_reviewed}/{bookIntel.knowledge_total}
+              {/* Next action */}
+              {bookIntel.next_action && (
+                <View style={{
+                  padding: 10, borderRadius: 8,
+                  backgroundColor: colors.primary + '0e',
+                  borderWidth: 1, borderColor: colors.primary + '30',
+                }}>
+                  <Text style={{ fontSize: 11, fontWeight: '600', color: colors.primary, marginBottom: 2 }}>
+                    Next step
+                  </Text>
+                  <Text style={{ fontSize: 12, color: colors.foreground, lineHeight: 17 }}>
+                    {bookIntel.next_action}
                   </Text>
                 </View>
-                <View style={{ height: 4, backgroundColor: colors.muted, borderRadius: 2, overflow: 'hidden' }}>
-                  <View style={{
-                    height: '100%', borderRadius: 2,
-                    backgroundColor: colors.primary,
-                    width: `${Math.round(100 * bookIntel.knowledge_reviewed / bookIntel.knowledge_total)}%` as any,
-                  }} />
-                </View>
-              </View>
-            )}
+              )}
 
-            {/* Gaps summary */}
-            {Array.isArray(bookIntel.gaps) && bookIntel.gaps.length > 0 && (
-              <Text style={{ fontSize: 12, color: '#d97706' }}>
-                ⚠ {bookIntel.gaps.length} gap{bookIntel.gaps.length !== 1 ? 's' : ''} detected
-              </Text>
-            )}
-
-            {/* Next action */}
-            {bookIntel.next_action && (
-              <View style={{
-                marginTop: 4, padding: 10, borderRadius: 8,
-                backgroundColor: colors.primary + '0e',
-                borderWidth: 1, borderColor: colors.primary + '30',
-              }}>
-                <Text style={{ fontSize: 11, fontWeight: '600', color: colors.primary, marginBottom: 2 }}>
-                  Next step
-                </Text>
-                <Text style={{ fontSize: 12, color: colors.foreground, lineHeight: 17 }}>
-                  {bookIntel.next_action}
-                </Text>
-              </View>
-            )}
+              {/* Tap-through to Book tab */}
+              {onOpenBook && (
+                <Pressable
+                  onPress={onOpenBook}
+                  style={({ pressed }) => ({
+                    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+                    gap: 6, paddingVertical: 8, borderRadius: 8,
+                    backgroundColor: pressed ? colors.muted : 'transparent',
+                  })}
+                >
+                  <Text style={{ fontSize: 12, color: colors.primary, fontFamily: 'Inter_500Medium' }}>
+                    View full book analysis
+                  </Text>
+                  <Feather name="chevron-right" size={13} color={colors.primary} />
+                </Pressable>
+              )}
+            </View>
           </View>
-        </View>
-      )}
+        );
+      })()}
 
       {/* Start Discussion CTA */}
       <Pressable
@@ -1671,6 +1664,301 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
 
 // ─── Main screen ──────────────────────────────────────────────────────────────
 
+// ─── Book Intelligence Tab ─────────────────────────────────────────────────────
+
+const SEV_COLOR: Record<string, string> = {
+  high: '#dc2626',
+  medium: '#d97706',
+  low: '#6366f1',
+};
+
+const CHAPTER_STATUS_COLOR: Record<string, string> = {
+  present: '#16a34a',
+  incomplete: '#d97706',
+  missing: '#dc2626',
+};
+
+function BookIntelTab({
+  bookIntel,
+  loading,
+  colors,
+}: {
+  bookIntel: any;
+  loading: boolean;
+  colors: ReturnType<typeof useColors>;
+}) {
+  if (loading && !bookIntel) {
+    return (
+      <ActivityIndicator color={colors.primary} style={{ marginTop: 48 }} />
+    );
+  }
+
+  if (!bookIntel) {
+    return (
+      <View style={{ alignItems: 'center', paddingVertical: 48, paddingHorizontal: 24, gap: 12 }}>
+        <Feather name="book-open" size={36} color={colors.mutedForeground} />
+        <Text style={{ fontSize: 15, fontFamily: 'Inter_600SemiBold', color: colors.foreground, textAlign: 'center' }}>
+          No intelligence yet
+        </Text>
+        <Text style={{ fontSize: 13, fontFamily: 'Inter_400Regular', color: colors.mutedForeground, textAlign: 'center', maxWidth: 280, lineHeight: 20 }}>
+          Link documents to this Work and process them to build the Book Intelligence view.
+        </Text>
+      </View>
+    );
+  }
+
+  const c = bookIntel.completeness ?? {};
+  const dims = [
+    { key: 'structural_pct', label: 'Structural', icon: 'layers' as const },
+    { key: 'content_pct',    label: 'Content',    icon: 'file-text' as const },
+    { key: 'research_pct',   label: 'Research',   icon: 'search' as const },
+    { key: 'editorial_pct',  label: 'Editorial',  icon: 'check-circle' as const },
+  ];
+  const outline: any[] = bookIntel.outline ?? [];
+  const gaps: any[] = bookIntel.gaps ?? [];
+  const topGaps = gaps.slice(0, 5);
+
+  const barColor = (pct: number) =>
+    pct >= 70 ? '#16a34a' : pct >= 40 ? '#d97706' : '#dc2626';
+
+  return (
+    <ScrollView contentContainerStyle={{ padding: 16, gap: 16 }}>
+
+      {/* ── Next action card ─────────────────────────────────── */}
+      {bookIntel.next_action ? (
+        <View style={{
+          borderRadius: 12, overflow: 'hidden',
+          backgroundColor: colors.primary + '0c',
+          borderWidth: 1, borderColor: colors.primary + '38',
+        }}>
+          <View style={{
+            flexDirection: 'row', alignItems: 'center', gap: 8,
+            paddingHorizontal: 14, paddingVertical: 10,
+            borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.primary + '28',
+            backgroundColor: colors.primary + '10',
+          }}>
+            <Feather name="zap" size={14} color={colors.primary} />
+            <Text style={{ fontSize: 12, fontFamily: 'Inter_700Bold', color: colors.primary, letterSpacing: 0.6, textTransform: 'uppercase' }}>
+              Next step
+            </Text>
+          </View>
+          <View style={{ paddingHorizontal: 14, paddingVertical: 12 }}>
+            <Text style={{ fontSize: 14, fontFamily: 'Inter_500Medium', color: colors.foreground, lineHeight: 21 }}>
+              {bookIntel.next_action}
+            </Text>
+          </View>
+        </View>
+      ) : null}
+
+      {/* ── Completeness ─────────────────────────────────────── */}
+      <View style={{
+        borderRadius: 12, borderWidth: 1, borderColor: colors.border,
+        backgroundColor: colors.card, overflow: 'hidden',
+      }}>
+        <View style={{
+          paddingHorizontal: 14, paddingVertical: 10,
+          borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border,
+          backgroundColor: colors.muted + '44',
+          flexDirection: 'row', alignItems: 'center', gap: 8,
+        }}>
+          <Feather name="bar-chart-2" size={14} color={colors.mutedForeground} />
+          <Text style={{ fontSize: 11, fontFamily: 'Inter_600SemiBold', color: colors.mutedForeground, letterSpacing: 0.8, textTransform: 'uppercase' }}>
+            Completeness
+          </Text>
+        </View>
+        <View style={{ paddingHorizontal: 14, paddingVertical: 12, gap: 12 }}>
+          {dims.map(({ key, label, icon }) => {
+            const pct: number = c[key] ?? 0;
+            const col = barColor(pct);
+            return (
+              <View key={key}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7, marginBottom: 5 }}>
+                  <Feather name={icon} size={12} color={colors.mutedForeground} />
+                  <Text style={{ flex: 1, fontSize: 13, fontFamily: 'Inter_500Medium', color: colors.foreground }}>
+                    {label}
+                  </Text>
+                  <Text style={{ fontSize: 12, fontFamily: 'Inter_700Bold', color: col }}>{pct}%</Text>
+                </View>
+                <View style={{ height: 5, backgroundColor: colors.muted, borderRadius: 3, overflow: 'hidden' }}>
+                  <View style={{
+                    height: '100%', borderRadius: 3, backgroundColor: col,
+                    width: `${pct}%` as any,
+                  }} />
+                </View>
+              </View>
+            );
+          })}
+          {bookIntel.knowledge_total > 0 && (
+            <View style={{
+              marginTop: 4, paddingTop: 10,
+              borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border,
+            }}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
+                <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: colors.mutedForeground }}>
+                  Knowledge reviewed
+                </Text>
+                <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: colors.foreground }}>
+                  {bookIntel.knowledge_reviewed ?? 0} / {bookIntel.knowledge_total}
+                </Text>
+              </View>
+              <View style={{ height: 5, backgroundColor: colors.muted, borderRadius: 3, overflow: 'hidden' }}>
+                <View style={{
+                  height: '100%', borderRadius: 3, backgroundColor: colors.primary,
+                  width: `${Math.round(100 * (bookIntel.knowledge_reviewed ?? 0) / bookIntel.knowledge_total)}%` as any,
+                }} />
+              </View>
+            </View>
+          )}
+        </View>
+      </View>
+
+      {/* ── Top gaps ─────────────────────────────────────────── */}
+      {topGaps.length > 0 && (
+        <View style={{
+          borderRadius: 12, borderWidth: 1, borderColor: colors.border,
+          backgroundColor: colors.card, overflow: 'hidden',
+        }}>
+          <View style={{
+            paddingHorizontal: 14, paddingVertical: 10,
+            borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border,
+            backgroundColor: colors.muted + '44',
+            flexDirection: 'row', alignItems: 'center', gap: 8,
+          }}>
+            <Feather name="alert-triangle" size={14} color="#d97706" />
+            <Text style={{ fontSize: 11, fontFamily: 'Inter_600SemiBold', color: colors.mutedForeground, letterSpacing: 0.8, textTransform: 'uppercase' }}>
+              Gaps ({gaps.length})
+            </Text>
+          </View>
+          <View style={{ paddingVertical: 6 }}>
+            {topGaps.map((gap: any, i: number) => {
+              const sevColor = SEV_COLOR[gap.severity] ?? colors.mutedForeground;
+              return (
+                <View key={i} style={{
+                  flexDirection: 'row', alignItems: 'flex-start', gap: 10,
+                  paddingHorizontal: 14, paddingVertical: 10,
+                  borderBottomWidth: i < topGaps.length - 1 ? StyleSheet.hairlineWidth : 0,
+                  borderBottomColor: colors.border,
+                }}>
+                  <View style={{
+                    width: 6, height: 6, borderRadius: 3,
+                    backgroundColor: sevColor, marginTop: 5,
+                  }} />
+                  <View style={{ flex: 1, gap: 2 }}>
+                    <Text style={{ fontSize: 13, fontFamily: 'Inter_500Medium', color: colors.foreground, lineHeight: 18 }}>
+                      {gap.title}
+                    </Text>
+                    {gap.description ? (
+                      <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: colors.mutedForeground, lineHeight: 16 }}>
+                        {gap.description}
+                      </Text>
+                    ) : null}
+                  </View>
+                  <View style={{
+                    paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4,
+                    backgroundColor: sevColor + '14', borderWidth: 1, borderColor: sevColor + '40',
+                  }}>
+                    <Text style={{ fontSize: 10, fontFamily: 'Inter_600SemiBold', color: sevColor }}>
+                      {gap.severity}
+                    </Text>
+                  </View>
+                </View>
+              );
+            })}
+          </View>
+        </View>
+      )}
+
+      {/* ── Outline ──────────────────────────────────────────── */}
+      {outline.length > 0 && (
+        <View style={{
+          borderRadius: 12, borderWidth: 1, borderColor: colors.border,
+          backgroundColor: colors.card, overflow: 'hidden',
+        }}>
+          <View style={{
+            paddingHorizontal: 14, paddingVertical: 10,
+            borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border,
+            backgroundColor: colors.muted + '44',
+            flexDirection: 'row', alignItems: 'center', gap: 8,
+          }}>
+            <Feather name="list" size={14} color={colors.mutedForeground} />
+            <Text style={{ fontSize: 11, fontFamily: 'Inter_600SemiBold', color: colors.mutedForeground, letterSpacing: 0.8, textTransform: 'uppercase' }}>
+              Outline ({outline.length})
+            </Text>
+          </View>
+          <View style={{ paddingVertical: 4 }}>
+            {outline.map((ch: any, i: number) => {
+              const status: string = ch.chapter_status ?? 'missing';
+              const statusColor = CHAPTER_STATUS_COLOR[status] ?? colors.mutedForeground;
+              const kc: number = ch.knowledge_count ?? 0;
+              const indent = Math.max(0, ((ch.level ?? 1) - 1)) * 14;
+              return (
+                <View key={ch.id ?? i} style={{
+                  flexDirection: 'row', alignItems: 'center', gap: 8,
+                  paddingLeft: 14 + indent, paddingRight: 14, paddingVertical: 9,
+                  borderBottomWidth: i < outline.length - 1 ? StyleSheet.hairlineWidth : 0,
+                  borderBottomColor: colors.border,
+                }}>
+                  {/* Status dot */}
+                  <View style={{
+                    width: 7, height: 7, borderRadius: 4,
+                    backgroundColor: statusColor, flexShrink: 0,
+                  }} />
+
+                  {/* Title */}
+                  <Text
+                    style={{ flex: 1, fontSize: 13, fontFamily: 'Inter_400Regular', color: colors.foreground, lineHeight: 18 }}
+                    numberOfLines={2}
+                  >
+                    {ch.title ?? `Chapter ${i + 1}`}
+                  </Text>
+
+                  {/* Research chip */}
+                  <View style={{
+                    paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4,
+                    backgroundColor: kc === 0 ? colors.muted : colors.primary + '14',
+                    borderWidth: 1, borderColor: kc === 0 ? colors.border : colors.primary + '38',
+                  }}>
+                    <Text style={{
+                      fontSize: 10, fontFamily: 'Inter_600SemiBold',
+                      color: kc === 0 ? colors.mutedForeground : colors.primary,
+                    }}>
+                      {kc}
+                    </Text>
+                  </View>
+                </View>
+              );
+            })}
+          </View>
+          {/* Legend */}
+          <View style={{
+            flexDirection: 'row', gap: 14, paddingHorizontal: 14, paddingVertical: 10,
+            borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border,
+            backgroundColor: colors.muted + '28',
+          }}>
+            {([['present','Present'],['incomplete','Incomplete'],['missing','Missing']] as const).map(([s, label]) => (
+              <View key={s} style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+                <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: CHAPTER_STATUS_COLOR[s] }} />
+                <Text style={{ fontSize: 10, fontFamily: 'Inter_400Regular', color: colors.mutedForeground }}>{label}</Text>
+              </View>
+            ))}
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+              <View style={{
+                width: 14, height: 14, borderRadius: 3, borderWidth: 1,
+                alignItems: 'center', justifyContent: 'center',
+                borderColor: colors.primary + '38', backgroundColor: colors.primary + '14',
+              }}>
+                <Text style={{ fontSize: 7, color: colors.primary, fontFamily: 'Inter_700Bold' }}>n</Text>
+              </View>
+              <Text style={{ fontSize: 10, fontFamily: 'Inter_400Regular', color: colors.mutedForeground }}>Research items</Text>
+            </View>
+          </View>
+        </View>
+      )}
+
+    </ScrollView>
+  );
+}
+
 export default function WorkDetailScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
@@ -1742,9 +2030,29 @@ export default function WorkDetailScreen() {
     finally { setChaptersLoading(false); }
   }, [id, domain]);
 
+  const [bookIntel, setBookIntel] = useState<any>(null);
+  const [bookIntelLoading, setBookIntelLoading] = useState(false);
+
+  const fetchBookIntel = useCallback(async () => {
+    if (!id) return;
+    setBookIntelLoading(true);
+    try {
+      const res = await mobileFetch(`https://${domain}/api/works/${id}/book-intelligence`);
+      if (res.ok) setBookIntel(await res.json());
+      else setBookIntel(null);
+    } catch { /* non-fatal */ }
+    finally { setBookIntelLoading(false); }
+  }, [id, domain]);
+
+  // Fetch book intel on mount so the Overview mini-card shows data immediately,
+  // without requiring the user to visit the Book tab first.
   useEffect(() => {
-    if (activeTab === 'book') { fetchPipeline(); fetchChapters(); }
-  }, [activeTab, fetchPipeline, fetchChapters]);
+    fetchBookIntel();
+  }, [fetchBookIntel]);
+
+  useEffect(() => {
+    if (activeTab === 'book') { fetchPipeline(); fetchChapters(); fetchBookIntel(); }
+  }, [activeTab, fetchPipeline, fetchChapters, fetchBookIntel]);
   const queryClient = useQueryClient();
   const { mutateAsync: createTask } = useCreateWorkTask();
 
@@ -1936,6 +2244,8 @@ export default function WorkDetailScreen() {
             onStartDiscussion={handleStartDiscussion}
             starting={startingConvo}
             onNavigateToTab={setActiveTab}
+            bookIntel={bookIntel}
+            onOpenBook={() => setActiveTab('book')}
           />
         );
       case 'docs':
@@ -2186,18 +2496,67 @@ export default function WorkDetailScreen() {
         return <MobileLearnTab workId={id} colors={colors} />;
       case 'book':
         return (
-          <ScrollView contentContainerStyle={{ padding: 16 }}>
-            {pipelineLoading ? (
-              <ActivityIndicator color={colors.primary} style={{ marginTop: 32 }} />
-            ) : !pipeline ? (
-              <View style={{ alignItems: 'center', paddingVertical: 40, gap: 16 }}>
-                <Feather name="book" size={36} color={colors.mutedForeground} />
-                <Text style={{ fontSize: 15, fontFamily: 'Inter_600SemiBold', color: colors.foreground }}>
-                  No book pipeline yet
-                </Text>
-                <Text style={{ fontSize: 13, fontFamily: 'Inter_400Regular', color: colors.mutedForeground, textAlign: 'center', maxWidth: 260 }}>
-                  Start a pipeline to track this Work through the full book production lifecycle.
-                </Text>
+          <View style={{ flex: 1 }}>
+            {/* ── Book Intelligence ──────────────────────────────── */}
+            <BookIntelTab
+              bookIntel={bookIntel}
+              loading={bookIntelLoading}
+              colors={colors}
+            />
+
+            {/* ── Pipeline section (collapsible footer) ─────────── */}
+            {(pipeline || pipelineLoading) && (
+              <View style={{
+                borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border,
+                backgroundColor: colors.muted + '28',
+              }}>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={{ paddingHorizontal: 16, paddingVertical: 10, gap: 8, flexDirection: 'row', alignItems: 'center' }}
+                >
+                  {pipelineLoading ? (
+                    <ActivityIndicator size="small" color={colors.primary} />
+                  ) : pipeline ? (
+                    <>
+                      {/* Stage badge */}
+                      <View style={{
+                        paddingHorizontal: 10, paddingVertical: 5, borderRadius: 6,
+                        backgroundColor: colors.primary + '18', borderWidth: 1, borderColor: colors.primary + '44',
+                      }}>
+                        <Text style={{ fontSize: 12, fontFamily: 'Inter_700Bold', color: colors.primary }}>
+                          {pipeline.status ?? 'B0'}
+                        </Text>
+                      </View>
+                      <Text style={{ fontSize: 13, fontFamily: 'Inter_500Medium', color: colors.foreground }}>
+                        {pipeline.stage_label ?? pipeline.status}
+                      </Text>
+                      {pipeline.next_status && (
+                        <Pressable
+                          onPress={advancePipeline}
+                          disabled={advancingPipeline}
+                          style={({ pressed }) => ({
+                            flexDirection: 'row', alignItems: 'center', gap: 6,
+                            paddingHorizontal: 12, paddingVertical: 5, borderRadius: 6,
+                            backgroundColor: pressed || advancingPipeline
+                              ? colors.primary + 'aa' : colors.primary,
+                          })}
+                        >
+                          {advancingPipeline
+                            ? <ActivityIndicator size="small" color="#fff" />
+                            : <Feather name="arrow-right" size={12} color="#fff" />}
+                          <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: '#fff' }}>
+                            {advancingPipeline ? 'Advancing…' : `→ ${pipeline.next_status}`}
+                          </Text>
+                        </Pressable>
+                      )}
+                    </>
+                  ) : null}
+                </ScrollView>
+              </View>
+            )}
+
+            {/* Start pipeline CTA — shown whenever no pipeline exists */}
+            {!pipeline && !pipelineLoading && (
+              <View style={{ padding: 16 }}>
                 <Pressable
                   onPress={startPipeline}
                   style={[styles.newChatBtn, { backgroundColor: colors.primary }]}
@@ -2206,88 +2565,8 @@ export default function WorkDetailScreen() {
                   <Text style={styles.newChatBtnText}>Start Pipeline</Text>
                 </Pressable>
               </View>
-            ) : (
-              <View style={{ gap: 14 }}>
-                {/* Stage badge */}
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                  <View style={{ paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6, backgroundColor: colors.primary + '18', borderWidth: 1, borderColor: colors.primary + '44' }}>
-                    <Text style={{ fontSize: 13, fontFamily: 'Inter_700Bold', color: colors.primary }}>
-                      {pipeline.status ?? 'B0'}
-                    </Text>
-                  </View>
-                  <Text style={{ fontSize: 15, fontFamily: 'Inter_600SemiBold', color: colors.foreground, flex: 1 }}>
-                    {pipeline.stage_label ?? pipeline.status}
-                  </Text>
-                </View>
-
-                {/* Chapter stats */}
-                {pipeline.chapters_total > 0 && (
-                  <View style={{ backgroundColor: colors.muted + '44', borderRadius: 10, padding: 14, gap: 8 }}>
-                    <Text style={{ fontSize: 11, fontFamily: 'Inter_600SemiBold', color: colors.mutedForeground, letterSpacing: 0.8 }}>CHAPTERS</Text>
-                    {[
-                      { label: 'Total', value: pipeline.chapters_total },
-                      { label: 'Extracted', value: pipeline.chapters_extracted },
-                      { label: 'Drafted', value: pipeline.chapters_drafted },
-                      { label: 'Approved', value: pipeline.chapters_approved },
-                    ].map(({ label, value }) => (
-                      <View key={label} style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                        <Text style={{ fontSize: 13, fontFamily: 'Inter_400Regular', color: colors.foreground }}>{label}</Text>
-                        <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: colors.foreground }}>{value ?? 0}</Text>
-                      </View>
-                    ))}
-                  </View>
-                )}
-
-                {/* Advance button */}
-                {pipeline.next_status && (
-                  <Pressable
-                    onPress={advancePipeline}
-                    disabled={advancingPipeline}
-                    style={({ pressed }) => [
-                      styles.newChatBtn,
-                      { backgroundColor: pressed ? colors.primary + 'cc' : colors.primary, opacity: advancingPipeline ? 0.6 : 1 },
-                    ]}
-                  >
-                    {advancingPipeline
-                      ? <ActivityIndicator size="small" color="#fff" />
-                      : <Feather name="arrow-right" size={14} color="#fff" />}
-                    <Text style={styles.newChatBtnText}>
-                      {advancingPipeline ? 'Advancing…' : `Advance to ${pipeline.next_status}`}
-                    </Text>
-                  </Pressable>
-                )}
-
-                {/* Chapter list */}
-                {chaptersLoading ? (
-                  <ActivityIndicator color={colors.primary} style={{ marginTop: 8 }} />
-                ) : chapters.length > 0 ? (
-                  <View style={{ gap: 6, marginTop: 4 }}>
-                    <Text style={{ fontSize: 11, fontFamily: 'Inter_600SemiBold', color: colors.mutedForeground, letterSpacing: 0.8 }}>
-                      CHAPTERS ({chapters.length})
-                    </Text>
-                    {chapters.map((ch: any, i: number) => {
-                      const statusColor = ch.status === 'approved' ? '#16a34a' : ch.status === 'drafted' ? colors.primary : colors.mutedForeground;
-                      return (
-                        <View key={ch.id ?? i} style={[styles.listItem, { borderColor: colors.border, paddingVertical: 8 }]}>
-                          <View style={{ flex: 1 }}>
-                            <Text style={{ fontSize: 13, fontFamily: 'Inter_500Medium', color: colors.foreground }} numberOfLines={2}>
-                              {ch.title ?? `Chapter ${ch.seq ?? i + 1}`}
-                            </Text>
-                            <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: colors.mutedForeground, marginTop: 2 }}>
-                              {ch.doc_title} · {ch.word_count ?? 0} words
-                            </Text>
-                          </View>
-                          <View style={{ paddingHorizontal: 7, paddingVertical: 3, borderRadius: 5, borderWidth: 1, borderColor: statusColor + '44', backgroundColor: statusColor + '12' }}>
-                            <Text style={{ fontSize: 10, fontFamily: 'Inter_600SemiBold', color: statusColor }}>{ch.status ?? 'pending'}</Text>
-                          </View>
-                        </View>
-                      );
-                    })}
-                  </View>
-                ) : null}
-              </View>
             )}
-          </ScrollView>
+          </View>
         );
       case 'conversations': {
         const convs = convsData?.conversations ?? [];
