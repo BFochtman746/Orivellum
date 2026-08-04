@@ -110,6 +110,7 @@ export default function ConversationsScreen() {
   const router = useRouter();
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [showArchived, setShowArchived] = useState(false);
 
   // Debounce the search term (~200ms) so filtering doesn't run on every keystroke
   useEffect(() => {
@@ -118,7 +119,7 @@ export default function ConversationsScreen() {
   }, [search]);
 
   const { data, isLoading, isError, refetch } = useListConversations(
-    { archived: false, limit: 200 },
+    { archived: showArchived, limit: 200 } as any,
     { query: { refetchInterval: 15_000, staleTime: 10_000 } } as any
   );
   const allConversations = data?.conversations ?? [];
@@ -186,7 +187,22 @@ export default function ConversationsScreen() {
         ]}
       >
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-          <Text style={[styles.title, { color: colors.foreground }]}>Conversations</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <Text style={[styles.title, { color: colors.foreground }]}>Conversations</Text>
+            <Pressable
+              onPress={() => setShowArchived((v) => !v)}
+              style={{
+                paddingHorizontal: 8, paddingVertical: 3, borderRadius: 12,
+                backgroundColor: showArchived ? colors.primary + '22' : colors.muted,
+                borderWidth: 1,
+                borderColor: showArchived ? colors.primary + '55' : colors.border,
+              }}
+            >
+              <Text style={{ fontSize: 11, fontFamily: 'Inter_500Medium', color: showArchived ? colors.primary : colors.mutedForeground }}>
+                {showArchived ? 'Archived' : 'Active'}
+              </Text>
+            </Pressable>
+          </View>
           <Pressable
             onPress={handleNew}
             style={({ pressed }) => [
@@ -203,6 +219,7 @@ export default function ConversationsScreen() {
           </Pressable>
         </View>
         {/* Search bar */}
+
         <View style={[styles.searchRow, { backgroundColor: colors.card, borderColor: colors.border }]}>
           <Feather name="search" size={14} color={colors.mutedForeground} />
           <TextInput

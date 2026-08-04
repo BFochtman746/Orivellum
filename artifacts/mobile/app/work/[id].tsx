@@ -857,6 +857,7 @@ export default function WorkDetailScreen() {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<Tab>('overview');
   const [newTaskText, setNewTaskText] = useState('');
+  const [newTaskPriority, setNewTaskPriority] = useState(0);
   const [addingTask, setAddingTask] = useState(false);
 
   // ── Book / Pipeline tab state ──────────────────────────────────────────────
@@ -996,8 +997,9 @@ export default function WorkDetailScreen() {
     if (!trimmed) return;
     setAddingTask(true);
     try {
-      await createTask({ workId: id, data: { text: trimmed } });
+      await createTask({ workId: id, data: { text: trimmed, priority: newTaskPriority || undefined } });
       setNewTaskText('');
+      setNewTaskPriority(0);
       await refetchTasks();
       queryClient.invalidateQueries({ queryKey: getGetWorkTasksQueryKey(id) });
     } catch {
@@ -1124,6 +1126,30 @@ export default function WorkDetailScreen() {
                   : <Feather name="plus" size={18} color={newTaskText.trim() ? colors.primaryForeground : colors.mutedForeground} />
                 }
               </Pressable>
+            </View>
+            {/* Priority picker */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 16, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: colors.border }}>
+              <Text style={{ fontSize: 11, fontFamily: 'Inter_500Medium', color: colors.mutedForeground, marginRight: 4 }}>Priority</Text>
+              {([0, 1, 2, 3] as const).map((p) => {
+                const labels = ['None', 'P3', 'P2', 'P1'];
+                const active = newTaskPriority === p;
+                return (
+                  <Pressable
+                    key={p}
+                    onPress={() => setNewTaskPriority(p)}
+                    style={{
+                      paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12,
+                      backgroundColor: active ? colors.primary : colors.muted,
+                      borderWidth: 1,
+                      borderColor: active ? colors.primary : colors.border,
+                    }}
+                  >
+                    <Text style={{ fontSize: 11, fontFamily: 'Inter_600SemiBold', color: active ? colors.primaryForeground : colors.mutedForeground }}>
+                      {labels[p]}
+                    </Text>
+                  </Pressable>
+                );
+              })}
             </View>
             <FlatList
               data={tasks}
