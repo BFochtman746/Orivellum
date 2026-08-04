@@ -1163,6 +1163,7 @@ interface MobileAssessResult {
 }
 
 function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
+  const router = useRouter();
   const [phase, setPhase]       = useState<MobileLearnPhase>('loading');
   const [session, setSession]   = useState<MobileSession | null>(null);
   const [answer, setAnswer]     = useState('');
@@ -1334,42 +1335,66 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
 
   // ── Session done (5 correct in one sitting) ──────────────────────────────
   if (phase === 'session_done') {
+    const masteryPct = summary?.mastery_pct ?? 0;
     return (
       <View style={[styles.centered, { flex: 1, padding: 32 }]}>
         <Feather name="check-circle" size={52} color="#22c55e" />
         <Text style={[styles.workTitle, { color: colors.foreground, textAlign: 'center', marginTop: 16, fontSize: 20 }]}>
-          Session complete!
+          Great session!
         </Text>
-        <Text style={[styles.description, { color: colors.mutedForeground, textAlign: 'center', marginTop: 8 }]}>
-          {SESSION_LIMIT} correct answers — great work. Take a short break, then keep going.
+        <Text style={[styles.description, { color: colors.mutedForeground, textAlign: 'center', marginTop: 6 }]}>
+          {SESSION_LIMIT} correct answers · {masteryPct}% mastery
         </Text>
-        {summary && (
-          <Text style={[styles.itemMeta, { color: colors.mutedForeground, marginTop: 10 }]}>
-            {summary.graduated}/{summary.total} concepts mastered · {summary.mastery_pct}%
-          </Text>
-        )}
-        <View style={{ flexDirection: 'row', gap: 12, marginTop: 28 }}>
+
+        {/* Mastery progress bar */}
+        <View style={{ width: '100%', marginTop: 20, gap: 6 }}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+            <Text style={{ fontSize: 12, color: colors.mutedForeground, fontFamily: 'Inter_500Medium' }}>
+              Overall mastery
+            </Text>
+            <Text style={{ fontSize: 12, color: colors.foreground, fontFamily: 'Inter_600SemiBold' }}>
+              {masteryPct}%
+            </Text>
+          </View>
+          <View style={{ height: 8, backgroundColor: colors.muted, borderRadius: 4, overflow: 'hidden' }}>
+            <View
+              style={{
+                height: '100%',
+                width: `${masteryPct}%` as any,
+                backgroundColor: masteryPct === 100 ? '#22c55e' : colors.primary,
+                borderRadius: 4,
+              }}
+            />
+          </View>
+          {summary && (
+            <Text style={{ fontSize: 11, color: colors.mutedForeground, textAlign: 'center' }}>
+              {summary.graduated}/{summary.total} concepts mastered
+            </Text>
+          )}
+        </View>
+
+        <View style={{ flexDirection: 'row', gap: 12, marginTop: 28, width: '100%' }}>
           <Pressable
-            onPress={() => setLearnView('concepts')}
-            style={({ pressed }) => ({
+            onPress={() => router.back()}
+            style={({ pressed }: { pressed: boolean }) => ({
               flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-              gap: 6, paddingVertical: 12, borderRadius: 10, borderWidth: 1,
-              borderColor: colors.border, opacity: pressed ? 0.7 : 1,
+              gap: 6, paddingVertical: 13, borderRadius: 10, borderWidth: 1,
+              borderColor: colors.border, opacity: pressed ? 0.7 : 1, minHeight: 44,
             })}
           >
-            <Feather name="list" size={14} color={colors.foreground} />
-            <Text style={{ fontWeight: '600', fontSize: 14, color: colors.foreground }}>View concepts</Text>
+            <Feather name="check" size={14} color={colors.foreground} />
+            <Text style={{ fontWeight: '600', fontSize: 14, color: colors.foreground }}>Done for now</Text>
           </Pressable>
           <Pressable
             onPress={() => { setSessionCorrect(0); init(); }}
-            style={({ pressed }) => ({
+            style={({ pressed }: { pressed: boolean }) => ({
               flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-              gap: 6, paddingVertical: 12, borderRadius: 10,
-              backgroundColor: colors.primary, opacity: pressed ? 0.7 : 1,
+              gap: 6, paddingVertical: 13, borderRadius: 10,
+              backgroundColor: colors.primary, opacity: pressed ? 0.7 : 1, minHeight: 44,
             })}
           >
             <Feather name="chevron-right" size={14} color="#fff" />
-            <Text style={{ fontWeight: '600', fontSize: 14, color: '#fff' }}>Keep studying</Text>
+            <Text style={{ fontWeight: '600', fontSize: 14, color: '#fff' }}>Keep going</Text>
           </Pressable>
         </View>
       </View>
