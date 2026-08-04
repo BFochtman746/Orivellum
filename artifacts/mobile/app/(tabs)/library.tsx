@@ -138,20 +138,29 @@ export default function LibraryScreen() {
    *  Falls back to keyword results silently when embeddings are off. */
   const [searchMode, setSearchMode] = useState<'keyword' | 'semantic' | 'hybrid'>('hybrid');
   const [embeddingsDown, setEmbeddingsDown] = useState(false);
+  // User can dismiss the banner for the current search session.
+  // Resets automatically whenever searchMode changes (e.g. they switch to Keyword).
+  const [embeddingsBannerDismissed, setEmbeddingsBannerDismissed] = useState(false);
 
   const { data: worksData } = useListWorks({} as any, { query: { staleTime: 60_000 } } as any);
   const works: any[] = (worksData as any)?.works ?? [];
 
-  // Poll embeddings circuit-breaker only while the user is in a mode that uses them.
+  // Poll embeddings circuit-breaker every 15 s while in a semantic mode so the
+  // banner auto-hides as soon as the circuit reopens, without requiring navigation.
   useEffect(() => {
+    setEmbeddingsBannerDismissed(false);           // reset dismiss on mode switch
     const domain = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
-    let cancelled = false;
     if (searchMode === 'keyword') { setEmbeddingsDown(false); return; }
-    mobileFetch(`https://${domain}/api/system/embeddings/status`)
-      .then(r => r.ok ? r.json() : null)
-      .then((data: any) => { if (!cancelled) setEmbeddingsDown(data?.circuit_open === true); })
-      .catch(() => { if (!cancelled) setEmbeddingsDown(false); });
-    return () => { cancelled = true; };
+    let cancelled = false;
+    const check = () => {
+      mobileFetch(`https://${domain}/api/system/embeddings/status`)
+        .then(r => r.ok ? r.json() : null)
+        .then((data: any) => { if (!cancelled) setEmbeddingsDown(data?.circuit_open === true); })
+        .catch(() => { if (!cancelled) setEmbeddingsDown(false); });
+    };
+    check();
+    const interval = setInterval(check, 15_000);
+    return () => { cancelled = true; clearInterval(interval); };
   }, [searchMode]);
 
   const handleUpload = async () => {
@@ -395,20 +404,28 @@ export default function LibraryScreen() {
         </ScrollView>
       )}
 
-      {/* Embeddings unavailability notice — shown when circuit is open and user is in a semantic mode */}
-      {isSearching && embeddingsDown && searchMode !== 'keyword' && (
+      {/* Embeddings unavailability notice — auto-hides every 15 s when circuit closes,
+          or immediately when the user taps ✕ */}
+      {isSearching && embeddingsDown && searchMode !== 'keyword' && !embeddingsBannerDismissed && (
         <View style={{
           flexDirection: 'row', alignItems: 'center', gap: 8,
-          paddingHorizontal: 14, paddingVertical: 8,
-          backgroundColor: '#92400e0e',
+          paddingHorizontal: 14, paddingVertical: 9,
+          backgroundColor: '#92400e12',
           borderBottomWidth: StyleSheet.hairlineWidth,
           borderBottomColor: '#f59e0b44',
         }}>
           <Feather name="alert-triangle" size={13} color="#d97706" />
-          <Text style={{ fontSize: 12, color: '#d97706', flex: 1 }}>
+          <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: '#92400e', flex: 1 }}>
             Semantic search is offline — showing keyword results only
           </Text>
-          <Text style={{ fontSize: 11, color: '#d97706', opacity: 0.7 }}>Keyword</Text>
+          <Pressable
+            onPress={() => setEmbeddingsBannerDismissed(true)}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            accessibilityLabel="Dismiss notice"
+            accessibilityRole="button"
+          >
+            <Feather name="x" size={14} color="#d97706" />
+          </Pressable>
         </View>
       )}
 
