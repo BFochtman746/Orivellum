@@ -643,11 +643,22 @@ def create_pipeline(work_id: str, body: PipelineCreateRequest = Body(default=Pip
 
 @router.get("/works/{work_id}/pipeline")
 def get_pipeline(work_id: str):
-    """Return the current book pipeline state for a Work, or null if none exists."""
+    """Return the current book pipeline state for a Work, or null if none exists.
+
+    Enriches the DB row with computed ``stage_label``, ``next_status``, and
+    ``chapters_total`` so clients don't need to hard-code the B-stage list.
+    """
     db = get_db()
     if not db.get_work(work_id):
         raise HTTPException(404, f"Work {work_id!r} not found")
     pipeline = db.get_book_pipeline_for_work(work_id)
+    if pipeline:
+        from orivellum.capabilities.state_machine import BOOK_SM, BOOK_STAGE_LABELS
+        status = pipeline.get("status", "")
+        pipeline["stage_label"] = BOOK_STAGE_LABELS.get(status, status)
+        allowed = BOOK_SM.allowed_from(status)
+        pipeline["next_status"] = next(iter(allowed)) if allowed else None
+        pipeline["chapters_total"] = pipeline.get("chapter_count", 0)
     return {"pipeline": pipeline}
 
 

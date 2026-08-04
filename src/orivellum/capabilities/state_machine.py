@@ -242,3 +242,25 @@ BOOK_SM: StateMachine = StateMachine({
 Forward: exactly one step at a time.
 Backward: use apply_transition(..., check_blockers=False) to return scope.
 """
+
+# Human-readable labels for each B-stage (matches web book-tab.tsx)
+BOOK_STAGE_LABELS: dict[str, str] = {
+    "B0":  "Intake",
+    "B1":  "Outline",
+    "B2":  "Research",
+    "B3":  "Architecture",
+    "B4":  "Chapter Extraction",
+    "B5":  "Chapter Drafting",
+    "B6":  "Continuity Review",
+    "B7":  "Fact Check",
+    "B8":  "Style Pass",
+    "B9":  "Editorial Review",
+    "B10": "Beta Read",
+    "B11": "Revision",
+    "B12": "Final Polish",
+    "B13": "Proof",
+    "B14": "Layout",
+    "B15": "Index & TOC",
+    "B16": "Quality Gate",
+    "B17": "Published",
+}
