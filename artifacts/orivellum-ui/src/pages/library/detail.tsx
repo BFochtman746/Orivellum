@@ -4,7 +4,7 @@
  * Shows metadata, full extracted text, and all knowledge items
  * harvested from this specific document.
  */
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { useParams, useLocation } from "wouter";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { useGetDocument, useDeleteDocument, useGetWork, useListWorks, getGetDocumentQueryKey, getGetWorkQueryKey } from "@workspace/api-client-react";
@@ -57,6 +57,51 @@ interface KnowledgeItem {
 }
 
 // ── Editable doc title ────────────────────────────────────────────────────────
+
+function TextSearchableContent({ text }: { text: string }) {
+  const [q, setQ] = useState("");
+  const query = q.trim().toLowerCase();
+  const matchCount = query
+    ? (text.toLowerCase().match(new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g")) ?? []).length
+    : 0;
+
+  const highlighted = useMemo(() => {
+    if (!query) return [{ text, match: false }];
+    const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const parts = text.split(new RegExp(`(${escaped})`, "gi"));
+    return parts.map((p) => ({ text: p, match: p.toLowerCase() === query }));
+  }, [text, query]);
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-2">
+        <input
+          type="search"
+          placeholder="Search within text…"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          className="h-8 flex-1 rounded-md border border-input bg-background px-3 text-sm outline-none focus:ring-1 focus:ring-ring font-mono"
+        />
+        {query && (
+          <span className="text-xs font-mono text-muted-foreground shrink-0">
+            {matchCount} match{matchCount !== 1 ? "es" : ""}
+          </span>
+        )}
+      </div>
+      <div className="bg-muted/20 border border-border/50 rounded-lg p-5 max-h-[60vh] overflow-y-auto">
+        <pre className="text-sm font-mono whitespace-pre-wrap leading-relaxed text-foreground/80">
+          {highlighted.map((part: { text: string; match: boolean }, i: number) =>
+            part.match ? (
+              <mark key={i} className="bg-yellow-300/60 text-foreground rounded-[2px]">{part.text}</mark>
+            ) : (
+              <span key={i}>{part.text}</span>
+            )
+          )}
+        </pre>
+      </div>
+    </div>
+  );
+}
 
 function EditableTitle({ docId: _docId, title, onSave }: { docId: string; title: string; onSave: (t: string) => void }) {
   const [editing, setEditing] = useState(false);
@@ -1419,11 +1464,7 @@ export default function DocumentDetail() {
       {activeTab === "text" && (
         <div>
           {doc.extracted_text ? (
-            <div className="bg-muted/20 border border-border/50 rounded-lg p-5 max-h-[60vh] overflow-y-auto">
-              <pre className="text-sm font-mono whitespace-pre-wrap leading-relaxed text-foreground/80">
-                {doc.extracted_text}
-              </pre>
-            </div>
+            <TextSearchableContent text={doc.extracted_text} />
           ) : (
             <div className="text-center py-16 bg-muted/10 border border-dashed rounded-lg">
               <BookOpen className="w-8 h-8 text-muted-foreground mx-auto mb-3 opacity-50" />

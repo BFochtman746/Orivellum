@@ -1,8 +1,9 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
   FlatList,
+  Modal,
   Platform,
   Pressable,
   RefreshControl,
@@ -27,7 +28,7 @@ import type { Conversation } from '@workspace/api-client-react';
 import { OfflineBanner, ErrorScreen } from '@/components/OfflineBanner';
 import { stripMarkdown } from '@/lib/stripMarkdown';
 
-function ConversationItem({ item, onArchive, onDelete }: { item: Conversation; onArchive?: (id: string) => void; onDelete?: (id: string) => void }) {
+function ConversationItem({ item, onArchive, onDelete, onRename }: { item: Conversation; onArchive?: (id: string) => void; onDelete?: (id: string) => void; onRename?: (id: string, title: string) => void }) {
   const colors = useColors();
   const router = useRouter();
 
@@ -42,6 +43,7 @@ function ConversationItem({ item, onArchive, onDelete }: { item: Conversation; o
       item.title ?? 'Conversation',
       '',
       [
+        { text: 'Rename', onPress: () => onRename?.(item.id ?? '', item.title ?? '') },
         { text: archived ? 'Unarchive' : 'Archive', onPress: () => onArchive?.(item.id ?? '') },
         { text: 'Delete', style: 'destructive', onPress: () => onDelete?.(item.id ?? '') },
         { text: 'Cancel', style: 'cancel' },
@@ -114,6 +116,9 @@ export default function ConversationsScreen() {
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [showArchived, setShowArchived] = useState(false);
+  const [renameModal, setRenameModal] = useState<{ id: string; title: string } | null>(null);
+  const [renameText, setRenameText] = useState('');
+  const renameRef = useRef<TextInput>(null);
 
   // Debounce the search term (~200ms) so filtering doesn't run on every keystroke
   useEffect(() => {
@@ -138,6 +143,30 @@ export default function ConversationsScreen() {
 
   const { mutateAsync: createConversation, isPending: creating } = useCreateConversation();
   const queryClient = useQueryClient();
+
+  const handleRename = async (convId: string, newTitle: string) => {
+    const trimmed = newTitle.trim();
+    if (!trimmed) return;
+    try {
+      const domain = process.env.EXPO_PUBLIC_DOMAIN;
+      await mobileFetch(`https://${domain}/api/conversations/${convId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: trimmed }),
+      });
+      queryClient.invalidateQueries({ queryKey: getListConversationsQueryKey({ archived: false, limit: 200 }) });
+      refetch();
+    } catch {
+      Alert.alert('Could not rename', 'Check your connection and try again.', [{ text: 'OK' }]);
+    }
+    setRenameModal(null);
+  };
+
+  const openRenameModal = (convId: string, currentTitle: string) => {
+    setRenameText(currentTitle);
+    setRenameModal({ id: convId, title: currentTitle });
+    setTimeout(() => renameRef.current?.focus(), 100);
+  };
 
   const handleDelete = async (convId: string) => {
     try {
@@ -288,7 +317,7 @@ export default function ConversationsScreen() {
         <FlatList
           data={conversations}
           keyExtractor={(item) => item.id ?? ''}
-          renderItem={({ item }) => <ConversationItem item={item} onArchive={handleArchive} onDelete={handleDelete} />}
+          renderItem={({ item }) => <ConversationItem item={item} onArchive={handleArchive} onDelete={handleDelete} onRename={openRenameModal} />}
           refreshControl={
             <RefreshControl refreshing={isLoading} onRefresh={refetch} tintColor={colors.primary} />
           }
@@ -301,6 +330,55 @@ export default function ConversationsScreen() {
           ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
         />
       )}
+
+      {/* Rename Modal */}
+      <Modal
+        visible={!!renameModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setRenameModal(null)}
+      >
+        <Pressable
+          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 24 }}
+          onPress={() => setRenameModal(null)}
+        >
+          <Pressable
+            onPress={(e) => e.stopPropagation()}
+            style={{ backgroundColor: colors.card, borderRadius: 12, padding: 20, gap: 14 }}
+          >
+            <Text style={{ fontSize: 16, fontFamily: 'Inter_600SemiBold', color: colors.foreground }}>
+              Rename conversation
+            </Text>
+            <TextInput
+              ref={renameRef}
+              value={renameText}
+              onChangeText={setRenameText}
+              style={{
+                height: 40, borderWidth: 1, borderColor: colors.primary,
+                borderRadius: 8, paddingHorizontal: 10, fontSize: 14,
+                fontFamily: 'Inter_400Regular', color: colors.foreground,
+              }}
+              autoFocus
+              returnKeyType="done"
+              onSubmitEditing={() => renameModal && handleRename(renameModal.id, renameText)}
+            />
+            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10 }}>
+              <Pressable
+                onPress={() => setRenameModal(null)}
+                style={{ paddingHorizontal: 16, paddingVertical: 8, borderRadius: 8, borderWidth: 1, borderColor: colors.border }}
+              >
+                <Text style={{ fontSize: 14, color: colors.mutedForeground }}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => renameModal && handleRename(renameModal.id, renameText)}
+                style={{ paddingHorizontal: 16, paddingVertical: 8, borderRadius: 8, backgroundColor: colors.primary }}
+              >
+                <Text style={{ fontSize: 14, fontFamily: 'Inter_600SemiBold', color: colors.primaryForeground }}>Save</Text>
+              </Pressable>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
