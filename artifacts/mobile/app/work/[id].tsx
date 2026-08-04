@@ -1066,6 +1066,10 @@ export default function WorkDetailScreen() {
   // Tasks search state
   const [taskSearch, setTaskSearch] = useState('');
 
+  // Knowledge search + kind filter
+  const [knSearch, setKnSearch] = useState('');
+  const [knKindFilter, setKnKindFilter] = useState<'all' | 'entity' | 'claim' | 'relationship' | 'summary'>('all');
+
   // Task #13 — start a conversation linked to this work
   const handleStartDiscussion = async () => {
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -1246,8 +1250,46 @@ export default function WorkDetailScreen() {
             {knError && knowledge.length > 0 && (
               <OfflineBanner message="Showing cached knowledge — server unreachable" onRetry={refetchKn} />
             )}
+            {/* Search + kind filter */}
+            <View style={{ paddingHorizontal: 12, paddingVertical: 8, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border, gap: 6, backgroundColor: colors.background }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <Feather name="search" size={13} color={colors.mutedForeground} />
+                <TextInput
+                  style={{ flex: 1, fontSize: 13, fontFamily: 'Inter_400Regular', color: colors.foreground }}
+                  placeholder="Search knowledge…"
+                  placeholderTextColor={colors.mutedForeground}
+                  value={knSearch}
+                  onChangeText={setKnSearch}
+                />
+                {knSearch.length > 0 && (
+                  <Pressable onPress={() => setKnSearch('')} hitSlop={8}>
+                    <Feather name="x" size={13} color={colors.mutedForeground} />
+                  </Pressable>
+                )}
+              </View>
+              <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap' }}>
+                {(['all', 'entity', 'claim', 'relationship', 'summary'] as const).map((k) => (
+                  <Pressable
+                    key={k}
+                    onPress={() => setKnKindFilter(k)}
+                    style={{
+                      paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10,
+                      backgroundColor: knKindFilter === k ? colors.primary : colors.muted,
+                      borderWidth: 1,
+                      borderColor: knKindFilter === k ? colors.primary : colors.border,
+                    }}
+                  >
+                    <Text style={{ fontSize: 10, fontFamily: 'Inter_600SemiBold', color: knKindFilter === k ? colors.primaryForeground : colors.mutedForeground, textTransform: 'capitalize' }}>{k}</Text>
+                  </Pressable>
+                ))}
+              </View>
+            </View>
             <FlatList
-              data={knowledge}
+              data={knowledge.filter((k: any) => {
+                const matchesKind = knKindFilter === 'all' || k.kind === knKindFilter;
+                const matchesSearch = !knSearch.trim() || (k.text ?? '').toLowerCase().includes(knSearch.toLowerCase());
+                return matchesKind && matchesSearch;
+              })}
               keyExtractor={(k) => k.id ?? ''}
               renderItem={({ item }) => (
                 <KnowledgeRow
@@ -1263,7 +1305,9 @@ export default function WorkDetailScreen() {
               ListEmptyComponent={
                 <View style={styles.centered}>
                   <Feather name="cpu" size={36} color={colors.mutedForeground} />
-                  <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>No knowledge nodes</Text>
+                  <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
+                    {knSearch.trim() || knKindFilter !== 'all' ? 'No matching knowledge items' : 'No knowledge nodes'}
+                  </Text>
                 </View>
               }
             />

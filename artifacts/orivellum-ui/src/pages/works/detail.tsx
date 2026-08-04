@@ -2031,17 +2031,17 @@ function GapsTab({ workId }: { workId: string }) {
                         </div>
                       </div>
                       <p className="text-[12px] leading-relaxed opacity-80">{g.description}</p>
-                      {/* One-click action */}
-                      {(g.kind === "uncovered_chapter" || g.kind === "weak_coverage") && (
-                        <div className="flex items-center justify-end gap-3 mt-2 pt-2 border-t border-current/10">
-                          <button
-                            disabled={createTask.isPending}
-                            onClick={() => createTaskFromGap(chapTitle)}
-                            className="flex items-center gap-1.5 text-[11px] font-mono opacity-70 hover:opacity-100 disabled:opacity-30 transition-opacity"
-                          >
-                            <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12h14"/></svg>
-                            Add task
-                          </button>
+                      {/* One-click actions — Add task is available on all gap kinds */}
+                      <div className="flex items-center justify-end gap-3 mt-2 pt-2 border-t border-current/10">
+                        <button
+                          disabled={createTask.isPending}
+                          onClick={() => createTaskFromGap(chapTitle)}
+                          className="flex items-center gap-1.5 text-[11px] font-mono opacity-70 hover:opacity-100 disabled:opacity-30 transition-opacity"
+                        >
+                          <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12h14"/></svg>
+                          Add task
+                        </button>
+                        {(g.kind === "uncovered_chapter" || g.kind === "weak_coverage") && (
                           <button
                             disabled={!!actionPending}
                             onClick={() => createResearchChat(chapTitle)}
@@ -2052,8 +2052,8 @@ function GapsTab({ workId }: { workId: string }) {
                               : <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>}
                             Research this chapter →
                           </button>
-                        </div>
-                      )}
+                        )}
+                      </div>
                       {g.kind === "undocumented_doc" && docId && (
                         <div className="flex justify-end mt-2 pt-2 border-t border-current/10">
                           <button
