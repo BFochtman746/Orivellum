@@ -26,28 +26,30 @@ const BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/
 
 // ─── Book stage metadata ──────────────────────────────────────────────────────
 
+// Stages are sourced from the backend BOOK_SM (state_machine.py). B17 is terminal.
 const BOOK_STAGES: { state: string; label: string; desc: string }[] = [
-  { state: "B0",  label: "Intake",               desc: "Manuscripts and source material collected" },
-  { state: "B1",  label: "Outline",              desc: "Chapter structure and scope approved" },
-  { state: "B2",  label: "Research",             desc: "Supporting research and sources complete" },
-  { state: "B3",  label: "First Draft",          desc: "Full manuscript drafted" },
-  { state: "B4",  label: "Self-Review",          desc: "Author review and first round of revisions" },
-  { state: "B5",  label: "Peer Review",          desc: "External review and feedback received" },
-  { state: "B6",  label: "Revision",             desc: "Revisions complete, manuscript stable" },
-  { state: "B7",  label: "Copy Edit",            desc: "Line-by-line language and style edit" },
-  { state: "B8",  label: "Proof",                desc: "Typeset proof checked" },
-  { state: "B9",  label: "Layout",               desc: "Final layout and design complete" },
-  { state: "B10", label: "Final Check",          desc: "Last quality gate passed" },
-  { state: "B11", label: "Production Approval",  desc: "Approved for production" },
-  { state: "B12", label: "Published",            desc: "Released" },
-  { state: "B13", label: "Distributed",          desc: "Available through distribution channels" },
-  { state: "B14", label: "Errata Period",        desc: "Active errata window" },
-  { state: "B15", label: "Revision Open",        desc: "New revision in progress" },
-  { state: "B16", label: "Archived",             desc: "Superseded or archived" },
+  { state: "B0",  label: "Intake",              desc: "Manuscripts and source material collected" },
+  { state: "B1",  label: "Outline",             desc: "Chapter structure and scope defined" },
+  { state: "B2",  label: "Research",            desc: "Supporting research and sources complete" },
+  { state: "B3",  label: "Architecture",        desc: "Work structure and plan approved" },
+  { state: "B4",  label: "Chapter Extraction",  desc: "Chapters extracted and segmented from source" },
+  { state: "B5",  label: "Chapter Drafting",    desc: "All chapters drafted" },
+  { state: "B6",  label: "Continuity Review",   desc: "Narrative and factual continuity verified" },
+  { state: "B7",  label: "Fact Check",          desc: "Claims verified against evidence" },
+  { state: "B8",  label: "Style Pass",          desc: "Style and voice consistent throughout" },
+  { state: "B9",  label: "Editorial Review",    desc: "Editor feedback received and applied" },
+  { state: "B10", label: "Beta Read",           desc: "Beta reader feedback collected" },
+  { state: "B11", label: "Revision",            desc: "Revisions complete, manuscript stable" },
+  { state: "B12", label: "Final Polish",        desc: "Final language and formatting pass done" },
+  { state: "B13", label: "Proof",               desc: "Typeset proof checked" },
+  { state: "B14", label: "Layout",              desc: "Final layout and design complete" },
+  { state: "B15", label: "Index & TOC",         desc: "Table of contents and index complete" },
+  { state: "B16", label: "Quality Gate",        desc: "All quality checks passed" },
+  { state: "B17", label: "Published",           desc: "Released to readers" },
 ];
 
 const STAGE_MAP = Object.fromEntries(BOOK_STAGES.map((s, i) => [s.state, { ...s, index: i }]));
-const TERMINAL_STATES = new Set(["B16"]);
+const TERMINAL_STATES = new Set(["B17"]);
 
 // ─── Types (endpoint is not in the generated client) ─────────────────────────
 
@@ -172,15 +174,15 @@ function PipelinePanel({ workId }: { workId: string }) {
       if (!r.ok) throw new Error((json as any).detail ?? "Advance failed");
       return json;
     },
-    onSuccess: () => {
+    onSuccess: (json: any) => {
       setBlockerMsg(null);
       queryClient.invalidateQueries({ queryKey: ["pipeline", workId] });
       queryClient.invalidateQueries({ queryKey: ["book-intelligence", workId] });
-      const updated = data?.pipeline;
-      if (updated) {
-        const next = STAGE_MAP[updated.status];
-        if (next) toast.success(`Advanced to ${next.label}`);
-      }
+      // Use the mutation response (not stale cached data) to get the new stage label
+      const newStatus = json?.pipeline?.status;
+      const next = newStatus ? STAGE_MAP[newStatus] : null;
+      if (next) toast.success(`Advanced to ${next.state} — ${next.label}`);
+      else toast.success("Pipeline advanced");
     },
     onError: (e: Error) => {
       if (!blockerMsg) toast.error(e.message);
@@ -199,7 +201,7 @@ function PipelinePanel({ workId }: { workId: string }) {
             <Play className="w-4 h-4 text-primary/60 shrink-0" />
             <div>
               <div className="text-xs font-mono uppercase tracking-widest text-muted-foreground">Production Pipeline</div>
-              <p className="text-sm text-muted-foreground mt-0.5">No pipeline started yet. Initialise to begin tracking this book through the B0–B16 lifecycle.</p>
+              <p className="text-sm text-muted-foreground mt-0.5">No pipeline started yet. Initialise to begin tracking this book through the B0–B17 lifecycle.</p>
             </div>
           </div>
           <Button size="sm" variant="outline" className="shrink-0 gap-1.5"
@@ -261,7 +263,7 @@ function PipelinePanel({ workId }: { workId: string }) {
         <div className="flex justify-between text-[10px] font-mono text-muted-foreground">
           <span>B0 Intake</span>
           <span>{progressPct}% through lifecycle</span>
-          <span>B16 Archived</span>
+          <span>B17 Published</span>
         </div>
 
         {/* Blocker warning */}
