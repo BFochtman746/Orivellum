@@ -594,6 +594,17 @@ def _build_system_prompt(db: Any, conv: dict, scope: str = "work",
             pass  # fall through to recency-based fallback
 
     # ── 2. Recency fallback (no query or search failed) ────────────────────────
+    # scope="work" with no linked Work → never inject knowledge from other Works.
+    if scope == "work" and not work_id:
+        if claim_block or verification_instruction:
+            parts = [base]
+            if claim_block:
+                parts.append(claim_block)
+            if verification_instruction:
+                parts.append(verification_instruction)
+            return "\n\n".join(p for p in parts if p.strip())
+        return base
+
     fallback_wid = work_id  # prefer linked Work; None = all works
     all_knowledge = db.list_knowledge(work_id=fallback_wid,
                                       limit=_CONTEXT_KNOWLEDGE * 4)

@@ -225,6 +225,11 @@ def _call_llm_sync(prompt: str, base_url: str, model: str, timeout: int,
         base_url=base_url, model=model,
         timeout=timeout, purpose="harvest.llm", db=db,
     )
+    if not result.ok or result.text is None:
+        logger.warning(
+            "LLM call failed during knowledge extraction: %s",
+            result.error or "no response",
+        )
     return result.text
 
 
