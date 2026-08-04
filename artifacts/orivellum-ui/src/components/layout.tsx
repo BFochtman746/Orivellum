@@ -705,23 +705,185 @@ function ProgressPanel({ open, onClose }: { open: boolean; onClose: () => void }
   );
 }
 
-// ─── Mobile hamburger trigger ──────────────────────────────────────────────────
+// ─── Route title helper ────────────────────────────────────────────────────────
 
-function MobileMenuButton() {
+function useRouteTitle(): string {
+  const [location] = useLocation();
+  const path = location.split("?")[0];
+  if (path === "/") return "Today";
+  if (path === "/chat") return "Chat";
+  if (path.match(/^\/works\/[^/]+\/intelligence/)) return "Intelligence";
+  if (path.match(/^\/works\/[^/]+/)) return "Work";
+  if (path === "/works") return "Works";
+  if (path.match(/^\/library\/[^/]+/)) return "Document";
+  if (path === "/library") return "Library";
+  if (path === "/files") return "Files";
+  if (path === "/projects") return "Projects";
+  if (path.match(/^\/projects\/[^/]+/)) return "Project";
+  if (path === "/studio") return "Studio";
+  if (path === "/write") return "Write";
+  if (path === "/backups") return "Backups";
+  if (path === "/system") return "System";
+  if (path === "/mcos") return "Calibration";
+  if (path === "/governance") return "Governance";
+  if (path === "/review") return "Review";
+  return "Orivellum";
+}
+
+// ─── Mobile navigation bottom sheet ───────────────────────────────────────────
+
+const NAV_ITEMS = [
+  { label: "Today",      href: "/",           icon: Activity      },
+  { label: "Chat",       href: "/chat",        icon: MessageSquare },
+  { label: "Works",      href: "/works",       icon: BookOpen      },
+  { label: "Library",    href: "/library",     icon: Library       },
+  { label: "Files",      href: "/files",       icon: FolderOpen    },
+  { label: "Studio",     href: "/studio",      icon: Mic           },
+  { label: "Write",      href: "/write",       icon: Feather       },
+  { label: "Projects",   href: "/projects",    icon: Target        },
+  { label: "Review",     href: "/review",      icon: Inbox         },
+  { label: "Governance", href: "/governance",  icon: CheckCircle2  },
+  { label: "System",     href: "/system",      icon: HardDrive     },
+  { label: "Calibration",href: "/mcos",        icon: Gauge         },
+] as const;
+
+function MobileNavSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const [location, setLocation] = useLocation();
+  const go = (href: string) => { setLocation(href); onClose(); };
+
   return (
-    <SheetTrigger asChild>
-      <button className="lg:hidden p-2 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors" aria-label="Open menu">
+    <Sheet open={open} onOpenChange={v => !v && onClose()}>
+      <SheetContent
+        side="bottom"
+        className="p-0 rounded-t-2xl flex flex-col bg-background border-t border-border/50 [&>button.absolute]:hidden"
+        style={{ height: "82svh", paddingBottom: "max(1.5rem, var(--sai-bottom))" }}
+      >
+        {/* Drag handle visual */}
+        <div className="flex justify-center pt-3 pb-1 shrink-0" aria-hidden>
+          <div className="w-10 h-1 rounded-full bg-border/70" />
+        </div>
+
+        {/* App branding row */}
+        <div className="px-5 py-2.5 flex items-center gap-2.5 border-b border-border/30 shrink-0">
+          <div className="bg-primary text-primary-foreground w-7 h-7 rounded-sm flex items-center justify-center font-serif font-bold text-base shrink-0">
+            O
+          </div>
+          <span className="font-serif font-bold text-lg tracking-tight">Orivellum</span>
+        </div>
+
+        {/* 3-column nav grid — thumb-friendly ≥80px tall cells */}
+        <ScrollArea className="flex-1 px-3 pt-3">
+          <div className="grid grid-cols-3 gap-2 pb-2">
+            {NAV_ITEMS.map(({ label, href, icon: Icon }) => {
+              const isActive =
+                location === href ||
+                (href !== "/" && location.startsWith(href));
+              return (
+                <button
+                  key={href}
+                  onClick={() => go(href)}
+                  className={[
+                    "flex flex-col items-center justify-center gap-2 py-4 rounded-xl border",
+                    "text-center transition-colors min-h-[80px] active:scale-95",
+                    isActive
+                      ? "bg-primary/10 border-primary/30 text-primary font-medium"
+                      : "bg-muted/30 border-border/40 text-foreground/75 hover:bg-muted/60",
+                  ].join(" ")}
+                >
+                  <Icon className="w-5 h-5 shrink-0" />
+                  <span className="text-xs font-medium leading-tight">{label}</span>
+                </button>
+              );
+            })}
+          </div>
+        </ScrollArea>
+      </SheetContent>
+    </Sheet>
+  );
+}
+
+// ─── Mobile header ─────────────────────────────────────────────────────────────
+
+function MobileHeader({
+  onMenuOpen,
+  onProgressOpen,
+  activeJobCount,
+  serverOk,
+  aiOk,
+  healthFetching,
+}: {
+  onMenuOpen: () => void;
+  onProgressOpen: () => void;
+  activeJobCount: number;
+  serverOk: boolean;
+  aiOk: boolean;
+  healthFetching: boolean;
+}) {
+  const title = useRouteTitle();
+  return (
+    <div
+      className="lg:hidden flex items-center px-2 border-b border-border/30 bg-background/95 backdrop-blur-sm z-10 shrink-0"
+      style={{ paddingTop: "max(0.75rem, var(--sai-top))", paddingBottom: "0.75rem" }}
+    >
+      {/* App-menu button — ≥44×44pt touch target per HIG */}
+      <button
+        onClick={onMenuOpen}
+        className="flex items-center justify-center w-11 h-11 rounded-lg text-foreground/80 hover:bg-muted/50 transition-colors shrink-0"
+        aria-label="Open navigation menu"
+      >
         <Menu className="w-5 h-5" />
       </button>
-    </SheetTrigger>
+
+      {/* Centered route title + health dot */}
+      <div className="flex-1 flex items-center justify-center gap-1.5 min-w-0 px-2">
+        <span className="font-serif font-semibold text-base tracking-tight truncate">{title}</span>
+        <span
+          title={
+            !serverOk ? "Server unreachable"
+            : !aiOk   ? "Server online — AI degraded"
+            :            "Server online"
+          }
+          className={`w-2 h-2 rounded-full shrink-0 transition-colors ${
+            healthFetching ? "bg-amber-400 animate-pulse"
+            : !serverOk   ? "bg-red-500"
+            : !aiOk       ? "bg-amber-400"
+            :                "bg-emerald-500"
+          }`}
+        />
+      </div>
+
+      {/* Right slot: background jobs indicator — ≥44×44pt */}
+      <button
+        onClick={onProgressOpen}
+        className={`flex items-center justify-center w-11 h-11 rounded-lg transition-colors shrink-0 ${
+          activeJobCount > 0
+            ? "text-primary"
+            : "text-muted-foreground hover:bg-muted/50"
+        }`}
+        aria-label={activeJobCount > 0 ? `${activeJobCount} jobs running` : "View background jobs"}
+        title="View background jobs"
+      >
+        {activeJobCount > 0 ? (
+          <span className="relative inline-flex">
+            <Loader2 className="w-5 h-5 animate-spin" />
+            <span className="absolute -top-1.5 -right-1.5 min-w-[14px] h-3.5 px-0.5 rounded-full bg-primary text-primary-foreground text-[8px] font-bold flex items-center justify-center leading-none">
+              {activeJobCount > 9 ? "9+" : activeJobCount}
+            </span>
+          </span>
+        ) : (
+          <Activity className="w-5 h-5" />
+        )}
+      </button>
+    </div>
   );
 }
 
 // ─── AppLayout ─────────────────────────────────────────────────────────────────
 
 export function AppLayout({ children }: { children: React.ReactNode }) {
-  const [mobileOpen,    setMobileOpen]    = useState(false);
-  const [progressOpen,  setProgressOpen]  = useState(false);
+  const [mobileOpen,   setMobileOpen]   = useState(false);
+  const [progressOpen, setProgressOpen] = useState(false);
+  const [location] = useLocation();
   const { data: jobsData } = useJobs(false);
   const activeJobCount = jobsData?.total ?? 0;
   const { ok: serverOk, aiReachable: aiOk, isFetching: healthFetching } = useConnectivity();
@@ -737,106 +899,87 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
     return () => { if (t) clearTimeout(t); };
   }, [activeJobCount, progressOpen]);
 
+  // Slide-in animation on path change (mobile only; CSS guards for reduced-motion)
+  const contentRef = useRef<HTMLDivElement>(null);
+  const prevPath = useRef(location.split("?")[0]);
+  useEffect(() => {
+    const path = location.split("?")[0];
+    if (prevPath.current === path) return;
+    prevPath.current = path;
+    const el = contentRef.current;
+    if (!el) return;
+    el.classList.remove("mobile-page-slide-in");
+    void el.offsetWidth; // force reflow to restart the animation
+    el.classList.add("mobile-page-slide-in");
+    const t = setTimeout(() => el.classList.remove("mobile-page-slide-in"), 250);
+    return () => clearTimeout(t);
+  }, [location]);
+
   return (
     <SidebarProvider>
       <ProgressPanel open={progressOpen} onClose={() => setProgressOpen(false)} />
-      <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
-        {/* Height is driven by --visual-viewport-height (set by the inline VisualViewport
-            controller in index.html) so the shell stays inside the visible viewport on
-            iPhone Safari regardless of address bar state. Overflow-hidden prevents any
-            scroll from leaking out of this container. */}
-        <div className="flex w-full overflow-hidden" style={{ height: 'var(--visual-viewport-height, 100dvh)' }}>
-          {/* Desktop sidebar */}
-          <Sidebar className="hidden lg:flex border-r border-border/50 bg-sidebar flex-col w-56 shrink-0">
-            <SidebarHeader className="px-4 py-3 flex flex-row items-center gap-2 border-b border-border/30">
-              <div className="bg-primary text-primary-foreground w-7 h-7 rounded-sm flex items-center justify-center font-serif font-bold text-base shrink-0">
-                O
-              </div>
-              <div className="font-serif font-bold text-lg tracking-tight">Orivellum</div>
-            </SidebarHeader>
-            <SidebarContent className="flex-1 min-h-0 overflow-hidden">
-              <SidebarInner onNavigate={() => {}} />
-            </SidebarContent>
-          </Sidebar>
+      {/* Mobile bottom-sheet nav — rendered outside the main layout grid */}
+      <MobileNavSheet open={mobileOpen} onClose={() => setMobileOpen(false)} />
 
-          {/* Mobile sheet sidebar */}
-          <SheetContent side="left" className="p-0 w-64 flex flex-col bg-sidebar">
-            <div className="px-4 py-3 flex items-center gap-2 border-b border-border/30">
-              <div className="bg-primary text-primary-foreground w-7 h-7 rounded-sm flex items-center justify-center font-serif font-bold text-base shrink-0">
-                O
-              </div>
-              <div className="font-serif font-bold text-lg tracking-tight">Orivellum</div>
+      {/* Height is driven by --visual-viewport-height (set by the inline VisualViewport
+          controller in index.html) so the shell stays inside the visible viewport on
+          iPhone Safari regardless of address bar state. */}
+      <div className="flex w-full overflow-hidden" style={{ height: "var(--visual-viewport-height, 100dvh)" }}>
+        {/* Desktop sidebar — hidden on mobile */}
+        <Sidebar className="hidden lg:flex border-r border-border/50 bg-sidebar flex-col w-56 shrink-0">
+          <SidebarHeader className="px-4 py-3 flex flex-row items-center gap-2 border-b border-border/30">
+            <div className="bg-primary text-primary-foreground w-7 h-7 rounded-sm flex items-center justify-center font-serif font-bold text-base shrink-0">
+              O
             </div>
-            <div className="flex-1 min-h-0 overflow-hidden">
-              <SidebarInner onNavigate={() => setMobileOpen(false)} />
-            </div>
-          </SheetContent>
+            <div className="font-serif font-bold text-lg tracking-tight">Orivellum</div>
+          </SidebarHeader>
+          <SidebarContent className="flex-1 min-h-0 overflow-hidden">
+            <SidebarInner onNavigate={() => {}} />
+          </SidebarContent>
+        </Sidebar>
 
-          {/* Main content */}
-          <main className="flex-1 overflow-hidden bg-background selection:bg-primary/20 flex flex-col">
-            {/* Mobile top bar — padding-top consumes the safe-area-inset-top so content
-                never bleeds under the notch. No sticky needed: the parent is a bounded
-                flex column so this header is always visually at the top. */}
-            <div
-              className="lg:hidden flex items-center gap-2 px-4 border-b border-border/30 bg-background/80 backdrop-blur z-10 shrink-0"
-              style={{ paddingTop: 'max(0.75rem, var(--sai-top))', paddingBottom: '0.75rem' }}
+        {/* Main content column */}
+        <main className="flex-1 overflow-hidden bg-background selection:bg-primary/20 flex flex-col">
+          {/* Mobile compact header — replaces the old left-drawer trigger bar */}
+          <MobileHeader
+            onMenuOpen={() => setMobileOpen(true)}
+            onProgressOpen={() => setProgressOpen(true)}
+            activeJobCount={activeJobCount}
+            serverOk={serverOk}
+            aiOk={aiOk}
+            healthFetching={healthFetching}
+          />
+
+          {/* Desktop progress badge — fixed top-right, never overlaps content */}
+          <div className="fixed top-4 right-6 z-20 pointer-events-none hidden lg:flex">
+            <button
+              onClick={() => setProgressOpen(true)}
+              className={`pointer-events-auto flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-mono border shadow-sm transition-all
+                ${activeJobCount > 0
+                  ? "bg-primary text-primary-foreground border-primary animate-pulse"
+                  : "bg-background/80 backdrop-blur text-muted-foreground border-border/50 hover:border-border hover:text-foreground"}`}
+              title="View background jobs"
             >
-              <MobileMenuButton />
-              <div className="font-serif font-bold text-base tracking-tight flex-1 flex items-center gap-2">
-                Orivellum
-                <span
-                  title={!serverOk ? "Server unreachable" : !aiOk ? "Server online — AI service degraded" : "Server online"}
-                  className={`w-2 h-2 rounded-full shrink-0 transition-colors ${
-                    healthFetching ? "bg-amber-400 animate-pulse" :
-                    !serverOk ? "bg-red-500" :
-                    !aiOk ? "bg-amber-400" :
-                    "bg-emerald-500"
-                  }`}
-                />
-              </div>
-              {/* Progress button — pinned in mobile top bar so it never floats over content */}
-              <button
-                onClick={() => setProgressOpen(true)}
-                className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-mono border shadow-sm transition-all
-                  ${activeJobCount > 0
-                    ? "bg-primary text-primary-foreground border-primary animate-pulse"
-                    : "bg-muted/60 text-muted-foreground border-border/50"}`}
-                title="View background jobs"
-              >
-                {activeJobCount > 0 ? (
-                  <><Loader2 className="w-3 h-3 animate-spin" />{activeJobCount}</>
-                ) : (
-                  <><Activity className="w-3 h-3" />Progress</>
-                )}
-              </button>
-            </div>
-            {/* Progress badge — fixed in top-right, never overlaps page content */}
-            <div className="fixed top-4 right-6 z-20 pointer-events-none hidden lg:flex">
-              <button
-                onClick={() => setProgressOpen(true)}
-                className={`pointer-events-auto flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-mono border shadow-sm transition-all
-                  ${activeJobCount > 0
-                    ? "bg-primary text-primary-foreground border-primary animate-pulse"
-                    : "bg-background/80 backdrop-blur text-muted-foreground border-border/50 hover:border-border hover:text-foreground"}`}
-                title="View background jobs"
-              >
-                {activeJobCount > 0 ? (
-                  <><Loader2 className="w-3 h-3 animate-spin" />{activeJobCount} running</>
-                ) : (
-                  <><Activity className="w-3 h-3" />Progress</>
-                )}
-              </button>
-            </div>
-            {/* Content area: flex-1 + min-h-0 let full-height pages (chat, write desk)
-                fill the available space exactly; overflow-auto gives normal pages a
-                scrollbar. This div is the ONLY vertically scrolling surface for
-                non-chat pages — html/body have overflow:hidden. */}
-            <div className="flex-1 min-h-0 overflow-auto w-full max-w-[1400px] mx-auto px-6 lg:px-8 py-6 lg:py-8 flex flex-col">
-              {children}
-            </div>
-          </main>
-        </div>
-      </Sheet>
+              {activeJobCount > 0 ? (
+                <><Loader2 className="w-3 h-3 animate-spin" />{activeJobCount} running</>
+              ) : (
+                <><Activity className="w-3 h-3" />Progress</>
+              )}
+            </button>
+          </div>
+
+          {/* Content area: flex-1 + min-h-0 let full-height pages (chat, write desk)
+              fill the available space exactly; overflow-auto gives normal pages a
+              scrollbar. This div is the ONLY vertically scrolling surface for
+              non-chat pages — html/body have overflow:hidden. */}
+          <div
+            ref={contentRef}
+            className="flex-1 min-h-0 overflow-auto w-full max-w-[1400px] mx-auto px-6 lg:px-8 py-6 lg:py-8 flex flex-col"
+          >
+            {children}
+          </div>
+        </main>
+      </div>
     </SidebarProvider>
   );
 }
