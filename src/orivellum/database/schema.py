@@ -1073,4 +1073,9 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         ALTER TABLE claims ADD COLUMN contract_version TEXT NOT NULL DEFAULT '1.0.0';
         ALTER TABLE claims ADD COLUMN producer TEXT
     """),
+
+    (62, "Data-tier classifier: tier column on documents", """
+        ALTER TABLE documents ADD COLUMN tier TEXT NOT NULL DEFAULT 'source';
+        CREATE INDEX IF NOT EXISTS docs_tier ON documents(tier);
+    """),
 ]

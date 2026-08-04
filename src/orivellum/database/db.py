@@ -1075,7 +1075,8 @@ class OrivellumDB:
 
     def create_document(self, title: str, source: str | None = None, sha256: str | None = None,
                         kind: str | None = None, work_id: str | None = None,
-                        content_path: str | None = None, meta: dict | None = None) -> dict:
+                        content_path: str | None = None, meta: dict | None = None,
+                        tier: str = "source") -> dict:
         oid = _uuid()
         now = _now()
         with self.governed_write(
@@ -1083,7 +1084,7 @@ class OrivellumDB:
             event_type="document.imported",
             object_id=oid,
             object_type="document",
-            payload={"work_id": work_id, "kind": kind, "sha256": sha256},
+            payload={"work_id": work_id, "kind": kind, "sha256": sha256, "tier": tier},
             actor="user",
             detail=(title[:120] if title else source),
         ):
@@ -1094,8 +1095,8 @@ class OrivellumDB:
             )
             self._conn.execute(
                 """INSERT INTO documents(id,work_id,title,source,sha256,kind,readiness,
-                   content_path,meta,created_at) VALUES(?,?,?,?,?,?,'imported',?,?,?)""",
-                (oid, work_id, title, source, sha256, kind, content_path, _jdump(meta or {}), now),
+                   content_path,meta,tier,created_at) VALUES(?,?,?,?,?,?,'imported',?,?,?,?)""",
+                (oid, work_id, title, source, sha256, kind, content_path, _jdump(meta or {}), tier, now),
             )
         return self.get_document(oid)  # type: ignore[return-value]
 
