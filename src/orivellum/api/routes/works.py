@@ -129,7 +129,12 @@ def works_knowledge(work_id: str, kind: str | None = None):
 
 @router.post("/works/{work_id}/quiz")
 async def generate_quiz(work_id: str, count: int = 5):
-    """Generate multiple-choice quiz questions from a Work's knowledge base using the AI."""
+    """Generate multiple-choice quiz questions from a Work's knowledge base using the AI.
+
+    Each returned question includes an optional ``concept_id`` field when the Work has seeded
+    learning concepts so that the frontend can call /learning/assess against the exact concept
+    the question tests — avoiding cross-concept mastery contamination.
+    """
     import asyncio, json, logging
     db = get_db()
     if not db.get_work(work_id):
@@ -145,21 +150,46 @@ async def generate_quiz(work_id: str, count: int = 5):
     work = db.get_work(work_id)
     title = (work.get("title") or "this topic") if work else "this topic"
 
+    # Fetch concepts so each question can be tagged with the concept it tests.
+    from orivellum.capabilities.learning import list_concepts
+    concepts = list_concepts(db, work_id)
+    has_concepts = bool(concepts)
+
+    if has_concepts:
+        concept_list = "\n".join(
+            f'  {{"id":"{c["id"]}","subject":"{c["subject"]}"}}'
+            for c in concepts
+        )
+        concept_instruction = (
+            f'\n\nAvailable concepts (pick the best matching concept_id for each question):\n'
+            f'[{concept_list}]\n\n'
+            'Add a "concept_id" field to each question with the id of the concept it tests. '
+            'Format:\n'
+            '{"questions":[{"q":"Question?","options":["A","B","C","D"],'
+            '"answer":0,"explanation":"...","concept_id":"<id from list above>"}]}'
+        )
+    else:
+        concept_instruction = (
+            '\n\nReturn ONLY valid JSON with no markdown, no commentary, no code fences. '
+            'Format:\n'
+            '{"questions":[{"q":"Question?","options":["A text","B text","C text","D text"],"answer":0,"explanation":"..."}]}'
+        )
+
     prompt = (
         f'You are an expert quiz generator. Based on the following knowledge items about "{title}", '
         f'generate exactly {count} multiple-choice questions that test real understanding. '
         'Each question must have exactly 4 options (A–D), one correct answer index (0-based), '
-        'and a short explanation of why the correct answer is right.\n\n'
-        'Return ONLY valid JSON with no markdown, no commentary, no code fences. '
-        'Format:\n'
-        '{"questions":[{"q":"Question?","options":["A text","B text","C text","D text"],"answer":0,"explanation":"..."}]}\n\n'
-        f'Knowledge items:\n{knowledge_text}'
+        'and a short explanation of why the correct answer is right.'
+        + concept_instruction
+        + f'\n\nKnowledge items:\n{knowledge_text}'
     )
 
     from orivellum.config import get_config
     from starlette.concurrency import run_in_threadpool
     from orivellum.capabilities.llm import llm_call
     cfg = get_config()
+    # Build a valid concept_id set for post-parse validation
+    valid_concept_ids = {c["id"] for c in concepts}
     try:
         result = await run_in_threadpool(
             llm_call,
@@ -177,7 +207,14 @@ async def generate_quiz(work_id: str, count: int = 5):
             if content.startswith("json"):
                 content = content[4:]
         parsed = json.loads(content)
-        return {"questions": parsed["questions"][:count], "work_id": work_id}
+        questions = parsed["questions"][:count]
+        # Validate concept_ids: strip any id the model hallucinated so the frontend
+        # never calls /learning/assess against a non-existent concept.
+        if valid_concept_ids:
+            for q in questions:
+                if q.get("concept_id") not in valid_concept_ids:
+                    q.pop("concept_id", None)
+        return {"questions": questions, "work_id": work_id, "has_concepts": has_concepts}
     except HTTPException:
         raise
     except json.JSONDecodeError as exc:
