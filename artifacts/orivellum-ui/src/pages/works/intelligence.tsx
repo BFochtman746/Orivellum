@@ -224,6 +224,8 @@ export default function WorkIntelligence() {
   // Navigation helpers
   const goSearch = (q: string) =>
     navigate(`${WORKS_BASE}/${workId}?tab=search&q=${encodeURIComponent(q)}`);
+  const goBrainstorm = (q: string) =>
+    navigate(`${WORKS_BASE}/${workId}?tab=brainstorm&q=${encodeURIComponent(q)}`);
   const goBook = () =>
     navigate(`${WORKS_BASE}/${workId}?tab=book`);
 
@@ -473,6 +475,14 @@ export default function WorkIntelligence() {
                         >
                           <Search className="w-3 h-3" />
                           Find sources
+                        </button>
+                        <button
+                          className="flex items-center gap-1 text-[10px] font-mono text-amber-600/80 hover:text-amber-700 transition-colors whitespace-nowrap"
+                          onClick={() => goBrainstorm(g.title)}
+                          title={`Brainstorm approaches for: ${g.title}`}
+                        >
+                          <Lightbulb className="w-3 h-3" />
+                          Brainstorm approaches
                         </button>
                         {trackedGaps.has(g.title) ? (
                           <span className="flex items-center gap-1 text-[10px] font-mono text-emerald-700 whitespace-nowrap">

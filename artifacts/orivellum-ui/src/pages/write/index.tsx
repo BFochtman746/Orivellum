@@ -139,7 +139,7 @@ function TBBtn({
 
 // ── Formatting toolbar ────────────────────────────────────────────────────────
 
-function FormattingToolbar({ editor }: { editor: ReturnType<typeof useEditor> }) {
+function FormattingToolbar({ editor }: { editor: ReturnType<typeof useEditor> | null }) {
   if (!editor) return null;
   const e = editor;
 
@@ -617,8 +617,11 @@ export default function WriteDeskPage() {
   // ── Editor ────────────────────────────────────────────────────────────────
 
   const editor = useEditor({
+    immediatelyRender: false,
     extensions: [
-      StarterKit,
+      // Disable Link and Underline inside StarterKit so our custom configs below
+      // are the only registered instances (avoids "duplicate extension" crash in v3).
+      StarterKit.configure({ link: false, underline: false }),
       Typography,
       Underline,
       Highlight.configure({ multicolor: true }),

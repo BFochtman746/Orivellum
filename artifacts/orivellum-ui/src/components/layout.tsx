@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
+import { BUILD_SHA, BUILD_TIME } from "@/build-info";
 import { apiFetch } from "@/lib/auth";
 import { Link, useLocation } from "wouter";
 import { format, isToday, isYesterday, subDays, isAfter } from "date-fns";
@@ -549,7 +550,7 @@ function SidebarInner({ onNavigate }: { onNavigate: () => void }) {
         <ConversationHistory activeConvId={activeConvId} onNavigate={onNavigate} />
       </div>
 
-      {/* Footer: font controls + server status */}
+      {/* Footer: font controls + server status + build stamp */}
       <div className="border-t border-border/40">
         <div className="flex items-center gap-1 px-3 py-1.5">
           <ALargeSmall className="w-3.5 h-3.5 text-muted-foreground" />
@@ -569,6 +570,11 @@ function SidebarInner({ onNavigate }: { onNavigate: () => void }) {
           >A+</button>
         </div>
         <ServerStatus />
+        <div className="px-3 py-1.5 border-t border-border/20">
+          <p className="text-[9px] font-mono text-muted-foreground/40 leading-tight" title={`Built ${BUILD_TIME}`}>
+            Build {BUILD_SHA} · {BUILD_TIME.slice(0, 16).replace('T', ' ')}
+          </p>
+        </div>
       </div>
     </div>
   );
