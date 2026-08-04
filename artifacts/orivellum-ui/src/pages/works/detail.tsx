@@ -1302,7 +1302,7 @@ function KnowledgeTab({ workId }: { workId: string }) {
                         : pct >= 50 ? { label: "Med", color: "text-amber-700 bg-amber-50 border-amber-200" }
                         : { label: "Low", color: "text-red-700 bg-red-50 border-red-200" };
                       return (
-                        <div className="flex flex-col items-end gap-0.5" title={`Confidence: ${pct.toFixed(1)}% — ${tier.label === "High" ? "Strong signal, likely accurate" : tier.label === "Med" ? "Moderate signal, worth verifying" : "Weak signal, treat with caution"}`}>
+                        <div className="flex flex-col items-end gap-0.5" title={`Confidence: ${pct.toFixed(1)}% (estimated) — ${tier.label === "High" ? "Well-evidenced: corroborated by multiple sources, recent, reviewed" : tier.label === "Med" ? "Partially evidenced: some corroboration or review present" : "Thin evidence: single source, unreviewed, or old — verify before relying on this"}`}>
                           <span className={`text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded border ${tier.color}`}>
                             {pct.toFixed(0)}% {tier.label}
                           </span>

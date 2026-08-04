@@ -394,7 +394,7 @@ export default function WorkIntelligence() {
                   return (
                     <span
                       className={`text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded border shrink-0 mt-0.5 ${tier.cls}`}
-                      title={`Confidence: ${pct.toFixed(1)}% — ${tier.label === 'High' ? 'Strong signal, likely accurate' : tier.label === 'Med' ? 'Moderate signal, worth verifying' : 'Weak signal, treat with caution'}`}
+                      title={`Confidence: ${pct.toFixed(1)}% (estimated) — ${tier.label === 'High' ? 'Well-evidenced: corroborated by multiple sources, recent, reviewed' : tier.label === 'Med' ? 'Partially evidenced: some corroboration or review present' : 'Thin evidence: single source, unreviewed, or old — verify before relying on this'}`}
                     >
                       {pct.toFixed(0)}% {tier.label}
                     </span>

@@ -213,7 +213,7 @@ function MessageBubble({ message, colors, isDark, onResend }: { message: LocalMe
                 onPress={onResend}
                 style={{ paddingHorizontal: 8, paddingVertical: 3, borderRadius: 4, backgroundColor: colors.primary + '22', borderWidth: 1, borderColor: colors.primary + '44' }}
               >
-                <Text style={{ fontSize: 10, fontFamily: 'Inter_500Medium', color: colors.primary }}>Re-send →</Text>
+                <Text style={{ fontSize: 10, fontFamily: 'Inter_500Medium', color: colors.primary }}>Continue →</Text>
               </Pressable>
             )}
           </View>

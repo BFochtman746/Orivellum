@@ -1347,7 +1347,7 @@ export default function Chat() {
                                         disabled={!resendText || sending}
                                         className="text-xs font-mono text-amber-700 hover:text-amber-900 underline underline-offset-2 shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
                                       >
-                                        Re-send
+                                        Continue
                                       </button>
                                     </div>
                                   );
