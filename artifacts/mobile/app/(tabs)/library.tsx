@@ -92,6 +92,14 @@ function DocItem({ doc, colors, onPress, onReprocess }: { doc: any; colors: any;
               {doc.word_count.toLocaleString()} words
             </Text>
           ) : null}
+          {/* Shown on search results when the hit came from semantic (vector)
+              matching rather than keyword — helps users understand why a doc
+              appeared even though the query words aren't in the title. */}
+          {doc.match_type === 'semantic' && (
+            <Text style={[styles.lifecycleBadge, { color: '#7c3aed', borderColor: '#7c3aed44' }]}>
+              semantic
+            </Text>
+          )}
         </View>
       </View>
       {onReprocess && (doc.readiness === 'error' || doc.readiness === 'no_text') && (
@@ -125,6 +133,9 @@ export default function LibraryScreen() {
   const [uploadProgress, setUploadProgress] = useState(0); // 0–100
   const [workFilter, setWorkFilter] = useState<string | undefined>(undefined); // work_id or undefined = all
   const [sortBy, setSortBy] = useState<'newest' | 'oldest' | 'az' | 'za'>('newest');
+  /** Default to hybrid so users get conceptual matches right away.
+   *  Falls back to keyword results silently when embeddings are off. */
+  const [searchMode, setSearchMode] = useState<'keyword' | 'semantic' | 'hybrid'>('hybrid');
 
   const { data: worksData } = useListWorks({} as any, { query: { staleTime: 60_000 } } as any);
   const works: any[] = (worksData as any)?.works ?? [];
@@ -230,7 +241,10 @@ export default function LibraryScreen() {
     data: searchData,
     isLoading: searchLoading,
     isError: searchError,
-  } = useSearchLibrary({ q: search }, { query: { enabled: search.length > 1, staleTime: 60_000 } } as any);
+  } = useSearchLibrary(
+    { q: search, mode: searchMode },
+    { query: { enabled: search.length > 1, staleTime: 60_000 } } as any,
+  );
 
   // Update cache whenever we get fresh results
   if (searchData?.results) {
@@ -326,6 +340,45 @@ export default function LibraryScreen() {
           </Pressable>
         )}
       </View>
+
+      {/* Search mode picker — shown while the user is actively searching.
+          Hybrid is the default: it combines keyword + semantic results.
+          Falls back to keyword silently when the embeddings endpoint is off. */}
+      {isSearching && (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={{ flexDirection: 'row', paddingHorizontal: 12, paddingVertical: 5, gap: 6 }}
+          style={{ borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border }}
+        >
+          {(['hybrid', 'keyword', 'semantic'] as const).map((mode) => {
+            const label = mode === 'hybrid' ? 'Hybrid' : mode === 'keyword' ? 'Keyword' : 'Semantic';
+            const active = searchMode === mode;
+            return (
+              <Pressable
+                key={mode}
+                onPress={() => setSearchMode(mode)}
+                style={{
+                  paddingHorizontal: 10,
+                  paddingVertical: 3,
+                  borderRadius: 12,
+                  borderWidth: 1,
+                  borderColor: active ? colors.primary : colors.border,
+                  backgroundColor: active ? colors.primary + '18' : 'transparent',
+                }}
+              >
+                <Text style={{
+                  fontSize: 11,
+                  fontFamily: 'Inter_500Medium',
+                  color: active ? colors.primary : colors.mutedForeground,
+                }}>
+                  {label}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
+      )}
 
       {/* Work filter chips — only shown when works exist */}
       {works.length > 0 && (
