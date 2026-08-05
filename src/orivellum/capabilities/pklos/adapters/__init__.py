@@ -9,11 +9,9 @@ The foundation owns the claim shape and the verifier.
 Adapters own how to fetch and rank evidence for their own domain.
 
 Available adapters:
-  recollection  — Adapter 4: user recollection / conversational assertion (A7)
-  library       — Adapter 2: local library / Second Brain documents (A4)
-
-Planned (BUILDABLE-NOW, not yet wired):
-  windows_inventory — Adapter 1: Windows CIM inventory (A0/A1)
+  windows_inventory — Adapter 1: Windows CIM inventory (A0/A1)  ← registered at startup
+  library           — Adapter 2: local library / Second Brain documents (A4)
+  recollection      — Adapter 4: user recollection / conversational assertion (A7)  ← registered at startup
 
 [NEEDS-ENGINEERING]:
   web           — Adapter 3: governed web / external sources (A5/A6)

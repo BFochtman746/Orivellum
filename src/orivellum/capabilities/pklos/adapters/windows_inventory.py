@@ -131,10 +131,40 @@ class WindowsInventoryAdapter(AdapterBase):
 
             result = _verifier.verify(predicate, safe, subject=subject)
 
+            if result.status == ClaimStatus.UNAVAILABLE:
+                claims_unavailable += 1
+                return
+
             # Choose the display value to store
             store_value = result.normalized_value or (safe[0].get("raw_value", "") if safe else "")
 
-            self._db.upsert_claim(
+            # upsert_claim() always writes RETRIEVED for A0–A6 tiers (it knows
+            # nothing about the verifier's corroboration result).  We capture the
+            # claim id and immediately apply the verified status so the ledger
+            # reflects the actual verification outcome — not just "retrieved".
+            #
+            # AUTHORITY GUARD: upsert_claim() only writes when the incoming tier
+            # is equal-or-better (lower number) than any existing claim.  If a
+            # higher-authority claim already exists, upsert_claim() returns its id
+            # WITHOUT writing.  Calling update_claim_status() on that id would
+            # corrupt a claim we never wrote.  We therefore pre-check authority
+            # so the status transition only fires when we know the write happened.
+            incoming_tier_num = int(result.authority.value[1:]) \
+                if result.authority.value[1:].isdigit() else 99
+            try:
+                _existing = self._db.get_claim_by_predicate(subject, predicate)
+            except Exception:
+                _existing = None
+            _existing_tier_num = 99
+            if _existing:
+                _t = _existing.get("authority_tier", "A99")
+                if len(_t) > 1 and _t[1:].isdigit():
+                    _existing_tier_num = int(_t[1:])
+            # upsert_claim writes when incoming_tier_num <= existing_tier_num
+            # (equal or better authority) — same condition as inside upsert_claim.
+            _write_wins = incoming_tier_num <= _existing_tier_num
+
+            claim_id = self._db.upsert_claim(
                 subject, predicate, store_value,
                 authority_tier=result.authority.value,
                 ttl_class=_resolver.resolve(predicate).ttl_class,
@@ -148,14 +178,21 @@ class WindowsInventoryAdapter(AdapterBase):
                     "all_evidence_count": len(safe),
                 },
             )
+            # Only apply the verifier-derived status when inventory won the
+            # authority race.  update_claim_status() is a no-op when old == new.
+            if claim_id and _write_wins:
+                self._db.update_claim_status(
+                    claim_id,
+                    result.status.value,
+                    actor="windows-inventory",
+                    reason=result.confidence_basis[:200] if result.confidence_basis else None,
+                )
             claims_written += 1
 
             if result.status == ClaimStatus.VERIFIED:
                 claims_verified += 1
             elif result.status == ClaimStatus.CONFLICTED:
                 claims_conflicted += 1
-            elif result.status == ClaimStatus.UNAVAILABLE:
-                claims_unavailable += 1
 
         # ── CPU ───────────────────────────────────────────────────────────────
         cpu = payload.get("cpu") or {}
@@ -207,12 +244,13 @@ class WindowsInventoryAdapter(AdapterBase):
         # ── GPU — NOTE: no AdapterRAM (INV-REQ-001) ──────────────────────────
         gpu = payload.get("gpu") or {}
         if gpu.get("Name"):
+            # Use only Win32_VideoController.Name as the primary evidence item.
+            # VideoProcessor is a different attribute (e.g. "AMD Radeon 890M" vs
+            # "AMD Radeon 890M Graphics") — pairing both as competing evidence items
+            # triggers a material contradiction in the verifier.  Store it as
+            # metadata for display only.
             evidence = [{"source_type": "windows_cim", "source_locator": "Win32_VideoController.Name",
                          "authority": "A0", "raw_value": gpu["Name"]}]
-            if gpu.get("VideoProcessor"):
-                evidence.append({"source_type": "windows_cim",
-                                  "source_locator": "Win32_VideoController.VideoProcessor",
-                                  "authority": "A0", "raw_value": gpu["VideoProcessor"]})
             _write("gpu_model", evidence)
 
         # AdapterRAM MUST NOT be used for VRAM (INV-REQ-001)

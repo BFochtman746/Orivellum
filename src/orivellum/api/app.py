@@ -89,6 +89,19 @@ async def lifespan(app: FastAPI):
     # Step 5: Wire deps
     _deps.init(db=db, cfg=cfg)
 
+    # Step 5b: Register PKLOS adapters with the global AdapterRegistry.
+    # The WindowsInventoryAdapter reads from the claim ledger (not live CIM),
+    # so it only needs db and can be safely registered at startup.
+    try:
+        from orivellum.capabilities.pklos.adapters.base import registry as _pklos_registry
+        from orivellum.capabilities.pklos.adapters.windows_inventory import WindowsInventoryAdapter as _WinInvAdapter
+        from orivellum.capabilities.pklos.adapters.recollection import RecollectionAdapter as _RecollectionAdapter
+        _pklos_registry.register(_WinInvAdapter(db))
+        _pklos_registry.register(_RecollectionAdapter(db))
+        logger.info("PKLOS adapters registered: %s", list(_pklos_registry.all_capabilities().keys()))
+    except Exception as _pklos_exc:
+        logger.warning("PKLOS adapter registration failed (non-fatal): %s", _pklos_exc)
+
     # Step 5b: Start the shared background thread-pool executor.
     # All fire-and-forget work (document processing, embeddings, Studio
     # registration) submits here instead of spawning unlimited daemon threads.
