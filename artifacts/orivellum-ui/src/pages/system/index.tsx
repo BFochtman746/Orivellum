@@ -3,7 +3,7 @@ import { apiFetch } from "@/lib/auth";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
-import { Activity, Database, Cpu, CheckCircle2, XCircle, AlertCircle, AlertTriangle, Terminal, Sparkles, Moon, Brain, Trash2, ScrollText, User, Settings, Image as ImageIcon, Eye, Loader2, FileSearch, ClipboardCopy, ChevronDown, ChevronRight, Zap, Download, RotateCcw } from "lucide-react";
+import { Activity, Database, Cpu, CheckCircle2, XCircle, AlertCircle, AlertTriangle, Terminal, Sparkles, Moon, Brain, Trash2, ScrollText, User, Settings, Image as ImageIcon, Eye, Loader2, FileSearch, ClipboardCopy, ChevronDown, ChevronRight, Zap, Download, RotateCcw, FolderOpen, FolderPlus, Plus, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -491,6 +491,244 @@ function VersionCard() {
             <p><span className="text-foreground font-semibold">{data?.product}</span> v{data?.version}</p>
             <p>Python {data?.python?.split(" ")[0]}</p>
             <p className="truncate">{data?.platform}</p>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ─── Watched folders card ─────────────────────────────────────────────────────
+
+type WatchDir = {
+  path: string;
+  work_id: string | null;
+  enabled: boolean;
+  last_scan_files_imported?: number;
+  last_scan_error?: string | null;
+};
+
+type WatchDirsResponse = {
+  dirs: WatchDir[];
+  scanned_at: string | null;
+};
+
+function WatchedFoldersCard() {
+  const qc = useQueryClient();
+  const [adding, setAdding] = useState(false);
+  const [newPath, setNewPath] = useState("");
+  const [newWorkId, setNewWorkId] = useState<string>("");
+
+  const { data, isLoading } = useQuery<WatchDirsResponse>({
+    queryKey: ["system", "watch-dirs"],
+    queryFn: async () => {
+      const r = await apiFetch(`${API_BASE}/api/system/watch-dirs`);
+      if (!r.ok) throw new Error("watch dirs fetch failed");
+      return r.json();
+    },
+    staleTime: 15_000,
+    refetchInterval: 30_000,
+  });
+
+  // Works list for the optional work picker
+  const { data: worksData } = useQuery<{ works: { id: string; title: string }[] }>({
+    queryKey: ["works", "list-mini"],
+    queryFn: async () => {
+      const r = await apiFetch(`${API_BASE}/api/works?limit=100`);
+      if (!r.ok) return { works: [] };
+      return r.json();
+    },
+    staleTime: 60_000,
+  });
+  const works = worksData?.works ?? [];
+
+  const invalidate = () => qc.invalidateQueries({ queryKey: ["system", "watch-dirs"] });
+
+  const addMutation = useMutation({
+    mutationFn: async () => {
+      const r = await apiFetch(`${API_BASE}/api/system/watch-dirs`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: newPath.trim(), work_id: newWorkId || null, enabled: true }),
+      });
+      if (r.status === 409) throw new Error("already_watched");
+      if (!r.ok) throw new Error("add failed");
+      return r.json();
+    },
+    onSuccess: () => {
+      invalidate();
+      setAdding(false);
+      setNewPath("");
+      setNewWorkId("");
+      toast.success("Folder added — files will be imported within 60 seconds");
+    },
+    onError: (e: Error) =>
+      toast.error(e.message === "already_watched"
+        ? "That folder is already being watched"
+        : "Could not add folder"),
+  });
+
+  const toggleMutation = useMutation({
+    mutationFn: async ({ index, dir }: { index: number; dir: WatchDir }) => {
+      const r = await apiFetch(`${API_BASE}/api/system/watch-dirs/${index}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: dir.path, work_id: dir.work_id, enabled: !dir.enabled }),
+      });
+      if (!r.ok) throw new Error("update failed");
+      return r.json();
+    },
+    onSuccess: () => { invalidate(); },
+    onError: () => toast.error("Could not update folder"),
+  });
+
+  const removeMutation = useMutation({
+    mutationFn: async (index: number) => {
+      const r = await apiFetch(`${API_BASE}/api/system/watch-dirs/${index}`, { method: "DELETE" });
+      if (!r.ok) throw new Error("delete failed");
+    },
+    onSuccess: () => { invalidate(); toast.success("Folder removed"); },
+    onError: () => toast.error("Could not remove folder"),
+  });
+
+  const dirs = data?.dirs ?? [];
+
+  return (
+    <Card>
+      <CardContent className="p-6 space-y-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex items-start gap-3">
+            <FolderOpen className="w-5 h-5 text-primary mt-0.5 shrink-0" />
+            <div>
+              <h3 className="font-medium text-sm">Watched Folders</h3>
+              <p className="text-sm text-muted-foreground mt-0.5 max-w-xl">
+                Drop files into a watched folder and they appear in your library automatically —
+                scanned every 60 seconds. Already-imported files are never re-imported.
+              </p>
+              {data?.scanned_at && (
+                <p className="text-[11px] font-mono text-muted-foreground mt-1">
+                  Last scan: {relativeTime(data.scanned_at)}
+                </p>
+              )}
+            </div>
+          </div>
+          <Button
+            size="sm" variant="outline" className="gap-1.5 text-xs shrink-0"
+            onClick={() => setAdding(true)}
+            disabled={adding}
+          >
+            <Plus className="w-3.5 h-3.5" />
+            Add Folder
+          </Button>
+        </div>
+
+        {/* Add-folder form */}
+        {adding && (
+          <div className="rounded-lg border border-border/60 bg-muted/20 p-4 space-y-3">
+            <p className="text-xs font-medium">Add a watched folder</p>
+            <div className="space-y-2">
+              <input
+                type="text"
+                placeholder="/absolute/path/to/folder"
+                value={newPath}
+                onChange={e => setNewPath(e.target.value)}
+                onKeyDown={e => { if (e.key === "Enter" && newPath.trim()) addMutation.mutate(); }}
+                className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm font-mono placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary/50"
+              />
+              {works.length > 0 && (
+                <select
+                  value={newWorkId}
+                  onChange={e => setNewWorkId(e.target.value)}
+                  className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-primary/50"
+                >
+                  <option value="">No work assignment (goes to library root)</option>
+                  {works.map(w => (
+                    <option key={w.id} value={w.id}>{w.title}</option>
+                  ))}
+                </select>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm" variant="default" className="text-xs gap-1.5"
+                onClick={() => addMutation.mutate()}
+                disabled={!newPath.trim() || addMutation.isPending}
+              >
+                {addMutation.isPending
+                  ? <><Loader2 className="w-3 h-3 animate-spin" />Adding…</>
+                  : <><FolderPlus className="w-3 h-3" />Watch this folder</>}
+              </Button>
+              <Button size="sm" variant="ghost" className="text-xs"
+                onClick={() => { setAdding(false); setNewPath(""); setNewWorkId(""); }}>
+                Cancel
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {/* Directory list */}
+        {isLoading ? (
+          <Skeleton className="h-16 w-full" />
+        ) : dirs.length === 0 ? (
+          <div className="flex items-center gap-2 text-sm text-muted-foreground px-3 py-4 rounded-lg border border-dashed">
+            <FolderOpen className="w-4 h-4 shrink-0" />
+            No folders watched yet — click <span className="font-medium mx-1">Add Folder</span> to get started.
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {dirs.map((dir, i) => (
+              <div
+                key={i}
+                className={`flex items-start gap-3 p-3 rounded-lg border transition-colors ${
+                  dir.enabled
+                    ? "border-border/50 bg-background"
+                    : "border-border/30 bg-muted/20 opacity-60"
+                }`}
+              >
+                <FolderOpen className={`w-4 h-4 mt-0.5 shrink-0 ${dir.enabled ? "text-primary" : "text-muted-foreground"}`} />
+                <div className="flex-1 min-w-0 space-y-0.5">
+                  <p className="text-sm font-mono font-medium truncate" title={dir.path}>{dir.path}</p>
+                  <div className="flex items-center gap-3 flex-wrap">
+                    {dir.work_id && works.find(w => w.id === dir.work_id) && (
+                      <span className="text-[11px] text-muted-foreground">
+                        → {works.find(w => w.id === dir.work_id)?.title}
+                      </span>
+                    )}
+                    {dir.last_scan_error ? (
+                      <span className="flex items-center gap-1 text-[11px] text-red-600">
+                        <XCircle className="w-3 h-3" />
+                        {dir.last_scan_error}
+                      </span>
+                    ) : dir.last_scan_files_imported !== undefined && dir.last_scan_files_imported > 0 ? (
+                      <span className="flex items-center gap-1 text-[11px] text-emerald-700">
+                        <CheckCircle2 className="w-3 h-3" />
+                        {dir.last_scan_files_imported} imported last scan
+                      </span>
+                    ) : data?.scanned_at ? (
+                      <span className="text-[11px] text-muted-foreground font-mono">
+                        {dir.enabled ? "no new files" : "paused"}
+                      </span>
+                    ) : null}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <Switch
+                    checked={dir.enabled}
+                    onCheckedChange={() => toggleMutation.mutate({ index: i, dir })}
+                    disabled={toggleMutation.isPending}
+                    aria-label={dir.enabled ? "Pause watching" : "Resume watching"}
+                  />
+                  <button
+                    onClick={() => removeMutation.mutate(i)}
+                    disabled={removeMutation.isPending}
+                    className="p-1.5 rounded text-muted-foreground hover:text-destructive hover:bg-destructive/5 transition-colors"
+                    title="Remove this folder"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            ))}
           </div>
         )}
       </CardContent>
@@ -1161,6 +1399,9 @@ $env:ORIVELLUM_AI_URL="http://127.0.0.1:11434/v1"`}
           </CardContent>
         </Card>
       )}
+
+      {/* Watched Folders */}
+      <WatchedFoldersCard />
 
       {/* Maintenance */}
       <MaintenanceCard />

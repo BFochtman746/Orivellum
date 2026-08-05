@@ -1449,3 +1449,75 @@ def get_briefing():
         "summary": summary,
         "greeting": greeting,
     }
+
+
+# ─── Watch directories CRUD ───────────────────────────────────────────────────
+
+
+class _WatchDirEntry(BaseModel):
+    path: str
+    work_id: str | None = None
+    enabled: bool = True
+
+
+@router.get("/system/watch-dirs")
+def list_watch_dirs():
+    """Return the configured watch directories and last scan status."""
+    from orivellum.capabilities.folder_watch import get_watch_dirs, get_watch_status
+    db = get_db()
+    dirs = get_watch_dirs(db)
+    status = get_watch_status(db)
+    # Merge per-dir status into the dir list
+    status_by_path = {d.get("path"): d for d in status.get("dirs", [])}
+    enriched = []
+    for entry in dirs:
+        ds = status_by_path.get(entry.get("path"), {})
+        enriched.append({
+            **entry,
+            "last_scan_files_imported": ds.get("files_imported", 0),
+            "last_scan_error": ds.get("error"),
+        })
+    return {
+        "dirs": enriched,
+        "scanned_at": status.get("scanned_at"),
+    }
+
+
+@router.post("/system/watch-dirs")
+def add_watch_dir(entry: _WatchDirEntry):
+    """Append a new watch directory to the list."""
+    from orivellum.capabilities.folder_watch import get_watch_dirs, set_watch_dirs
+    db = get_db()
+    dirs = get_watch_dirs(db)
+    # Reject duplicate paths
+    if any(d.get("path") == entry.path for d in dirs):
+        raise HTTPException(409, f"Directory already watched: {entry.path}")
+    dirs.append({"path": entry.path, "work_id": entry.work_id, "enabled": entry.enabled})
+    set_watch_dirs(dirs, db)
+    return {"ok": True, "dirs": dirs}
+
+
+@router.put("/system/watch-dirs/{index}")
+def update_watch_dir(index: int, entry: _WatchDirEntry):
+    """Update a watch directory entry by index."""
+    from orivellum.capabilities.folder_watch import get_watch_dirs, set_watch_dirs
+    db = get_db()
+    dirs = get_watch_dirs(db)
+    if index < 0 or index >= len(dirs):
+        raise HTTPException(404, "Watch dir index out of range")
+    dirs[index] = {"path": entry.path, "work_id": entry.work_id, "enabled": entry.enabled}
+    set_watch_dirs(dirs, db)
+    return {"ok": True, "dirs": dirs}
+
+
+@router.delete("/system/watch-dirs/{index}")
+def delete_watch_dir(index: int):
+    """Remove a watch directory by index."""
+    from orivellum.capabilities.folder_watch import get_watch_dirs, set_watch_dirs
+    db = get_db()
+    dirs = get_watch_dirs(db)
+    if index < 0 or index >= len(dirs):
+        raise HTTPException(404, "Watch dir index out of range")
+    dirs.pop(index)
+    set_watch_dirs(dirs, db)
+    return {"ok": True, "dirs": dirs}

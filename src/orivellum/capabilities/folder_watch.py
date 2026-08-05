@@ -1,25 +1,32 @@
-"""Folder watch — auto-import new files from a watched directory.
+"""Folder watch — auto-import new files from watched directories.
 
-Orivellum can watch a local directory for new files and automatically import
-them into the library.  This is useful for users who save documents to a
-specific folder on their device (e.g. Downloads, Dropbox, Obsidian vault).
+Orivellum can watch one or more local directories for new files and
+automatically import them into the library.  This is useful for users who save
+documents to a specific folder on their device (e.g. Downloads, Obsidian vault).
 
-The watcher runs as a background thread managed by the nightshift daemon.
-It polls the watched directory every ``_POLL_INTERVAL_SEC`` seconds (no
-inotify/FSEvents dependency — works on all platforms).
+The watcher runs as a single background thread.  It polls every
+``_POLL_INTERVAL_SEC`` seconds with no inotify/FSEvents dependency — works on
+all platforms including Windows.
 
-Configuration (stored in db_settings):
-  folder_watch_path  — absolute path to watch (empty = disabled)
-  folder_watch_enabled — "true" / "false"
-  folder_watch_work_id — optional Work to link imported documents to
+Configuration (stored in settings table):
+  watch_dirs   — JSON array of ``{"path": str, "work_id": str|null, "enabled": bool}``
+                 (multi-dir config; preferred over legacy keys below)
+  watch_dirs_status — JSON written after each scan:
+                 ``{"scanned_at": ISO, "dirs": [{"path", "files_imported", "error"}]}``
 
-Files are identified by path.  Once a file has been imported its path is
-stored in folder_watch_seen so it is never re-imported.
+Legacy single-dir keys (read-only compat; replaced when watch_dirs is written):
+  folder_watch_path     — absolute path to watch
+  folder_watch_enabled  — "true" / "false"
+  folder_watch_work_id  — optional Work id
+
+Seen-file registry (prevents re-import):
+  folder_watch_seen — JSON array of canonical absolute paths already imported;
+                      capped at 10 000 entries.
 """
 from __future__ import annotations
 
+import json
 import logging
-import os
 import threading
 import time
 from pathlib import Path
@@ -30,7 +37,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("orivellum.folder_watch")
 
-_POLL_INTERVAL_SEC = 15
+_POLL_INTERVAL_SEC = 60  # within-60-second guarantee
 _SUPPORTED_EXTS = {
     ".pdf", ".docx", ".doc", ".xlsx", ".xls", ".csv",
     ".pptx", ".ppt", ".txt", ".md", ".py", ".js", ".ts",
@@ -44,40 +51,102 @@ _thread: threading.Thread | None = None
 _stop_event = threading.Event()
 
 
+# ─── Watch-dirs config helpers ────────────────────────────────────────────────
+
+def get_watch_dirs(db: "OrivellumDB") -> list[dict]:
+    """Return the list of configured watch directories.
+
+    Prefers the ``watch_dirs`` setting (multi-dir JSON array) and falls back to
+    the legacy single-dir keys if ``watch_dirs`` is not set.
+    """
+    raw = db.get_setting("watch_dirs", "")
+    if raw:
+        try:
+            dirs = json.loads(raw)
+            if isinstance(dirs, list):
+                return dirs
+        except Exception:
+            pass
+
+    # Legacy single-dir compat
+    legacy_path = db.get_setting("folder_watch_path", "").strip()
+    if legacy_path:
+        return [{
+            "path": legacy_path,
+            "work_id": db.get_setting("folder_watch_work_id", "").strip() or None,
+            "enabled": db.get_setting("folder_watch_enabled", "false").lower() == "true",
+        }]
+    return []
+
+
+def set_watch_dirs(dirs: list[dict], db: "OrivellumDB") -> None:
+    """Persist the watch-dirs list and clear the legacy single-dir keys."""
+    db.set_setting("watch_dirs", json.dumps(dirs), actor="user")
+    # Clear legacy keys so the UI and watcher read from watch_dirs only.
+    db.set_setting("folder_watch_path", "", actor="system")
+    db.set_setting("folder_watch_enabled", "false", actor="system")
+    db.set_setting("folder_watch_work_id", "", actor="system")
+
+
+def get_watch_status(db: "OrivellumDB") -> dict:
+    """Return the status written by the last watcher scan cycle."""
+    raw = db.get_setting("watch_dirs_status", "")
+    if raw:
+        try:
+            return json.loads(raw)
+        except Exception:
+            pass
+    return {"scanned_at": None, "dirs": []}
+
+
+# ─── Seen-file registry ────────────────────────────────────────────────────────
+
 def _get_seen_paths(db: "OrivellumDB") -> set[str]:
-    """Return the set of file paths already imported by the watcher."""
     try:
         raw = db.get_setting("folder_watch_seen", "")
-        if not raw:
-            return set()
-        import json
-        return set(json.loads(raw))
+        return set(json.loads(raw)) if raw else set()
     except Exception:
         return set()
 
 
-def _mark_seen(path: str, db: "OrivellumDB") -> None:
-    """Record a path as imported so it is not reimported next cycle."""
+def _mark_seen(paths: list[str], db: "OrivellumDB") -> None:
     try:
-        import json
         seen = _get_seen_paths(db)
-        seen.add(path)
-        # Keep at most 5000 entries to avoid unbounded growth
-        if len(seen) > 5000:
-            seen = set(list(seen)[-4000:])
+        seen.update(paths)
+        if len(seen) > 10_000:
+            seen = set(list(seen)[-8_000:])
         db.set_setting("folder_watch_seen", json.dumps(list(seen)), actor="system")
     except Exception as exc:
         logger.debug("folder_watch: could not mark seen: %s", exc)
 
 
+# ─── File importer ────────────────────────────────────────────────────────────
+
+_KIND_MAP: dict[str, str] = {
+    ".pdf": "pdf", ".docx": "docx", ".doc": "docx",
+    ".xlsx": "excel", ".xls": "excel", ".csv": "csv",
+    ".pptx": "pptx", ".ppt": "pptx",
+    ".txt": "text", ".md": "markdown",
+    ".png": "image", ".jpg": "image", ".jpeg": "image",
+    ".webp": "image", ".gif": "image",
+    ".mp3": "audio", ".wav": "audio", ".m4a": "audio",
+    ".ogg": "audio", ".flac": "audio",
+    ".py": "code", ".js": "code", ".ts": "code",
+    ".jsx": "code", ".tsx": "code",
+    ".json": "json", ".html": "html", ".htm": "html",
+    ".zip": "zip",
+}
+
+
 def _import_file(file_path: Path, work_id: str | None, db: "OrivellumDB") -> bool:
-    """Import a single file into the library.  Returns True on success."""
+    """Copy a file into the library and queue it for processing.
+
+    Returns True on success (including dedup skip).
+    """
     try:
         import hashlib
         import shutil
-        import tempfile
 
-        # Compute SHA-256 to detect duplicates
         sha256 = hashlib.sha256(file_path.read_bytes()).hexdigest()
 
         from orivellum.api._deps import get_config
@@ -85,40 +154,20 @@ def _import_file(file_path: Path, work_id: str | None, db: "OrivellumDB") -> boo
         lib_root = Path(cfg.data_dir) / "library"
         lib_root.mkdir(parents=True, exist_ok=True)
 
-        # Check for existing document with the same SHA
-        existing_rows = []
         with db._lock:
-            existing_rows = db._conn.execute(
+            existing = db._conn.execute(
                 "SELECT id FROM documents WHERE sha256=?", (sha256,)
             ).fetchall()
-        if existing_rows:
+        if existing:
             logger.info("folder_watch: skipping %s (duplicate SHA)", file_path.name)
-            return True  # treated as success — file was seen
+            return True
 
-        # Copy to library storage
         dest = lib_root / file_path.name
         if dest.exists():
             dest = lib_root / f"{file_path.stem}_{sha256[:8]}{file_path.suffix}"
         shutil.copy2(file_path, dest)
 
-        # Determine kind
-        ext = file_path.suffix.lower()
-        kind_map = {
-            ".pdf": "pdf", ".docx": "docx", ".doc": "docx",
-            ".xlsx": "excel", ".xls": "excel", ".csv": "csv",
-            ".pptx": "pptx", ".ppt": "pptx",
-            ".txt": "text", ".md": "markdown",
-            ".png": "image", ".jpg": "image", ".jpeg": "image",
-            ".webp": "image", ".gif": "image",
-            ".mp3": "audio", ".wav": "audio", ".m4a": "audio",
-            ".py": "code", ".js": "code", ".ts": "code",
-            ".jsx": "code", ".tsx": "code",
-            ".json": "json", ".html": "html", ".htm": "html",
-            ".zip": "zip",
-        }
-        kind = kind_map.get(ext, "file")
-
-        # Create document
+        kind = _KIND_MAP.get(file_path.suffix.lower(), "file")
         doc = db.create_document(
             source=str(dest.relative_to(lib_root)),
             title=file_path.name,
@@ -127,17 +176,15 @@ def _import_file(file_path: Path, work_id: str | None, db: "OrivellumDB") -> boo
             sha256=sha256,
             work_id=work_id,
         )
-        doc_id = doc["id"]
 
-        # Queue processing
         from orivellum.capabilities.pipeline import process_document
         from orivellum.api.executor import get_executor
         get_executor().submit(
             process_document,
-            doc_id=doc_id, file_path=str(dest), kind=kind,
+            doc_id=doc["id"], file_path=str(dest), kind=kind,
             work_id=work_id, title=file_path.name, db=db,
         )
-        logger.info("folder_watch: imported %s (id=%s)", file_path.name, doc_id)
+        logger.info("folder_watch: imported %s → id=%s", file_path.name, doc["id"])
         return True
 
     except Exception as exc:
@@ -145,38 +192,73 @@ def _import_file(file_path: Path, work_id: str | None, db: "OrivellumDB") -> boo
         return False
 
 
-def _watch_loop(db: "OrivellumDB") -> None:
-    """Main polling loop — runs in the background thread."""
-    logger.info("folder_watch: daemon started")
-    while not _stop_event.is_set():
-        try:
-            enabled = db.get_setting("folder_watch_enabled", "false").lower() == "true"
-            watch_path = db.get_setting("folder_watch_path", "").strip()
-            work_id = db.get_setting("folder_watch_work_id", "").strip() or None
+# ─── Main polling loop ────────────────────────────────────────────────────────
 
-            if enabled and watch_path:
-                p = Path(watch_path)
-                if p.is_dir():
-                    seen = _get_seen_paths(db)
+def _watch_loop(db: "OrivellumDB") -> None:
+    logger.info("folder_watch: daemon started (interval=%ds)", _POLL_INTERVAL_SEC)
+    while not _stop_event.is_set():
+        dir_statuses: list[dict] = []
+        try:
+            dirs = get_watch_dirs(db)
+            seen = _get_seen_paths(db)
+            newly_seen: list[str] = []
+
+            for entry in dirs:
+                path_str = (entry.get("path") or "").strip()
+                enabled = bool(entry.get("enabled", True))
+                work_id = entry.get("work_id") or None
+
+                status: dict = {"path": path_str, "files_imported": 0, "error": None}
+                dir_statuses.append(status)
+
+                if not enabled or not path_str:
+                    continue
+
+                p = Path(path_str)
+                try:
+                    if not p.is_dir():
+                        status["error"] = "directory not found"
+                        logger.warning("folder_watch: path does not exist: %s", path_str)
+                        continue
+
                     for f in sorted(p.iterdir()):
                         if (f.is_file()
                                 and f.suffix.lower() in _SUPPORTED_EXTS
                                 and str(f) not in seen):
-                            success = _import_file(f, work_id, db)
-                            if success:
-                                _mark_seen(str(f), db)
-                elif watch_path:
-                    logger.warning("folder_watch: configured path does not exist: %s", watch_path)
+                            if _import_file(f, work_id, db):
+                                newly_seen.append(str(f))
+                                seen.add(str(f))
+                                status["files_imported"] += 1
+                except OSError as dir_exc:
+                    status["error"] = str(dir_exc)
+                    logger.warning("folder_watch: could not scan %s: %s", path_str, dir_exc)
+
+            if newly_seen:
+                _mark_seen(newly_seen, db)
+
         except Exception as exc:
-            logger.error("folder_watch: poll error: %s", exc)
+            logger.error("folder_watch: poll cycle error: %s", exc)
+
+        # Write scan status so the UI can display last-scan info
+        try:
+            from datetime import datetime, timezone
+            scan_status = {
+                "scanned_at": datetime.now(timezone.utc).isoformat(),
+                "dirs": dir_statuses,
+            }
+            db.set_setting("watch_dirs_status", json.dumps(scan_status), actor="system")
+        except Exception:
+            pass
 
         _stop_event.wait(timeout=_POLL_INTERVAL_SEC)
 
     logger.info("folder_watch: daemon stopped")
 
 
+# ─── Public API ───────────────────────────────────────────────────────────────
+
 def start_watcher(db: "OrivellumDB") -> None:
-    """Start the folder watch background thread.  Idempotent."""
+    """Start the folder-watch background thread.  Idempotent."""
     global _thread
     if _thread is not None and _thread.is_alive():
         return
