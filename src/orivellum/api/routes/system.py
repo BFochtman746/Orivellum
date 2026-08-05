@@ -625,6 +625,57 @@ def set_vision_model_setting(body: VisionModelUpdate):
     return {"model": body.model.strip(), "ok": True}
 
 
+# ── Context-window settings ────────────────────────────────────────────────────
+
+@router.get("/system/settings/context-window")
+def get_context_window_setting():
+    """Return the effective context-window size (tokens) used for prompt trimming.
+
+    Uses the same validation as the runtime resolver:
+      effective = validated DB value (integer ≥ 512) → config default.
+    Sub-512 or non-integer stored values are reported as invalid (stored=None)
+    and the config default is used as the effective value, matching exactly
+    what chat construction applies.
+    """
+    db  = get_db()
+    cfg = get_config()
+    stored_raw = db.get_setting("context_window", "")
+    stored: int | None = None
+    if stored_raw:
+        try:
+            val = int(stored_raw)
+            if val >= 512:
+                stored = val
+        except ValueError:
+            pass
+    effective = stored if stored is not None else cfg.serving.context_window
+    return {
+        "context_window": effective,
+        "stored": stored,
+        "config_default": cfg.serving.context_window,
+    }
+
+
+class ContextWindowUpdate(BaseModel):
+    context_window: int  # token count; must be a positive integer
+
+
+@router.put("/system/settings/context-window")
+def set_context_window_setting(body: ContextWindowUpdate):
+    """Persist a custom context-window size (in tokens) for prompt trimming.
+
+    This overrides the YAML / env-var default at runtime without a restart.
+    The value is validated to be ≥ 512 tokens (below that, useful context
+    would be impossible to include).
+    """
+    from fastapi import HTTPException as _HTTP
+    if body.context_window < 512:
+        raise _HTTP(422, "context_window must be ≥ 512 tokens")
+    db = get_db()
+    db.set_setting("context_window", str(body.context_window), actor="user")
+    return {"context_window": body.context_window, "ok": True}
+
+
 @router.get("/system/embeddings/status")
 def embeddings_status():
     """Return the circuit-breaker state for the embeddings endpoint.

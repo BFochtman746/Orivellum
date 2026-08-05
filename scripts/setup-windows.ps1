@@ -290,12 +290,26 @@ Write-Host "---------------------------------------" -ForegroundColor Green
 Write-Host "  Setup complete!" -ForegroundColor Green
 Write-Host ""
 Write-Host "  Next steps:" -ForegroundColor White
-Write-Host "    1. Install Ollama for AI:  https://ollama.com/download" -ForegroundColor Gray
-Write-Host "       Then run:  ollama pull llama3.2" -ForegroundColor Gray
+Write-Host "    1. Install Ollama:  https://ollama.com/download/windows" -ForegroundColor Gray
+Write-Host ""
+Write-Host "       --- AMD Ryzen AI Max+ 395 / Strix Halo GPU acceleration ---" -ForegroundColor Yellow
+Write-Host "       Add these lines to your PowerShell profile or run before start.ps1:" -ForegroundColor Gray
+Write-Host '       $env:HSA_OVERRIDE_GFX_VERSION = "11.0.0"  # gfx1150/1151 -> ROCm gfx1100' -ForegroundColor DarkCyan
+Write-Host '       $env:OLLAMA_GPU_LAYERS = "99"              # all layers on iGPU' -ForegroundColor DarkCyan
+Write-Host '       $env:HIP_VISIBLE_DEVICES = "0"            # use the integrated GPU' -ForegroundColor DarkCyan
+Write-Host ""
+Write-Host "       Then pull models sized for your 112 GB allocatable VRAM:" -ForegroundColor Gray
+Write-Host "         ollama pull llama3.3:70b-instruct-q4_K_M  # primary (~40 GB)" -ForegroundColor Gray
+Write-Host "         ollama pull qwen2.5:72b-instruct-q4_K_M   # reasoner (~42 GB)" -ForegroundColor Gray
+Write-Host "         ollama pull qwen2.5-coder:32b-instruct-q4_K_M  # coder (~20 GB)" -ForegroundColor Gray
+Write-Host "         ollama pull mxbai-embed-large              # embeddings (330 MB)" -ForegroundColor Gray
+Write-Host "       (Lighter option: qwen2.5:32b-instruct-q4_K_M ~20 GB — very fast)" -ForegroundColor DarkGray
+Write-Host "       See full guide: scripts\windows\ryzen-ai-max-395.md" -ForegroundColor DarkGray
 Write-Host ""
 Write-Host "    2. Start Orivellum (from the project root):" -ForegroundColor White
 Write-Host "       .\scripts\start.ps1" -ForegroundColor Gray
+Write-Host "       (AMD GPU env vars are set automatically by start.ps1)" -ForegroundColor DarkGray
 Write-Host ""
-Write-Host "    3. Open http://localhost:8000 in your browser" -ForegroundColor White
+Write-Host "    3. Open http://localhost:8080/orivellum-ui/ in your browser" -ForegroundColor White
 Write-Host "---------------------------------------" -ForegroundColor Green
 Write-Host ""

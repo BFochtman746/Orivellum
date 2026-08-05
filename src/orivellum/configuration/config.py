@@ -144,6 +144,8 @@ def load_config(path: str | None = None) -> OrivellumConfig:
         "ORIVELLUM_AI_URL": ("serving.base_url", str),
         "ORIVELLUM_DB_PATH": ("database.path", str),
         "ORIVELLUM_EXTRACTION_TIMEOUT": ("serving.extraction_timeout_sec", int),
+        "ORIVELLUM_CONTEXT_WINDOW": ("serving.context_window", int),
+        "ORIVELLUM_EMBEDDER_MODEL": ("serving.embedder_model", str),
     }
     for env_key, (cfg_path, cast) in env_map.items():
         val = os.environ.get(env_key)
@@ -172,9 +174,13 @@ def load_config(path: str | None = None) -> OrivellumConfig:
                 "models", {}).get("coder", ServingConfig.coder_model)),
             vision_model=serving_raw.get("vision_model", serving_raw.get(
                 "models", {}).get("vision", ServingConfig.vision_model)),
+            embedder_model=serving_raw.get("embedder_model", serving_raw.get(
+                "models", {}).get("embedder", ServingConfig.embedder_model)),
             timeout_sec=int(serving_raw.get("timeout_sec", ServingConfig.timeout_sec)),
             extraction_timeout_sec=int(serving_raw.get(
                 "extraction_timeout_sec", ServingConfig.extraction_timeout_sec)),
+            context_window=int(serving_raw.get(
+                "context_window", ServingConfig.context_window)),
         ),
         server=ServerConfig(
             host=str(server_raw.get("host", ServerConfig.host)),

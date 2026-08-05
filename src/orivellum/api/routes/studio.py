@@ -999,7 +999,7 @@ def studio_status():
     deadline = time.monotonic() + _STATUS_GLOBAL_TIMEOUT
     results: dict[str, object] = {}
 
-    pool = _cf.ThreadPoolExecutor(max_workers=8, thread_name_prefix="studio-probe")
+    pool = _cf.ThreadPoolExecutor(max_workers=16, thread_name_prefix="studio-probe")
     try:
         futs: dict[str, _cf.Future] = {
             "ai_tts":    pool.submit(_url_probe, ai_tts_url),

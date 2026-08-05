@@ -41,9 +41,96 @@ _EXPLICIT_REMEMBER_RE = re.compile(
     r"|my (email|phone|address|birthday))\b",
     re.IGNORECASE,
 )
-# Max knowledge items to inject as context
+# Max knowledge items to inject as context (count backstop; token budget applied first)
 _CONTEXT_KNOWLEDGE = 12   # max knowledge items injected per turn
 _CONTEXT_CHUNKS    = 5    # max raw document passages injected per turn
+
+# Token estimation — 4 chars per token heuristic (stdlib-only, never used for billing)
+_CHARS_PER_TOKEN: int = 4
+
+
+def estimate_tokens(text: str) -> int:
+    """Estimate token count using the 4-chars-per-token heuristic.
+
+    Pure-Python, zero-dependency, no model-specific tokenizer needed.
+    Good enough for context-window budgeting; not suitable for billing
+    or model-accurate accounting.
+    """
+    return max(0, len(text) // _CHARS_PER_TOKEN)
+
+
+def _get_effective_context_window(db: Any) -> int:
+    """Return the effective context-window size (tokens) for this request.
+
+    Priority (highest → lowest):
+      1. DB setting ``context_window`` (set via PUT /api/system/settings/context-window)
+         — only accepted when the stored value is a valid integer ≥ 512.
+      2. ``get_config().serving.context_window`` (YAML / env-var / code default)
+      3. ``ServingConfig.context_window`` class default (8 192) as last resort
+
+    This is the single authoritative source for the budget used in
+    knowledge injection, history trimming, and continuation-message building.
+    All chat-construction code must call this function instead of reading
+    ``get_config().serving.context_window`` directly so that runtime overrides
+    take effect without a server restart.
+    """
+    try:
+        stored_raw = db.get_setting("context_window", "")
+        if stored_raw:
+            val = int(stored_raw)
+            if val >= 512:
+                return val
+    except Exception:
+        pass
+    try:
+        return get_config().serving.context_window
+    except Exception:
+        from orivellum.configuration.config import ServingConfig
+        return ServingConfig.context_window
+
+
+def _trim_history_for_budget(
+    prior: list[dict],
+    system_prompt: str,
+    db: Any,
+    *,
+    extra_text: str = "",
+) -> list[dict]:
+    """Trim *prior* (oldest-first history list) so the total prompt fits in budget.
+
+    Budget = 80 % of the effective context window, minus the system-prompt
+    token cost, minus *extra_text* (e.g. a partial assistant reply that will be
+    appended after the history), minus a 256-token safety margin for the model's
+    reply.
+
+    Drops the oldest messages first, preserving the most recent context.
+    Falls through with *prior* untrimmed on any exception so a bug here never
+    silently breaks the response path.
+
+    Callers should use this instead of duplicating the inline trimming pattern.
+    """
+    try:
+        _ctx = _get_effective_context_window(db)
+        _budget = int(_ctx * 0.80)
+        _budget -= estimate_tokens(system_prompt) + estimate_tokens(extra_text) + 256
+        if _budget <= 0:
+            return prior
+        trimmed: list[dict] = []
+        remain = _budget
+        for m in reversed(prior):
+            t = estimate_tokens(m.get("text", ""))
+            if remain - t < 0:
+                break
+            trimmed.insert(0, m)
+            remain -= t
+        if len(trimmed) < len(prior):
+            logger.debug(
+                "Token budget (continuation): trimmed history %d → %d messages (ctx=%d)",
+                len(prior), len(trimmed), _ctx,
+            )
+        return trimmed
+    except Exception:
+        return prior
 
 
 class ConversationCreate(BaseModel):
@@ -480,7 +567,8 @@ async def continue_message(conv_id: str, body: ContinueBody):
 
     system_prompt = _build_system_prompt(db, conv, scope="work", user_query=None)
     history = db.get_messages(conv_id, limit=_HISTORY_LIMIT + 5)
-    prior = [m for m in history if m.get("id") != cut_short_msg["id"]][-_HISTORY_LIMIT:]
+    raw_prior = [m for m in history if m.get("id") != cut_short_msg["id"]][-_HISTORY_LIMIT:]
+    prior = _trim_history_for_budget(raw_prior, system_prompt, db, extra_text=partial_text)
     msgs: list[dict] = [{"role": "system", "content": system_prompt}]
     for m in prior:
         role = m["role"] if m["role"] in ("user", "assistant") else "user"
@@ -686,8 +774,21 @@ def _build_system_prompt(db: Any, conv: dict, scope: str = "work",
             from orivellum.capabilities.embeddings import hybrid_search_knowledge
             knowledge_hits = hybrid_search_knowledge(user_query, db,
                                                      limit=_CONTEXT_KNOWLEDGE * 2)
-            trusted_k = [k for k in knowledge_hits
-                         if k.get("review_status") in _TRUSTED][:_CONTEXT_KNOWLEDGE]
+
+            # Token budget: 30% of context_window for all injected knowledge.
+            # Count cap (_CONTEXT_KNOWLEDGE / _CONTEXT_CHUNKS) is a backstop.
+            _k_budget = int(_get_effective_context_window(db) * 0.30)
+
+            trusted_k: list[dict] = []
+            _k_used = 0
+            for _ki in knowledge_hits:
+                if _ki.get("review_status") not in _TRUSTED:
+                    continue
+                _t = estimate_tokens(_ki.get("text", ""))
+                if len(trusted_k) >= _CONTEXT_KNOWLEDGE or _k_used + _t > _k_budget:
+                    break
+                trusted_k.append(_ki)
+                _k_used += _t
 
             # Hybrid chunk retrieval (BM25 + cosine, RRF-fused).  Falls back to
             # keyword-only when embeddings are unavailable, and to semantic-only
@@ -695,7 +796,17 @@ def _build_system_prompt(db: Any, conv: dict, scope: str = "work",
             from orivellum.capabilities.embeddings import hybrid_search_chunks
             chunk_hits = hybrid_search_chunks(user_query, db, work_id=None,
                                               limit=_CONTEXT_CHUNKS * 2)
-            trusted_c = chunk_hits[:_CONTEXT_CHUNKS]
+
+            # Chunks share what remains of the 30% budget after knowledge items
+            _c_budget = max(0, _k_budget - _k_used)
+            trusted_c: list[dict] = []
+            _c_used = 0
+            for _ci in chunk_hits:
+                _t = estimate_tokens(_ci.get("text", ""))
+                if len(trusted_c) >= _CONTEXT_CHUNKS or _c_used + _t > _c_budget:
+                    break
+                trusted_c.append(_ci)
+                _c_used += _t
 
             if trusted_k or trusted_c:
                 # Group by work so the AI sees topics clearly
@@ -836,16 +947,32 @@ def _build_system_prompt(db: Any, conv: dict, scope: str = "work",
         return base
 
     fallback_wid = work_id  # prefer linked Work; None = all works
+
+    # Token budget for the recency fallback: 30% of context_window (same as primary path)
+    _fb_budget = int(_get_effective_context_window(db) * 0.30)
+
+    def _trim_by_budget(candidates: list[dict]) -> list[dict]:
+        """Return trusted knowledge items within the token budget."""
+        result: list[dict] = []
+        used = 0
+        for _k in candidates:
+            if _k.get("review_status") not in _TRUSTED:
+                continue
+            _t = estimate_tokens(_k.get("text", ""))
+            if len(result) >= _CONTEXT_KNOWLEDGE or used + _t > _fb_budget:
+                break
+            result.append(_k)
+            used += _t
+        return result
+
     all_knowledge = db.list_knowledge(work_id=fallback_wid,
                                       limit=_CONTEXT_KNOWLEDGE * 4)
-    knowledge = [k for k in all_knowledge
-                 if k.get("review_status") in _TRUSTED][:_CONTEXT_KNOWLEDGE]
+    knowledge = _trim_by_budget(all_knowledge)
 
     if not knowledge and fallback_wid:
         # No knowledge in the linked Work — broaden to all works
         all_knowledge = db.list_knowledge(work_id=None, limit=_CONTEXT_KNOWLEDGE * 4)
-        knowledge = [k for k in all_knowledge
-                     if k.get("review_status") in _TRUSTED][:_CONTEXT_KNOWLEDGE]
+        knowledge = _trim_by_budget(all_knowledge)
 
     if not knowledge:
         # Still inject claim block + verification instruction even with no knowledge
@@ -907,11 +1034,10 @@ def _build_messages(
     # so the combined prompt stays within 80% of the model's context window.
     # This prevents 400 errors from context-length overflows on long chats.
     try:
-        _ctx = get_config().serving.context_window
+        _ctx = _get_effective_context_window(db)
         _budget = int(_ctx * 0.80)
-        _CHARS_PER_TOKEN = 4
         # Deduct system prompt and a 256-token margin for the final user turn
-        _budget -= len(system_prompt) // _CHARS_PER_TOKEN + 256
+        _budget -= estimate_tokens(system_prompt) + 256
         if _budget > 0:
             _trimmed: list[dict] = []
             _remain = _budget
@@ -1518,7 +1644,8 @@ async def _stream_continuation(db: Any, conv: dict, cut_short_msg: dict):
     # Build messages: system + history (excluding cut-short stub) + partial as assistant turn
     system_prompt = _build_system_prompt(db, conv, scope="work", user_query=None)
     history = db.get_messages(conv_id, limit=_HISTORY_LIMIT + 5)
-    prior = [m for m in history if m.get("id") != orig_id][-_HISTORY_LIMIT:]
+    raw_prior = [m for m in history if m.get("id") != orig_id][-_HISTORY_LIMIT:]
+    prior = _trim_history_for_budget(raw_prior, system_prompt, db, extra_text=partial_text)
     messages: list[dict] = [{"role": "system", "content": system_prompt}]
     for m in prior:
         role = m["role"] if m["role"] in ("user", "assistant") else "user"
