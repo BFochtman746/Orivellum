@@ -35,6 +35,11 @@ class ServingConfig:
     # Dedicated short timeout for background AI extraction so a slow/absent AI
     # service never blocks the pipeline for the full chat timeout.
     extraction_timeout_sec: int = 30
+    # Estimated context window for the configured model (in tokens).
+    # Used to trim conversation history and knowledge injection so the combined
+    # prompt never exceeds the model's hard limit.  Conservative default of 8192
+    # covers all common 7-8B models.  Increase for 32K/128K models.
+    context_window: int = 8192
 
     @property
     def model(self) -> str:

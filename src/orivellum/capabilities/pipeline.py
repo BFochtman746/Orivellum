@@ -133,18 +133,33 @@ def _explode_zip_into_documents(
                 )
                 children.append(doc["id"])
 
+                # BUG-005 fix: every ZIP child must be recorded in object_provenance
+                # so it is visible to the recall index ("find everything I've imported").
+                try:
+                    from orivellum.capabilities.persist import record_provenance as _rp
+                    _rp(doc["id"], "zip_extract", db, origin_id=doc_id)
+                except Exception as _prov_exc:
+                    logger.warning("ZIP provenance record failed for %s: %s", doc["id"], _prov_exc)
+
                 # Skip knowledge harvest for ARTIFACT/SYSTEM children — they
                 # must never become knowledge nodes or Works.
                 if _child_clf.tier in _EFW:
                     logger.debug("ZIP child %s is tier=%s — skipping harvest", basename, _child_tier)
                     continue
 
-                # Queue processing in a daemon thread so we return quickly
-                threading.Thread(
-                    target=process_document,
-                    args=(doc["id"], str(file_path), kind, work_id, title, db),
-                    daemon=True,
-                ).start()
+                # Queue processing via shared executor so work is bounded
+                try:
+                    from orivellum.api.executor import get_executor as _gex_zip
+                    _gex_zip().submit(
+                        process_document, doc["id"], str(file_path), kind, work_id, title, db
+                    )
+                except Exception:
+                    # Executor not yet initialised (e.g. tests) — fall back to thread
+                    threading.Thread(
+                        target=process_document,
+                        args=(doc["id"], str(file_path), kind, work_id, title, db),
+                        daemon=True,
+                    ).start()
 
     except zipfile.BadZipFile as exc:
         logger.error("ZIP explode: bad archive %s: %s", path.name, exc)
@@ -421,11 +436,9 @@ def process_document(doc_id: str, file_path: str, kind: str,
         # embeddings endpoint is down this exits quietly; the nightly backfill
         # catches up later.
         try:
-            import threading as _threading
             from orivellum.capabilities.embeddings import embed_chunks_for_doc
-            _threading.Thread(
-                target=embed_chunks_for_doc, args=(doc_id, db), daemon=True,
-            ).start()
+            from orivellum.api.executor import get_executor as _gex_emb
+            _gex_emb().submit(embed_chunks_for_doc, doc_id, db)
         except Exception as _emb_exc:
             logger.debug("Embedding kickoff non-fatal for %s: %s", doc_id, _emb_exc)
 

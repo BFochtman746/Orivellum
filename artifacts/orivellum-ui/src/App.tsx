@@ -39,6 +39,10 @@ const queryClient = new QueryClient({
     queries: {
       retry: 1,
       refetchOnWindowFocus: false,
+      // Global staleTime: data is fresh for 5 minutes, eliminating
+      // redundant refetches on every component mount and window focus.
+      // Per-query overrides (e.g. real-time polls) still use their own values.
+      staleTime: 5 * 60 * 1000,
     },
   },
 });

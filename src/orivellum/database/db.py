@@ -318,14 +318,38 @@ class OrivellumDB:
                 re-raised.
         """
         with self._lock:
+            # Sentinel: use set_trace_callback to detect if the caller issues a
+            # COMMIT inside the block, which would skip the audit-log and outbox
+            # insertions that governed_write appends after yield.
+            # sqlite3.Connection.commit is a C-extension method (read-only attr),
+            # so we cannot monkey-patch it; trace_callback is writable.
+            _early_commit_detected = False
+
+            def _commit_tracer(sql: str) -> None:
+                nonlocal _early_commit_detected
+                if sql.strip().upper() in ("COMMIT", "COMMIT;"):
+                    _early_commit_detected = True
+
+            self._conn.set_trace_callback(_commit_tracer)
             try:
                 yield
+                # Clear trace BEFORE our own audit/outbox/commit so we only
+                # catch commits that the caller issued, not our own.
+                self._conn.set_trace_callback(None)
+                if _early_commit_detected:
+                    self._conn.rollback()
+                    raise RuntimeError(
+                        "governed_write: caller issued COMMIT inside the block — "
+                        "audit log and outbox were NOT written. "
+                        "Remove the _conn.commit() call from inside the 'with' block."
+                    )
                 self._audit_tx(operation, object_id, object_type,
                                actor=actor, detail=detail)
                 self._emit_outbox_tx(event_type, object_id, object_type,
                                      payload or {})
                 self._conn.commit()
             except Exception:
+                self._conn.set_trace_callback(None)  # always restore
                 try:
                     self._conn.rollback()
                 except Exception:
@@ -796,6 +820,73 @@ class OrivellumDB:
             d["meta"] = _jload(d.get("meta"), {})
             result.append(d)
         return result
+
+    def search_messages(self, query: str, limit: int = 50) -> list[dict]:
+        """Full-text search across all conversation messages.
+
+        Returns matches with conversation context, ordered by recency.
+        Requires at least 2 characters to avoid vacuous matches.
+        """
+        if not query or len(query.strip()) < 2:
+            return []
+        q = query.strip().lower()
+        sql = """
+            SELECT m.id, m.conversation_id, m.role, m.text, m.created_at,
+                   c.title as conv_title, c.work_id, c.updated_at as conv_updated_at,
+                   w.title as work_title
+            FROM messages m
+            JOIN conversations c ON c.id = m.conversation_id
+            LEFT JOIN works w ON w.id = c.work_id
+            WHERE m.state = 'done'
+              AND instr(lower(m.text), ?) > 0
+            ORDER BY m.created_at DESC
+            LIMIT ?
+        """
+        with self._lock:
+            rows = self._conn.execute(sql, (q, limit)).fetchall()
+        result = []
+        for r in rows:
+            d = dict(r)
+            # Compute a brief snippet around the first match
+            text = d.get("text", "")
+            idx = text.lower().find(q)
+            if idx >= 0:
+                start = max(0, idx - 80)
+                end = min(len(text), idx + len(q) + 120)
+                snippet = ("…" if start > 0 else "") + text[start:end] + ("…" if end < len(text) else "")
+            else:
+                snippet = text[:200]
+            d["snippet"] = snippet
+            result.append(d)
+        return result
+
+    def log_access(self, method: str, path: str, status: int,
+                   latency_ms: int, ip: str | None = None,
+                   user_agent: str = "") -> None:
+        """Append one row to the access_log table (best-effort; non-fatal on error)."""
+        try:
+            now = _now()
+            with self._lock:
+                self._conn.execute(
+                    """INSERT OR IGNORE INTO access_log
+                       (id, ts, method, path, status, latency_ms, ip, user_agent)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (_uuid(), now, method, path, status, latency_ms, ip or "", user_agent),
+                )
+                self._conn.commit()
+        except Exception:
+            pass
+
+    def get_access_log(self, limit: int = 200) -> list[dict]:
+        """Return the most recent access log entries."""
+        try:
+            with self._lock:
+                rows = self._conn.execute(
+                    "SELECT * FROM access_log ORDER BY ts DESC LIMIT ?", (limit,)
+                ).fetchall()
+            return [dict(r) for r in rows]
+        except Exception:
+            return []
 
     def create_conversation(self, title: str | None = None, work_id: str | None = None,
                             model: str | None = None) -> dict:

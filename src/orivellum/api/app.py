@@ -39,6 +39,17 @@ logging.basicConfig(
 logger = logging.getLogger("orivellum")
 
 
+def _write_access_log(db_fn, method: str, path: str, status: int,
+                      latency_ms: int, ip: str | None, user_agent: str) -> None:
+    """Write one row to the access_log table.  Called from the background executor."""
+    try:
+        db = db_fn()
+        db.log_access(method=method, path=path, status=status,
+                      latency_ms=latency_ms, ip=ip, user_agent=user_agent)
+    except Exception:
+        pass  # access log writes are always best-effort
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Governed startup: config → db → migrations → deps → serve."""
@@ -78,19 +89,38 @@ async def lifespan(app: FastAPI):
     # Step 5: Wire deps
     _deps.init(db=db, cfg=cfg)
 
+    # Step 5b: Start the shared background thread-pool executor.
+    # All fire-and-forget work (document processing, embeddings, Studio
+    # registration) submits here instead of spawning unlimited daemon threads.
+    import os as _os
+    _max_workers = int(_os.environ.get("ORIVELLUM_WORKERS", "8"))
+    from orivellum.api.executor import init as _init_executor
+    _init_executor(max_workers=_max_workers)
+
     # Step 6: Start background daemons
     try:
         from orivellum.capabilities.nightshift import start_nightshift_daemon
         start_nightshift_daemon(db=db, cfg=cfg)
         logger.info("Nightshift daemon started")
+
+        # Folder watch daemon — auto-imports files from a watched directory.
+        # Non-fatal: any error here must never prevent the API from starting.
+        try:
+            from orivellum.capabilities.folder_watch import start_watcher as _fw_start
+            _fw_start(_deps.get_db())
+            logger.info("Folder watch daemon started")
+        except Exception as _fw_exc:
+            logger.warning("Folder watch daemon could not start (non-fatal): %s", _fw_exc)
     except Exception as ns_exc:
         logger.warning("Could not start nightshift daemon: %s", ns_exc)
 
     logger.info("API ready — serving on %s:%d", cfg.server.host, cfg.server.port)
     yield
 
-    # Shutdown: close DB
+    # Shutdown: close DB and executor
     logger.info("Shutting down...")
+    from orivellum.api.executor import shutdown as _shutdown_executor
+    _shutdown_executor(wait=False)  # don't block; threads finish on their own
     db.close()
     logger.info("Shutdown complete")
 
@@ -251,6 +281,33 @@ def create_app() -> FastAPI:
                     break
         return await call_next(request)
 
+    # ── Structured API access log ─────────────────────────────────────────────
+    # Records every HTTP request asynchronously so production issues can be
+    # investigated without real-time stdout tailing.
+    # Health probes are excluded to avoid log spam.
+    _ACCESS_LOG_EXCLUDE = frozenset({"/api/health", "/api/system/health", "/"})
+
+    @app.middleware("http")
+    async def access_log_middleware(request: Request, call_next):
+        _t0 = time.monotonic()
+        response = await call_next(request)
+        _path = _canonical_path(request.url.path)
+        if _path not in _ACCESS_LOG_EXCLUDE:
+            _latency_ms = int((time.monotonic() - _t0) * 1000)
+            _ip = request.client.host if request.client else None
+            _ua = request.headers.get("user-agent", "")[:200]
+            try:
+                from orivellum.api.executor import get_executor as _gex_al
+                _db_ref = _deps.get_db
+                _gex_al().submit(
+                    _write_access_log,
+                    _db_ref, request.method, _path,
+                    response.status_code, _latency_ms, _ip, _ua,
+                )
+            except Exception:
+                pass  # access log writes are always best-effort
+        return response
+
     # ── Request size limit ────────────────────────────────────────────────────
     # Routes that stream the body to disk (multipart upload) are exempt from the
     # in-RAM body limit — their practical ceiling is disk space, not memory.
@@ -272,16 +329,30 @@ def create_app() -> FastAPI:
                 pass
         return await call_next(request)
 
+    # ── Security response headers ─────────────────────────────────────────────
+    # Added to every API response to harden against common web vulnerabilities.
+    # Not applied to static file responses (those are served by StaticFiles).
+    @app.middleware("http")
+    async def security_headers(request: Request, call_next):
+        response = await call_next(request)
+        path = _canonical_path(request.url.path)
+        if path.startswith("/api/"):
+            response.headers["X-Content-Type-Options"] = "nosniff"
+            response.headers["X-Frame-Options"] = "SAMEORIGIN"
+            response.headers["X-XSS-Protection"] = "1; mode=block"
+            response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        return response
+
     # Register routers
     from orivellum.api.routes import (
         auth, health, works, conversations, library, knowledge,
         projects, backups, studio, files, system, dashboard, learning, write,
-        mcos, review, claims, pklos, intake, generate, topics, actions,
+        mcos, review, claims, pklos, intake, generate, topics, actions, mcp,
     )
     _route_modules = [
         auth, health, works, conversations, library, knowledge,
         projects, backups, studio, files, system, dashboard, learning, write,
-        mcos, review, claims, pklos, intake, generate, topics, actions,
+        mcos, review, claims, pklos, intake, generate, topics, actions, mcp,
     ]
     for module in _route_modules:
         app.include_router(module.router)
@@ -427,6 +498,18 @@ def _init_session_secret() -> str:
     SESSION_SECRET the two secrets are independently random.
     """
     if env_secret := os.environ.get("SESSION_SECRET"):
+        if len(env_secret) < 16:
+            raise RuntimeError(
+                f"SESSION_SECRET is dangerously short ({len(env_secret)} chars). "
+                "Minimum is 16 characters. "
+                "Generate a strong one with: python -c \"import secrets; print(secrets.token_hex(32))\""
+            )
+        if len(env_secret) < 32:
+            logger.warning(
+                "SESSION_SECRET is only %d chars. Recommended minimum is 32. "
+                "Generate a stronger one with: python -c \"import secrets; print(secrets.token_hex(32))\"",
+                len(env_secret),
+            )
         return env_secret
 
     # Locate the data directory using the same env var the config uses so we

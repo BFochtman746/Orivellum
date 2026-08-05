@@ -135,6 +135,20 @@ def _make_thumbnail_b64(
 # Route handlers
 # ──────────────────────────────────────────────────────────────────────────────
 
+@router.get("/conversations/search")
+def search_conversations(q: str = "", limit: int = 50):
+    """Full-text search across all conversation message content.
+
+    Returns up to `limit` matching messages with a snippet and conversation
+    metadata. Requires q >= 2 characters.
+    """
+    db = get_db()
+    if not q or len(q.strip()) < 2:
+        return {"results": [], "count": 0}
+    hits = db.search_messages(q.strip(), limit=min(limit, 200))
+    return {"results": hits, "count": len(hits)}
+
+
 @router.get("/conversations")
 def list_conversations(archived: bool = False, limit: int = 100):
     db = get_db()
@@ -845,6 +859,34 @@ def _build_messages(
     prior = [m for m in history if not (m["role"] == "user" and m["text"] == new_user_text)]
     # Keep within context limit
     prior = prior[-_HISTORY_LIMIT:]
+
+    # ── Token-aware history trimming ──────────────────────────────────────────
+    # Estimate token counts (4 chars ≈ 1 token) and drop oldest messages first
+    # so the combined prompt stays within 80% of the model's context window.
+    # This prevents 400 errors from context-length overflows on long chats.
+    try:
+        _ctx = get_config().serving.context_window
+        _budget = int(_ctx * 0.80)
+        _CHARS_PER_TOKEN = 4
+        # Deduct system prompt and a 256-token margin for the final user turn
+        _budget -= len(system_prompt) // _CHARS_PER_TOKEN + 256
+        if _budget > 0:
+            _trimmed: list[dict] = []
+            _remain = _budget
+            for _m in reversed(prior):
+                _t = len(_m.get("text", "")) // _CHARS_PER_TOKEN
+                if _remain - _t < 0:
+                    break
+                _trimmed.insert(0, _m)
+                _remain -= _t
+            if len(_trimmed) < len(prior):
+                logger.debug(
+                    "Token budget: trimmed history from %d → %d messages (ctx=%d)",
+                    len(prior), len(_trimmed), _ctx,
+                )
+            prior = _trimmed
+    except Exception:
+        pass  # trimming is best-effort — fall through with untrimmed history
 
     messages: list[dict] = [{"role": "system", "content": system_prompt}]
     for m in prior:

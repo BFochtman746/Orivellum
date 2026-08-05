@@ -1199,11 +1199,252 @@ $env:ORIVELLUM_AI_URL="http://127.0.0.1:11434/v1"`}
         </div>
       </div>
 
+      {/* Hardware Telemetry */}
+      <HardwareCard />
+
+      {/* Background Jobs */}
+      <JobsCard />
+
+      {/* LLM Health */}
+      <LlmHealthCard />
+
       {/* Action history */}
       <ActionHistoryCard />
 
       {/* Audit log */}
       <AuditLogCard />
+    </div>
+  );
+}
+
+// ─── Hardware telemetry card ─────────────────────────────────────────────────
+
+function HardwareCard() {
+  const { data, isLoading, refetch, isFetching } = useQuery<{
+    cpu_percent: number;
+    ram_total_mb: number;
+    ram_used_mb: number;
+    ram_percent: number;
+    disk_total_gb: number;
+    disk_used_gb: number;
+    disk_percent: number;
+    gpu: { name: string; memory_used_mb: number; memory_total_mb: number; utilization: number } | null;
+    cpu_count: number;
+  }>({
+    queryKey: ["system", "hardware"],
+    queryFn: async () => {
+      const r = await apiFetch(`${API_BASE}/api/system/hardware`);
+      if (!r.ok) return null;
+      return r.json();
+    },
+    refetchInterval: 10_000,
+    staleTime: 8_000,
+  });
+
+  function bar(pct: number) {
+    const color = pct > 90 ? "bg-destructive" : pct > 70 ? "bg-amber-500" : "bg-emerald-500";
+    return (
+      <div className="h-1.5 w-full bg-muted rounded-full overflow-hidden">
+        <div className={`h-full rounded-full ${color}`} style={{ width: `${Math.min(pct, 100)}%` }} />
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between border-b border-border/50 pb-2">
+        <h2 className="text-xl font-serif font-medium flex items-center gap-2">
+          <Cpu className="w-5 h-5 text-muted-foreground" />
+          Hardware
+        </h2>
+        <button onClick={() => refetch()} disabled={isFetching}
+          className="text-xs font-mono text-muted-foreground hover:text-foreground transition-colors">
+          {isFetching ? "refreshing…" : "refresh"}
+        </button>
+      </div>
+      {isLoading ? [1,2,3].map(i => <Skeleton key={i} className="h-8 w-full" />) : !data ? (
+        <p className="text-sm text-muted-foreground">Hardware telemetry unavailable (psutil may not be installed).</p>
+      ) : (
+        <div className="grid md:grid-cols-3 gap-4">
+          <div className="space-y-1.5 p-4 rounded-lg border border-border/50 bg-muted/10">
+            <div className="flex items-center justify-between text-xs font-mono mb-2">
+              <span className="text-muted-foreground">CPU</span>
+              <span className="font-medium">{data.cpu_percent?.toFixed(1)}% · {data.cpu_count} cores</span>
+            </div>
+            {bar(data.cpu_percent ?? 0)}
+          </div>
+          <div className="space-y-1.5 p-4 rounded-lg border border-border/50 bg-muted/10">
+            <div className="flex items-center justify-between text-xs font-mono mb-2">
+              <span className="text-muted-foreground">RAM</span>
+              <span className="font-medium">{((data.ram_used_mb ?? 0) / 1024).toFixed(1)} / {((data.ram_total_mb ?? 0) / 1024).toFixed(1)} GB</span>
+            </div>
+            {bar(data.ram_percent ?? 0)}
+          </div>
+          <div className="space-y-1.5 p-4 rounded-lg border border-border/50 bg-muted/10">
+            <div className="flex items-center justify-between text-xs font-mono mb-2">
+              <span className="text-muted-foreground">Disk</span>
+              <span className="font-medium">{(data.disk_used_gb ?? 0).toFixed(1)} / {(data.disk_total_gb ?? 0).toFixed(1)} GB</span>
+            </div>
+            {bar(data.disk_percent ?? 0)}
+          </div>
+          {data.gpu && (
+            <div className="md:col-span-3 space-y-1.5 p-4 rounded-lg border border-border/50 bg-muted/10">
+              <div className="flex items-center justify-between text-xs font-mono mb-2">
+                <span className="text-muted-foreground">GPU — {data.gpu.name}</span>
+                <span className="font-medium">
+                  {(data.gpu.memory_used_mb / 1024).toFixed(1)} / {(data.gpu.memory_total_mb / 1024).toFixed(1)} GB VRAM · {data.gpu.utilization}% util
+                </span>
+              </div>
+              {bar(data.gpu.utilization)}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Background jobs card ─────────────────────────────────────────────────────
+
+interface BgJob {
+  id: string; kind: string; label: string;
+  state: "running" | "done" | "failed";
+  started_at: number; finished_at: number | null; error: string | null;
+}
+
+function JobsCard() {
+  const { data, isLoading, refetch, isFetching } = useQuery<{
+    jobs: BgJob[]; running: number; failed: number; total: number;
+  }>({
+    queryKey: ["system", "jobs"],
+    queryFn: async () => {
+      const r = await apiFetch(`${API_BASE}/api/system/jobs?limit=50`);
+      if (!r.ok) return { jobs: [], running: 0, failed: 0, total: 0 };
+      return r.json();
+    },
+    refetchInterval: 5_000,
+    staleTime: 4_000,
+  });
+
+  const jobs = data?.jobs ?? [];
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between border-b border-border/50 pb-2">
+        <h2 className="text-xl font-serif font-medium flex items-center gap-2">
+          <Zap className="w-5 h-5 text-muted-foreground" />
+          Background Jobs
+          {(data?.running ?? 0) > 0 && (
+            <Badge variant="secondary" className="font-mono text-[10px]">{data!.running} running</Badge>
+          )}
+          {(data?.failed ?? 0) > 0 && (
+            <Badge variant="destructive" className="font-mono text-[10px]">{data!.failed} failed</Badge>
+          )}
+        </h2>
+        <button onClick={() => refetch()} disabled={isFetching}
+          className="text-xs font-mono text-muted-foreground hover:text-foreground transition-colors">
+          {isFetching ? "refreshing…" : `${data?.total ?? 0} total · refresh`}
+        </button>
+      </div>
+      {isLoading ? [1,2,3].map(i => <Skeleton key={i} className="h-10 w-full" />) : jobs.length === 0 ? (
+        <div className="text-center py-8 text-muted-foreground text-sm border border-dashed rounded-lg">
+          No background jobs recorded yet — jobs appear when you import files or run AI tasks.
+        </div>
+      ) : (
+        <div className="rounded-lg border border-border/50 overflow-hidden divide-y divide-border/30 max-h-64 overflow-y-auto">
+          {jobs.map(j => (
+            <div key={j.id} className="flex items-center gap-3 px-4 py-2.5 hover:bg-muted/20 transition-colors">
+              <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${j.state === "done" ? "bg-emerald-500" : j.state === "failed" ? "bg-destructive" : "bg-amber-400 animate-pulse"}`} />
+              <div className="flex-1 min-w-0">
+                <span className="text-xs font-mono font-medium">{j.label}</span>
+                {j.error && <span className="text-[11px] text-destructive ml-2">{j.error.slice(0, 60)}</span>}
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <span className={`text-[10px] font-mono ${j.state === "done" ? "text-emerald-600" : j.state === "failed" ? "text-red-600" : "text-amber-600"}`}>{j.state}</span>
+                {j.finished_at && (
+                  <span className="text-[10px] font-mono text-muted-foreground/50">
+                    {((j.finished_at - j.started_at)).toFixed(1)}s
+                  </span>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── LLM health card ──────────────────────────────────────────────────────────
+
+function LlmHealthCard() {
+  const { data, isLoading, refetch, isFetching } = useQuery<{
+    overall: "ok" | "degraded" | "down";
+    primary: { ok: boolean; model: string; latency_ms: number; error: string | null };
+    fallback: { ok: boolean; model: string; latency_ms: number; error: string | null } | null;
+    base_url: string;
+  }>({
+    queryKey: ["system", "llm-health"],
+    queryFn: async () => {
+      const r = await apiFetch(`${API_BASE}/api/system/llm-health`);
+      if (!r.ok) return null;
+      return r.json();
+    },
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+  });
+
+  const overallColor = data?.overall === "ok" ? "text-emerald-600" : data?.overall === "degraded" ? "text-amber-600" : "text-destructive";
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between border-b border-border/50 pb-2">
+        <h2 className="text-xl font-serif font-medium flex items-center gap-2">
+          <Brain className="w-5 h-5 text-muted-foreground" />
+          LLM Health
+          {data && <span className={`text-sm font-mono ${overallColor}`}>{data.overall}</span>}
+        </h2>
+        <button onClick={() => refetch()} disabled={isFetching}
+          className="text-xs font-mono text-muted-foreground hover:text-foreground transition-colors">
+          {isFetching ? "probing…" : "probe now"}
+        </button>
+      </div>
+      {isLoading ? <Skeleton className="h-16 w-full" /> : !data ? (
+        <p className="text-sm text-muted-foreground">Could not reach /api/system/llm-health.</p>
+      ) : (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between p-3 rounded-lg border border-border/50 bg-muted/10">
+            <div>
+              <span className="text-xs font-mono font-medium">{data.primary.model}</span>
+              <span className="text-[10px] text-muted-foreground ml-2">primary</span>
+            </div>
+            <div className="flex items-center gap-3">
+              <span className="text-[10px] font-mono text-muted-foreground">{data.primary.latency_ms}ms</span>
+              <span className={`text-[10px] font-mono ${data.primary.ok ? "text-emerald-600" : "text-destructive"}`}>
+                {data.primary.ok ? "ok" : "down"}
+              </span>
+            </div>
+          </div>
+          {data.fallback && (
+            <div className="flex items-center justify-between p-3 rounded-lg border border-border/50 bg-muted/10">
+              <div>
+                <span className="text-xs font-mono font-medium">{data.fallback.model}</span>
+                <span className="text-[10px] text-muted-foreground ml-2">fallback</span>
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="text-[10px] font-mono text-muted-foreground">{data.fallback.latency_ms}ms</span>
+                <span className={`text-[10px] font-mono ${data.fallback.ok ? "text-emerald-600" : "text-destructive"}`}>
+                  {data.fallback.ok ? "ok" : "down"}
+                </span>
+              </div>
+            </div>
+          )}
+          {!data.primary.ok && data.primary.error && (
+            <p className="text-xs text-destructive font-mono px-1">{data.primary.error}</p>
+          )}
+          <p className="text-[10px] font-mono text-muted-foreground">Base URL: {data.base_url}</p>
+        </div>
+      )}
     </div>
   );
 }

@@ -682,6 +682,101 @@ def _extract_zip(path: Path) -> ExtractionResult:
 # Public entry point
 # ---------------------------------------------------------------------------
 
+def _extract_audio(path: Path, db=None) -> ExtractionResult:
+    """Transcribe an audio file using the AI server's Whisper endpoint.
+
+    Tries POST /v1/audio/transcriptions (OpenAI-compatible Whisper API).
+    Falls back to a minimal metadata-only result if the endpoint is absent or
+    the server is unreachable — so the document still lands in the library as
+    an audio file users can download.
+
+    ``db`` (optional) — supplies the base_url from config, and records telemetry.
+    """
+    import os
+    import urllib.request as _urlr
+    import json as _json
+    import mimetypes as _mt
+    from email.mime.multipart import MIMEMultipart
+    from email.mime.application import MIMEApplication
+
+    base_url: str = ""
+    try:
+        from orivellum.config import get_config
+        base_url = get_config().serving.base_url.rstrip("/")
+    except Exception:
+        pass
+
+    def _metadata_only(msg: str) -> ExtractionResult:
+        text = (
+            f"Audio file: {path.name}\n"
+            f"Note: {msg}\n\n"
+            "To enable transcription, ensure your AI server supports the "
+            "OpenAI /v1/audio/transcriptions endpoint (e.g. Whisper via LocalAI or llama.cpp)."
+        )
+        return ExtractionResult(
+            kind="audio", full_text=text, word_count=len(text.split()),
+            meta={"transcription": None, "reason": msg},
+        )
+
+    if not base_url:
+        return _metadata_only("AI server URL not configured")
+
+    try:
+        mime_type, _ = _mt.guess_type(path.name)
+        mime_type = mime_type or "application/octet-stream"
+
+        # Build a minimal multipart/form-data body manually (no requests dependency)
+        import uuid as _uuid
+        boundary = f"---{_uuid.uuid4().hex}"
+        filename = path.name
+
+        with open(path, "rb") as fh:
+            file_bytes = fh.read()
+
+        body_parts: list[bytes] = []
+        # File part
+        body_parts.append(
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'
+            f"Content-Type: {mime_type}\r\n\r\n"
+            .encode("utf-8") + file_bytes + b"\r\n"
+        )
+        # model part
+        body_parts.append(
+            f"--{boundary}\r\n"
+            'Content-Disposition: form-data; name="model"\r\n\r\n'
+            f"whisper-1\r\n"
+            .encode("utf-8")
+        )
+        body_parts.append(f"--{boundary}--\r\n".encode("utf-8"))
+        body = b"".join(body_parts)
+
+        req = _urlr.Request(
+            f"{base_url}/audio/transcriptions",
+            data=body,
+            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+            method="POST",
+        )
+        with _urlr.urlopen(req, timeout=120) as resp:
+            data = _json.loads(resp.read().decode("utf-8"))
+        transcript = data.get("text", "").strip()
+        if not transcript:
+            return _metadata_only("Whisper returned an empty transcription")
+
+        logger.info("Audio transcription OK: %d words from %s", len(transcript.split()), path.name)
+        result = ExtractionResult(
+            kind="audio",
+            full_text=f"[Audio transcript: {path.name}]\n\n{transcript}",
+            word_count=len(transcript.split()),
+            pages=[PageSegment(page=1, text=transcript)],
+            meta={"transcription": "whisper", "source": str(path.name)},
+        )
+        return result
+    except Exception as exc:
+        logger.warning("Audio transcription failed for %s: %s", path.name, exc)
+        return _metadata_only(f"Transcription unavailable: {exc}")
+
+
 _DISPATCH: dict[str, object] = {
     "pdf": _extract_pdf,
     "docx": _extract_docx,
@@ -693,6 +788,7 @@ _DISPATCH: dict[str, object] = {
     "json": _extract_json,
     "zip": _extract_zip,
     "image": _extract_image,
+    "audio": _extract_audio,
 }
 
 
@@ -708,6 +804,8 @@ def extract(path: str | Path, kind: str, db=None) -> ExtractionResult:
     try:
         if kind == "image":
             result = _extract_image(path, db=db)
+        elif kind == "audio":
+            result = _extract_audio(path, db=db)
         else:
             result = handler(path)  # type: ignore[call-arg]
     except Exception as exc:

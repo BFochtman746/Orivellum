@@ -124,6 +124,61 @@ def _kind_for(filename: str) -> str:
     return _KIND_MAP.get(ext, "file")
 
 
+# Magic-byte signatures for MIME validation.
+# Each entry: (extension_set, expected_magic_bytes, max_offset).
+# We check that the first `max_offset + len(sig)` bytes contain the signature
+# at position `max_offset` (or 0 for fixed-offset checks).
+_MIME_SIGNATURES: list[tuple[frozenset[str], bytes, int]] = [
+    (frozenset({".pdf"}),                       b"%PDF",              0),
+    (frozenset({".png"}),                       b"\x89PNG\r\n\x1a\n", 0),
+    (frozenset({".jpg", ".jpeg"}),              b"\xff\xd8\xff",      0),
+    (frozenset({".zip", ".docx", ".xlsx",
+                ".pptx", ".epub"}),             b"PK\x03\x04",       0),
+    (frozenset({".ogg"}),                       b"OggS",             0),
+    (frozenset({".wav"}),                       b"RIFF",             0),
+    (frozenset({".mp3"}),                       b"ID3",              0),
+    (frozenset({".mp3"}),                       b"\xff\xfb",         0),  # MP3 without ID3
+    (frozenset({".webp"}),                      b"WEBP",             8),  # RIFF????WEBP
+    (frozenset({".gif"}),                       b"GIF8",             0),
+]
+_MIME_CHECK_BYTES = 32  # how many bytes to read
+
+
+def _validate_mime_signature(file_path: Path, original_name: str = "") -> None:
+    """Raise HTTPException 415 when file magic bytes don't match the extension.
+
+    Non-fatal for extensions without a known signature — those pass through.
+    Uses *original_name* (the user-supplied filename) to determine the expected
+    extension, not *file_path* which may be a temp file with a .part suffix.
+    """
+    ext = Path(original_name).suffix.lower() if original_name else file_path.suffix.lower()
+    # Find relevant signatures for this extension
+    relevant = [
+        (sig_bytes, offset)
+        for exts, sig_bytes, offset in _MIME_SIGNATURES
+        if ext in exts
+    ]
+    if not relevant:
+        return  # No known magic for this type — allow through
+
+    try:
+        with open(file_path, "rb") as fh:
+            header = fh.read(_MIME_CHECK_BYTES + 16)
+    except OSError:
+        return  # Can't read — let the extractor handle it
+
+    for sig_bytes, offset in relevant:
+        window = header[offset:offset + len(sig_bytes)]
+        if window == sig_bytes:
+            return  # Signature matched — OK
+
+    raise HTTPException(
+        415,
+        f"File content does not match its extension ({ext}). "
+        "The file may be corrupt or misnamed. Please verify and re-upload.",
+    )
+
+
 def _library_root() -> Path:
     cfg = get_config()
     p = Path(cfg.data_dir) / "library"
@@ -660,6 +715,7 @@ async def library_upload(
         if size == 0:
             Path(tmp.name).unlink(missing_ok=True)
             raise HTTPException(400, "Uploaded file is empty")
+        _validate_mime_signature(Path(tmp.name), original_name=name)
         return _ingest_file(
             db, background_tasks,
             tmp_path=Path(tmp.name), name=name, sha256=hasher.hexdigest(),

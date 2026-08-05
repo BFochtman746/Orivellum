@@ -1685,9 +1685,49 @@ export default function Chat() {
     m => m.role === "assistant" && !m.streaming
   )?.id ?? null;
 
-  const filteredConvs = convsResp?.conversations?.filter((c) => {
-    return !search || c.title?.toLowerCase().includes(search.toLowerCase()) || c.last_message?.toLowerCase().includes(search.toLowerCase());
-  });
+  // ── API-backed message content search ───────────────────────────────────
+  // When the user types >= 2 chars, search across message content (not just titles).
+  // Debounced 400 ms to avoid spamming the API while typing.
+  const [msgSearchResults, setMsgSearchResults] = useState<any[]>([]);
+  const [msgSearchLoading, setMsgSearchLoading] = useState(false);
+  const _searchAbortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    if (search.trim().length < 2) {
+      setMsgSearchResults([]);
+      return;
+    }
+    const timer = setTimeout(async () => {
+      _searchAbortRef.current?.abort();
+      const ctrl = new AbortController();
+      _searchAbortRef.current = ctrl;
+      setMsgSearchLoading(true);
+      try {
+        const API_BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") || "";
+        const r = await fetch(
+          `${API_BASE}/api/conversations/search?q=${encodeURIComponent(search.trim())}&limit=30`,
+          { headers: buildAuthHeaders(), signal: ctrl.signal }
+        );
+        if (r.ok) {
+          const d = await r.json();
+          setMsgSearchResults(d.results ?? []);
+        }
+      } catch {
+        // Aborted or network error — ignore
+      } finally {
+        setMsgSearchLoading(false);
+      }
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [search]);
+
+  const isSearchMode = search.trim().length >= 2;
+
+  const filteredConvs = isSearchMode
+    ? undefined  // replaced by msgSearchResults in search mode
+    : convsResp?.conversations?.filter((c) => {
+        return !search || c.title?.toLowerCase().includes(search.toLowerCase()) || c.last_message?.toLowerCase().includes(search.toLowerCase());
+      });
 
   const conv = activeConv?.conversation;
 
@@ -1736,6 +1776,28 @@ export default function Chat() {
 
         <ScrollArea className="flex-1">
           <div className="p-2 space-y-0.5">
+            {/* ── Message search results (when search >= 2 chars) ───────── */}
+            {isSearchMode ? (
+              msgSearchLoading
+                ? [1, 2, 3].map((i) => <Skeleton key={i} className="h-16 w-full rounded-md mb-1" />)
+                : msgSearchResults.length === 0
+                  ? <p className="text-xs text-muted-foreground text-center py-6">No messages match "{search}"</p>
+                  : msgSearchResults.map((r: any, i: number) => (
+                      <div
+                        key={r.id ?? i}
+                        onClick={() => setLocation(`/chat?id=${r.conversation_id}`)}
+                        className="p-3 rounded-md cursor-pointer hover:bg-muted/50 transition-colors"
+                      >
+                        <div className="font-medium text-sm truncate">{r.conv_title || "Untitled"}</div>
+                        <div className="text-xs text-muted-foreground mt-0.5 line-clamp-2 leading-relaxed">{r.snippet}</div>
+                        <div className="flex items-center justify-between mt-1">
+                          {r.work_title && <span className="text-[10px] text-primary/60 flex items-center gap-0.5"><BookOpen className="w-2.5 h-2.5" />{r.work_title}</span>}
+                          <span className="text-[10px] font-mono text-muted-foreground/60 ml-auto">{r.created_at ? format(new Date(r.created_at), "MMM d") : ""}</span>
+                        </div>
+                      </div>
+                    ))
+            ) : (
+            <>
             {loadingList
               ? [1, 2, 3].map((i) => <Skeleton key={i} className="h-14 w-full rounded-md mb-1" />)
               : filteredConvs?.map((c) => (
@@ -1817,6 +1879,8 @@ export default function Chat() {
                 ))}
             {!loadingList && !filteredConvs?.length && (
               <p className="text-xs text-muted-foreground text-center py-6">{search ? "No conversations match" : "No conversations yet"}</p>
+            )}
+            </>
             )}
           </div>
         </ScrollArea>

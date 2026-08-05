@@ -1218,4 +1218,25 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         CREATE INDEX IF NOT EXISTS op_work    ON object_provenance(work_id, created_at DESC);
         CREATE INDEX IF NOT EXISTS op_origin  ON object_provenance(origin_id)
     """),
+
+    # v71 — Structured API access log.
+    # Records every HTTP request so production issues can be investigated
+    # without requiring real-time stdout log tailing.  Kept lightweight:
+    # writes happen asynchronously via the background executor so hot paths
+    # (chat streaming, library list) are never blocked.
+    (71, "Structured API access log", """
+        CREATE TABLE IF NOT EXISTS access_log (
+            id         TEXT PRIMARY KEY,
+            ts         TEXT NOT NULL,
+            method     TEXT NOT NULL,
+            path       TEXT NOT NULL,
+            status     INTEGER NOT NULL,
+            latency_ms INTEGER NOT NULL,
+            ip         TEXT,
+            user_agent TEXT,
+            user_id    TEXT
+        );
+        CREATE INDEX IF NOT EXISTS al_ts   ON access_log(ts DESC);
+        CREATE INDEX IF NOT EXISTS al_path ON access_log(path, ts DESC)
+    """),
 ]

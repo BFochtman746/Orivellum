@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -22,6 +22,7 @@ import { font } from '@/lib/typography';
 import * as Haptics from 'expo-haptics';
 import type { Work } from '@workspace/api-client-react';
 import { OfflineBanner, ErrorScreen } from '@/components/OfflineBanner';
+import { readCache, writeCache } from '@/lib/cache';
 
 const TEAL = '#14b8a6';
 
@@ -261,8 +262,31 @@ export default function WorksScreen() {
   };
 
   const [search, setSearch] = useState('');
+  const [cachedWorks, setCachedWorks] = useState<any[]>([]);
+  const [usingCache, setUsingCache] = useState(false);
   const { data, isLoading, isError, refetch } = useListWorks({ query: { refetchInterval: 30_000, staleTime: 20_000 } } as any);
-  const allWorks = data?.works ?? [];
+
+  // Offline cache: persist works locally so users can browse when the server is unreachable
+  useEffect(() => {
+    if (data?.works?.length) {
+      writeCache('works:list', data.works);
+      setCachedWorks(data.works);
+      setUsingCache(false);
+    }
+  }, [data?.works]);
+
+  useEffect(() => {
+    if (isError) {
+      readCache<any[]>('works:list').then(entry => {
+        if (entry?.data?.length) {
+          setCachedWorks(entry.data);
+          setUsingCache(true);
+        }
+      });
+    }
+  }, [isError]);
+
+  const allWorks = (isError && usingCache) ? cachedWorks : (data?.works ?? []);
   const works = useMemo(() => {
     if (!search.trim()) return allWorks;
     const q = search.toLowerCase();

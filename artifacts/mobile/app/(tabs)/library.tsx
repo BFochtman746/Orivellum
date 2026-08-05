@@ -1,5 +1,6 @@
 import React, { useMemo, useRef, useState, useEffect } from 'react';
 import { mobileFetch } from '@/lib/api';
+import { readCache, writeCache } from '@/lib/cache';
 import {
   ActivityIndicator,
   Alert,
@@ -246,6 +247,9 @@ export default function LibraryScreen() {
     }
   };
 
+  const [cachedDocs, setCachedDocs] = useState<any[]>([]);
+  const [usingListCache, setUsingListCache] = useState(false);
+
   const {
     data: listData,
     isLoading: listLoading,
@@ -255,6 +259,30 @@ export default function LibraryScreen() {
     workFilter ? { work_id: workFilter } as any : {},
     { query: { refetchInterval: 30_000, staleTime: 20_000 } } as any,
   );
+
+  // Persist last successful library list to AsyncStorage for offline fallback
+  useEffect(() => {
+    if (listData?.documents?.length) {
+      const key = `library:list:${workFilter ?? 'all'}`;
+      writeCache(key, listData.documents);
+      setCachedDocs(listData.documents);
+      setUsingListCache(false);
+    }
+  }, [listData?.documents, workFilter]);
+
+  useEffect(() => {
+    if (listError) {
+      const key = `library:list:${workFilter ?? 'all'}`;
+      readCache<any[]>(key).then(entry => {
+        if (entry?.data?.length) {
+          setCachedDocs(entry.data);
+          setUsingListCache(true);
+        }
+      });
+    } else {
+      setUsingListCache(false);
+    }
+  }, [listError, workFilter]);
 
   // Offline search cache — keep last successful results so they remain visible
   // even when the network drops mid-search.
@@ -279,7 +307,9 @@ export default function LibraryScreen() {
   // When offline during a search, fall back to last cached results for that query
   const searchResults: any[] = searchData?.results ?? (searchError && lastSearchCache.current.results.length > 0 ? lastSearchCache.current.results : []);
   const isOfflineSearch = searchError && lastSearchCache.current.results.length > 0;
-  const rawDocs: any[] = isSearching ? searchResults : (listData?.documents ?? []);
+  const rawDocs: any[] = isSearching
+    ? searchResults
+    : (listError && usingListCache ? cachedDocs : (listData?.documents ?? []));
   const docs: any[] = useMemo(() => {
     if (isSearching) return rawDocs;
     return [...rawDocs].sort((a, b) => {

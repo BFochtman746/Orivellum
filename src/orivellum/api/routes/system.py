@@ -449,8 +449,8 @@ def nightshift_last_report():
     }
 
 
-@router.get("/system/jobs")
-def system_jobs():
+@router.get("/system/document-queue")
+def system_document_queue():
     """Return documents currently in-progress (not ready/error/no_text), recently completed, and the last nightshift run."""
     db = get_db()
     with db._lock:
@@ -1177,6 +1177,169 @@ async def run_diagnostics(vacuum: bool = False):
 
     result = await run_in_threadpool(run_full_diagnostic, db, cfg, vacuum)
     return result
+
+
+@router.get("/system/jobs")
+def system_jobs(limit: int = 50):
+    """Return recent background job status for the job dashboard."""
+    from orivellum.api.executor import get_recent_jobs
+    jobs = get_recent_jobs(limit=min(limit, 200))
+    running = sum(1 for j in jobs if j["state"] == "running")
+    failed  = sum(1 for j in jobs if j["state"] == "failed")
+    return {"jobs": jobs, "running": running, "failed": failed, "total": len(jobs)}
+
+
+@router.get("/system/llm-health")
+def system_llm_health():
+    """Probe the configured LLM server and configured models.
+
+    Returns health status for the primary and (if configured) fallback models.
+    Used by the UI to show a clear error instead of a broken spinner when the
+    AI server is down.
+    """
+    cfg = get_config()
+    db = get_db()
+
+    def _probe_model(base_url: str, model_id: str) -> dict:
+        """Send a minimal /chat/completions request and measure latency."""
+        import time as _t, httpx as _hx
+        t0 = _t.monotonic()
+        try:
+            r = _hx.post(
+                f"{base_url}/chat/completions",
+                json={"model": model_id, "messages": [{"role": "user", "content": "ping"}],
+                      "max_tokens": 1, "stream": False},
+                timeout=5.0,
+            )
+            ok = r.status_code in (200, 201)
+            return {"ok": ok, "status_code": r.status_code,
+                    "latency_ms": int((_t.monotonic() - t0) * 1000),
+                    "model": model_id, "error": None if ok else r.text[:200]}
+        except Exception as exc:
+            return {"ok": False, "status_code": None,
+                    "latency_ms": int((_t.monotonic() - t0) * 1000),
+                    "model": model_id, "error": str(exc)[:200]}
+
+    primary = _probe_model(cfg.serving.base_url, cfg.serving.workhorse_model)
+
+    # Fallback model — currently configured as the reasoner; in the future this
+    # could be a dedicated smaller model.  Only probe if different from primary.
+    fallback_model = db.get_setting("fallback_model", cfg.serving.reasoner_model)
+    if fallback_model and fallback_model != cfg.serving.workhorse_model:
+        fallback = _probe_model(cfg.serving.base_url, fallback_model)
+    else:
+        fallback = None
+
+    overall = "ok" if primary["ok"] else ("degraded" if (fallback and fallback["ok"]) else "down")
+    return {
+        "overall": overall,
+        "primary": primary,
+        "fallback": fallback,
+        "base_url": cfg.serving.base_url,
+    }
+
+
+@router.get("/system/hardware")
+def system_hardware():
+    """Return server hardware telemetry: CPU, RAM, disk, GPU (if available)."""
+    import time as _time
+    result: dict = {}
+
+    # ── CPU / RAM / Disk (psutil) ─────────────────────────────────────────────
+    try:
+        import psutil
+        result["cpu_percent"] = psutil.cpu_percent(interval=0.1)
+        mem = psutil.virtual_memory()
+        result["ram"] = {
+            "used_gb": round(mem.used / 1e9, 2),
+            "total_gb": round(mem.total / 1e9, 2),
+            "percent": mem.percent,
+        }
+        try:
+            import sys as _sys
+            _disk_path = "C:\\" if _sys.platform == "win32" else "/"
+            disk = psutil.disk_usage(_disk_path)
+            result["disk"] = {
+                "used_gb": round(disk.used / 1e9, 2),
+                "total_gb": round(disk.total / 1e9, 2),
+                "percent": disk.percent,
+            }
+        except Exception:
+            result["disk"] = {"error": "unavailable"}
+        # Uptime via boot time
+        try:
+            boot = psutil.boot_time()
+            result["uptime_seconds"] = int(_time.time() - boot)
+        except Exception:
+            pass
+    except ImportError:
+        result["error"] = "psutil not installed"
+
+    # ── GPU — nvidia-smi ──────────────────────────────────────────────────────
+    gpu_info: list[dict] = []
+    try:
+        import subprocess as _sp
+        r = _sp.run(
+            ["nvidia-smi",
+             "--query-gpu=name,memory.used,memory.total,utilization.gpu,temperature.gpu",
+             "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=3,
+        )
+        if r.returncode == 0:
+            for line in r.stdout.strip().splitlines():
+                parts = [p.strip() for p in line.split(",")]
+                if len(parts) >= 3:
+                    gpu_info.append({
+                        "name": parts[0],
+                        "vram_used_mb": _safe_int(parts[1]),
+                        "vram_total_mb": _safe_int(parts[2]),
+                        "utilization_percent": _safe_int(parts[3]) if len(parts) > 3 else None,
+                        "temp_c": _safe_int(parts[4]) if len(parts) > 4 else None,
+                    })
+    except Exception:
+        pass
+
+    # ── GPU — rocm-smi (AMD) ──────────────────────────────────────────────────
+    if not gpu_info:
+        try:
+            import subprocess as _sp, json as _json
+            r = _sp.run(["rocm-smi", "--json"], capture_output=True, text=True, timeout=3)
+            if r.returncode == 0:
+                data = _json.loads(r.stdout)
+                for _k, v in data.items():
+                    if isinstance(v, dict):
+                        gpu_info.append({
+                            "name": v.get("Card series", "AMD GPU"),
+                            "vram_used_mb": None,
+                            "vram_total_mb": None,
+                            "utilization_percent": _safe_int(v.get("GPU use (%)", None)),
+                            "temp_c": _safe_int(v.get("Temperature (Sensor edge) (°C)", None)),
+                        })
+        except Exception:
+            pass
+
+    result["gpus"] = gpu_info
+    result["gpu_available"] = len(gpu_info) > 0
+    return result
+
+
+def _safe_int(v) -> int | None:
+    try:
+        return int(str(v).strip())
+    except Exception:
+        return None
+
+
+@router.get("/system/access-log")
+def get_access_log(limit: int = 200):
+    """Return recent API request log entries."""
+    db = get_db()
+    try:
+        rows = db.get_access_log(limit=limit)
+        return {"entries": rows, "count": len(rows)}
+    except Exception as exc:
+        logger.warning("Access log unavailable: %s", exc)
+        return {"entries": [], "count": 0, "error": str(exc)}
 
 
 @router.get("/briefing")

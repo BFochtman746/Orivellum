@@ -1,6 +1,7 @@
 """Creative Studio routes — /api/studio/*"""
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import subprocess
@@ -207,14 +208,12 @@ async def synthesize_speech(body: TTSRequest):
                 tmp.write(resp.content)
                 tmp.close()
                 _tts_rel = _link_output_sync(Path(tmp.name))
-                _rotate_outputs(out_dir)
-                threading.Thread(
-                    target=_register_output_bg,
-                    args=(Path(tmp.name), body.text, "mp3",
-                          f"TTS clip: {body.text[:60]}"),
-                    kwargs={"prelinked_rel": _tts_rel},
-                    daemon=True,
-                ).start()
+                await asyncio.to_thread(_rotate_outputs, out_dir)
+                from orivellum.api.executor import get_executor as _gex
+                _gex().submit(
+                    _register_output_bg, Path(tmp.name), body.text, "mp3",
+                    f"TTS clip: {body.text[:60]}", prelinked_rel=_tts_rel,
+                )
                 return FileResponse(tmp.name, media_type="audio/mpeg",
                                     filename="speech.mp3")
     except Exception as exc:
@@ -232,7 +231,8 @@ async def synthesize_speech(body: TTSRequest):
                 "af_heart", "af_bella", "am_adam", "bf_emma", "bm_george",
             } else "af_heart"
 
-            samples, sample_rate = kokoro.create(
+            samples, sample_rate = await asyncio.to_thread(
+                kokoro.create,
                 body.text,
                 voice=kokoro_voice,
                 speed=body.speed,
@@ -245,7 +245,7 @@ async def synthesize_speech(body: TTSRequest):
             wav_tmp = tempfile.NamedTemporaryFile(
                 delete=False, dir=out_dir, suffix=".wav"
             )
-            sf.write(wav_tmp.name, samples, sample_rate)
+            await asyncio.to_thread(sf.write, wav_tmp.name, samples, sample_rate)
             wav_tmp.close()
 
             mp3_tmp = tempfile.NamedTemporaryFile(
@@ -254,7 +254,8 @@ async def synthesize_speech(body: TTSRequest):
             mp3_path = mp3_tmp.name
             mp3_tmp.close()
 
-            ff = subprocess.run(
+            ff = await asyncio.to_thread(
+                subprocess.run,
                 ["ffmpeg", "-y", "-i", wav_tmp.name,
                  "-codec:a", "libmp3lame", "-q:a", "2", mp3_path],
                 capture_output=True, timeout=60,
@@ -263,14 +264,12 @@ async def synthesize_speech(body: TTSRequest):
 
             if ff.returncode == 0:
                 _kok_rel = _link_output_sync(Path(mp3_path))
-                _rotate_outputs(out_dir)
-                threading.Thread(
-                    target=_register_output_bg,
-                    args=(Path(mp3_path), body.text, "mp3",
-                          f"TTS clip: {body.text[:60]}"),
-                    kwargs={"prelinked_rel": _kok_rel},
-                    daemon=True,
-                ).start()
+                await asyncio.to_thread(_rotate_outputs, out_dir)
+                from orivellum.api.executor import get_executor as _gex
+                _gex().submit(
+                    _register_output_bg, Path(mp3_path), body.text, "mp3",
+                    f"TTS clip: {body.text[:60]}", prelinked_rel=_kok_rel,
+                )
                 return FileResponse(mp3_path, media_type="audio/mpeg",
                                     filename="speech.mp3")
     except Exception as exc:
@@ -292,7 +291,8 @@ async def synthesize_speech(body: TTSRequest):
         wpm = int(175 * body.speed)
         wpm = max(80, min(400, wpm))
 
-        result = subprocess.run(
+        result = await asyncio.to_thread(
+            subprocess.run,
             ["espeak-ng", "-v", espeak_voice, "-s", str(wpm), "-w", wav_path, body.text],
             capture_output=True, text=True, timeout=30,
         )
@@ -306,23 +306,22 @@ async def synthesize_speech(body: TTSRequest):
         mp3_path = mp3_tmp.name
         mp3_tmp.close()
 
-        ff = subprocess.run(
+        ff = await asyncio.to_thread(
+            subprocess.run,
             ["ffmpeg", "-y", "-i", wav_path, "-codec:a", "libmp3lame", "-q:a", "4",
              mp3_path],
             capture_output=True, timeout=30,
         )
         Path(wav_path).unlink(missing_ok=True)
 
+        from orivellum.api.executor import get_executor as _gex
         if ff.returncode == 0:
             _esp_mp3_rel = _link_output_sync(Path(mp3_path))
-            _rotate_outputs(out_dir)
-            threading.Thread(
-                target=_register_output_bg,
-                args=(Path(mp3_path), body.text, "mp3",
-                      f"TTS clip: {body.text[:60]}"),
-                kwargs={"prelinked_rel": _esp_mp3_rel},
-                daemon=True,
-            ).start()
+            await asyncio.to_thread(_rotate_outputs, out_dir)
+            _gex().submit(
+                _register_output_bg, Path(mp3_path), body.text, "mp3",
+                f"TTS clip: {body.text[:60]}", prelinked_rel=_esp_mp3_rel,
+            )
             return FileResponse(mp3_path, media_type="audio/mpeg",
                                 filename="speech.mp3")
         else:
@@ -334,21 +333,19 @@ async def synthesize_speech(body: TTSRequest):
             )
             wav_path2 = wav_tmp2.name
             wav_tmp2.close()
-            subprocess.run(
+            await asyncio.to_thread(
+                subprocess.run,
                 ["espeak-ng", "-v", espeak_voice, "-s", str(wpm), "-w", wav_path2,
                  body.text],
                 capture_output=True, timeout=30,
             )
             # Hard-link the WAV before rotation so it survives the rolling window.
             _esp_wav_rel = _link_output_sync(Path(wav_path2))
-            _rotate_outputs(out_dir)
-            threading.Thread(
-                target=_register_output_bg,
-                args=(Path(wav_path2), body.text, "wav",
-                      f"TTS clip: {body.text[:60]}"),
-                kwargs={"prelinked_rel": _esp_wav_rel},
-                daemon=True,
-            ).start()
+            await asyncio.to_thread(_rotate_outputs, out_dir)
+            _gex().submit(
+                _register_output_bg, Path(wav_path2), body.text, "wav",
+                f"TTS clip: {body.text[:60]}", prelinked_rel=_esp_wav_rel,
+            )
             return FileResponse(wav_path2, media_type="audio/wav",
                                 filename="speech.wav")
 
@@ -559,13 +556,12 @@ def synthesize_document(body: DocumentTTSRequest):
         # Use the source document's text as content so "find the audiobook for X"
         # resolves via the audio file's own library entry.
         doc_title = doc.get("title") or "audiobook"
-        threading.Thread(
-            target=_register_output_bg,
-            args=(mp3_path, full_text[:8000], "mp3",
-                  f"Audiobook: {doc_title}"),
-            kwargs={"prelinked_rel": _ab_rel, "origin_id": body.doc_id},
-            daemon=True,
-        ).start()
+        from orivellum.api.executor import get_executor as _gex
+        _gex().submit(
+            _register_output_bg, mp3_path, full_text[:8000], "mp3",
+            f"Audiobook: {doc_title}", prelinked_rel=_ab_rel,
+            origin_id=body.doc_id,
+        )
 
         if body.return_url:
             # Mobile clients can't play a streaming FileResponse directly;
@@ -869,15 +865,42 @@ def _persist_generated_image(result: dict, cfg, prompt: str = "") -> dict:
         # Amendment-1: register image with prompt as searchable caption so
         # "find the image I made of X" resolves via semantic / keyword search.
         caption = prompt or item.get("revised_prompt") or "generated image"
-        threading.Thread(
-            target=_register_output_bg,
-            args=(img_path, caption, "png", f"Image: {caption[:60]}"),
-            kwargs={"prelinked_rel": _img_rel},
-            daemon=True,
-        ).start()
+        from orivellum.api.executor import get_executor as _gex
+        _gex().submit(
+            _register_output_bg, img_path, caption, "png",
+            f"Image: {caption[:60]}", prelinked_rel=_img_rel,
+        )
     except Exception as exc:
         logger.warning("Could not persist generated image to outputs: %s", exc)
     return result
+
+
+def _is_ssrf_url(url: str) -> bool:
+    """Return True when the URL points to a private/loopback address (SSRF risk).
+
+    Blocks: loopback (127.x.x.x, ::1), RFC-1918 private ranges, link-local,
+    and the metadata service (169.254.169.254).  Hostnames that resolve to
+    blocked IPs are NOT probed here — add DNS resolution if needed.
+    """
+    import urllib.parse as _up
+    import ipaddress as _ip
+    try:
+        parsed = _up.urlparse(url)
+        host = parsed.hostname or ""
+        # Resolve numeric IP addresses
+        addr = _ip.ip_address(host)
+        return (
+            addr.is_loopback
+            or addr.is_private
+            or addr.is_link_local
+            or addr.is_multicast
+            or str(addr) == "169.254.169.254"  # AWS/GCP metadata
+        )
+    except ValueError:
+        # Not an IP — allow hostnames (localhost is a special case)
+        return host.lower() in ("localhost", "metadata.google.internal")
+    except Exception:
+        return False
 
 
 @router.post("/studio/image")
@@ -892,6 +915,12 @@ async def generate_image(body: ImageGenRequest):
         #    _try_comfyui so WSL/remote instances work without OpenAI compat.
         custom_url = db.get_setting("image_gen_url", "").strip()
         if custom_url:
+            if _is_ssrf_url(custom_url):
+                raise HTTPException(
+                    400,
+                    "Image generation URL points to a private/loopback address. "
+                    "Enter a publicly-reachable URL (e.g. http://192.168.1.x:8188 for LAN use)."
+                )
             if _is_comfyui_url(custom_url):
                 result = await _try_comfyui(client, body, base_url=custom_url)
             else:
@@ -900,22 +929,22 @@ async def generate_image(body: ImageGenRequest):
                     # Could be A1111 with its own API format
                     result = await _try_a1111(client, body)
             if result:
-                return _persist_generated_image(result, cfg, prompt=body.prompt)
+                return await asyncio.to_thread(_persist_generated_image, result, cfg, prompt=body.prompt)
 
         # 2. Automatic1111 (SD WebUI) — localhost:7860
         result = await _try_a1111(client, body)
         if result:
-            return _persist_generated_image(result, cfg, prompt=body.prompt)
+            return await asyncio.to_thread(_persist_generated_image, result, cfg, prompt=body.prompt)
 
         # 3. ComfyUI — localhost:8188
         result = await _try_comfyui(client, body, base_url="http://localhost:8188")
         if result:
-            return _persist_generated_image(result, cfg, prompt=body.prompt)
+            return await asyncio.to_thread(_persist_generated_image, result, cfg, prompt=body.prompt)
 
         # 4. OpenAI-compatible endpoint on the chat AI server
         result = await _try_openai_compat(client, cfg.serving.base_url, body)
         if result:
-            return _persist_generated_image(result, cfg, prompt=body.prompt)
+            return await asyncio.to_thread(_persist_generated_image, result, cfg, prompt=body.prompt)
 
     raise HTTPException(
         503,
