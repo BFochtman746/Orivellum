@@ -57,3 +57,4 @@
 - [Memory + recall system](orivellum-memory-recall.md) — inference-based capture after every reply; single-row-per-key versioning; conv_chunk vectors; recall intent handler; GET /api/memory; MemoryPanel UI.
 - [System diagnostic tool](orivellum-diagnostics.md) — full health check CLI + API endpoint + web UI card; run with `uv run python scripts/run_diagnostics.py [--vacuum]`.
 - [Phase 2-4 hardening decisions](orivellum-phase2-hardening.md) — access log, security headers, MIME validation, SSRF blocklist, executor job tracking, MCP server, audio transcription, folder watch, mobile offline cache.
+- [Document Workshop system](orivellum-workshop.md) — self-prompting AI doc gen; plan/execute endpoints; clarify→code-gen→sandbox→critique loop; Studio page panel.

@@ -1,10 +1,12 @@
 """Document generation API routes — /api/generate/*
 
-POST /api/generate/excel    → generate xlsx workbook from a Work
-POST /api/generate/report   → generate pdf or docx report from a Work
-POST /api/generate/slides   → generate pptx deck from a Work
-POST /api/generate/bundle   → zip a list of output file paths
-GET  /api/generate/download → stream a generated file for download
+POST /api/generate/excel              → generate xlsx workbook from a Work
+POST /api/generate/report             → generate pdf or docx report from a Work
+POST /api/generate/slides             → generate pptx deck from a Work
+POST /api/generate/bundle             → zip a list of output file paths
+GET  /api/generate/download           → stream a generated file for download
+POST /api/generate/workshop/plan      → clarifying-question planner (self-prompting)
+POST /api/generate/workshop/execute   → AI code-gen → safe sandbox → critique loop
 """
 from __future__ import annotations
 
@@ -38,6 +40,22 @@ class BundleRequest(BaseModel):
     work_id: str
     paths: list[str]
     name: Optional[str] = None
+
+
+# ── Workshop request models ────────────────────────────────────────────────────
+
+class WorkshopPlanRequest(BaseModel):
+    request: str
+    format: Optional[str] = None   # xlsx | docx | pdf | pptx
+    work_id: Optional[str] = None
+
+
+class WorkshopExecuteRequest(BaseModel):
+    session_id: Optional[str] = None
+    request: str
+    format: str = "docx"
+    work_id: Optional[str] = None
+    answers: dict[str, str] = {}
 
 
 # ── Response shape ─────────────────────────────────────────────────────────────
@@ -189,3 +207,70 @@ def download_generated_file(path: str):
         filename=target.name,
         headers={"Content-Disposition": f'attachment; filename="{target.name}"'},
     )
+
+
+# ── Workshop — self-prompting, AI code-generated, critique-looped ──────────────
+
+@router.post("/generate/workshop/plan")
+def workshop_plan(body: WorkshopPlanRequest):
+    """Step 1: LLM generates clarifying questions for the document request.
+
+    Returns session_id + questions + detected_format + detected_intent.
+    Call /generate/workshop/execute with the session_id + answers to produce the file.
+    """
+    if not body.request or not body.request.strip():
+        raise HTTPException(status_code=422, detail="request must not be empty")
+
+    db = get_db()
+    cfg = get_config()
+
+    try:
+        from orivellum.capabilities.workshop import plan_document
+        session = plan_document(
+            request=body.request.strip(),
+            format_hint=body.format,
+            work_id=body.work_id,
+            db=db,
+            cfg=cfg,
+        )
+    except Exception as exc:
+        logger.exception("Workshop plan failed")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    return session
+
+
+@router.post("/generate/workshop/execute")
+def workshop_execute(body: WorkshopExecuteRequest):
+    """Step 2: Generate the document — AI writes code → safe sandbox → critique.
+
+    Pass session_id from /plan (optional but recommended for context),
+    plus answers dict keyed by question id.
+
+    Returns ok, download_url, critique, doc_id.
+    """
+    if not body.request or not body.request.strip():
+        raise HTTPException(status_code=422, detail="request must not be empty")
+
+    db = get_db()
+    cfg = get_config()
+
+    try:
+        from orivellum.capabilities.workshop import execute_workshop
+        result = execute_workshop(
+            session_id=body.session_id,
+            request=body.request.strip(),
+            format=body.format,
+            work_id=body.work_id,
+            answers=body.answers or {},
+            db=db,
+            cfg=cfg,
+        )
+    except Exception as exc:
+        logger.exception("Workshop execute failed")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    if not result.get("ok"):
+        raise HTTPException(status_code=500, detail=result.get("error", "Generation failed"))
+
+    return result

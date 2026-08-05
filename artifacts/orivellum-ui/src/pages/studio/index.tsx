@@ -1,17 +1,20 @@
 import { useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useListVoices, useListStudioOutputs, useGetSystemHealth, useListLibrary } from "@workspace/api-client-react";
+import { useListVoices, useListStudioOutputs, useGetSystemHealth, useListLibrary, useListWorks } from "@workspace/api-client-react";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Slider } from "@/components/ui/slider";
 import { Textarea } from "@/components/ui/textarea";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Mic, Play, Pause, Settings2, Video, Image as ImageIcon,
   FileAudio, Loader2, Volume2, Download, BookHeadphones, FileText,
-  X, Trash2, RefreshCw, Activity,
+  X, Trash2, RefreshCw, Activity, Sparkles, FileSpreadsheet,
+  Presentation, CheckCircle2, AlertTriangle, ChevronRight, Wand2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Link } from "wouter";
@@ -947,6 +950,438 @@ function OutputsGallery() {
   );
 }
 
+// ── Document Workshop ─────────────────────────────────────────────────────────
+
+type WsQuestion = { id: string; question: string; type: string; options?: string[]; hint?: string };
+type WsSession = {
+  id: string; request: string; format: string;
+  detected_intent: string; questions: WsQuestion[];
+};
+type WsCritique = {
+  scores?: Record<string, number>; overall?: number;
+  strengths?: string[]; gaps?: string[]; suggestions?: string[]; verdict?: string;
+};
+type WsResult = {
+  ok: boolean; doc_id?: string; filename?: string;
+  download_url?: string; size_bytes?: number; critique?: WsCritique; error?: string;
+};
+
+const FORMAT_ICONS: Record<string, React.ReactNode> = {
+  xlsx: <FileSpreadsheet className="w-4 h-4" />,
+  docx: <FileText className="w-4 h-4" />,
+  pdf:  <FileText className="w-4 h-4" />,
+  pptx: <Presentation className="w-4 h-4" />,
+};
+
+const FORMAT_LABELS: Record<string, string> = {
+  xlsx: "Excel Workbook",
+  docx: "Word Document",
+  pdf:  "PDF Report",
+  pptx: "PowerPoint",
+};
+
+function ScoreBadge({ label, value }: { label: string; value: number }) {
+  const color = value >= 8
+    ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+    : value >= 6
+    ? "bg-amber-50 text-amber-700 border-amber-200"
+    : "bg-red-50 text-red-700 border-red-200";
+  return (
+    <span className={`inline-flex gap-1 items-center text-[11px] font-mono px-2 py-0.5 rounded-full border ${color}`}>
+      <span className="font-semibold">{value}/10</span>
+      <span className="opacity-70">{label}</span>
+    </span>
+  );
+}
+
+function DocumentWorkshopPanel() {
+  const { data: worksResp } = useListWorks({});
+  const works: any[] = (worksResp as any)?.works ?? [];
+
+  const [step, setStep] = useState<"request" | "questions" | "generating" | "result">("request");
+  const [request, setRequest] = useState("");
+  const [format, setFormat] = useState("docx");
+  const [workId, setWorkId] = useState("__none__");
+  const [planning, setPlanning] = useState(false);
+  const [session, setSession] = useState<WsSession | null>(null);
+  const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [result, setResult] = useState<WsResult | null>(null);
+
+  async function handlePlan() {
+    if (!request.trim()) return;
+    setPlanning(true);
+    try {
+      const resp = await apiFetch(`${BASE}/generate/workshop/plan`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          request: request.trim(),
+          format,
+          work_id: workId === "__none__" ? null : workId,
+        }),
+      });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        throw new Error((err as any).detail || "Planning failed");
+      }
+      const data: WsSession = await resp.json();
+      setSession(data);
+      // Pre-fill detected format
+      if (data.format && data.format !== format) setFormat(data.format);
+      setAnswers({});
+      setStep("questions");
+    } catch (e: any) {
+      toast.error(`Planner failed: ${e.message}`, { duration: 8000 });
+    } finally {
+      setPlanning(false);
+    }
+  }
+
+  async function handleGenerate() {
+    setStep("generating");
+    setResult(null);
+    try {
+      const resp = await apiFetch(`${BASE}/generate/workshop/execute`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          session_id: session?.id ?? null,
+          request: request.trim(),
+          format,
+          work_id: workId === "__none__" ? null : workId,
+          answers,
+        }),
+      });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        throw new Error((err as any).detail || "Generation failed");
+      }
+      const data: WsResult = await resp.json();
+      setResult(data);
+      setStep("result");
+      toast.success("Document ready — download below");
+    } catch (e: any) {
+      toast.error(`Generation failed: ${e.message}`, { duration: 10_000 });
+      setStep("questions");
+    }
+  }
+
+  function reset() {
+    setStep("request");
+    setSession(null);
+    setAnswers({});
+    setResult(null);
+  }
+
+  const critique = result?.critique;
+  const overallScore = critique?.overall ?? null;
+
+  return (
+    <Card className="border-border/50">
+      <CardHeader className="pb-3">
+        <div className="flex items-center justify-between gap-3">
+          <CardTitle className="flex items-center gap-2 font-serif text-lg">
+            <Wand2 className="w-5 h-5 text-violet-500" />
+            Document Workshop
+            <Badge variant="secondary" className="text-[10px] font-mono">AI</Badge>
+          </CardTitle>
+          {step !== "request" && (
+            <Button variant="ghost" size="sm" onClick={reset} className="text-xs gap-1.5">
+              <RefreshCw className="w-3 h-3" /> Start Over
+            </Button>
+          )}
+        </div>
+        <p className="text-xs text-muted-foreground mt-0.5">
+          Describe what you need — the AI asks targeted questions, writes code, executes it,
+          and critiques its own output before delivering the file.
+        </p>
+      </CardHeader>
+
+      <CardContent className="space-y-4">
+
+        {/* ── Step 1: Request ─────────────────────────────────────────── */}
+        {step === "request" && (
+          <div className="space-y-4">
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">What do you need?</Label>
+              <Textarea
+                value={request}
+                onChange={e => setRequest(e.target.value)}
+                placeholder="e.g. A PowerPoint presentation on Moses' leadership with timeline and charts, formal tone, 8 slides…"
+                className="min-h-[90px] text-sm resize-none"
+              />
+            </div>
+
+            <div className="grid sm:grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">Format</Label>
+                <Select value={format} onValueChange={setFormat}>
+                  <SelectTrigger className="h-9 text-sm">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {Object.entries(FORMAT_LABELS).map(([k, v]) => (
+                      <SelectItem key={k} value={k}>
+                        <span className="flex items-center gap-2">{FORMAT_ICONS[k]}{v}</span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">Link to Work <span className="text-muted-foreground font-normal">(optional)</span></Label>
+                <Select value={workId} onValueChange={setWorkId}>
+                  <SelectTrigger className="h-9 text-sm">
+                    <SelectValue placeholder="No work" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">No work</SelectItem>
+                    {works.map((w: any) => (
+                      <SelectItem key={w.id} value={w.id}>{w.title}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <Button
+              onClick={handlePlan}
+              disabled={!request.trim() || planning}
+              className="w-full gap-2"
+            >
+              {planning
+                ? <><Loader2 className="w-4 h-4 animate-spin" /> Planning…</>
+                : <><Sparkles className="w-4 h-4" /> Plan Document</>}
+            </Button>
+            <p className="text-[11px] text-muted-foreground text-center">
+              The AI will ask a few targeted questions before generating.
+            </p>
+          </div>
+        )}
+
+        {/* ── Step 2: Clarifying questions ────────────────────────────── */}
+        {step === "questions" && session && (
+          <div className="space-y-5">
+            {/* Intent summary */}
+            <div className="rounded-lg border border-violet-200 bg-violet-50/60 px-4 py-3 space-y-1">
+              <p className="text-xs font-semibold text-violet-700 flex items-center gap-1.5">
+                <Sparkles className="w-3.5 h-3.5" /> Understood intent
+              </p>
+              <p className="text-sm text-violet-900">{session.detected_intent}</p>
+              <div className="flex items-center gap-2 mt-1">
+                <span className="flex items-center gap-1 text-[11px] text-violet-600">
+                  {FORMAT_ICONS[session.format]}{FORMAT_LABELS[session.format] ?? session.format}
+                </span>
+              </div>
+            </div>
+
+            {/* Questions */}
+            <div className="space-y-4">
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                Clarifying questions
+              </p>
+              {session.questions.map((q, i) => (
+                <div key={q.id} className="space-y-1.5">
+                  <Label className="text-sm leading-snug">
+                    <span className="text-muted-foreground font-mono mr-1">{i + 1}.</span>
+                    {q.question}
+                  </Label>
+                  {q.hint && (
+                    <p className="text-[11px] text-muted-foreground pl-4">{q.hint}</p>
+                  )}
+                  {q.type === "choice" && q.options?.length ? (
+                    <Select
+                      value={answers[q.id] ?? ""}
+                      onValueChange={v => setAnswers(a => ({ ...a, [q.id]: v }))}
+                    >
+                      <SelectTrigger className="h-9 text-sm">
+                        <SelectValue placeholder="Choose…" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {q.options.map(o => (
+                          <SelectItem key={o} value={o}>{o}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  ) : q.type === "multiselect" && q.options?.length ? (
+                    <div className="flex flex-wrap gap-2 pl-4">
+                      {q.options.map(o => {
+                        const sel = (answers[q.id] ?? "").split(",").filter(Boolean);
+                        const active = sel.includes(o);
+                        return (
+                          <button
+                            key={o}
+                            onClick={() => {
+                              const next = active ? sel.filter(x => x !== o) : [...sel, o];
+                              setAnswers(a => ({ ...a, [q.id]: next.join(",") }));
+                            }}
+                            className={`text-xs px-3 py-1 rounded-full border transition-colors
+                              ${active
+                                ? "border-violet-400 bg-violet-100 text-violet-800"
+                                : "border-border text-muted-foreground hover:border-violet-300"
+                              }`}
+                          >
+                            {o}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <Textarea
+                      value={answers[q.id] ?? ""}
+                      onChange={e => setAnswers(a => ({ ...a, [q.id]: e.target.value }))}
+                      placeholder="Your answer…"
+                      className="text-sm min-h-[60px] resize-none"
+                    />
+                  )}
+                </div>
+              ))}
+            </div>
+
+            <Button onClick={handleGenerate} className="w-full gap-2 bg-violet-600 hover:bg-violet-700">
+              <Wand2 className="w-4 h-4" /> Generate Document
+            </Button>
+            <p className="text-[11px] text-muted-foreground text-center">
+              Unanswered questions are fine — the AI will make sensible choices.
+            </p>
+          </div>
+        )}
+
+        {/* ── Step 3: Generating ──────────────────────────────────────── */}
+        {step === "generating" && (
+          <div className="py-10 text-center space-y-4">
+            <div className="w-14 h-14 rounded-full bg-violet-100 flex items-center justify-center mx-auto">
+              <Loader2 className="w-7 h-7 text-violet-600 animate-spin" />
+            </div>
+            <div>
+              <p className="font-semibold text-sm">Generating your document…</p>
+              <p className="text-xs text-muted-foreground mt-1">
+                The AI is writing and executing Python code. This takes 30–90 seconds.
+              </p>
+            </div>
+            <div className="flex justify-center gap-6 text-[11px] text-muted-foreground font-mono">
+              <span className="flex items-center gap-1"><ChevronRight className="w-3 h-3 text-violet-500" />Writing code</span>
+              <span className="flex items-center gap-1"><ChevronRight className="w-3 h-3 text-violet-500" />Executing</span>
+              <span className="flex items-center gap-1"><ChevronRight className="w-3 h-3 text-violet-500" />Critiquing</span>
+            </div>
+          </div>
+        )}
+
+        {/* ── Step 4: Result ──────────────────────────────────────────── */}
+        {step === "result" && result?.ok && (
+          <div className="space-y-4">
+            {/* Download card */}
+            <div className="rounded-lg border border-emerald-200 bg-emerald-50/60 p-4 flex items-center gap-4">
+              <div className="w-10 h-10 rounded-full bg-emerald-100 flex items-center justify-center shrink-0">
+                <CheckCircle2 className="w-5 h-5 text-emerald-600" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-semibold text-emerald-800">Document ready</p>
+                <p className="text-xs text-emerald-700 truncate mt-0.5">{result.filename}</p>
+                {result.size_bytes && (
+                  <p className="text-[10px] font-mono text-emerald-600 mt-0.5">
+                    {result.size_bytes >= 1_048_576
+                      ? `${(result.size_bytes / 1_048_576).toFixed(1)} MB`
+                      : `${Math.round(result.size_bytes / 1024)} KB`}
+                  </p>
+                )}
+              </div>
+              <a
+                href={`${BASE}${result.download_url}`}
+                download={result.filename}
+                className="shrink-0"
+              >
+                <Button size="sm" className="gap-2 bg-emerald-600 hover:bg-emerald-700">
+                  <Download className="w-3.5 h-3.5" /> Download
+                </Button>
+              </a>
+            </div>
+
+            {/* Critique */}
+            {critique && (
+              <div className="rounded-lg border border-border/50 bg-muted/10 p-4 space-y-3">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-violet-500" />
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Quality critique</p>
+                  {overallScore !== null && (
+                    <Badge
+                      variant="secondary"
+                      className={`ml-auto text-xs font-mono ${
+                        overallScore >= 8 ? "text-emerald-700" : overallScore >= 6 ? "text-amber-700" : "text-red-700"
+                      }`}
+                    >
+                      {overallScore}/10 overall
+                    </Badge>
+                  )}
+                </div>
+
+                {critique.verdict && (
+                  <p className="text-sm text-foreground/80 italic">"{critique.verdict}"</p>
+                )}
+
+                {critique.scores && Object.keys(critique.scores).length > 0 && (
+                  <div className="flex flex-wrap gap-1.5">
+                    {Object.entries(critique.scores).map(([k, v]) => (
+                      <ScoreBadge key={k} label={k} value={v} />
+                    ))}
+                  </div>
+                )}
+
+                {critique.strengths && critique.strengths.length > 0 && (
+                  <div className="space-y-1">
+                    <p className="text-[11px] font-semibold text-emerald-700 uppercase tracking-wide">Strengths</p>
+                    {critique.strengths.map((s, i) => (
+                      <p key={i} className="text-xs text-foreground/70 flex gap-1.5">
+                        <CheckCircle2 className="w-3 h-3 text-emerald-500 shrink-0 mt-0.5" />{s}
+                      </p>
+                    ))}
+                  </div>
+                )}
+
+                {critique.gaps && critique.gaps.length > 0 && (
+                  <div className="space-y-1">
+                    <p className="text-[11px] font-semibold text-amber-700 uppercase tracking-wide">Gaps</p>
+                    {critique.gaps.map((g, i) => (
+                      <p key={i} className="text-xs text-foreground/70 flex gap-1.5">
+                        <AlertTriangle className="w-3 h-3 text-amber-500 shrink-0 mt-0.5" />{g}
+                      </p>
+                    ))}
+                  </div>
+                )}
+
+                {critique.suggestions && critique.suggestions.length > 0 && (
+                  <div className="space-y-1">
+                    <p className="text-[11px] font-semibold text-violet-700 uppercase tracking-wide">Improvement suggestions</p>
+                    {critique.suggestions.map((s, i) => (
+                      <button
+                        key={i}
+                        onClick={() => {
+                          setRequest(r => r + (r.endsWith(" ") ? "" : " ") + s);
+                          reset();
+                          setTimeout(() => setRequest(r => r), 50);
+                        }}
+                        className="w-full text-left text-xs text-foreground/70 flex gap-1.5 items-start rounded px-2 py-1 hover:bg-muted/30 transition-colors group"
+                        title="Click to restart with this improvement"
+                      >
+                        <ChevronRight className="w-3 h-3 text-violet-400 shrink-0 mt-0.5 group-hover:text-violet-600 transition-colors" />{s}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            <Button variant="outline" onClick={reset} className="w-full gap-2 text-sm">
+              <RefreshCw className="w-4 h-4" /> Generate Another
+            </Button>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function Studio() {
@@ -972,6 +1407,8 @@ export default function Studio() {
       </div>
 
       <ErrorBoundary label="audiobook panel"><AudiobookPanel /></ErrorBoundary>
+
+      <ErrorBoundary label="document workshop"><DocumentWorkshopPanel /></ErrorBoundary>
 
       <ErrorBoundary label="outputs gallery"><OutputsGallery /></ErrorBoundary>
     </div>
