@@ -462,7 +462,8 @@ def _pass_sparse_harvest(db: "OrivellumDB", report: list[str]) -> int:
                     try:
                         from orivellum.capabilities.knowledge_harvest import llm_harvest
                         llm_harvest(result, doc_id=doc_id, work_id=work_id,
-                                    doc_title=title, db=db)
+                                    doc_title=title, db=db,
+                                    kind=doc_info.get("kind"))
                     except Exception as ai_exc:
                         logger.warning("LLM harvest failed for %s: %s", doc_id, ai_exc)
 

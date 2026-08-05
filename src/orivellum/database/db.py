@@ -257,6 +257,196 @@ class OrivellumDB:
             return None
 
     # -------------------------------------------------------------------------
+    # Extraction templates
+    # -------------------------------------------------------------------------
+
+    def list_extraction_templates(
+        self,
+        kind_label: str | None = None,
+        work_id: str | None = None,
+    ) -> list[dict]:
+        """Return all extraction templates, optionally filtered by kind or work."""
+        q = "SELECT * FROM extraction_templates WHERE 1=1"
+        args: list = []
+        if kind_label is not None:
+            q += " AND kind_label=?"
+            args.append(kind_label)
+        if work_id is not None:
+            q += " AND work_id=?"
+            args.append(work_id)
+        q += " ORDER BY created_at ASC"
+        try:
+            with self._lock:
+                rows = self._conn.execute(q, args).fetchall()
+            return [self._et_dict(r) for r in rows]
+        except Exception:
+            return []
+
+    def get_extraction_template(self, template_id: str) -> dict | None:
+        """Return a single extraction template by id, or None."""
+        try:
+            with self._lock:
+                row = self._conn.execute(
+                    "SELECT * FROM extraction_templates WHERE id=?", (template_id,)
+                ).fetchone()
+            return self._et_dict(row) if row else None
+        except Exception:
+            return None
+
+    def create_extraction_template(
+        self,
+        name: str,
+        system_prompt: str,
+        kind_label: str | None = None,
+        field_hints: list | None = None,
+        work_id: str | None = None,
+    ) -> dict:
+        """Insert a new extraction template and return it."""
+        import json as _j
+        import uuid as _u
+        from datetime import datetime as _dt, timezone as _tz
+
+        tid = str(_u.uuid4())
+        now = _dt.now(_tz.utc).isoformat()
+        hints_json = _j.dumps(field_hints or [])
+        with self._lock:
+            self._conn.execute(
+                """INSERT INTO extraction_templates
+                   (id, name, kind_label, system_prompt, field_hints, work_id,
+                    created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (tid, name, kind_label, system_prompt, hints_json, work_id, now, now),
+            )
+            self._conn.commit()
+        return self.get_extraction_template(tid)  # type: ignore[return-value]
+
+    def update_extraction_template(
+        self,
+        template_id: str,
+        name: str | None = None,
+        kind_label: str | None = None,
+        system_prompt: str | None = None,
+        field_hints: list | None = None,
+        work_id: str | None = None,
+        _clear_work_id: bool = False,
+        _clear_kind_label: bool = False,
+    ) -> dict | None:
+        """Update an existing extraction template in-place.
+
+        Pass ``_clear_work_id=True`` to set work_id to NULL.
+        Pass ``_clear_kind_label=True`` to set kind_label to NULL.
+        """
+        import json as _j
+        from datetime import datetime as _dt, timezone as _tz
+
+        existing = self.get_extraction_template(template_id)
+        if not existing:
+            return None
+        now = _dt.now(_tz.utc).isoformat()
+        cols: list[tuple] = [("updated_at", now)]
+        if name is not None:
+            cols.append(("name", name))
+        if kind_label is not None:
+            cols.append(("kind_label", kind_label))
+        elif _clear_kind_label:
+            cols.append(("kind_label", None))
+        if system_prompt is not None:
+            cols.append(("system_prompt", system_prompt))
+        if field_hints is not None:
+            cols.append(("field_hints", _j.dumps(field_hints)))
+        if work_id is not None:
+            cols.append(("work_id", work_id))
+        elif _clear_work_id:
+            cols.append(("work_id", None))
+        if len(cols) <= 1:
+            return existing  # nothing to update
+        set_clause = ", ".join(f"{c}=?" for c, _ in cols)
+        vals = [v for _, v in cols] + [template_id]
+        with self._lock:
+            self._conn.execute(
+                f"UPDATE extraction_templates SET {set_clause} WHERE id=?", vals
+            )
+            self._conn.commit()
+        return self.get_extraction_template(template_id)
+
+    def delete_extraction_template(self, template_id: str) -> bool:
+        """Delete an extraction template. Returns True if it existed."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT id FROM extraction_templates WHERE id=?", (template_id,)
+            ).fetchone()
+            if not row:
+                return False
+            self._conn.execute(
+                "DELETE FROM extraction_templates WHERE id=?", (template_id,)
+            )
+            self._conn.commit()
+        return True
+
+    def get_template_for_doc(
+        self,
+        kind: str | None,
+        work_id: str | None,
+    ) -> dict | None:
+        """Return the best-matching extraction template for a document.
+
+        Priority (highest first):
+          1. kind_label = kind  AND  work_id = work_id   (most specific)
+          2. kind_label = kind  AND  work_id IS NULL      (kind-wide)
+          3. kind_label IS NULL AND  work_id = work_id   (work-wide catch-all)
+        Returns None when no template matches.
+        """
+        if not kind and not work_id:
+            return None
+        try:
+            candidates: list = []
+            with self._lock:
+                # Priority 1: exact kind + work match
+                if kind and work_id:
+                    row = self._conn.execute(
+                        """SELECT * FROM extraction_templates
+                           WHERE kind_label=? AND work_id=?
+                           ORDER BY created_at DESC LIMIT 1""",
+                        (kind, work_id),
+                    ).fetchone()
+                    if row:
+                        return self._et_dict(row)
+                # Priority 2: kind-only match (work_id IS NULL)
+                if kind:
+                    row = self._conn.execute(
+                        """SELECT * FROM extraction_templates
+                           WHERE kind_label=? AND work_id IS NULL
+                           ORDER BY created_at DESC LIMIT 1""",
+                        (kind,),
+                    ).fetchone()
+                    if row:
+                        return self._et_dict(row)
+                # Priority 3: work-wide catch-all (kind_label IS NULL)
+                if work_id:
+                    row = self._conn.execute(
+                        """SELECT * FROM extraction_templates
+                           WHERE kind_label IS NULL AND work_id=?
+                           ORDER BY created_at DESC LIMIT 1""",
+                        (work_id,),
+                    ).fetchone()
+                    if row:
+                        return self._et_dict(row)
+        except Exception:
+            return None
+        return None
+
+    @staticmethod
+    def _et_dict(row: Any) -> dict:
+        import json as _j
+        d = dict(row)
+        raw = d.get("field_hints")
+        try:
+            d["field_hints"] = _j.loads(raw) if raw else []
+        except Exception:
+            d["field_hints"] = []
+        return d
+
+    # -------------------------------------------------------------------------
     # Audit log
     # -------------------------------------------------------------------------
 

@@ -253,11 +253,19 @@ def _parse_extraction(raw: str) -> dict:
 
 def llm_harvest(result: "ExtractionResult", doc_id: str,
                 work_id: str | None, doc_title: str,
-                db: "OrivellumDB") -> int:
+                db: "OrivellumDB",
+                kind: str | None = None) -> int:
     """LLM-powered knowledge extraction for a single document.
 
     Sends up to _MAX_LLM_CHUNKS text segments to the local AI endpoint and
     writes the resulting entities, claims, and relationships to the DB.
+
+    Template resolution order (highest priority first):
+      1. User-defined extraction template matching (kind, work_id) — most specific.
+      2. User-defined extraction template matching kind (work_id=NULL).
+      3. User-defined extraction template matching work_id (kind_label=NULL).
+      4. Active MCOS prompt-registry template for slot 'harvest.extract'.
+      5. Hardcoded ``_EXTRACT_PROMPT`` constant.
 
     Returns the count of knowledge items created.
     Silently skips on any LLM or parse failure so the pipeline never breaks.
@@ -279,18 +287,55 @@ def llm_harvest(result: "ExtractionResult", doc_id: str,
     created = 0
     segments = result.pages[:_MAX_LLM_CHUNKS]
 
-    # Prefer the active MCOS prompt-registry template (slot 'harvest.extract');
-    # fall back to the hardcoded constant on any failure — same never-break rule
-    # as chat.base.  The template MUST keep the {title}/{chunk} placeholders and
-    # its literal JSON braces doubled ({{ }}); if a DB-sourced template can't be
-    # formatted, we fall back rather than crash the harvest.
+    # ── Template resolution ────────────────────────────────────────────────────
+    # Priority 1–3: user-defined extraction templates stored in the DB.
+    # Priority 4: active MCOS prompt-registry template (slot 'harvest.extract').
+    # Priority 5: hardcoded fallback — never crashes the harvest.
     template = _EXTRACT_PROMPT
+    _using_custom_template = False
     try:
-        active = db.get_active_prompt("harvest.extract")
-        if active:
-            template = active
-    except Exception:
-        template = _EXTRACT_PROMPT
+        et = db.get_template_for_doc(kind=kind, work_id=work_id)
+        if et:
+            # Build the effective prompt from the custom template.
+            # Custom templates must use {title} and {chunk} placeholders.
+            # field_hints, when present, are appended as bullet guidance.
+            hints: list[str] = et.get("field_hints") or []
+            hints_block = ""
+            if hints:
+                hints_block = "\n\nExtraction guidance for this document type:\n" + \
+                              "\n".join(f"  • {h}" for h in hints)
+            # Append the JSON output structure reminder so the parser can handle
+            # responses from any custom template that still uses our JSON schema.
+            template = (
+                et["system_prompt"].rstrip()
+                + hints_block
+                + "\n\n"
+                + "Return ONLY valid JSON with this structure:\n"
+                + '{{\n'
+                + '  "entities": [{{"name": "...", "description": "..."}}],\n'
+                + '  "claims": [{{"text": "..."}}],\n'
+                + '  "relationships": [{{"subject": "...", "predicate": "...", "object": "..."}}\n'
+                + ']\n}}\n\n'
+                + "Document title: {title}\n\nChunk:\n{chunk}"
+            )
+            _using_custom_template = True
+            logger.debug(
+                "llm_harvest: using custom template %r (id=%s) for kind=%s work=%s",
+                et.get("name"), et.get("id", "")[:8], kind, work_id,
+            )
+    except Exception as _te:
+        logger.debug("llm_harvest: template lookup failed (%s) — using defaults", _te)
+
+    if not _using_custom_template:
+        # Fall back through MCOS prompt registry then hardcoded constant.
+        # Same never-break rule as chat.base.  The template MUST keep the
+        # {title}/{chunk} placeholders and its literal JSON braces doubled ({{ }}).
+        try:
+            active = db.get_active_prompt("harvest.extract")
+            if active:
+                template = active
+        except Exception:
+            template = _EXTRACT_PROMPT
 
     for seg in segments:
         chunk_text = seg.text[:_MAX_CHUNK_CHARS].strip()

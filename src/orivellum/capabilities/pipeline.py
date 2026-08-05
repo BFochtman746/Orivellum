@@ -505,7 +505,7 @@ def process_document(doc_id: str, file_path: str, kind: str,
             logger.info("AI extraction enabled — running llm_harvest for doc %s", doc_id)
             try:
                 llm_harvest(result, doc_id=doc_id, work_id=work_id,
-                            doc_title=title, db=db)
+                            doc_title=title, db=db, kind=kind)
             except Exception as llm_exc:
                 # Never let an LLM failure touch the ready document
                 logger.warning(

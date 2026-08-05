@@ -1284,4 +1284,21 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         CREATE INDEX IF NOT EXISTS mem_work ON memories(work_id);
         CREATE INDEX IF NOT EXISTS fl_work  ON forge_learning(work_id)
     """),
+
+    # v76 — Custom extraction templates: per-kind / per-work LLM prompts
+    (76, "Extraction templates: per-kind/per-work custom LLM harvest prompts", """
+        CREATE TABLE IF NOT EXISTS extraction_templates (
+            id            TEXT PRIMARY KEY,
+            name          TEXT NOT NULL,
+            kind_label    TEXT,
+            system_prompt TEXT NOT NULL,
+            field_hints   TEXT NOT NULL DEFAULT '[]',
+            work_id       TEXT REFERENCES works(id) ON DELETE CASCADE,
+            created_at    TEXT NOT NULL,
+            updated_at    TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS et_kind    ON extraction_templates(kind_label);
+        CREATE INDEX IF NOT EXISTS et_work    ON extraction_templates(work_id);
+        CREATE INDEX IF NOT EXISTS et_kind_work ON extraction_templates(kind_label, work_id);
+    """),
 ]

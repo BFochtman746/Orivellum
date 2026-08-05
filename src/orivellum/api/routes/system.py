@@ -1521,3 +1521,228 @@ def delete_watch_dir(index: int):
     dirs.pop(index)
     set_watch_dirs(dirs, db)
     return {"ok": True, "dirs": dirs}
+
+
+# ── Extraction templates ───────────────────────────────────────────────────────
+
+_VALID_DOC_KINDS = {
+    "pdf", "docx", "excel", "csv", "markdown", "text",
+    "image", "audio", "pptx", "html", "json", "code", "file",
+}
+
+
+class ExtractionTemplateCreate(BaseModel):
+    name: str
+    system_prompt: str
+    kind_label: str | None = None   # None = applies to any document kind
+    field_hints: list[str] = []     # optional extraction hints shown to the model
+    work_id: str | None = None      # None = applies to any Work
+
+
+class ExtractionTemplateUpdate(BaseModel):
+    name: str | None = None
+    system_prompt: str | None = None
+    kind_label: str | None = None
+    field_hints: list[str] | None = None
+    work_id: str | None = None
+    clear_work_id: bool = False       # explicitly set work_id to NULL
+    clear_kind_label: bool = False    # explicitly set kind_label to NULL
+
+
+@router.get("/system/extraction-templates")
+def list_extraction_templates(kind_label: str | None = None, work_id: str | None = None):
+    """List all extraction templates, optionally filtered by kind or work."""
+    db = get_db()
+    templates = db.list_extraction_templates(kind_label=kind_label, work_id=work_id)
+    return {"templates": templates, "count": len(templates)}
+
+
+@router.post("/system/extraction-templates")
+def create_extraction_template(body: ExtractionTemplateCreate):
+    """Create a new named extraction template."""
+    if body.kind_label and body.kind_label not in _VALID_DOC_KINDS:
+        raise HTTPException(
+            422,
+            f"Unknown kind_label '{body.kind_label}'. "
+            f"Valid values: {sorted(_VALID_DOC_KINDS)}",
+        )
+    if not body.name.strip():
+        raise HTTPException(422, "name must not be blank")
+    if not body.system_prompt.strip():
+        raise HTTPException(422, "system_prompt must not be blank")
+    db = get_db()
+    template = db.create_extraction_template(
+        name=body.name.strip(),
+        system_prompt=body.system_prompt,
+        kind_label=body.kind_label or None,
+        field_hints=body.field_hints,
+        work_id=body.work_id or None,
+    )
+    db.audit(
+        "extraction_template.created",
+        object_id=template["id"],
+        object_type="extraction_template",
+        actor="user",
+        detail=f"name={template['name']!r} kind={template['kind_label']}",
+    )
+    return template
+
+
+@router.get("/system/extraction-templates/{template_id}")
+def get_extraction_template(template_id: str):
+    """Return a single extraction template."""
+    db = get_db()
+    t = db.get_extraction_template(template_id)
+    if not t:
+        raise HTTPException(404, "Template not found")
+    return t
+
+
+@router.put("/system/extraction-templates/{template_id}")
+def update_extraction_template(template_id: str, body: ExtractionTemplateUpdate):
+    """Update an extraction template's fields."""
+    db = get_db()
+    existing = db.get_extraction_template(template_id)
+    if not existing:
+        raise HTTPException(404, "Template not found")
+    kl = body.kind_label
+    if kl is not None and kl not in _VALID_DOC_KINDS:
+        raise HTTPException(
+            422,
+            f"Unknown kind_label '{kl}'. Valid values: {sorted(_VALID_DOC_KINDS)}",
+        )
+    updated = db.update_extraction_template(
+        template_id,
+        name=body.name,
+        kind_label=kl,
+        system_prompt=body.system_prompt,
+        field_hints=body.field_hints,
+        work_id=body.work_id,
+        _clear_work_id=body.clear_work_id,
+        _clear_kind_label=body.clear_kind_label,
+    )
+    db.audit(
+        "extraction_template.updated",
+        object_id=template_id,
+        object_type="extraction_template",
+        actor="user",
+    )
+    return updated
+
+
+@router.delete("/system/extraction-templates/{template_id}")
+def delete_extraction_template(template_id: str):
+    """Delete an extraction template."""
+    db = get_db()
+    deleted = db.delete_extraction_template(template_id)
+    if not deleted:
+        raise HTTPException(404, "Template not found")
+    db.audit(
+        "extraction_template.deleted",
+        object_id=template_id,
+        object_type="extraction_template",
+        actor="user",
+    )
+    return {"deleted": template_id, "ok": True}
+
+
+@router.post("/system/extraction-templates/{template_id}/reharvest")
+def reharvest_with_template(template_id: str, background_tasks: BackgroundTasks):
+    """Re-run LLM harvest for all documents matching this template's kind/work scope.
+
+    Queues background jobs for each matching document so the response returns
+    immediately. Only runs when AI extraction is currently enabled.
+    """
+    import threading
+    db = get_db()
+    t = db.get_extraction_template(template_id)
+    if not t:
+        raise HTTPException(404, "Template not found")
+
+    enabled = db.get_setting("ai_extraction_enabled", "false").lower() == "true"
+    if not enabled:
+        raise HTTPException(
+            409,
+            "AI extraction is disabled — enable it first under System → AI Extraction",
+        )
+
+    # Find documents that match this template's scope
+    kind_label = t.get("kind_label")
+    work_id = t.get("work_id")
+
+    q = "SELECT d.id, d.source, d.kind, d.work_id, d.title FROM documents d WHERE d.readiness='ready'"
+    args: list = []
+    if kind_label:
+        q += " AND d.kind=?"
+        args.append(kind_label)
+    if work_id:
+        q += " AND d.work_id=?"
+        args.append(work_id)
+    q += " LIMIT 200"
+
+    with db._lock:
+        doc_rows = db._conn.execute(q, args).fetchall()
+
+    docs = [dict(r) for r in doc_rows]
+    if not docs:
+        return {"queued": 0, "message": "No matching documents found"}
+
+    def _run_reharvest(doc: dict) -> None:
+        try:
+            from orivellum.capabilities.knowledge_harvest import llm_harvest
+            from orivellum.capabilities.extraction import ExtractionResult, PageSegment
+            # Rebuild a minimal ExtractionResult from the stored extracted_text.
+            with db._lock:
+                row = db._conn.execute(
+                    "SELECT extracted_text FROM documents WHERE id=?", (doc["id"],)
+                ).fetchone()
+            text = (row["extracted_text"] if row else "") or ""
+            if not text:
+                logger.debug(
+                    "reharvest: doc %s has no extracted_text — skipping", doc["id"][:8]
+                )
+                return
+            # Segment the text into ~2000-char chunks mirroring the normal pipeline.
+            chunk_size = 2000
+            segments = [
+                PageSegment(page=i, text=text[i * chunk_size:(i + 1) * chunk_size])
+                for i in range(0, max(1, (len(text) + chunk_size - 1) // chunk_size))
+            ]
+            er = ExtractionResult(
+                kind=doc.get("kind") or "text",
+                full_text=text,
+                word_count=len(text.split()),
+                pages=segments,
+            )
+            llm_harvest(
+                er,
+                doc_id=doc["id"],
+                work_id=doc.get("work_id"),
+                doc_title=doc.get("title") or doc["id"][:8],
+                db=db,
+                kind=doc.get("kind"),
+            )
+        except Exception as exc:
+            logger.warning("reharvest failed for doc %s: %s", doc.get("id", "?"), exc)
+
+    queued = 0
+    for doc in docs:
+        try:
+            from orivellum.api.executor import _tracked_submit as _ts
+            _ts(
+                _run_reharvest, doc,
+                kind="pipeline",
+                label=f"reharvest:{doc['id'][:8]}",
+            )
+        except Exception:
+            threading.Thread(target=_run_reharvest, args=(doc,), daemon=True).start()
+        queued += 1
+
+    db.audit(
+        "extraction_template.reharvest",
+        object_id=template_id,
+        object_type="extraction_template",
+        actor="user",
+        detail=f"queued {queued} docs, kind={kind_label}, work_id={work_id}",
+    )
+    return {"queued": queued, "template_id": template_id, "ok": True}

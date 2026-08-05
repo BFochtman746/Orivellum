@@ -736,6 +736,307 @@ function WatchedFoldersCard() {
   );
 }
 
+// ─── Extraction Templates card ────────────────────────────────────────────────
+
+const DOC_KINDS = [
+  { value: "pdf",      label: "PDF" },
+  { value: "docx",     label: "Word / DOCX" },
+  { value: "excel",    label: "Excel / XLSX" },
+  { value: "csv",      label: "CSV" },
+  { value: "markdown", label: "Markdown" },
+  { value: "text",     label: "Plain text" },
+  { value: "image",    label: "Image" },
+  { value: "audio",    label: "Audio" },
+  { value: "pptx",     label: "Presentation / PPTX" },
+  { value: "html",     label: "HTML" },
+  { value: "json",     label: "JSON" },
+  { value: "code",     label: "Code" },
+];
+
+type ExtractionTemplate = {
+  id: string;
+  name: string;
+  kind_label: string | null;
+  system_prompt: string;
+  field_hints: string[];
+  work_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+function ExtractionTemplatesCard() {
+  const qc = useQueryClient();
+  const [adding, setAdding] = useState(false);
+  const [editing, setEditing] = useState<ExtractionTemplate | null>(null);
+  const [form, setForm] = useState({
+    name: "", kind_label: "", system_prompt: "", field_hints: "",
+  });
+
+  const invalidate = () => qc.invalidateQueries({ queryKey: ["system", "extraction-templates"] });
+
+  const { data, isLoading } = useQuery<{ templates: ExtractionTemplate[]; count: number }>({
+    queryKey: ["system", "extraction-templates"],
+    queryFn: async () => {
+      const r = await apiFetch(`${API_BASE}/api/system/extraction-templates`);
+      if (!r.ok) throw new Error("fetch failed");
+      return r.json();
+    },
+    staleTime: 15_000,
+  });
+
+  // Works list for optional work assignment
+  const { data: worksData } = useQuery<{ works: { id: string; title: string }[] }>({
+    queryKey: ["works", "list-mini"],
+    queryFn: async () => {
+      const r = await apiFetch(`${API_BASE}/api/works?limit=100`);
+      if (!r.ok) return { works: [] };
+      return r.json();
+    },
+    staleTime: 60_000,
+  });
+  const works = worksData?.works ?? [];
+
+  const openAdd = () => {
+    setForm({ name: "", kind_label: "", system_prompt: "", field_hints: "" });
+    setEditing(null);
+    setAdding(true);
+  };
+  const openEdit = (t: ExtractionTemplate) => {
+    setForm({
+      name: t.name,
+      kind_label: t.kind_label ?? "",
+      system_prompt: t.system_prompt,
+      field_hints: (t.field_hints ?? []).join("\n"),
+    });
+    setEditing(t);
+    setAdding(true);
+  };
+  const closeForm = () => { setAdding(false); setEditing(null); };
+
+  const saveMutation = useMutation({
+    mutationFn: async () => {
+      const hints = form.field_hints.split("\n").map(s => s.trim()).filter(Boolean);
+      const body = {
+        name: form.name.trim(),
+        kind_label: form.kind_label || null,
+        system_prompt: form.system_prompt.trim(),
+        field_hints: hints,
+        work_id: null,
+      };
+      const url = editing
+        ? `${API_BASE}/api/system/extraction-templates/${editing.id}`
+        : `${API_BASE}/api/system/extraction-templates`;
+      const r = await apiFetch(url, {
+        method: editing ? "PUT" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error((e as any).detail ?? "Save failed"); }
+      return r.json();
+    },
+    onSuccess: () => {
+      invalidate();
+      closeForm();
+      toast.success(editing ? "Template updated" : "Template created");
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const r = await apiFetch(`${API_BASE}/api/system/extraction-templates/${id}`, { method: "DELETE" });
+      if (!r.ok) throw new Error("Delete failed");
+    },
+    onSuccess: () => { invalidate(); toast.success("Template deleted"); },
+    onError: () => toast.error("Could not delete template"),
+  });
+
+  const reharvest = useMutation({
+    mutationFn: async (id: string) => {
+      const r = await apiFetch(`${API_BASE}/api/system/extraction-templates/${id}/reharvest`, { method: "POST" });
+      if (r.status === 409) { const e = await r.json().catch(() => ({})); throw new Error((e as any).detail ?? "AI extraction is disabled"); }
+      if (!r.ok) throw new Error("Reharvest failed");
+      return r.json() as Promise<{ queued: number }>;
+    },
+    onSuccess: (d) => toast.success(`Re-harvesting ${d.queued} document${d.queued !== 1 ? "s" : ""} in the background`),
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const templates = data?.templates ?? [];
+
+  return (
+    <Card>
+      <CardContent className="p-6 space-y-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex items-start gap-3">
+            <Sparkles className="w-5 h-5 text-primary mt-0.5 shrink-0" />
+            <div>
+              <h3 className="font-medium text-sm">Extraction Templates</h3>
+              <p className="text-sm text-muted-foreground mt-0.5 max-w-xl">
+                Define custom AI prompts for specific document types or Works.
+                A template for <em>Meeting notes</em> can extract decisions and action items;
+                one for <em>Research papers</em> can target hypothesis, methods, and findings.
+                Templates override the generic extraction prompt when AI extraction is enabled.
+              </p>
+            </div>
+          </div>
+          {!adding && (
+            <Button size="sm" variant="outline" className="gap-1.5 text-xs shrink-0" onClick={openAdd}>
+              <Plus className="w-3.5 h-3.5" />
+              New Template
+            </Button>
+          )}
+        </div>
+
+        {/* Add / Edit form */}
+        {adding && (
+          <div className="rounded-lg border border-border/60 bg-muted/20 p-4 space-y-3">
+            <p className="text-xs font-medium">{editing ? "Edit template" : "New extraction template"}</p>
+            <div className="grid gap-3">
+              <div className="grid sm:grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="text-xs text-muted-foreground">Template name *</label>
+                  <input
+                    type="text"
+                    placeholder="Meeting Notes"
+                    value={form.name}
+                    onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+                    className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-primary/50"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs text-muted-foreground">Document kind (optional)</label>
+                  <select
+                    value={form.kind_label}
+                    onChange={e => setForm(f => ({ ...f, kind_label: e.target.value }))}
+                    className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-primary/50"
+                  >
+                    <option value="">All document types</option>
+                    {DOC_KINDS.map(k => (
+                      <option key={k.value} value={k.value}>{k.label}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs text-muted-foreground">
+                  Extraction prompt *
+                  <span className="ml-1 opacity-60">— use <code className="bg-muted rounded px-0.5">{"{title}"}</code> and <code className="bg-muted rounded px-0.5">{"{chunk}"}</code> as placeholders</span>
+                </label>
+                <textarea
+                  rows={6}
+                  placeholder={`You are an expert at extracting structured information from meeting notes.\nGiven the document chunk below, extract:\n- Decisions made (as claims)\n- Action items with owners (as relationships: person → action → deadline)\n- Attendees (as entities)\n\nDocument title: {title}\n\nChunk:\n{chunk}`}
+                  value={form.system_prompt}
+                  onChange={e => setForm(f => ({ ...f, system_prompt: e.target.value }))}
+                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm font-mono resize-y min-h-[120px] focus:outline-none focus:ring-1 focus:ring-primary/50"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs text-muted-foreground">
+                  Field hints (optional) — one per line, shown to the AI as extraction guidance
+                </label>
+                <textarea
+                  rows={3}
+                  placeholder={"Extract the meeting date from the header\nCapture all action items with assignee names\nList all decisions as factual claims"}
+                  value={form.field_hints}
+                  onChange={e => setForm(f => ({ ...f, field_hints: e.target.value }))}
+                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm resize-y min-h-[72px] focus:outline-none focus:ring-1 focus:ring-primary/50"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 pt-1">
+              <Button
+                size="sm"
+                onClick={() => saveMutation.mutate()}
+                disabled={saveMutation.isPending || !form.name.trim() || !form.system_prompt.trim()}
+                className="gap-1.5 text-xs"
+              >
+                {saveMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
+                {editing ? "Save changes" : "Create template"}
+              </Button>
+              <Button size="sm" variant="ghost" onClick={closeForm} className="text-xs">Cancel</Button>
+            </div>
+          </div>
+        )}
+
+        {/* Template list */}
+        {isLoading ? (
+          <Skeleton className="h-16 w-full" />
+        ) : templates.length === 0 ? (
+          <p className="text-sm text-muted-foreground py-2">
+            No templates yet — create one above to override the generic extraction prompt for a document type.
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {templates.map(t => (
+              <div key={t.id} className="rounded-lg border border-border/40 bg-muted/10 p-4 space-y-2">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-sm font-medium">{t.name}</span>
+                      {t.kind_label ? (
+                        <Badge variant="secondary" className="text-[10px] h-4">
+                          {DOC_KINDS.find(k => k.value === t.kind_label)?.label ?? t.kind_label}
+                        </Badge>
+                      ) : (
+                        <Badge variant="outline" className="text-[10px] h-4 text-muted-foreground">all types</Badge>
+                      )}
+                      {t.work_id && works.find(w => w.id === t.work_id) && (
+                        <Badge variant="outline" className="text-[10px] h-4">
+                          {works.find(w => w.id === t.work_id)?.title}
+                        </Badge>
+                      )}
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-1 font-mono line-clamp-2">
+                      {t.system_prompt.slice(0, 180)}
+                      {t.system_prompt.length > 180 ? "…" : ""}
+                    </p>
+                    {t.field_hints?.length > 0 && (
+                      <p className="text-[11px] text-muted-foreground/70 mt-0.5">
+                        {t.field_hints.length} field hint{t.field_hints.length !== 1 ? "s" : ""}
+                      </p>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <Button
+                      size="sm" variant="ghost"
+                      className="h-7 px-2 text-[11px] gap-1 text-muted-foreground hover:text-foreground"
+                      onClick={() => reharvest.mutate(t.id)}
+                      disabled={reharvest.isPending}
+                      title="Re-run AI extraction for all matching documents using this template"
+                    >
+                      <RotateCcw className="w-3 h-3" />
+                      Re-harvest
+                    </Button>
+                    <Button
+                      size="sm" variant="ghost"
+                      className="h-7 px-2 text-[11px] text-muted-foreground hover:text-foreground"
+                      onClick={() => openEdit(t)}
+                    >
+                      Edit
+                    </Button>
+                    <button
+                      onClick={() => deleteMutation.mutate(t.id)}
+                      disabled={deleteMutation.isPending}
+                      className="p-1.5 rounded text-muted-foreground hover:text-destructive hover:bg-destructive/5 transition-colors"
+                      title="Delete template"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 // ─── AI Extraction toggle ─────────────────────────────────────────────────────
 
 function useAiExtractionSetting() {
@@ -1402,6 +1703,9 @@ $env:ORIVELLUM_AI_URL="http://127.0.0.1:11434/v1"`}
 
       {/* Watched Folders */}
       <WatchedFoldersCard />
+
+      {/* Extraction Templates */}
+      <ExtractionTemplatesCard />
 
       {/* Maintenance */}
       <MaintenanceCard />
