@@ -194,6 +194,182 @@ async def test_sources_persisted_on_disconnect():
         db.close()
 
 
+# ---------------------------------------------------------------------------
+# Graceful-degradation tests — malformed / missing meta
+# ---------------------------------------------------------------------------
+
+def test_sources_empty_when_no_knowledge_matched():
+    """_build_system_prompt returns an empty out_sources list when no
+    trusted knowledge items match the query."""
+    with tempfile.TemporaryDirectory() as tmp:
+        db = _make_db(tmp)
+        work = db.create_work(title="Empty Work")
+        conv = db.create_conversation(title="Chat", work_id=work["id"])
+
+        from orivellum.api.routes import conversations as C
+        from unittest.mock import patch
+
+        out_sources: list = []
+        with patch("orivellum.capabilities.embeddings.hybrid_search_knowledge",
+                   return_value=[]):
+            with patch.object(db, "search_chunks", return_value=[]):
+                C._build_system_prompt(
+                    db, conv, user_query="anything", out_sources=out_sources,
+                )
+
+        # No knowledge injected → out_sources must be empty, never crash
+        assert out_sources == []
+        db.close()
+
+
+def test_sources_with_deleted_document_returns_safe_entry():
+    """When a source's source_doc_id references a document that has since
+    been deleted, _build_system_prompt still records the source_doc_id in
+    out_sources (no crash at citation time — the frontend handles dead links
+    gracefully; the source chip still appears, tapping it produces a 404
+    which the router handles)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        db = _make_db(tmp)
+        from unittest.mock import patch
+
+        work = db.create_work(title="Rocketry")
+        doc = db.create_document(title="Thrust Notes", work_id=work["id"])
+        kid = db.create_knowledge_item(
+            work_id=work["id"], kind="fact",
+            text="Specific impulse measures efficiency.",
+            source_doc_id=doc["id"], review_status="approved",
+        )
+        conv = db.create_conversation(title="Chat", work_id=work["id"])
+
+        # Delete the document — knowledge item retains its source_doc_id
+        db.delete_document(doc["id"])
+
+        from orivellum.api.routes import conversations as C
+
+        hit = {
+            "id": kid,
+            "text": "Specific impulse measures efficiency.",
+            "kind": "fact",
+            "work_id": work["id"],
+            "source_doc_id": doc["id"],   # still the original id
+            "review_status": "approved",
+        }
+        out_sources: list = []
+        with patch("orivellum.capabilities.embeddings.hybrid_search_knowledge",
+                   return_value=[hit]):
+            with patch.object(db, "search_chunks", return_value=[]):
+                C._build_system_prompt(
+                    db, conv, user_query="rocket efficiency",
+                    out_sources=out_sources,
+                )
+
+        # Source is returned — frontend is responsible for graceful dead-link handling
+        assert len(out_sources) == 1
+        assert out_sources[0]["source_doc_id"] == doc["id"]
+        db.close()
+
+
+def test_message_with_legacy_meta_no_sources_key():
+    """An assistant message whose meta has no 'sources' key (messages from
+    before citation support was added) stores and retrieves its text without
+    error.  meta.get('sources') returns None — callers guard before iterating."""
+    with tempfile.TemporaryDirectory() as tmp:
+        db = _make_db(tmp)
+        conv = db.create_conversation(title="Legacy")
+
+        # Simulate a pre-sources message
+        db.add_message(conv["id"], "assistant", "The answer is 42.",
+                       meta={"model": "old-model"})
+
+        messages = db.get_messages(conv["id"])
+        assistant = [m for m in messages if m["role"] == "assistant"]
+        assert len(assistant) == 1
+        assert assistant[0]["text"] == "The answer is 42."
+        meta = assistant[0]["meta"]
+        assert meta.get("model") == "old-model"
+        # Must not crash; sources absent or falsy — both are fine
+        srcs = meta.get("sources")
+        assert not srcs   # None or missing — SourcesFooter guard treats this as empty
+        db.close()
+
+
+def test_sources_with_work_id_only_no_doc_id():
+    """A knowledge item created without a source_doc_id (e.g. from manual
+    entry or synthesis) produces a source entry with work_id set but
+    source_doc_id as None.  SourcesFooter falls back to a Work-level link
+    instead of a document link — no crash, no broken <a href>."""
+    with tempfile.TemporaryDirectory() as tmp:
+        db = _make_db(tmp)
+        from unittest.mock import patch
+
+        work = db.create_work(title="Theory")
+        # Knowledge item with no document backing
+        kid = db.create_knowledge_item(
+            work_id=work["id"], kind="summary",
+            text="General overview of the theory.",
+            review_status="approved",
+        )
+        conv = db.create_conversation(title="Chat", work_id=work["id"])
+
+        from orivellum.api.routes import conversations as C
+
+        hit = {
+            "id": kid,
+            "text": "General overview of the theory.",
+            "kind": "summary",
+            "work_id": work["id"],
+            "source_doc_id": None,   # no document backing
+            "review_status": "approved",
+        }
+        out_sources: list = []
+        with patch("orivellum.capabilities.embeddings.hybrid_search_knowledge",
+                   return_value=[hit]):
+            with patch.object(db, "search_chunks", return_value=[]):
+                C._build_system_prompt(
+                    db, conv, user_query="theory overview",
+                    out_sources=out_sources,
+                )
+
+        assert len(out_sources) == 1
+        s = out_sources[0]
+        # work_id is set so SourcesFooter can link to the Work page
+        assert s["work_id"] == work["id"]
+        # source_doc_id is absent/None — frontend renders a non-clickable chip
+        assert s.get("source_doc_id") is None
+        db.close()
+
+
+def test_message_with_null_and_empty_sources_stored_safely():
+    """Messages stored with meta.sources=None and meta.sources=[] both
+    retrieve without error and without surfacing as crashes to SourcesFooter."""
+    with tempfile.TemporaryDirectory() as tmp:
+        db = _make_db(tmp)
+        conv = db.create_conversation(title="NullAndEmpty")
+
+        # null sources
+        db.add_message(conv["id"], "assistant", "Reply A.",
+                       meta={"model": "m", "sources": None})
+        # empty array sources
+        db.add_message(conv["id"], "assistant", "Reply B.",
+                       meta={"model": "m", "sources": []})
+
+        messages = db.get_messages(conv["id"])
+        assistant = [m for m in messages if m["role"] == "assistant"]
+        assert len(assistant) == 2
+
+        texts = {m["text"] for m in assistant}
+        assert "Reply A." in texts
+        assert "Reply B." in texts
+
+        for msg in assistant:
+            meta = msg["meta"]
+            srcs = meta.get("sources")
+            # Both None and [] are falsy — SourcesFooter guard treats them identically
+            # as "no sources" and renders nothing (not a crash)
+            assert not srcs or srcs == []
+        db.close()
+
+
 @pytest.mark.anyio
 async def test_sources_persisted_and_emitted_on_intent_branch():
     """The streaming intent branch must persist sources in meta AND emit a
