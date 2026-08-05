@@ -479,6 +479,26 @@ export default function Library() {
   const worksWithDocs = Array.from(
     new Set((listResp?.documents ?? []).map((d: any) => d.work_id).filter(Boolean))
   ) as string[];
+  // Topic clusters — fetched only when "By Topic" grouping is active
+  const { data: topicsResp } = useQuery<{
+    topics: Array<{ id: string; name: string; doc_count: number; doc_ids?: string[] }>;
+    doc_titles?: Record<string, string>;
+  }>({
+    queryKey: ["topics-with-docs"],
+    queryFn: () =>
+      apiFetch(`${BASE}/topics?with_docs=true`).then((r) => r.json()),
+    enabled: groupByWork && !search,
+    staleTime: 120_000,
+  });
+  // Build a doc_id → [topicName] index for quick lookup in the grouped view
+  const docTopicIndex: Record<string, string> = {};
+  if (topicsResp) {
+    for (const t of topicsResp.topics) {
+      for (const did of (t.doc_ids ?? [])) {
+        docTopicIndex[did] = t.name;
+      }
+    }
+  }
 
   const isLoading = search ? loadingSearch : loadingList;
   const rawDocs: any[] = search
@@ -825,25 +845,43 @@ export default function Library() {
           {isLoading ? (
             [1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-20 w-full" />)
           ) : groupByWork && !search ? (
-            // ── Grouped by Work/topic ────────────────────────────────────────
+            // ── Grouped by semantic topic cluster ────────────────────────────
             (() => {
-              const withWork = new Map<string, any[]>();
-              const unassigned: any[] = [];
-              for (const doc of docs) {
-                if (doc.work_id) {
-                  const arr = withWork.get(doc.work_id) ?? [];
-                  arr.push(doc);
-                  withWork.set(doc.work_id, arr);
-                } else {
-                  unassigned.push(doc);
+              // If we have real topic clusters, use them; otherwise fall back to work-based grouping
+              const hasTopics = topicsResp && topicsResp.topics.length > 0;
+              const grouped = new Map<string, any[]>();
+              const unclassified: any[] = [];
+              if (hasTopics) {
+                // Group by the topic this document belongs to (via docTopicIndex)
+                for (const doc of docs) {
+                  const topicName = docTopicIndex[doc.id];
+                  if (topicName) {
+                    const arr = grouped.get(topicName) ?? [];
+                    arr.push(doc);
+                    grouped.set(topicName, arr);
+                  } else {
+                    unclassified.push(doc);
+                  }
+                }
+              } else {
+                // Fallback: group by work
+                for (const doc of docs) {
+                  if (doc.work_id) {
+                    const label = workTitles[doc.work_id] ?? doc.work_id.slice(0, 8);
+                    const arr = grouped.get(label) ?? [];
+                    arr.push(doc);
+                    grouped.set(label, arr);
+                  } else {
+                    unclassified.push(doc);
+                  }
                 }
               }
               const groups: Array<{ title: string; color: string; docs: any[] }> = [];
-              for (const [wid, wdocs] of withWork) {
-                groups.push({ title: workTitles[wid] ?? wid.slice(0, 8), color: "text-violet-600", docs: wdocs });
+              for (const [label, gdocs] of grouped) {
+                groups.push({ title: label, color: hasTopics ? "text-primary" : "text-violet-600", docs: gdocs });
               }
-              if (unassigned.length > 0) {
-                groups.push({ title: "Unassigned", color: "text-muted-foreground", docs: unassigned });
+              if (unclassified.length > 0) {
+                groups.push({ title: hasTopics ? "Unclassified" : "Unassigned", color: "text-muted-foreground", docs: unclassified });
               }
               if (groups.length === 0) return (
                 <div className="text-center py-20 bg-muted/10 border border-dashed rounded-lg">

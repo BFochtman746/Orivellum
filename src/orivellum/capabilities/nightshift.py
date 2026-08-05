@@ -804,6 +804,28 @@ def _pass_version_suggestions(db: "OrivellumDB", report: list[str]) -> None:
         report.append("Version suggestions: no new version pairs found")
 
 
+def _pass_clustering(db: "OrivellumDB", report: list[str]) -> None:
+    """Rebuild topic clusters over all vectorised documents.
+
+    Skips gracefully if there are no vectors (embeddings not yet generated or
+    the embedding endpoint is unavailable).
+    """
+    try:
+        from orivellum.capabilities.cluster import run_clustering
+        result = run_clustering(db)
+        status = result.get("status", "?")
+        if status == "skipped":
+            report.append(f"Clustering: skipped — {result.get('reason', '')}")
+        else:
+            report.append(
+                f"Clustering: {result['topics']} topics from {result['docs_clustered']} docs, "
+                f"{result['doc_links']} doc-links (k={result.get('k', '?')})"
+            )
+    except Exception as exc:
+        report.append(f"Clustering: failed — {exc}")
+        logger.warning("Nightshift clustering pass failed: %s", exc, exc_info=True)
+
+
 def _run_nightshift_passes(db: "OrivellumDB", cfg: "OrivellumConfig") -> None:
     date_str = datetime.now().strftime("%Y-%m-%d")
     start_ts = time.time()
@@ -863,8 +885,12 @@ def _run_nightshift_passes(db: "OrivellumDB", cfg: "OrivellumConfig") -> None:
     _pass_verify_audit_chain(db, report)
 
     # 14 — Version relationship suggestions
-    logger.info("Nightshift pass 14/14: version-relationship suggestions")
+    logger.info("Nightshift pass 14/15: version-relationship suggestions")
     _pass_version_suggestions(db, report)
+
+    # 15 — Topic clustering
+    logger.info("Nightshift pass 15/15: topic clustering")
+    _pass_clustering(db, report)
 
     elapsed = time.time() - start_ts
     report.append(f"Completed in {elapsed:.0f}s")

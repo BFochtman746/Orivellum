@@ -64,10 +64,11 @@ const PHASES = [
     id: "understand",
     label: "Understand",
     icon: BookOpen,
-    routes: ["/works", "/chat", "/books", "/learn"],
+    routes: ["/works", "/chat", "/books", "/learn", "/topics"],
     items: [
       { name: "Works",  href: "/works",  icon: BookOpen },
       { name: "Books",  href: "/books",  icon: BookMarked },
+      { name: "Topics", href: "/topics", icon: FolderOpen },
       { name: "Learn",  href: "/learn",  icon: GraduationCap },
       { name: "Chat",   href: "/chat",   icon: MessageSquare },
     ],

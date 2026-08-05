@@ -20,7 +20,7 @@ import {
   FileQuestion, RefreshCw, Trash2, Hash, Calendar, Database,
   BookOpen, Cpu, Sparkles, ThumbsUp, ThumbsDown, Link2, Info,
   List, History, Star, GitBranch, ChevronDown,
-  BookHeadphones, Loader2, Play, Pause, X, Download,
+  BookHeadphones, Loader2, Play, Pause, X, Download, Network,
 } from "lucide-react";
 import {
   Tooltip, TooltipContent, TooltipProvider, TooltipTrigger,
@@ -33,7 +33,7 @@ const BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-type Tab = "overview" | "text" | "knowledge" | "chapters" | "versions" | "chunks";
+type Tab = "overview" | "text" | "knowledge" | "chapters" | "versions" | "chunks" | "related";
 
 const AI_KINDS = ["entity", "claim", "relationship"] as const;
 type AiKind = (typeof AI_KINDS)[number];
@@ -781,6 +781,20 @@ export default function DocumentDetail() {
     staleTime: 60_000,
   });
 
+  // Related documents — fetched lazily when the Related tab is active
+  const { data: relatedData, isLoading: relatedLoading } = useQuery<{
+    doc_id: string;
+    related: Array<{
+      doc_id: string; title: string; kind: string | null; readiness: string | null;
+      similarity: number | null; link_type: string; shared_topics: Array<{ id: string; name: string }>;
+    }>;
+  }>({
+    queryKey: ["doc-related", docId],
+    queryFn: () => apiFetch(`${BASE}/library/${docId}/related`).then((r) => r.json()),
+    enabled: !!docId && activeTab === "related",
+    staleTime: 120_000,
+  });
+
   // Versions for this document (must stay above the early returns — hooks
   // may never run conditionally)
   const { data: versData, isLoading: versLoading, refetch: versRefetch } = useQuery<{
@@ -1113,6 +1127,7 @@ export default function DocumentDetail() {
     { key: "text",      label: "Text",      icon: BookOpen },
     { key: "chunks",    label: "Chunks",    icon: Hash,    badge: chunksData?.count },
     { key: "knowledge", label: "Knowledge", icon: Cpu },
+    { key: "related",   label: "Related",   icon: Network, badge: relatedData?.related?.length },
   ];
 
   const snapshotVersion = async () => {
@@ -1625,6 +1640,71 @@ export default function DocumentDetail() {
             onDelete={handleDeleteKnowledge}
           />
         </ErrorBoundary>
+      )}
+
+      {activeTab === "related" && (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-mono text-muted-foreground uppercase tracking-wider">
+              Related documents
+            </p>
+            <button
+              onClick={() => navigate("/topics")}
+              className="text-xs text-primary hover:underline font-mono flex items-center gap-1"
+            >
+              <Network className="w-3 h-3" />
+              Browse all topics
+            </button>
+          </div>
+
+          {relatedLoading ? (
+            <div className="space-y-2">
+              {[1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-16 w-full" />)}
+            </div>
+          ) : !relatedData?.related?.length ? (
+            <div className="text-center py-16 bg-muted/10 border border-dashed rounded-lg space-y-3">
+              <Network className="w-9 h-9 text-muted-foreground mx-auto opacity-30" />
+              <p className="text-muted-foreground font-serif text-sm">No related documents found yet.</p>
+              <p className="text-xs text-muted-foreground/60 max-w-xs mx-auto">
+                Related documents appear after the nightshift clustering pass runs.
+                Make sure this document has been processed and has extracted text.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {relatedData.related.map((rel) => (
+                <div
+                  key={rel.doc_id}
+                  onClick={() => navigate(`/library/${rel.doc_id}`)}
+                  className="flex items-start gap-3 p-3 rounded-lg border border-border/50 hover:border-primary/20 hover:bg-muted/20 cursor-pointer transition-colors group"
+                >
+                  <FileText className="w-4 h-4 text-muted-foreground shrink-0 mt-0.5" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium truncate">{rel.title || "(untitled)"}</p>
+                    <div className="flex flex-wrap items-center gap-1.5 mt-1">
+                      {rel.kind && (
+                        <Badge variant="outline" className="font-mono text-[10px] uppercase py-0">
+                          {rel.kind}
+                        </Badge>
+                      )}
+                      {rel.similarity != null && (
+                        <span className="text-[10px] font-mono text-emerald-700 bg-emerald-50 border border-emerald-100 rounded px-1.5 py-0.5">
+                          {(rel.similarity * 100).toFixed(0)}% similar
+                        </span>
+                      )}
+                      {rel.shared_topics.slice(0, 2).map((t) => (
+                        <span key={t.id} className="text-[10px] font-mono text-violet-700 bg-violet-50 border border-violet-100 rounded px-1.5 py-0.5 truncate max-w-[140px]">
+                          {t.name}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                  <ChevronDown className="w-3.5 h-3.5 text-muted-foreground shrink-0 -rotate-90 opacity-0 group-hover:opacity-100 transition-opacity" />
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       )}
     </div>
   );

@@ -1129,4 +1129,28 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         ALTER TABLE user_memory ADD COLUMN superseded_at TEXT;
         ALTER TABLE user_memory ADD COLUMN prev_value TEXT
     """),
+
+    # v66 — Cross-document links + topic area profiles
+    (66, "Cross-document similarity links and topic area profiles", """
+        CREATE TABLE IF NOT EXISTS doc_links (
+            id          TEXT PRIMARY KEY,
+            doc_a_id    TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+            doc_b_id    TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+            similarity  REAL NOT NULL,
+            link_type   TEXT NOT NULL DEFAULT 'semantic',
+            created_at  TEXT NOT NULL,
+            UNIQUE(doc_a_id, doc_b_id)
+        );
+        CREATE INDEX IF NOT EXISTS dl_doc_a ON doc_links(doc_a_id);
+        CREATE INDEX IF NOT EXISTS dl_doc_b ON doc_links(doc_b_id);
+        CREATE INDEX IF NOT EXISTS dl_sim   ON doc_links(similarity DESC);
+        CREATE TABLE IF NOT EXISTS topic_profiles (
+            topic_id     TEXT PRIMARY KEY REFERENCES topics(id) ON DELETE CASCADE,
+            what_it_is   TEXT NOT NULL DEFAULT '',
+            purpose      TEXT NOT NULL DEFAULT '',
+            connected    TEXT NOT NULL DEFAULT '[]',
+            gaps         TEXT NOT NULL DEFAULT '[]',
+            generated_at TEXT NOT NULL
+        )
+    """),
 ]

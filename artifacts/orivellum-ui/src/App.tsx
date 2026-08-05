@@ -30,6 +30,7 @@ import Mcos from '@/pages/mcos/index';
 import BooksPage from '@/pages/books/index';
 import LearnPage from '@/pages/learn/index';
 import IntakePage from '@/pages/intake/index';
+import TopicsPage from '@/pages/topics/index';
 import NotFound from '@/pages/not-found';
 
 const queryClient = new QueryClient({
@@ -76,6 +77,7 @@ function Router() {
         <Route path="/books">{() => <RouteWithBoundary component={BooksPage} />}</Route>
         <Route path="/learn">{() => <RouteWithBoundary component={LearnPage} />}</Route>
         <Route path="/intake">{() => <RouteWithBoundary component={IntakePage} />}</Route>
+        <Route path="/topics">{() => <RouteWithBoundary component={TopicsPage} />}</Route>
         <Route component={NotFound} />
       </Switch>
     </AppLayout>
