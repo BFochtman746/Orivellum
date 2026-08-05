@@ -1130,6 +1130,29 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         ALTER TABLE user_memory ADD COLUMN prev_value TEXT
     """),
 
+    # v66.5 — Proactive custodian: work staleness nudges
+    (67, "Proactive custodian: work staleness nudges table", """
+        CREATE TABLE IF NOT EXISTS work_nudges (
+            id          TEXT PRIMARY KEY,
+            work_id     TEXT NOT NULL,
+            kind        TEXT NOT NULL DEFAULT 'stalled',
+            message     TEXT NOT NULL,
+            stage       TEXT,
+            days_stalled INTEGER,
+            priority    INTEGER NOT NULL DEFAULT 1,
+            created_at  TEXT NOT NULL,
+            resolved_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS wn_work ON work_nudges(work_id);
+        CREATE INDEX IF NOT EXISTS wn_priority ON work_nudges(priority DESC, created_at DESC);
+        CREATE INDEX IF NOT EXISTS wn_resolved ON work_nudges(resolved_at)
+    """),
+
+    # v68 — Proactive custodian: distinguish user-dismissed from auto-resolved nudges
+    (68, "Custodian nudges: user_dismissed flag to honour explicit dismissal across nightly passes", """
+        ALTER TABLE work_nudges ADD COLUMN user_dismissed INTEGER NOT NULL DEFAULT 0
+    """),
+
     # v66 — Cross-document links + topic area profiles
     (66, "Cross-document similarity links and topic area profiles", """
         CREATE TABLE IF NOT EXISTS doc_links (

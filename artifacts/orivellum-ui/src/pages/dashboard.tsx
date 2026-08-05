@@ -17,7 +17,7 @@ import {
   BookOpen, Library, MessageSquare, Target, Activity, FileText, CheckCircle2,
   Clock, Plus, Upload, FolderPlus, Sparkles, RefreshCw, ArrowRight, Lightbulb,
   Telescope, Zap, GitMerge, AlertTriangle, BookMarked, GraduationCap, Award,
-  Star, BarChart3,
+  Star, BarChart3, Bell, X,
 } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
@@ -42,6 +42,80 @@ const KIND_COLOR: Record<string, string> = {
   connect:   "text-amber-500",
   gap:       "text-rose-500",
 };
+
+// ── Proactive Custodian Nudge Widget ─────────────────────────────────────────
+
+function CustodianNudgeWidget() {
+  const [nudges, setNudges] = useState<any[]>([]);
+  const [dismissed, setDismissed] = useState<Set<string>>(new Set());
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    apiFetch(`${BASE}/dashboard/nudges?limit=3`)
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (data?.nudges) setNudges(data.nudges);
+        setLoaded(true);
+      })
+      .catch(() => setLoaded(true));
+  }, []);
+
+  async function handleDismiss(id: string) {
+    setDismissed(prev => new Set([...prev, id]));
+    try {
+      await apiFetch(`${BASE}/dashboard/nudges/resolve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ nudge_id: id }),
+      });
+    } catch { /* best-effort */ }
+  }
+
+  const visible = nudges.filter(n => !dismissed.has(n.id));
+  if (!loaded || visible.length === 0) return null;
+
+  const KIND_COLOR: Record<string, string> = {
+    stalled:         "border-amber-200/70 bg-amber-50/60 text-amber-800",
+    no_docs:         "border-blue-200/70 bg-blue-50/60 text-blue-800",
+    pipeline_stuck:  "border-violet-200/70 bg-violet-50/60 text-violet-800",
+  };
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-2">
+        <Bell className="w-4 h-4 text-muted-foreground" />
+        <h2 className="text-sm font-mono uppercase tracking-wider text-muted-foreground">Custodian</h2>
+      </div>
+      <div className="space-y-2">
+        {visible.map(nudge => (
+          <div
+            key={nudge.id}
+            className={`flex items-start gap-3 p-3 rounded-xl border ${KIND_COLOR[nudge.kind] ?? "border-border/50 bg-muted/20 text-foreground"} transition-all`}
+          >
+            <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0 opacity-70" />
+            <div className="min-w-0 flex-1 space-y-1">
+              <p className="text-sm leading-snug">{nudge.message}</p>
+              {nudge.work_title && (
+                <Link href={`/works/${nudge.work_id}`}>
+                  <span className="inline-flex items-center gap-1 text-[10px] font-mono underline underline-offset-2 opacity-70 hover:opacity-100 transition-opacity">
+                    <ArrowRight className="w-2.5 h-2.5" /> Open {nudge.work_title}
+                  </span>
+                </Link>
+              )}
+            </div>
+            <button
+              onClick={() => handleDismiss(nudge.id)}
+              className="p-0.5 rounded hover:bg-black/10 transition-colors shrink-0 opacity-50 hover:opacity-80"
+              title="Dismiss"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 function SuggestionsWidget() {
   const [suggestions, setSuggestions] = useState<any[]>([]);
@@ -431,6 +505,9 @@ export default function Dashboard() {
 
       {/* Research Gaps — only shown when there are active critical gaps */}
       <TopGapsWidget />
+
+      {/* Proactive Custodian — staleness nudges for untouched Works */}
+      <CustodianNudgeWidget />
 
       <div className="grid md:grid-cols-3 gap-8">
         {/* Recent Works */}

@@ -889,8 +889,22 @@ def _run_nightshift_passes(db: "OrivellumDB", cfg: "OrivellumConfig") -> None:
     _pass_version_suggestions(db, report)
 
     # 15 — Topic clustering
-    logger.info("Nightshift pass 15/15: topic clustering")
+    logger.info("Nightshift pass 15/16: topic clustering")
     _pass_clustering(db, report)
+
+    # 16 — Proactive custodian: staleness nudges
+    logger.info("Nightshift pass 16/16: proactive custodian nudges")
+    try:
+        from orivellum.capabilities.custodian import run_custodian
+        custodian_result = run_custodian(db)
+        written = custodian_result.get("nudges_written", 0)
+        pruned  = custodian_result.get("pruned", 0)
+        report.append(
+            f"Custodian: {written} nudge(s) written, {pruned} old nudge(s) pruned"
+        )
+    except Exception as _cex:
+        logger.warning("Custodian pass failed (non-fatal): %s", _cex)
+        report.append(f"Custodian: skipped ({_cex})")
 
     elapsed = time.time() - start_ts
     report.append(f"Completed in {elapsed:.0f}s")

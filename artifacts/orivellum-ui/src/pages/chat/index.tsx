@@ -207,6 +207,8 @@ interface KnowledgeSource {
   // Legacy fields (older persisted meta)
   doc_id?: string;
   doc_title?: string;
+  // Passage excerpt from the source document (for inline preview)
+  passage?: string;
 }
 
 /** Normalize a source object across the current + legacy backend shapes.
@@ -227,6 +229,7 @@ function normalizeSource(s: KnowledgeSource) {
     docId,
     url: s.url ?? null,
     isWeb,
+    passage: s.passage ?? null,
   };
 }
 
@@ -304,10 +307,17 @@ function SourcesFooter({ sources }: { sources: KnowledgeSource[] }) {
                       target={target.external ? "_blank" : undefined}
                       rel={target.external ? "noopener noreferrer" : undefined}
                       onClick={!target.external ? () => setOpen(false) : undefined}
-                      className="flex items-center gap-2.5 px-2 py-2.5 rounded-lg hover:bg-muted/50 transition-colors min-h-[44px]"
+                      className="flex items-start gap-2.5 px-2 py-2.5 rounded-lg hover:bg-muted/50 transition-colors min-h-[44px]"
                     >
-                      <Icon className="w-4 h-4 text-primary/60 shrink-0" />
-                      <span className="text-sm flex-1 truncate">{s.title}</span>
+                      <Icon className="w-4 h-4 text-primary/60 shrink-0 mt-0.5" />
+                      <div className="min-w-0 flex-1">
+                        <span className="text-sm block truncate">{s.title}</span>
+                        {s.passage && (
+                          <span className="text-[11px] text-muted-foreground line-clamp-2 mt-0.5 leading-relaxed">
+                            {s.passage}
+                          </span>
+                        )}
+                      </div>
                       <ChevronRight className="w-3.5 h-3.5 text-muted-foreground/40 shrink-0" />
                     </a>
                   ) : (

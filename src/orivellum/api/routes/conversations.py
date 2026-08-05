@@ -653,6 +653,20 @@ def _build_system_prompt(db: Any, conv: dict, scope: str = "work",
                         work_title_cache[wid] = (w.get("title") or wid) if w else wid
                     return work_title_cache[wid]
 
+                # Batch-fetch document titles for knowledge items with source_doc_id
+                _doc_title_cache: dict[str, str] = {}
+                _doc_ids = {k.get("source_doc_id") for k in trusted_k if k.get("source_doc_id")}
+                for _doc_id in _doc_ids:
+                    try:
+                        _doc = db.get_document(_doc_id)
+                        if _doc:
+                            _raw = _doc.get("title") or _doc.get("source", "")
+                            _doc_title_cache[_doc_id] = (
+                                _raw.split("/")[-1] if "/" in _raw else _raw
+                            ) or "Document"
+                    except Exception:
+                        pass
+
                 for k in trusted_k:
                     wid = k.get("work_id") or "__general__"
                     by_work.setdefault(wid, {"title": _work_title(k.get("work_id")),
@@ -672,33 +686,39 @@ def _build_system_prompt(db: Any, conv: dict, scope: str = "work",
                 )
 
                 context_parts = [
-                    "KNOWLEDGE FROM YOUR DATABASE (most relevant to this question):"
+                    "KNOWLEDGE FROM YOUR DATABASE (most relevant to this question):\n"
+                    "When referencing facts from this section, cite the source document "
+                    "title in your answer so the user knows where the information comes from."
                 ]
                 for wid, group in ordered:
                     context_parts.append(f"\n[Topic: {group['title']}]")
                     for k in group["knowledge"]:
                         text = k.get("text", "").strip()
                         kind = k.get("kind", "note")
+                        src_doc_id = k.get("source_doc_id")
+                        doc_title = _doc_title_cache.get(src_doc_id, "") if src_doc_id else ""
                         if text:
-                            context_parts.append(f"  [{kind}] {text[:400]}")
+                            cite = f" | source: \"{doc_title}\"" if doc_title else ""
+                            context_parts.append(f"  [{kind}{cite}] {text[:400]}")
                             if out_sources is not None:
                                 real_wid = k.get("work_id")
                                 out_sources.append({
                                     "id": k.get("id"),
-                                    "title": text[:100],
+                                    "title": doc_title or text[:100],
                                     "kind": kind,
                                     "work_id": real_wid,
                                     "work_title": group["title"],
-                                    "source_doc_id": k.get("source_doc_id"),
+                                    "source_doc_id": src_doc_id,
                                     # Legacy fields kept for the existing footer link
-                                    "doc_id": k.get("source_doc_id"),
-                                    "doc_title": group["title"],
+                                    "doc_id": src_doc_id,
+                                    "doc_title": doc_title or group["title"],
+                                    "passage": text[:200],
                                 })
                     for c in group["chunks"]:
                         text = c.get("text", "").strip()
                         doc  = c.get("doc_title") or "document"
                         if text:
-                            context_parts.append(f"  [from '{doc}'] {text[:400]}")
+                            context_parts.append(f"  [from \"{doc}\"] {text[:400]}")
                             if out_sources is not None:
                                 real_wid = c.get("work_id")
                                 out_sources.append({
@@ -711,6 +731,7 @@ def _build_system_prompt(db: Any, conv: dict, scope: str = "work",
                                     # Legacy fields kept for the existing footer link
                                     "doc_id": c.get("doc_id"),
                                     "doc_title": doc,
+                                    "passage": text[:200],
                                 })
 
                 # ── Prepend claim block; append verification instruction ──
@@ -722,6 +743,26 @@ def _build_system_prompt(db: Any, conv: dict, scope: str = "work",
                     parts.append(verification_instruction)
                 parts.append(knowledge_section)
                 return "\n\n".join(p for p in parts if p.strip())
+
+            else:
+                # No knowledge found — inject a corpus abstention guard so the
+                # model doesn't fabricate document content.
+                abstention_guard = (
+                    "CORPUS SEARCH: Your library was searched but no relevant "
+                    "information was found for this query. "
+                    "If the user is asking about specific content from their uploaded "
+                    "documents, respond with: "
+                    "\"I don't have that information in your library\" "
+                    "— do not invent document content or fabricate citations."
+                )
+                parts = [base]
+                if claim_block:
+                    parts.append(claim_block)
+                if verification_instruction:
+                    parts.append(verification_instruction)
+                parts.append(abstention_guard)
+                return "\n\n".join(p for p in parts if p.strip())
+
         except Exception:
             pass  # fall through to recency-based fallback
 
