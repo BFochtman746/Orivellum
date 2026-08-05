@@ -19,7 +19,7 @@ import {
   useCreateConversation,
   getListConversationsQueryKey,
 } from '@workspace/api-client-react';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { mobileFetch } from '@/lib/api';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -121,9 +121,9 @@ export default function ConversationsScreen() {
   const [renameText, setRenameText] = useState('');
   const renameRef = useRef<TextInput>(null);
 
-  // Debounce the search term (~200ms) so filtering doesn't run on every keystroke
+  // Debounce the search term (~300ms) so filtering/API calls don't fire on every keystroke
   useEffect(() => {
-    const t = setTimeout(() => setDebouncedSearch(search), 200);
+    const t = setTimeout(() => setDebouncedSearch(search), 300);
     return () => clearTimeout(t);
   }, [search]);
 
@@ -132,6 +132,34 @@ export default function ConversationsScreen() {
     { query: { refetchInterval: 15_000, staleTime: 10_000 } } as any
   );
   const allConversations = data?.conversations ?? [];
+
+  // API-backed FTS search (when query >= 2 chars)
+  const isSearchMode = debouncedSearch.trim().length >= 2;
+  const { data: msgSearchData, isFetching: msgSearchFetching } = useQuery<{
+    results: Array<{
+      id: string;
+      conversation_id: string;
+      conv_title: string | null;
+      snippet: string;
+      work_title: string | null;
+      created_at: string;
+      role: string;
+    }>;
+  } | null>({
+    queryKey: ['msg-search', debouncedSearch.trim()],
+    queryFn: async () => {
+      const domain = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
+      const r = await mobileFetch(
+        `https://${domain}/api/conversations/search?q=${encodeURIComponent(debouncedSearch.trim())}&limit=30`
+      );
+      if (!r.ok) return null;
+      return r.json();
+    },
+    enabled: isSearchMode,
+    staleTime: 10_000,
+  });
+
+  // Local title/snippet filtering for short queries (< 2 chars)
   const conversations = useMemo(() => {
     const q = debouncedSearch.trim().toLowerCase();
     if (!q) return allConversations;
@@ -305,6 +333,64 @@ export default function ConversationsScreen() {
           detail="Make sure Orivellum is running on your local machine and your device is on the same network."
           onRetry={refetch}
         />
+      ) : isSearchMode ? (
+        /* ── API full-text search results (query >= 2 chars) ─────────── */
+        msgSearchFetching ? (
+          <View style={styles.centered}>
+            <ActivityIndicator color={colors.primary} />
+          </View>
+        ) : !msgSearchData?.results?.length ? (
+          <View style={styles.centered}>
+            <Feather name="search" size={36} color={colors.mutedForeground} />
+            <Text style={[styles.emptyTitle, { color: colors.foreground }]}>No messages found</Text>
+            <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
+              Nothing matched "{debouncedSearch}"
+            </Text>
+          </View>
+        ) : (
+          <FlatList
+            data={msgSearchData.results}
+            keyExtractor={(item) => item.id}
+            renderItem={({ item }) => (
+              <Pressable
+                onPress={() => router.push(`/chat/${item.conversation_id}`)}
+                style={({ pressed }) => [
+                  styles.msgResultRow,
+                  { backgroundColor: pressed ? colors.muted : colors.card, borderColor: colors.border },
+                ]}
+              >
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                  <Text style={[styles.msgResultTitle, { color: colors.foreground }]} numberOfLines={1}>
+                    {item.conv_title || 'Untitled'}
+                  </Text>
+                  {item.work_title && (
+                    <Text style={[styles.msgResultWork, { color: colors.primary }]} numberOfLines={1}>
+                      · {item.work_title}
+                    </Text>
+                  )}
+                </View>
+                <Text style={[styles.msgResultSnippet, { color: colors.mutedForeground }]} numberOfLines={3}>
+                  {item.snippet}
+                </Text>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 6 }}>
+                  <Text style={[styles.msgResultMeta, { color: colors.mutedForeground }]}>
+                    {item.role === 'user' ? 'You' : 'AI'}
+                  </Text>
+                  <Text style={[styles.msgResultMeta, { color: colors.mutedForeground }]}>
+                    {item.created_at ? new Date(item.created_at).toLocaleDateString() : ''}
+                  </Text>
+                </View>
+              </Pressable>
+            )}
+            contentContainerStyle={{
+              paddingHorizontal: 16,
+              paddingTop: 12,
+              paddingBottom: isWeb ? 34 + 50 : insets.bottom + 24,
+            }}
+            showsVerticalScrollIndicator={false}
+            ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
+          />
+        )
       ) : conversations.length === 0 ? (
         <View style={styles.centered}>
           <Feather name="message-square" size={44} color={colors.mutedForeground} />
@@ -433,4 +519,14 @@ const styles = StyleSheet.create({
   itemDate: { fontSize: 12, ...font('regular'), lineHeight: 16 },
   itemPreview: { fontSize: 13, ...font('regular'), lineHeight: 18 },
   itemCount: { fontSize: 12, ...font('regular'), lineHeight: 16, marginTop: 2 },
+  // ── Message search result row ─────────────────────────────────────────────
+  msgResultRow: {
+    borderRadius: 10,
+    borderWidth: 1,
+    padding: 14,
+  },
+  msgResultTitle: { fontSize: 14, ...font('semibold'), lineHeight: 18, flex: 1 },
+  msgResultWork: { fontSize: 12, ...font('regular'), lineHeight: 18 },
+  msgResultSnippet: { fontSize: 13, ...font('regular'), lineHeight: 19 },
+  msgResultMeta: { fontSize: 11, ...font('regular'), lineHeight: 15 },
 });

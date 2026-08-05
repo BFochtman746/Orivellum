@@ -507,12 +507,19 @@ async def continue_message(conv_id: str, body: ContinueBody):
         new_meta["cut_short"] = True
         new_meta["partial_text"] = new_text
 
+    msg_id = cut_short_msg["id"]
     with db._lock:
         db._conn.execute(
             "UPDATE messages SET text=?, meta=? WHERE id=?",
-            (new_text, json.dumps(new_meta), cut_short_msg["id"]),
+            (new_text, json.dumps(new_meta), msg_id),
         )
         db._conn.commit()
+    # Keep FTS index in sync — the UPDATE above bypasses finalize_message()
+    db.sync_message_fts(
+        msg_id, new_text,
+        conv_id=cut_short_msg.get("conversation_id", conv_id),
+        role=cut_short_msg.get("role", "assistant"),
+    )
 
     updated_msg = {**cut_short_msg, "text": new_text, "meta": new_meta}
     return {"message": updated_msg, "cut_short": still_cut}
@@ -1627,6 +1634,12 @@ async def _stream_continuation(db: Any, conv: dict, cut_short_msg: dict):
                 (new_text, json.dumps(new_meta), orig_id),
             )
             db._conn.commit()
+        # Keep FTS index in sync — this UPDATE bypasses finalize_message()
+        db.sync_message_fts(
+            orig_id, new_text,
+            conv_id=cut_short_msg.get("conversation_id", conv_id),
+            role=cut_short_msg.get("role", "assistant"),
+        )
     except Exception as exc:
         logger.warning("Could not persist continuation: %s", exc)
 

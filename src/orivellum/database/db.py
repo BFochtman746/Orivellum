@@ -979,32 +979,65 @@ class OrivellumDB:
     def search_messages(self, query: str, limit: int = 50) -> list[dict]:
         """Full-text search across all conversation messages.
 
-        Returns matches with conversation context, ordered by recency.
+        Uses the ``messages_fts`` FTS5 virtual table (added in schema v72) when
+        available, falling back to a slower ``instr(lower(text), ?)`` scan on
+        older databases.  Always excludes archived conversations.
+
+        Returns matches with conversation context ordered by recency.
         Requires at least 2 characters to avoid vacuous matches.
         """
         if not query or len(query.strip()) < 2:
             return []
-        q = query.strip().lower()
-        sql = """
+        q = query.strip()
+
+        # ── FTS5 path (fast, preferred) ───────────────────────────────────────
+        # FTS5 requires special quoting: wrap in double-quotes and escape any
+        # internal double-quotes.  Append '*' for prefix matching so partial
+        # words (e.g. "prot" → "protein") still return results.
+        def _fts_term(s: str) -> str:
+            escaped = s.replace('"', '""')
+            return f'"{escaped}"*'
+
+        fts_query = " ".join(_fts_term(w) for w in q.split() if w)
+
+        fts_sql = """
+            SELECT m.id, m.conversation_id, m.role, m.text, m.created_at,
+                   c.title as conv_title, c.work_id, c.updated_at as conv_updated_at,
+                   w.title as work_title
+            FROM messages_fts f
+            JOIN messages m ON m.id = f.msg_id
+            JOIN conversations c ON c.id = m.conversation_id AND c.archived = 0
+            LEFT JOIN works w ON w.id = c.work_id
+            WHERE messages_fts MATCH ?
+            ORDER BY m.created_at DESC
+            LIMIT ?
+        """
+
+        fallback_sql = """
             SELECT m.id, m.conversation_id, m.role, m.text, m.created_at,
                    c.title as conv_title, c.work_id, c.updated_at as conv_updated_at,
                    w.title as work_title
             FROM messages m
-            JOIN conversations c ON c.id = m.conversation_id
+            JOIN conversations c ON c.id = m.conversation_id AND c.archived = 0
             LEFT JOIN works w ON w.id = c.work_id
-            WHERE m.state = 'done'
-              AND instr(lower(m.text), ?) > 0
+            WHERE instr(lower(m.text), lower(?)) > 0
             ORDER BY m.created_at DESC
             LIMIT ?
         """
+
         with self._lock:
-            rows = self._conn.execute(sql, (q, limit)).fetchall()
+            try:
+                rows = self._conn.execute(fts_sql, (fts_query, limit)).fetchall()
+            except Exception:
+                # FTS table not yet created (pre-v72 DB) — use substring fallback
+                rows = self._conn.execute(fallback_sql, (q, limit)).fetchall()
+
         result = []
+        q_lower = q.lower()
         for r in rows:
             d = dict(r)
-            # Compute a brief snippet around the first match
             text = d.get("text", "")
-            idx = text.lower().find(q)
+            idx = text.lower().find(q_lower)
             if idx >= 0:
                 start = max(0, idx - 80)
                 end = min(len(text), idx + len(q) + 120)
@@ -1096,6 +1129,20 @@ class OrivellumDB:
             self._conn.execute(
                 "UPDATE conversations SET updated_at=? WHERE id=?", (now, conv_id)
             )
+            # Keep FTS index in sync.
+            # Always DELETE first so the subsequent INSERT never creates a
+            # duplicate entry (FTS5 has no unique constraint on msg_id).
+            try:
+                self._conn.execute(
+                    "DELETE FROM messages_fts WHERE msg_id=?", (mid,)
+                )
+                self._conn.execute(
+                    "INSERT INTO messages_fts(text, role, msg_id, conversation_id)"
+                    " VALUES (?, ?, ?, ?)",
+                    (text, role, mid, conv_id),
+                )
+            except Exception:
+                pass
         return {"id": mid, "conversation_id": conv_id, "role": role, "text": text,
                 "state": state, "meta": meta or {}, "created_at": now}
 
@@ -1156,6 +1203,48 @@ class OrivellumDB:
                 "UPDATE messages SET text=?, state=? WHERE id=?",
                 (text, state, msg_id),
             )
+            # Keep FTS index in sync — delete then insert (no OR IGNORE needed
+            # after delete; avoids phantom duplicate FTS rows).
+            try:
+                self._conn.execute(
+                    "DELETE FROM messages_fts WHERE msg_id=?", (msg_id,)
+                )
+                row = self._conn.execute(
+                    "SELECT conversation_id, role FROM messages WHERE id=?", (msg_id,)
+                ).fetchone()
+                if row:
+                    self._conn.execute(
+                        "INSERT INTO messages_fts(text, role, msg_id, conversation_id)"
+                        " VALUES (?, ?, ?, ?)",
+                        (text, row["role"], msg_id, row["conversation_id"]),
+                    )
+            except Exception:
+                pass
+
+    def sync_message_fts(self, msg_id: str, new_text: str, conv_id: str, role: str) -> None:
+        """Re-index one message in messages_fts after an in-place text update.
+
+        Called by any code path that mutates ``messages.text`` directly (e.g.
+        the continuation handlers) rather than through ``finalize_message()``.
+        Always deletes before inserting so exactly one FTS row exists per
+        message — FTS5 has no unique constraint on content columns so
+        ``INSERT OR IGNORE`` would silently create duplicates.
+        Logs at DEBUG level and returns cleanly if the FTS table does not yet
+        exist (pre-v72 database) instead of swallowing errors silently.
+        """
+        try:
+            with self._lock:
+                self._conn.execute(
+                    "DELETE FROM messages_fts WHERE msg_id=?", (msg_id,)
+                )
+                self._conn.execute(
+                    "INSERT INTO messages_fts(text, role, msg_id, conversation_id)"
+                    " VALUES (?, ?, ?, ?)",
+                    (new_text, role, msg_id, conv_id),
+                )
+                self._conn.commit()
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("FTS sync skipped for message %s: %s", msg_id, exc)
 
     def update_conversation(self, conv_id: str, title: str | None = None,
                             archived: bool | None = None,
@@ -1228,6 +1317,16 @@ class OrivellumDB:
             object_type="conversation",
             actor="user",
         ):
+            # Purge FTS entries BEFORE the cascade delete removes the messages
+            # rows.  SQLite's ON DELETE CASCADE fires when the conversations row
+            # is deleted, so by that point message IDs are no longer queryable.
+            # A missing messages_fts table (pre-v72 DB) is silently ignored.
+            try:
+                self._conn.execute(
+                    "DELETE FROM messages_fts WHERE conversation_id=?", (conv_id,)
+                )
+            except Exception:
+                pass
             cur = self._conn.execute("DELETE FROM conversations WHERE id=?", (conv_id,))
             _deleted = cur.rowcount > 0
         return _deleted

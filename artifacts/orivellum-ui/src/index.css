@@ -308,6 +308,29 @@ body {
   mask-image: linear-gradient(to bottom, black 70%, transparent 100%);
 }
 
+/* ── Message search highlight flash ──────────────────────────────────────────
+   Applied temporarily by JS (useEffect in Chat) when arriving from a
+   search result with ?msg= in the URL.  The yellow-to-transparent background
+   gives the user a "found it" signal before fading away.                      */
+@keyframes msg-highlight-fade {
+  0%   { background-color: oklch(0.97 0.12 85); }
+  60%  { background-color: oklch(0.97 0.12 85); }
+  100% { background-color: transparent; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .msg-highlight {
+    border-radius: 6px;
+    animation: msg-highlight-fade 2500ms ease-out forwards;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .msg-highlight {
+    outline: 2px solid oklch(0.82 0.15 85);
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+}
+
 /* ── Mobile page-enter slide animation ────────────────────────────────────────
    Triggered by JS adding .mobile-page-slide-in to the content wrapper on each
    path change. Skipped automatically when prefers-reduced-motion: reduce.     */

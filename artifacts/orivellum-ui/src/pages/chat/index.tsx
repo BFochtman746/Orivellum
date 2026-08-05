@@ -1085,6 +1085,8 @@ export default function Chat() {
   const [, setLocation] = useLocation();
   const searchParams = new URLSearchParams(window.location.search);
   const activeId = searchParams.get("id");
+  // When arriving from a message-search result, this holds the target message id.
+  const highlightMsgId = searchParams.get("msg");
 
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
@@ -1182,6 +1184,24 @@ export default function Chat() {
   useEffect(() => { setLocalMessages([]); setDraft(""); }, [activeId]);
   useEffect(() => { if (activeConv?.messages && !sending) setLocalMessages([]); }, [activeConv?.messages, sending]);
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [localMessages, activeConv?.messages]);
+
+  // ── Scroll-to-message when arriving from a search result ──────────────────
+  // When the ?msg= URL param is present and the conversation messages have
+  // loaded, scroll that specific message element into view and briefly
+  // highlight it with a yellow flash so the user can spot it in context.
+  useEffect(() => {
+    if (!highlightMsgId || !activeConv?.messages) return;
+    // Small delay so the DOM has rendered before we query it
+    const timer = setTimeout(() => {
+      const el = document.querySelector(`[data-msg-id="${highlightMsgId}"]`);
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+        el.classList.add("msg-highlight");
+        setTimeout(() => el.classList.remove("msg-highlight"), 2500);
+      }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [highlightMsgId, activeConv?.messages]);
 
   // Abort any in-progress stream when conversation changes or component unmounts
   useEffect(() => {
@@ -1797,7 +1817,10 @@ export default function Chat() {
                   : msgSearchResults.map((r: any, i: number) => (
                       <div
                         key={r.id ?? i}
-                        onClick={() => setLocation(`/chat?id=${r.conversation_id}`)}
+                        onClick={() => {
+                          setSearch("");
+                          setLocation(`/chat?id=${r.conversation_id}&msg=${r.id}`);
+                        }}
                         className="p-3 rounded-md cursor-pointer hover:bg-muted/50 transition-colors"
                       >
                         <div className="font-medium text-sm truncate">{r.conv_title || "Untitled"}</div>
@@ -1972,7 +1995,7 @@ export default function Chat() {
                 ) : (
                   <ErrorBoundary label="message list">
                   {displayMessages.map((msg, msgIdx) => (
-                    <div key={msg.id} className={`flex gap-3 ${msg.role === "user" ? "flex-row-reverse" : ""}`}>
+                    <div key={msg.id} data-msg-id={msg.id} className={`flex gap-3 ${msg.role === "user" ? "flex-row-reverse" : ""}`}>
                       <div className={`w-7 h-7 shrink-0 rounded-sm flex items-center justify-center
                         ${msg.isClarification
                           ? "bg-amber-500/15 text-amber-600"

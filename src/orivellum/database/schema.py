@@ -1239,4 +1239,31 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         CREATE INDEX IF NOT EXISTS al_ts   ON access_log(ts DESC);
         CREATE INDEX IF NOT EXISTS al_path ON access_log(path, ts DESC)
     """),
+
+    # v72 — FTS5 virtual table for cross-conversation message search.
+    # Enables fast full-text search across all message bodies via
+    # GET /api/conversations/search?q=.  The table is kept in sync by
+    # add_message(), finalize_message(), and sync_message_fts() (for
+    # the continuation handlers that update messages.text directly).
+    # No triggers are used because the migration runner splits SQL on ";" which
+    # breaks CREATE TRIGGER … BEGIN … END blocks.  All sync is done in Python.
+    (72, "FTS5 index on messages for cross-conversation search", """
+        CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts
+            USING fts5(text, role UNINDEXED, msg_id UNINDEXED, conversation_id UNINDEXED)
+    """),
+
+    # v73 — Clear messages_fts before back-fill so retries are safe.
+    # If v73 ran but crashed before updating schema_version, a retry would
+    # re-execute v74 (the INSERT) on a partially-filled table, creating
+    # duplicates.  Clearing first makes the whole backfill restart-safe.
+    (73, "Clear messages_fts before back-fill (idempotent retry guard)", """
+        DELETE FROM messages_fts
+    """),
+
+    # v74 — Back-fill messages_fts for databases that existed before v72.
+    # Executed after the clear (v73) so this is always a clean insert.
+    (74, "Back-fill messages_fts from existing messages rows", """
+        INSERT INTO messages_fts(text, role, msg_id, conversation_id)
+            SELECT text, role, id, conversation_id FROM messages
+    """),
 ]
