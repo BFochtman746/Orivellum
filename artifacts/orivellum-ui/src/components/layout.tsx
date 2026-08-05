@@ -22,6 +22,7 @@ import {
   ChevronRight, Plus, Search, Archive, RotateCcw,
   Pencil, Check, X, Menu, DownloadCloud, Feather,
   ALargeSmall, Loader2, CheckCircle2, ExternalLink, Gauge, Inbox, Wand2, SlidersHorizontal,
+  BookMarked, GraduationCap,
 } from "lucide-react";
 import { useConnectivity } from "@/lib/useConnectivity";
 import { useQuery } from "@tanstack/react-query";
@@ -63,10 +64,12 @@ const PHASES = [
     id: "understand",
     label: "Understand",
     icon: BookOpen,
-    routes: ["/works", "/chat"],
+    routes: ["/works", "/chat", "/books", "/learn"],
     items: [
-      { name: "Works", href: "/works", icon: BookOpen },
-      { name: "Chat",  href: "/chat",  icon: MessageSquare },
+      { name: "Works",  href: "/works",  icon: BookOpen },
+      { name: "Books",  href: "/books",  icon: BookMarked },
+      { name: "Learn",  href: "/learn",  icon: GraduationCap },
+      { name: "Chat",   href: "/chat",   icon: MessageSquare },
     ],
   },
   {

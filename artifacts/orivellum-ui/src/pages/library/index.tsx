@@ -424,6 +424,8 @@ export default function Library() {
   const [, navigate] = useLocation();
   const searchStr = useSearch();
   const openImport = new URLSearchParams(searchStr).get("import") === "1";
+  // Tier filter pre-selected from URL (e.g. linked from dashboard scorecard tiles)
+  const urlTier = new URLSearchParams(searchStr).get("tier") ?? "all";
 
   const { data: listResp, isLoading: loadingList } = useListLibrary(
     {},
@@ -450,6 +452,10 @@ export default function Library() {
   const [kindFilter, setKindFilter] = useState<string>("all");
   const [workFilter, setWorkFilter] = useState<string>("all");
   const [lifecycleFilter, setLifecycleFilter] = useState<string>("all");
+  // Tier filter — initialised from ?tier= URL param so dashboard scorecard links work
+  const [tierFilter, setTierFilter] = useState<string>(
+    ["canon", "source", "artifact"].includes(urlTier) ? urlTier : "all"
+  );
   const [showFilters, setShowFilters] = useState(false);
   const [sortBy, setSortBy] = useState<"newest" | "oldest" | "a-z" | "z-a">("newest");
   const [groupByWork, setGroupByWork] = useState(false);
@@ -497,7 +503,14 @@ export default function Library() {
           ? !d.work_id
           : d.work_id === workFilter;
       const matchesLifecycle = lifecycleFilter === "all" || (d.lifecycle ?? "draft") === lifecycleFilter;
-      return matchesReadiness && matchesKind && matchesWork && matchesLifecycle;
+      const matchesTier = (() => {
+        if (tierFilter === "all") return true;
+        const docTier = d.tier ?? "source";
+        // "artifact" scorecard tile covers both artifact + system tiers
+        if (tierFilter === "artifact") return docTier === "artifact" || docTier === "system";
+        return docTier === tierFilter;
+      })();
+      return matchesReadiness && matchesKind && matchesWork && matchesLifecycle && matchesTier;
     })
     .sort((a, b) => {
       if (sortBy === "newest") return new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime();

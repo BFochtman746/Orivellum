@@ -23,7 +23,7 @@ import {
 // ── Constants ──────────────────────────────────────────────────────────────────
 
 const HEADER_HEIGHT = 56;
-const SHEET_CONTENT_HEIGHT = 320;
+const SHEET_CONTENT_HEIGHT = 420;
 
 // ── Server status ──────────────────────────────────────────────────────────────
 
@@ -47,6 +47,8 @@ function useSectionLabel(): string {
   const path = usePathname();
   if (path === '/' || path.endsWith('/index')) return 'Dashboard';
   if (path.includes('/conversations')) return 'Chats';
+  if (path.includes('/books')) return 'Books';
+  if (path.includes('/learn')) return 'Learn';
   if (path.includes('/works')) return 'Works';
   if (path.includes('/library')) return 'Library';
   return 'Orivellum';
@@ -138,11 +140,15 @@ const NAV_ITEMS: NavItem[] = [
   { key: 'index',         label: 'Dashboard', icon: 'home',           route: '/'              },
   { key: 'conversations', label: 'Chats',     icon: 'message-circle', route: '/conversations' },
   { key: 'works',         label: 'Works',     icon: 'book-open',      route: '/works'         },
+  { key: 'books',         label: 'Books',     icon: 'book',           route: '/books'         },
+  { key: 'learn',         label: 'Learn',     icon: 'award',          route: '/learn'         },
   { key: 'library',       label: 'Library',   icon: 'folder',         route: '/library'       },
 ];
 
 function currentRoute(path: string): string {
   if (path.includes('/conversations')) return '/conversations';
+  if (path.includes('/books')) return '/books';
+  if (path.includes('/learn')) return '/learn';
   if (path.includes('/works')) return '/works';
   if (path.includes('/library')) return '/library';
   return '/';
@@ -321,6 +327,8 @@ function NativeAppLayout() {
         <Tabs.Screen name="index" />
         <Tabs.Screen name="conversations" />
         <Tabs.Screen name="works" />
+        <Tabs.Screen name="books" />
+        <Tabs.Screen name="learn" />
         <Tabs.Screen name="library" />
       </Tabs>
       <NavBottomSheet visible={menuOpen} onClose={() => setMenuOpen(false)} />
@@ -371,6 +379,20 @@ function WebTabLayout() {
         options={{
           title: 'Works',
           tabBarIcon: ({ color }) => <Feather name="book-open" size={22} color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="books"
+        options={{
+          title: 'Books',
+          tabBarIcon: ({ color }) => <Feather name="book" size={22} color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="learn"
+        options={{
+          title: 'Learn',
+          tabBarIcon: ({ color }) => <Feather name="award" size={22} color={color} />,
         }}
       />
       <Tabs.Screen

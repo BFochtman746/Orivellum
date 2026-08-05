@@ -54,6 +54,61 @@ def works_list_types():
     return {"types": WORK_TYPES}
 
 
+@router.get("/books")
+def books_list():
+    """Return all Works that have a book pipeline, enriched with stage + word count."""
+    db = get_db()
+    with db._lock:
+        rows = db._conn.execute(
+            """SELECT w.id, w.title, w.work_type, w.status, w.description,
+                      o.updated_at, o.lifecycle,
+                      bp.id        AS pipeline_id,
+                      bp.status    AS pipeline_status,
+                      bp.chapter_count,
+                      (SELECT COUNT(*) FROM documents d WHERE d.work_id=w.id) AS doc_count,
+                      (SELECT COALESCE(SUM(d.word_count),0) FROM documents d
+                       WHERE d.work_id=w.id AND d.readiness='ready')          AS word_count
+               FROM book_pipelines bp
+               JOIN objects oo ON oo.id=bp.id AND oo.lifecycle != 'deleted'
+               JOIN works w    ON w.id=bp.work_id
+               JOIN objects o  ON o.id=w.id  AND o.lifecycle != 'deleted'
+               ORDER BY oo.updated_at DESC"""
+        ).fetchall()
+    from orivellum.capabilities.state_machine import BOOK_STAGE_LABELS
+    books = []
+    for r in rows:
+        d = dict(r)
+        d["stage_label"] = BOOK_STAGE_LABELS.get(d["pipeline_status"] or "", d.get("pipeline_status") or "")
+        books.append(d)
+    return {"books": books}
+
+
+@router.get("/learn")
+def learn_list():
+    """Return all Works with their mastery summary for the Learn home page."""
+    db = get_db()
+    works = db.list_works()
+    # Annotate each work with concept count and graduation stats from a single query
+    with db._lock:
+        concept_rows = db._conn.execute(
+            """SELECT wc.work_id,
+                      COUNT(DISTINCT wc.id) AS concept_count,
+                      SUM(CASE WHEN (
+                          SELECT consecutive_passes FROM work_mastery wm
+                          WHERE wm.concept_id=wc.id ORDER BY wm.created_at DESC LIMIT 1
+                      ) >= 3 THEN 1 ELSE 0 END) AS graduated_count
+               FROM work_concepts wc GROUP BY wc.work_id"""
+        ).fetchall()
+    mastery_by_work = {r["work_id"]: dict(r) for r in concept_rows}
+    for w in works:
+        m = mastery_by_work.get(w["id"], {})
+        w["concept_count"] = m.get("concept_count", 0)
+        w["graduated_count"] = m.get("graduated_count", 0)
+        total = w["concept_count"]
+        w["mastery_pct"] = round(w["graduated_count"] / total * 100) if total else 0
+    return {"works": works}
+
+
 @router.get("/works")
 def works_list(status: str | None = None, work_type: str | None = None):
     db = get_db()

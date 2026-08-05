@@ -27,6 +27,8 @@ import System from '@/pages/system/index';
 import GovernancePage from '@/pages/governance/index';
 import ReviewPage from '@/pages/review/index';
 import Mcos from '@/pages/mcos/index';
+import BooksPage from '@/pages/books/index';
+import LearnPage from '@/pages/learn/index';
 import NotFound from '@/pages/not-found';
 
 const queryClient = new QueryClient({
@@ -70,6 +72,8 @@ function Router() {
         <Route path="/mcos">{() => <RouteWithBoundary component={Mcos} />}</Route>
         <Route path="/governance">{() => <RouteWithBoundary component={GovernancePage} />}</Route>
         <Route path="/review">{() => <RouteWithBoundary component={ReviewPage} />}</Route>
+        <Route path="/books">{() => <RouteWithBoundary component={BooksPage} />}</Route>
+        <Route path="/learn">{() => <RouteWithBoundary component={LearnPage} />}</Route>
         <Route component={NotFound} />
       </Switch>
     </AppLayout>

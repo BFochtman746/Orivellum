@@ -13,7 +13,12 @@ import {
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { format, formatDistanceToNow } from "date-fns";
-import { BookOpen, Library, MessageSquare, Target, Activity, FileText, CheckCircle2, Clock, Plus, Upload, FolderPlus, Sparkles, RefreshCw, ArrowRight, Lightbulb, Telescope, Zap, GitMerge, AlertTriangle } from "lucide-react";
+import {
+  BookOpen, Library, MessageSquare, Target, Activity, FileText, CheckCircle2,
+  Clock, Plus, Upload, FolderPlus, Sparkles, RefreshCw, ArrowRight, Lightbulb,
+  Telescope, Zap, GitMerge, AlertTriangle, BookMarked, GraduationCap, Award,
+  Star, BarChart3,
+} from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -287,14 +292,8 @@ export default function Dashboard() {
   const docTotal = summary?.document_count ?? 0;
   const docReady = summary?.documents_ready ?? 0;
   const tierCounts: Record<string, number> = (summary as any)?.document_tier_counts ?? {};
-  const tierSubtitle = (() => {
-    const parts: string[] = [];
-    if (tierCounts.canon)   parts.push(`${tierCounts.canon} canon`);
-    if (tierCounts.source)  parts.push(`${tierCounts.source} source`);
-    if (tierCounts.artifact || tierCounts.system)
-      parts.push(`${(tierCounts.artifact ?? 0) + (tierCounts.system ?? 0)} artifact`);
-    return parts.length ? parts.join(" · ") : (docTotal > 0 ? `${docReady} of ${docTotal} ready` : undefined);
-  })();
+  const booksInProgress: number = (summary as any)?.books_in_progress ?? 0;
+  const conceptsMastered: number = (summary as any)?.concepts_mastered ?? 0;
 
   return (
     <div className="space-y-8 max-w-5xl animate-in fade-in slide-in-from-bottom-4 duration-500">
@@ -362,37 +361,72 @@ export default function Dashboard() {
         </Button>
       </div>
 
-      {/* Stats Grid */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <StatCard
-          title="Works"
-          value={summary?.work_count}
-          icon={BookOpen}
-          href="/works"
-          loading={loadingSummary}
-        />
-        <StatCard
-          title="Documents"
-          value={docTotal}
-          subtitle={tierSubtitle}
-          icon={Library}
-          href="/library"
-          loading={loadingSummary}
-        />
-        <StatCard
-          title="Conversations"
-          value={summary?.conversation_count}
-          icon={MessageSquare}
-          href="/chat"
-          loading={loadingSummary}
-        />
-        <StatCard
-          title="Knowledge Nodes"
-          value={summary?.knowledge_count}
-          icon={Target}
-          href="/works"
-          loading={loadingSummary}
-        />
+      {/* ── Scorecard ─────────────────────────────────────────────────────────── */}
+      <div className="space-y-3">
+        <div className="flex items-center gap-2">
+          <BarChart3 className="w-4 h-4 text-muted-foreground" />
+          <h2 className="text-sm font-mono uppercase tracking-wider text-muted-foreground">Scorecard</h2>
+        </div>
+
+        {/* Tier breakdown — real canonical vs source vs artifact */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+          {loadingSummary ? (
+            <>
+              {[1,2,3,4,5,6].map(i => <Skeleton key={i} className="h-20 rounded-xl" />)}
+            </>
+          ) : (
+            <>
+              {/* CANON */}
+              <Link href="/library?tier=canon">
+                <div className="group p-4 rounded-xl border border-violet-200/60 bg-violet-50/50 hover:border-violet-300 hover:bg-violet-50 transition-colors cursor-pointer space-y-1 text-center">
+                  <Star className="w-4 h-4 text-violet-500 mx-auto" />
+                  <div className="text-2xl font-serif font-bold text-violet-700">{tierCounts.canon ?? 0}</div>
+                  <div className="text-[9px] font-mono uppercase tracking-wider text-violet-600">Canon</div>
+                </div>
+              </Link>
+              {/* SOURCE */}
+              <Link href="/library?tier=source">
+                <div className="group p-4 rounded-xl border border-blue-200/60 bg-blue-50/50 hover:border-blue-300 hover:bg-blue-50 transition-colors cursor-pointer space-y-1 text-center">
+                  <Library className="w-4 h-4 text-blue-500 mx-auto" />
+                  <div className="text-2xl font-serif font-bold text-blue-700">{tierCounts.source ?? 0}</div>
+                  <div className="text-[9px] font-mono uppercase tracking-wider text-blue-600">Source</div>
+                </div>
+              </Link>
+              {/* ARTIFACT */}
+              <Link href="/library?tier=artifact">
+                <div className="group p-4 rounded-xl border border-amber-200/60 bg-amber-50/50 hover:border-amber-300 hover:bg-amber-50 transition-colors cursor-pointer space-y-1 text-center">
+                  <FileText className="w-4 h-4 text-amber-500 mx-auto" />
+                  <div className="text-2xl font-serif font-bold text-amber-700">{(tierCounts.artifact ?? 0) + (tierCounts.system ?? 0)}</div>
+                  <div className="text-[9px] font-mono uppercase tracking-wider text-amber-600">Artifact</div>
+                </div>
+              </Link>
+              {/* Books in progress */}
+              <Link href="/books">
+                <div className="group p-4 rounded-xl border border-emerald-200/60 bg-emerald-50/50 hover:border-emerald-300 hover:bg-emerald-50 transition-colors cursor-pointer space-y-1 text-center">
+                  <BookMarked className="w-4 h-4 text-emerald-500 mx-auto" />
+                  <div className="text-2xl font-serif font-bold text-emerald-700">{booksInProgress}</div>
+                  <div className="text-[9px] font-mono uppercase tracking-wider text-emerald-600">Books</div>
+                </div>
+              </Link>
+              {/* Concepts mastered */}
+              <Link href="/learn">
+                <div className="group p-4 rounded-xl border border-rose-200/60 bg-rose-50/50 hover:border-rose-300 hover:bg-rose-50 transition-colors cursor-pointer space-y-1 text-center">
+                  <GraduationCap className="w-4 h-4 text-rose-500 mx-auto" />
+                  <div className="text-2xl font-serif font-bold text-rose-700">{conceptsMastered}</div>
+                  <div className="text-[9px] font-mono uppercase tracking-wider text-rose-600">Mastered</div>
+                </div>
+              </Link>
+              {/* Knowledge */}
+              <Link href="/works">
+                <div className="group p-4 rounded-xl border border-border/50 bg-card hover:border-primary/30 transition-colors cursor-pointer space-y-1 text-center">
+                  <Target className="w-4 h-4 text-primary mx-auto" />
+                  <div className="text-2xl font-serif font-bold">{summary?.knowledge_count ?? 0}</div>
+                  <div className="text-[9px] font-mono uppercase tracking-wider text-muted-foreground">Knowledge</div>
+                </div>
+              </Link>
+            </>
+          )}
+        </div>
       </div>
 
       {/* Research Gaps — only shown when there are active critical gaps */}

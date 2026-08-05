@@ -2680,6 +2680,16 @@ class OrivellumDB:
             tier_rows = self._conn.execute(
                 "SELECT tier, COUNT(*) as cnt FROM documents GROUP BY tier"
             ).fetchall()
+            books_in_progress = self._conn.execute(
+                """SELECT COUNT(*) FROM book_pipelines bp
+                   JOIN objects o ON o.id=bp.id
+                   WHERE o.lifecycle != 'deleted'
+                     AND bp.status NOT IN ('B17','complete','published')"""
+            ).fetchone()[0]
+            concepts_mastered = self._conn.execute(
+                """SELECT COUNT(DISTINCT concept_id) FROM work_mastery
+                   WHERE consecutive_passes >= 3"""
+            ).fetchone()[0]
         tier_counts = {r["tier"]: r["cnt"] for r in tier_rows}
         return {
             "work_count": work_count,
@@ -2689,6 +2699,8 @@ class OrivellumDB:
             "conversation_count": conv_count,
             "pending_task_count": task_count,
             "document_tier_counts": tier_counts,
+            "books_in_progress": books_in_progress,
+            "concepts_mastered": concepts_mastered,
             "recent_works": [dict(r) for r in recent_works],
             "recent_documents": [dict(r) for r in recent_docs],
             "recent_conversations": [dict(r) for r in recent_convs],
