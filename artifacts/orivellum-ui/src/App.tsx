@@ -39,10 +39,16 @@ const queryClient = new QueryClient({
     queries: {
       retry: 1,
       refetchOnWindowFocus: false,
-      // Global staleTime: data is fresh for 5 minutes, eliminating
-      // redundant refetches on every component mount and window focus.
-      // Per-query overrides (e.g. real-time polls) still use their own values.
-      staleTime: 5 * 60 * 1000,
+      // Global staleTime: data is fresh for 30 s, so navigating between pages
+      // never shows a loading spinner for data fetched in the last half-minute.
+      // Real-time queries (progress panel, connectivity, chat polling) override
+      // this with their own shorter staleTime / refetchInterval values.
+      staleTime: 30_000,
+      // Keep inactive query cache for 5 minutes before garbage-collecting it.
+      // This lets the user navigate back to a page without a full refetch for
+      // the first 5 minutes, even after the 30 s staleTime window has passed
+      // (the data is served from cache while a background refetch runs).
+      gcTime: 300_000,
     },
   },
 });
