@@ -318,40 +318,195 @@ class OrivellumDB:
                 re-raised.
         """
         with self._lock:
-            # Sentinel: use set_trace_callback to detect if the caller issues a
-            # COMMIT inside the block, which would skip the audit-log and outbox
-            # insertions that governed_write appends after yield.
-            # sqlite3.Connection.commit is a C-extension method (read-only attr),
-            # so we cannot monkey-patch it; trace_callback is writable.
-            _early_commit_detected = False
+            # Replace self._conn with a hardened proxy for the duration of the block.
+            #
+            # Enforcement layers:
+            #
+            #  Layer A — Proxy (prevention for callers who use db._conn):
+            #   1. commit()         – direct Python-level commit intercepted; no-op
+            #   2. execute("COMMIT")– SQL COMMIT / END intercepted, not forwarded
+            #   3. executescript()  – always implicitly COMMITs; intercepted entirely
+            #   4. cursor()         – returns a _GuardedCursor; its .connection
+            #                        property returns the proxy so chained
+            #                        cursor().connection.commit() is also intercepted
+            #   5. execute/executemany – return _GuardedCursor so .connection
+            #                        on the returned cursor also resolves to proxy
+            #
+            #  Layer B — Trace callback (SQL-level detection for real-conn paths):
+            #   - set_trace_callback fires for SQL sent via _real_conn.execute(),
+            #     including cursors derived from it.  It catches execute("COMMIT")
+            #     for callers who hold a pre-existing cursor and use execute().
+            #   - LIMITATION: does NOT fire for Python-level connection.commit().
+            #
+            #  Layer C — Universal post-yield in_transaction check (closes all gaps):
+            #   - After yield, if DML was written (total_changes increased) but the
+            #     outer transaction is gone (in_transaction is False), something
+            #     committed — even via a pre-existing connection/cursor alias that
+            #     bypassed the proxy entirely.  This is the definitive check.
+            #
+            # Safety: self._lock is held for the entire governed_write block so no
+            # other thread observes the temporary proxy on self._conn.
+            _early_commit_attempted = False
+            _real_conn = self._conn
+            # Snapshot state before yield so Layer C can detect alias-based commits.
+            _tx_changes_before = _real_conn.total_changes
 
+            def _flag() -> None:
+                nonlocal _early_commit_attempted
+                _early_commit_attempted = True
+
+            import re as _re
+
+            def _is_commit_sql(sql: str) -> bool:
+                """True if sql begins with a SQLite transaction-ending statement.
+
+                Handles all forms SQLite accepts as a transaction commit:
+                  COMMIT, COMMIT TRANSACTION, END, END TRANSACTION
+
+                SQL comments (both -- line and /* block */ styles) are stripped
+                before checking the first meaningful token so that constructs like
+                ``-- note\nEND`` are also caught.
+                """
+                if not sql or not sql.strip():
+                    return False
+                # Strip block comments (/* ... */) — non-greedy, dotall
+                cleaned = _re.sub(r"/\*.*?\*/", " ", sql, flags=_re.DOTALL)
+                # Strip line comments (-- ...) 
+                cleaned = _re.sub(r"--[^\n]*", " ", cleaned)
+                first = cleaned.strip().upper().split()
+                if not first:
+                    return False
+                # SQLite commit forms: COMMIT [TRANSACTION], END [TRANSACTION]
+                return first[0] in ("COMMIT", "END")
+
+            # Defense-in-depth trace callback: fires for any SQL that reaches
+            # _real_conn.execute(), including from cursors derived from it.
             def _commit_tracer(sql: str) -> None:
-                nonlocal _early_commit_detected
-                if sql.strip().upper() in ("COMMIT", "COMMIT;"):
-                    _early_commit_detected = True
+                if _is_commit_sql(sql):
+                    _flag()
 
-            self._conn.set_trace_callback(_commit_tracer)
+            _real_conn.set_trace_callback(_commit_tracer)
+
+            # Forward-declare so _GuardedCursor.connection can reference it.
+            _proxy: "_NoCommitProxy | None" = None
+
+            class _GuardedCursor:
+                """Wraps a real sqlite3.Cursor so .connection returns the proxy.
+
+                Every method that can return a cursor (execute, executemany) returns
+                ``self`` rather than the underlying raw cursor so that the `.connection`
+                property always resolves to the proxy, never the real connection.
+                """
+                __slots__ = ("_cur",)
+
+                def __init__(self, real_cur: Any) -> None:
+                    object.__setattr__(self, "_cur", real_cur)
+
+                @property
+                def connection(self) -> Any:
+                    # Return the proxy — not the real connection — so
+                    # cursor().connection.commit() is also intercepted.
+                    return _proxy
+
+                def execute(self, sql: str, params: Any = ()) -> "_GuardedCursor":
+                    if _is_commit_sql(sql):
+                        _flag()
+                        return self
+                    object.__getattribute__(self, "_cur").execute(sql, params)
+                    # cursor.execute() returns the cursor itself; we return self
+                    # so the caller's .connection always resolves to the proxy.
+                    return self
+
+                def executemany(self, sql: str, seq: Any) -> "_GuardedCursor":
+                    if _is_commit_sql(sql):
+                        _flag()
+                        return self
+                    object.__getattribute__(self, "_cur").executemany(sql, seq)
+                    return self
+
+                def __getattr__(self, name: str) -> Any:
+                    return getattr(object.__getattribute__(self, "_cur"), name)
+
+            class _NoCommitProxy:
+                """Proxy connection that intercepts all commit paths.
+
+                Every method that can return a cursor wraps the result in
+                _GuardedCursor so that the returned cursor's .connection attribute
+                also points to this proxy rather than the real connection.
+                """
+
+                def commit(self) -> None:
+                    _flag()
+                    # Do NOT forward — leave domain changes pending so governed_write
+                    # can roll them back cleanly after detecting the attempt.
+
+                def rollback(self) -> None:
+                    _real_conn.rollback()
+
+                def execute(self, sql: str, params: Any = ()) -> "_GuardedCursor":
+                    if _is_commit_sql(sql):
+                        _flag()
+                        return _GuardedCursor(_real_conn.cursor())
+                    # Wrap the returned cursor so its .connection → proxy.
+                    return _GuardedCursor(_real_conn.execute(sql, params))
+
+                def executemany(self, sql: str, seq: Any) -> "_GuardedCursor":
+                    if _is_commit_sql(sql):
+                        _flag()
+                        return _GuardedCursor(_real_conn.cursor())
+                    return _GuardedCursor(_real_conn.executemany(sql, seq))
+
+                def executescript(self, script: str) -> None:
+                    # executescript() always issues an implicit COMMIT before and
+                    # after the script — any call inside governed_write is forbidden.
+                    _flag()
+
+                def cursor(self) -> "_GuardedCursor":
+                    return _GuardedCursor(_real_conn.cursor())
+
+                def __getattr__(self, name: str) -> Any:
+                    return getattr(_real_conn, name)
+
+            _proxy = _NoCommitProxy()
+            self._conn = _proxy
             try:
                 yield
-                # Clear trace BEFORE our own audit/outbox/commit so we only
-                # catch commits that the caller issued, not our own.
-                self._conn.set_trace_callback(None)
-                if _early_commit_detected:
-                    self._conn.rollback()
+                # Restore real connection BEFORE writing audit/outbox.
+                self._conn = _real_conn
+                _real_conn.set_trace_callback(None)
+
+                # Layer C — universal commit detection:
+                # If DML was executed (total_changes increased) but the outer
+                # transaction is no longer open, something committed — whether via
+                # the proxy (already flagged), via a SQL-level execute("COMMIT")
+                # (caught by trace), or via a pre-existing raw-connection/cursor
+                # alias that bypassed the proxy entirely.
+                _dml_was_written = _real_conn.total_changes > _tx_changes_before
+                _tx_was_committed = not _real_conn.in_transaction and _dml_was_written
+
+                if _early_commit_attempted or _tx_was_committed:
+                    try:
+                        _real_conn.rollback()  # no-op if already committed; clears any remaining state
+                    except Exception:
+                        pass
                     raise RuntimeError(
                         "governed_write: caller issued COMMIT inside the block — "
-                        "audit log and outbox were NOT written. "
-                        "Remove the _conn.commit() call from inside the 'with' block."
+                        "audit log and outbox were NOT written and the domain change "
+                        "was rolled back (or already committed if a pre-existing "
+                        "alias was used). Remove the commit() / execute('COMMIT') / "
+                        "executescript() call from inside the "
+                        "'with governed_write(...)' block."
                     )
                 self._audit_tx(operation, object_id, object_type,
                                actor=actor, detail=detail)
                 self._emit_outbox_tx(event_type, object_id, object_type,
                                      payload or {})
-                self._conn.commit()
+                _real_conn.commit()
             except Exception:
-                self._conn.set_trace_callback(None)  # always restore
+                self._conn = _real_conn  # always restore
+                _real_conn.set_trace_callback(None)
                 try:
-                    self._conn.rollback()
+                    _real_conn.rollback()
                 except Exception:
                     pass
                 raise
