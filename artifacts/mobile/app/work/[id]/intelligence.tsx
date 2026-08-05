@@ -14,7 +14,7 @@ import {
   Text,
   View,
 } from 'react-native';
-import { useLocalSearchParams, useNavigation } from 'expo-router';
+import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { useColors } from '@/hooks/useColors';
@@ -73,6 +73,7 @@ function MetricRow({ label, value, unit }: { label: string; value: number; unit?
 export default function WorkIntelligenceScreen() {
   const colors   = useColors();
   const insets   = useSafeAreaInsets();
+  const router   = useRouter();
   const isWeb    = Platform.OS === 'web';
   const { id }   = useLocalSearchParams<{ id: string }>();
   const navigation = useNavigation();
@@ -149,6 +150,26 @@ export default function WorkIntelligenceScreen() {
         <RefreshControl refreshing={loading} onRefresh={fetchAll} tintColor={colors.primary} />
       }
     >
+      {/* ── Graph entry point ── */}
+      <Pressable
+        onPress={() => router.push(`/graph?work_id=${id}` as any)}
+        style={({ pressed }) => [
+          s.graphBtn,
+          { backgroundColor: colors.card, borderColor: colors.border, opacity: pressed ? 0.7 : 1 },
+        ]}
+      >
+        <View style={[s.graphBtnIcon, { backgroundColor: colors.primary + '18' }]}>
+          <Feather name="share-2" size={16} color={colors.primary} />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={[s.graphBtnTitle, { color: colors.foreground }]}>Knowledge Graph</Text>
+          <Text style={[s.graphBtnSub, { color: colors.mutedForeground }]}>
+            Explore concept relationships visually
+          </Text>
+        </View>
+        <Feather name="chevron-right" size={16} color={colors.mutedForeground} />
+      </Pressable>
+
       {/* ── Overall completeness ── */}
       <Section title="Completeness">
         <MetricRow
@@ -282,4 +303,13 @@ const s = StyleSheet.create({
   chapterNumText:    { fontSize: 11, fontFamily: 'Inter_600SemiBold' },
   chapterTitle:      { fontSize: 13, fontFamily: 'Inter_500Medium' },
   chapterSummary:    { fontSize: 11, fontFamily: 'Inter_400Regular', marginTop: 2 },
+
+  // Graph entry card
+  graphBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    borderWidth: 1, borderRadius: 12, padding: 14, marginBottom: 20,
+  },
+  graphBtnIcon: { width: 38, height: 38, borderRadius: 9, alignItems: 'center', justifyContent: 'center' },
+  graphBtnTitle: { fontSize: 14, fontFamily: 'Inter_600SemiBold', marginBottom: 2 },
+  graphBtnSub:   { fontSize: 12, fontFamily: 'Inter_400Regular' },
 });

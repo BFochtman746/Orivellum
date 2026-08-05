@@ -83,6 +83,7 @@ function useSectionLabel(): string {
   if (path.includes('/intake')) return 'Load Anything';
   if (path.includes('/review')) return 'Review';
   if (path.includes('/backups')) return 'Backups';
+  if (path.includes('/graph')) return 'Knowledge Graph';
   if (path.includes('/works')) return 'Works';
   if (path.includes('/library')) return 'Library';
   return 'Orivellum';

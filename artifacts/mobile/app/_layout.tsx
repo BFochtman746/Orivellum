@@ -160,6 +160,10 @@ function RootLayoutNav() {
           title: '',
         }}
       />
+      {/* Screens with fully-custom headers — suppress the native Stack header */}
+      <Stack.Screen name="graph"   options={{ headerShown: false }} />
+      <Stack.Screen name="backups" options={{ headerShown: false }} />
+      <Stack.Screen name="review"  options={{ headerShown: false }} />
     </Stack>
   );
 }
