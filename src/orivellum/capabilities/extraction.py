@@ -700,15 +700,20 @@ def _extract_audio(path: Path, db=None) -> ExtractionResult:
     from email.mime.application import MIMEApplication
 
     base_url: str = ""
+    asr_model: str = "whisper-1"
     try:
         # Prefer the request-scoped config when running inside the FastAPI server.
         # Fall back to load_config() when called from a standalone script or test.
         try:
             from orivellum.api._deps import get_config as _get_cfg
-            base_url = _get_cfg().serving.base_url.rstrip("/")
+            _cfg_obj = _get_cfg()
+            base_url  = _cfg_obj.serving.base_url.rstrip("/")
+            asr_model = _cfg_obj.serving.asr_model
         except Exception:
             from orivellum.configuration.config import load_config as _load_cfg
-            base_url = _load_cfg().serving.base_url.rstrip("/")
+            _cfg_obj  = _load_cfg()
+            base_url  = _cfg_obj.serving.base_url.rstrip("/")
+            asr_model = getattr(_cfg_obj.serving, "asr_model", "whisper-1")
     except Exception:
         pass
 
@@ -747,11 +752,11 @@ def _extract_audio(path: Path, db=None) -> ExtractionResult:
             f"Content-Type: {mime_type}\r\n\r\n"
             .encode("utf-8") + file_bytes + b"\r\n"
         )
-        # model part
+        # model part — uses cfg.serving.asr_model (default: "whisper-1")
         body_parts.append(
             f"--{boundary}\r\n"
             'Content-Disposition: form-data; name="model"\r\n\r\n'
-            f"whisper-1\r\n"
+            f"{asr_model}\r\n"
             .encode("utf-8")
         )
         body_parts.append(f"--{boundary}--\r\n".encode("utf-8"))

@@ -22,27 +22,61 @@ serving:
   # If you see connection errors, try: http://127.0.0.1:11434/v1  (Ollama-compat)
   base_url: "http://127.0.0.1:8000/v1"
 
-  # ── Model selection ──────────────────────────────────────────────────────────
+  # ── Model selection (A-01 Capability Study — Aug 2026) ───────────────────────
   # Pull models with: lemonade pull <name>
   # Lemonade optimises automatically — NPU for 7-14 B, iGPU for 32-70 B.
   # Use  lemonade list  to see downloaded models;  lemonade models  for all.
   #
-  # Recommended for Ryzen AI Max+ 395 (128 GB unified RAM):
-  #   lemonade pull phi4          # 14B — fast NPU inference, best daily driver
-  #   lemonade pull llama3.3-70b  # 70B — iGPU, full quality, 128K context
-  #   lemonade pull qwen2.5-7b    # 7B  — very fast NPU, low-latency Q&A
-  #   lemonade pull phi3.5-mini   # 3.8B NPU — near-instant responses
+  # ── Current loadout (your Ryzen AI Max+ 395, 128 GB) ─────────────────────────
+  #  WORKHORSE options:
+  #    llama3.3-70b          — 70B iGPU, high single-pass quality, 128K ctx  (current)
+  #    Qwen3-30B-A3B         — 30B MoE, only 3B active → ~3× faster, same quality  ★ recommended
+  #    Qwen3-32B             — dense 32B, higher ceiling than MoE on hard tasks
+  #
+  #  REASONER options:
+  #    phi4                  — 14B NPU, fast  (current)
+  #    gpt-oss-120b          — 120B MXFP4 (~65 GB), best local reasoning  ★ A-01 pick
+  #
+  #  CODER options:
+  #    qwen2.5-coder-32b     — 32B dense coder  (current)
+  #    Qwen3-Coder-30B-A3B   — MoE coder, 256K ctx, purpose-built for agents  ★ recommended
+  #    Qwen3.6-27B           — 27B dense, ~77% SWE-bench Verified
   #
   # Model names must match exactly what  `lemonade list`  shows after pulling.
   workhorse_model: "llama3.3-70b"
   reasoner_model:  "phi4"
   coder_model:     "qwen2.5-coder-32b"
-  # Embeddings: Lemonade supports OpenAI-compatible /v1/embeddings.
-  # Use nomic-embed-text or a HuggingFace embedding model via Lemonade.
-  # If Lemonade's embedding endpoint is not enabled, Orivellum falls back
-  # to keyword-only search automatically (no data loss, just lower recall).
-  embedder_model:  "nomic-embed-text"
+
+  # ── Embeddings ────────────────────────────────────────────────────────────────
+  # Options ranked by quality (all OpenAI-compatible /v1/embeddings):
+  #   nomic-embed-text        — ~0.3 GB, 8K ctx, good all-rounder  (current)
+  #   Qwen3-Embedding-8B      — SOTA open-source, 70.6 MTEB, ~5 GB Q4  ★ recommended
+  #   BGE-M3                  — dense + sparse + multi-vector, 100+ langs, hybrid search
+  # NOTE: changing embedder re-indexes the entire library (different vector dims).
+  # Run: lemonade pull Qwen3-Embedding-8B  then update the value below.
+  embedder_model: "nomic-embed-text"
+
+  # ── Vision / OCR ──────────────────────────────────────────────────────────────
+  # Qwen3-VL-8B: DocVQA ~96 (vs Tesseract ~72), 32-language OCR, GUI grounding.
+  # Apache 2.0, ~5 GB Q4.  Dramatically better on scanned / complex documents.
+  # To enable: lemonade pull Qwen3-VL-8B  then set: vision_model: "Qwen3-VL-8B"
   vision_model: ""
+
+  # ── TTS / ASR ─────────────────────────────────────────────────────────────────
+  # TTS model name for the AI server /v1/audio/speech endpoint.
+  # "tts-1-hd" gives higher quality; "tts-1" is faster.
+  # Kokoro-82M (local ONNX) is used as fallback when AI server is unavailable.
+  tts_model: "tts-1-hd"
+  # ASR model for /v1/audio/transcriptions.
+  # faster-whisper (CTranslate2) is ~4× faster when self-hosted.
+  # Alternatives: "faster-whisper", "whisper-large-v3", "parakeet-tdt-1.1b"
+  asr_model: "whisper-1"
+
+  # ── Reranker ──────────────────────────────────────────────────────────────────
+  # Leave empty → RRF (reciprocal-rank fusion) only.
+  # A reranker typically gives +5–10% RAG precision at low extra latency.
+  # Options: "BAAI/bge-reranker-v2-m3" (MIT) or "Qwen3-Reranker-8B" (Apache 2.0)
+  reranker_model: ""
 
   # ── Context window ───────────────────────────────────────────────────────────
   # llama3.3-70b supports 128 K tokens.  The Ryzen AI Max+ 395 iGPU KV-cache

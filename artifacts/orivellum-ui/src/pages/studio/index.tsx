@@ -34,7 +34,23 @@ const STUDIO_STATUS_KEY = ["studio", "status"] as const;
 type TtsStrategy = { name: string; key: string; available: boolean; latency_ms: number | null };
 type ImgBackend = { name: string; url: string; online: boolean };
 type StudioStatus = {
-  tts: { available: boolean; best_strategy: string | null; strategies: TtsStrategy[] };
+  tts: {
+    available: boolean;
+    best_strategy: string | null;
+    /** True only when the Kokoro ONNX model is loaded in memory (neural quality). */
+    kokoro_loaded: boolean;
+    /** True when the kokoro_onnx Python package is installed (may still be model-missing). */
+    kokoro_pkg_installed: boolean;
+    strategies: TtsStrategy[];
+    /**
+     * Engine that will be used for voice *sample* synthesis.
+     * "kokoro_onnx" = neural | "espeak_ng" = basic | null = no local sample engine (503).
+     * NOTE: AI Server is NOT a valid fallback for the sample route — this field
+     * reflects only local engine availability, independent of `best_strategy`.
+     */
+    sample_engine: "kokoro_onnx" | "espeak_ng" | null;
+    sample_available: boolean;
+  };
   image_gen: { available: boolean; backends: ImgBackend[] };
   ocr: { available: boolean; engine: string | null; missing: string[] };
   last_checked: string;
@@ -52,16 +68,25 @@ function useStudioStatus() {
 
 // ── Service status bar ─────────────────────────────────────────────────────────
 
-function StatusPill({ label, available, detail, note }: {
+function StatusPill({ label, available, detail, note, warning }: {
   label: string;
   available: boolean;
   detail?: string;
   note?: string;
+  /** When true, shows an amber pill even though `available` is true — used to
+   *  signal degraded-but-functional state (e.g. espeak fallback active). */
+  warning?: boolean;
 }) {
-  const color = available
-    ? "border-emerald-200 text-emerald-700 bg-emerald-50/60"
-    : "border-amber-200 text-amber-700 bg-amber-50/60";
-  const dot = available ? "bg-emerald-500" : "bg-amber-400 animate-pulse";
+  const color = (!available)
+    ? "border-amber-200 text-amber-700 bg-amber-50/60"
+    : warning
+      ? "border-amber-200 text-amber-700 bg-amber-50/60"
+      : "border-emerald-200 text-emerald-700 bg-emerald-50/60";
+  const dot = (!available)
+    ? "bg-amber-400 animate-pulse"
+    : warning
+      ? "bg-amber-400 animate-pulse"
+      : "bg-emerald-500";
   return (
     <span className={`inline-flex items-center gap-1.5 text-[11px] font-mono px-2.5 py-1 rounded-full border ${color}`}
       title={note}>
@@ -100,7 +125,7 @@ function ServiceStatusBar() {
 
           {data && (
             <div className="flex flex-wrap items-center gap-2">
-              {/* TTS */}
+              {/* General TTS — reflects overall synthesis availability (AI Server, Kokoro, espeak) */}
               <StatusPill
                 label="TTS"
                 available={data.tts.available}
@@ -109,6 +134,29 @@ function ServiceStatusBar() {
                   data.tts.available
                     ? `Strategies available: ${data.tts.strategies.filter(s => s.available).map(s => s.name).join(", ")}`
                     : "All TTS strategies offline — check AI server, Kokoro ONNX, and espeak-ng"
+                }
+              />
+
+              {/* Voice samples — separate from general TTS; only Kokoro or espeak can generate catalog samples */}
+              <StatusPill
+                label="Samples"
+                available={data.tts.sample_available}
+                warning={data.tts.sample_available && data.tts.sample_engine !== "kokoro_onnx"}
+                detail={
+                  !data.tts.sample_available
+                    ? "unavailable"
+                    : data.tts.sample_engine === "kokoro_onnx"
+                      ? "Kokoro"
+                      : "espeak (basic)"
+                }
+                note={
+                  !data.tts.sample_available
+                    ? "No local TTS engine can generate voice samples — install Kokoro ONNX or espeak-ng. Voice sample previews will return 503."
+                    : data.tts.sample_engine === "kokoro_onnx"
+                      ? "Kokoro ONNX is loaded — voice catalog samples use neural synthesis (premium quality)"
+                      : data.tts.kokoro_pkg_installed
+                        ? "Kokoro package installed but model not yet loaded — samples fall back to espeak (basic quality) until Kokoro initializes"
+                        : "Kokoro ONNX not installed — samples use espeak (basic quality). Install kokoro-onnx for premium neural voices."
                 }
               />
 

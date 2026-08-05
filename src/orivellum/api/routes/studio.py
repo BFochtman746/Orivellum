@@ -122,6 +122,19 @@ def _get_kokoro():
     return _kokoro_instance
 
 
+def _is_kokoro_loaded() -> bool:
+    """Return True only when the Kokoro ONNX model is actually loaded in memory.
+
+    Distinguishes "package installed but model files absent/failed to load"
+    (returns False) from "fully operational" (returns True).
+
+    The status endpoint uses this instead of importlib.util.find_spec so that
+    it accurately reflects whether neural voice synthesis is live — not just
+    whether the Python wheel is present.
+    """
+    return _kokoro_instance is not None
+
+
 # ── Voices ────────────────────────────────────────────────────────────────────
 
 # espeak-ng fallback map (robotic but always available)
@@ -488,13 +501,26 @@ def _apply_acx_mastering(input_path: str, output_path: str) -> bool:
 
 @router.get("/studio/voices")
 def list_voices():
-    """Return the full voice catalog plus any custom voice profiles."""
+    """Return the full voice catalog plus any custom voice profiles.
+
+    Each voice entry includes a ``sample_engine`` field (``"kokoro"``,
+    ``"espeak"``, or ``null``) sourced from the voice_samples DB table.
+    A non-null value means a sample has already been generated; ``"espeak"``
+    means the robotic fallback was used and the UI should warn the user.
+    """
     db = get_db()
     with db._lock:
-        rows = db._conn.execute(
+        profile_rows = db._conn.execute(
             "SELECT * FROM voice_profiles ORDER BY is_default DESC, name"
         ).fetchall()
-    profiles = [dict(r) for r in rows]
+        # Batch-fetch sample engine for every known voice in one query
+        sample_rows = db._conn.execute(
+            "SELECT voice_id, engine FROM voice_samples"
+        ).fetchall()
+
+    engine_map: dict[str, str] = {r["voice_id"]: r["engine"] for r in sample_rows}
+
+    profiles = [dict(r) for r in profile_rows]
     # Mark custom profiles and add missing catalog fields
     for p in profiles:
         p.setdefault("accent", "custom")
@@ -504,9 +530,16 @@ def list_voices():
         p.setdefault("tags", [])
         p["builtin"] = False
         p["custom"] = True
+        p["sample_engine"] = engine_map.get(p.get("id", ""))
+
+    # Return catalog copies annotated with sample_engine (avoids mutating the
+    # module-level _VOICE_CATALOG list)
+    catalog_with_engine = [
+        {**v, "sample_engine": engine_map.get(v["id"])} for v in _VOICE_CATALOG
+    ]
 
     return {
-        "voices": _VOICE_CATALOG + profiles,
+        "voices": catalog_with_engine + profiles,
         "catalog_count": len(_VOICE_CATALOG),
         "profile_count": len(profiles),
     }
@@ -545,6 +578,20 @@ def _lookup_voice_sample_db(db, voice_id: str) -> str | None:
             (voice_id,),
         ).fetchone()
     return row["sample_path"] if row else None
+
+
+def _lookup_voice_sample_engine(db, voice_id: str) -> str | None:
+    """Return the synthesis engine recorded for *voice_id*'s cached sample.
+
+    Returns ``"kokoro"`` when neural synthesis was used, ``"espeak"`` when the
+    robotic fallback was used, or ``None`` when no sample exists yet.
+    """
+    with db._lock:
+        row = db._conn.execute(
+            "SELECT engine FROM voice_samples WHERE voice_id=?",
+            (voice_id,),
+        ).fetchone()
+    return row["engine"] if row else None
 
 
 def _synthesize_sample_sync(voice_id: str) -> Path | None:
@@ -636,28 +683,42 @@ async def get_voice_sample(voice_id: str):
       1. voice_samples DB row → file path (fast lookup, survives restarts)
       2. Deterministic file path in data/voice_samples/ (pre-DB back-compat)
       3. Generate on-demand via Kokoro ONNX → espeak-ng fallback
+
+    Every response includes an ``X-TTS-Engine`` header — ``"kokoro"`` when
+    neural synthesis was used, ``"espeak"`` when the robotic fallback ran.
+    The UI reads this header to surface a "basic synthesis" warning so users
+    are never silently served degraded audio.
     """
     if voice_id not in _VOICE_BY_ID:
         raise HTTPException(404, f"Unknown voice: {voice_id!r}")
 
-    # Quick DB lookup before spawning a thread
     db = get_db()
+
+    # Quick DB lookup before spawning a thread
     cached_path = await asyncio.to_thread(_lookup_voice_sample_db, db, voice_id)
     if cached_path:
         p = Path(cached_path)
         if p.exists() and p.stat().st_size > 1000:
+            engine = await asyncio.to_thread(_lookup_voice_sample_engine, db, voice_id) or "kokoro"
             return FileResponse(str(p), media_type="audio/mpeg",
                                 filename=f"sample_{voice_id}.mp3",
-                                headers={"Cache-Control": "public, max-age=86400"})
+                                headers={
+                                    "X-TTS-Engine": engine,
+                                    "Cache-Control": "public, max-age=86400",
+                                })
 
     # Generate (also writes to DB on success)
     result = await asyncio.to_thread(_synthesize_sample_sync, voice_id)
     if result is None:
         raise HTTPException(503, "Could not generate voice sample — TTS backend unavailable")
 
+    engine = await asyncio.to_thread(_lookup_voice_sample_engine, db, voice_id) or "espeak"
     return FileResponse(str(result), media_type="audio/mpeg",
                         filename=f"sample_{voice_id}.mp3",
-                        headers={"Cache-Control": "public, max-age=86400"})
+                        headers={
+                            "X-TTS-Engine": engine,
+                            "Cache-Control": "public, max-age=86400",
+                        })
 
 
 # ── AI Narrator Recommender ────────────────────────────────────────────────────
@@ -1264,7 +1325,7 @@ async def synthesize_speech(body: TTSRequest):
             resp = await client.post(
                 f"{cfg.serving.base_url}/audio/speech",
                 json={
-                    "model": "tts-1",
+                    "model": cfg.serving.tts_model,   # configurable: tts-1-hd / tts-1 / etc.
                     "input": body.text,
                     "voice": openai_voice,
                     "response_format": "mp3",
@@ -1563,7 +1624,8 @@ def synthesize_document(body: DocumentTTSRequest):
                     import httpx as _hx
                     r = _hx.post(
                         f"{cfg.serving.base_url}/audio/speech",
-                        json={"model": "tts-1", "input": seg,
+                        json={"model": cfg.serving.tts_model,  # configurable: tts-1-hd / tts-1 / etc.
+                              "input": seg,
                               "voice": body.voice, "response_format": "wav",
                               "speed": body.speed},
                         timeout=60,
@@ -2100,8 +2162,12 @@ def studio_status():
 
     # ── TTS strategies ────────────────────────────────────────────────────────
     ai_tts_ok, ai_ms = _get("ai_tts", (False, None))
-    kokoro_ok = importlib.util.find_spec("kokoro_onnx") is not None
-    espeak_ok = bool(shutil.which("espeak-ng"))
+    # Distinguish "package installed" from "model actually loaded in memory".
+    # find_spec only tells us whether the wheel is present; _is_kokoro_loaded()
+    # tells us whether the ONNX model was successfully opened and is ready to use.
+    kokoro_pkg_ok = importlib.util.find_spec("kokoro_onnx") is not None
+    kokoro_ok     = _is_kokoro_loaded()   # True only when neural synthesis is live
+    espeak_ok     = bool(shutil.which("espeak-ng"))
 
     tts_strategies = [
         {"name": "AI Server",   "key": "ai_server",   "available": ai_tts_ok, "latency_ms": ai_ms},
@@ -2109,6 +2175,17 @@ def studio_status():
         {"name": "espeak-ng",   "key": "espeak_ng",    "available": espeak_ok, "latency_ms": None},
     ]
     best_tts = next((s["name"] for s in tts_strategies if s["available"]), None)
+
+    # Voice-sample synthesis uses ONLY local engines (Kokoro ONNX or espeak-ng).
+    # The AI Server is NOT a valid fallback for GET /studio/voices/{id}/sample —
+    # that route calls _synthesize_sample_sync() which only has two paths:
+    # Kokoro and espeak. Report this separately so the UI doesn't conflate
+    # "AI Server TTS is up" with "voice samples can be generated locally".
+    best_sample_engine = (
+        "kokoro_onnx" if kokoro_ok else
+        "espeak_ng"   if espeak_ok else
+        None
+    )
 
     # ── Image gen backends ────────────────────────────────────────────────────
     img_backends: list[dict] = []
@@ -2144,7 +2221,17 @@ def studio_status():
         "tts": {
             "available": best_tts is not None,
             "best_strategy": best_tts,
+            # kokoro_loaded: True only if the ONNX model is actually in memory and
+            # ready to synthesize.  False means the pkg may be installed but the
+            # model failed to load — synthesis is currently routed through espeak.
+            "kokoro_loaded": kokoro_ok,
+            "kokoro_pkg_installed": kokoro_pkg_ok,
             "strategies": tts_strategies,
+            # Voice-sample quality — distinct from general TTS availability.
+            # Samples use ONLY local engines; AI Server is NOT a sample fallback.
+            # "kokoro_onnx" → neural quality | "espeak_ng" → basic | null → 503
+            "sample_engine": best_sample_engine,
+            "sample_available": best_sample_engine is not None,
         },
         "image_gen": {
             "available": img_any,

@@ -53,6 +53,9 @@ interface VoiceEntry {
   builtin?: boolean;
   engine?: string;
   custom?: boolean;
+  /** Engine used to generate this voice's cached sample, if one exists.
+   *  "kokoro" = neural quality; "espeak" = basic robotic fallback; null = not yet generated. */
+  sample_engine?: "kokoro" | "espeak" | null;
 }
 
 interface Recommendation {
@@ -92,6 +95,9 @@ function useGlobalAudio() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [playingId, setPlayingId] = useState<string | null>(null);
   const [loadingId, setLoadingId] = useState<string | null>(null);
+  // Maps voice ID → synthesis engine used for its sample ("kokoro" | "espeak").
+  // Populated lazily as the user plays samples; persists for the session.
+  const [sampleEngines, setSampleEngines] = useState<Record<string, string>>({});
 
   useEffect(() => {
     const el = new Audio();
@@ -119,6 +125,15 @@ function useGlobalAudio() {
     try {
       const resp = await apiFetch(`${BASE}/studio/voices/${voiceId}/sample`);
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+
+      // Capture which engine generated this sample so VoiceCard can show a
+      // "basic synthesis" badge when the espeak fallback was used instead of
+      // neural Kokoro.
+      const engine = resp.headers.get("X-TTS-Engine") ?? "kokoro";
+      setSampleEngines(prev =>
+        prev[voiceId] === engine ? prev : { ...prev, [voiceId]: engine }
+      );
+
       const blob = await resp.blob();
       const url  = URL.createObjectURL(blob);
       el.src = url;
@@ -136,7 +151,7 @@ function useGlobalAudio() {
     setPlayingId(null);
   }, []);
 
-  return { playingId, loadingId, playVoiceSample, stopAll };
+  return { playingId, loadingId, playVoiceSample, stopAll, sampleEngines };
 }
 
 // ── Dimension bar ─────────────────────────────────────────────────────────────
@@ -174,6 +189,7 @@ function VoiceCard({
   playingId,
   loadingId,
   onPlay,
+  sampleEngines = {},
 }: {
   voice: VoiceEntry;
   selected: boolean;
@@ -181,10 +197,19 @@ function VoiceCard({
   playingId: string | null;
   loadingId: string | null;
   onPlay: (id: string) => void;
+  /** Engine recorded for each voice's sample — keyed by voice ID.
+   *  Populated lazily as the user plays samples this session. */
+  sampleEngines?: Record<string, string>;
 }) {
   const isPlaying = playingId === voice.id;
   const isLoading = loadingId === voice.id;
   const dims = voice.dimensions;
+
+  // Show a "basic" badge when the espeak fallback was used for this voice's
+  // sample — either discovered this session (sampleEngines) or from a previous
+  // session persisted in the DB (voice.sample_engine).
+  const isEspeak =
+    sampleEngines[voice.id] === "espeak" || voice.sample_engine === "espeak";
 
   const accentColor = voice.accent === "british"
     ? "border-blue-200 bg-blue-50/30 dark:bg-blue-950/20"
@@ -213,6 +238,14 @@ function VoiceCard({
             {voice.builtin && (
               <span className="text-[9px] font-mono px-1 py-0.5 rounded bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-400">
                 ✓
+              </span>
+            )}
+            {isEspeak && (
+              <span
+                className="text-[9px] font-mono px-1 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400"
+                title="Sample uses basic espeak synthesis — Kokoro neural model not yet loaded. Install kokoro-onnx for premium audio."
+              >
+                basic
               </span>
             )}
           </div>
@@ -528,6 +561,7 @@ function BrowseTab({
                 playingId={globalAudio.playingId}
                 loadingId={globalAudio.loadingId}
                 onPlay={globalAudio.playVoiceSample}
+                sampleEngines={globalAudio.sampleEngines}
               />
             ))}
             {filtered.length === 0 && (

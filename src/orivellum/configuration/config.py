@@ -24,22 +24,56 @@ _SENSITIVE_KEYS = {"api_key", "token", "secret", "password", "key"}
 @dataclass
 class ServingConfig:
     base_url: str = "http://127.0.0.1:13305/api/v1"
+
+    # ── LLM models (A-01 Aug 2026 recommendations for Ryzen AI Max+ 395) ────────
+    # workhorse: Qwen3-30B-A3B-Instruct-2507 — fast MoE, ~3B active params,
+    #   handles ~95% of tasks.  Or llama3.3-70b for higher single-pass quality.
     workhorse_model: str = "Qwen3-30B-A3B-Instruct-2507"
+    # reasoner: gpt-oss-120b (fits 128 GB at MXFP4, ~65 GB) — best local reasoning.
     reasoner_model: str = "gpt-oss-120b"
-    coder_model: str = "Qwen3-Coder"
-    embedder_model: str = "Qwen3-Embedding-0.6B"
-    # Vision/multimodal model — used for image extraction and image-in-chat.
-    # Leave empty to fall back to workhorse_model.
+    # coder: Qwen3-Coder-30B-A3B — purpose-built for agentic loops, 256K context.
+    #   Dense alternative: Qwen3.6-27B (~77% SWE-bench Verified).
+    coder_model: str = "Qwen3-Coder-30B-A3B"
+
+    # ── Embeddings ────────────────────────────────────────────────────────────
+    # Qwen3-Embedding-8B: current open-source SOTA (70.6 MTEB, Apache 2.0, ~5 GB Q4).
+    # Lightweight alternative: nomic-embed-text (~0.3 GB, 8K ctx) — fast CPU indexing.
+    # BGE-M3 is the best hybrid choice (dense+sparse+multi-vector, 100+ languages).
+    embedder_model: str = "Qwen3-Embedding-8B"
+
+    # ── Vision / multimodal ────────────────────────────────────────────────────
+    # Qwen3-VL-8B: DocVQA ~96, 32-language OCR, GUI grounding (Apache 2.0, ~5 GB Q4).
+    # Dramatically better than Tesseract on scanned / complex documents.
+    # Leave empty to fall back to Tesseract OCR + workhorse_model for image chat.
     vision_model: str = ""
+
+    # ── TTS / ASR ─────────────────────────────────────────────────────────────
+    # TTS model name served by the AI server (OpenAI /v1/audio/speech endpoint).
+    # "tts-1-hd" gives higher quality than "tts-1".
+    # Kokoro-82M local is used as fallback when the AI server is unreachable.
+    tts_model: str = "tts-1-hd"
+    # ASR model name for audio transcription (OpenAI /v1/audio/transcriptions).
+    # Alternatives: "faster-whisper", "whisper-large-v3", "parakeet-tdt-1.1b".
+    # faster-whisper (CTranslate2) is ~4× faster than vanilla whisper.
+    asr_model: str = "whisper-1"
+
+    # ── Reranker ──────────────────────────────────────────────────────────────
+    # Leave empty to use RRF (reciprocal-rank fusion) only.
+    # Set to "BAAI/bge-reranker-v2-m3" or "Qwen3-Reranker-8B" when a reranker
+    # endpoint is available — a reranker typically gives +5–10% precision on RAG.
+    reranker_model: str = ""
+
+    # ── Timeouts ──────────────────────────────────────────────────────────────
     timeout_sec: int = 120
     # Dedicated short timeout for background AI extraction so a slow/absent AI
     # service never blocks the pipeline for the full chat timeout.
     extraction_timeout_sec: int = 30
-    # Estimated context window for the configured model (in tokens).
+
+    # ── Context window ────────────────────────────────────────────────────────
     # Used to trim conversation history and knowledge injection so the combined
-    # prompt never exceeds the model's hard limit.  Conservative default of 8192
-    # covers all common 7-8B models.  Increase for 32K/128K models.
-    context_window: int = 8192
+    # prompt never exceeds the model's hard limit.
+    # 32768 covers 7B–32B models; increase to 131072 for 70B+ with large KV cache.
+    context_window: int = 32768
 
     @property
     def model(self) -> str:
@@ -176,6 +210,12 @@ def load_config(path: str | None = None) -> OrivellumConfig:
                 "models", {}).get("vision", ServingConfig.vision_model)),
             embedder_model=serving_raw.get("embedder_model", serving_raw.get(
                 "models", {}).get("embedder", ServingConfig.embedder_model)),
+            tts_model=serving_raw.get("tts_model", serving_raw.get(
+                "models", {}).get("tts", ServingConfig.tts_model)),
+            asr_model=serving_raw.get("asr_model", serving_raw.get(
+                "models", {}).get("asr", ServingConfig.asr_model)),
+            reranker_model=serving_raw.get("reranker_model", serving_raw.get(
+                "models", {}).get("reranker", ServingConfig.reranker_model)),
             timeout_sec=int(serving_raw.get("timeout_sec", ServingConfig.timeout_sec)),
             extraction_timeout_sec=int(serving_raw.get(
                 "extraction_timeout_sec", ServingConfig.extraction_timeout_sec)),
