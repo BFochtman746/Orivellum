@@ -527,6 +527,364 @@ function useSharedAudio() {
   return { playingKey, toggle, stop };
 }
 
+// ── Voice Designer ───────────────────────────────────────────────────────────────
+
+interface DesignMatch {
+  voice_id: string;
+  match_score: number;
+  why: string;
+  voice?: VoiceEntry;
+}
+
+interface DesignResult {
+  description: string;
+  interpretation: string;
+  matches: DesignMatch[];
+}
+
+const _DESIGN_PLACEHOLDERS = [
+  'Warm, British, like a BBC documentary narrator…',
+  'Deep and commanding, ancient gravitas, male…',
+  'Young, bright, energetic — perfect for adventure…',
+  'Calm and contemplative, slow-paced, meditative…',
+  'Intimate and feminine, like a close friend reading aloud…',
+];
+
+/**
+ * Inline collapsible Voice Designer.
+ * Tap "Design a voice with AI" to expand; enter a natural-language description;
+ * receive top 3 matched voices with scores, rationale, preview, and a
+ * "Use [Name]" button that calls onUseVoice and collapses the panel.
+ */
+function VoiceDesignerCard({
+  voices,
+  audio,
+  onUseVoice,
+}: {
+  voices: VoiceEntry[];
+  audio: ReturnType<typeof useSharedAudio>;
+  onUseVoice: (id: string) => void;
+}) {
+  const colors = useColors();
+  const [open, setOpen] = useState(false);
+  const [description, setDescription] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<DesignResult | null>(null);
+  const [errorMsg, setErrorMsg] = useState('');
+  // Stable placeholder index per mount
+  const [phIdx] = useState(() => Math.floor(Math.random() * _DESIGN_PLACEHOLDERS.length));
+
+  const handleDesign = async () => {
+    if (!description.trim()) return;
+    setLoading(true);
+    setResult(null);
+    setErrorMsg('');
+    try {
+      const resp = await mobileFetch(`${API}/studio/voices/design`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ description: description.trim() }),
+      });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        throw new Error((err as any).detail ?? `HTTP ${resp.status}`);
+      }
+      const data: DesignResult = await resp.json();
+      setResult(data);
+    } catch (e: any) {
+      setErrorMsg(e?.message ?? 'Voice design failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleUse = (id: string) => {
+    onUseVoice(id);
+    // Collapse + reset after selection
+    setOpen(false);
+    setResult(null);
+    setDescription('');
+    setErrorMsg('');
+  };
+
+  // ── Collapsed trigger button ──────────────────────────────────────────────────
+  if (!open) {
+    return (
+      <Pressable
+        onPress={() => setOpen(true)}
+        style={({ pressed }) => ({
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 6,
+          paddingHorizontal: 12,
+          paddingVertical: 8,
+          borderRadius: 8,
+          borderWidth: 1,
+          borderColor: colors.primary + '55',
+          backgroundColor: colors.primary + '0a',
+          alignSelf: 'flex-start',
+          opacity: pressed ? 0.7 : 1,
+        })}
+        accessibilityRole="button"
+        accessibilityLabel="Design a voice with AI"
+      >
+        <Feather name="zap" size={12} color={colors.primary} />
+        <Text style={{ fontSize: 12, fontFamily: 'Inter_500Medium', color: colors.primary }}>
+          Design a voice with AI
+        </Text>
+      </Pressable>
+    );
+  }
+
+  // ── Expanded panel ────────────────────────────────────────────────────────────
+  return (
+    <View style={[vdStyles.container, { borderColor: colors.border, backgroundColor: colors.muted + '30' }]}>
+      {/* Header */}
+      <View style={vdStyles.header}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          <Feather name="zap" size={14} color={colors.primary} />
+          <Text style={{ fontSize: 14, fontFamily: 'Inter_600SemiBold', color: colors.foreground }}>
+            Design a voice
+          </Text>
+        </View>
+        <Pressable
+          onPress={() => { setOpen(false); setResult(null); setErrorMsg(''); }}
+          hitSlop={10}
+        >
+          <Feather name="x" size={16} color={colors.mutedForeground} />
+        </Pressable>
+      </View>
+
+      <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: colors.mutedForeground, lineHeight: 17 }}>
+        Describe the narrator in plain language. The AI maps your description to the closest voice.
+      </Text>
+
+      {/* Description input */}
+      <TextInput
+        style={[styles.textArea, {
+          color: colors.foreground,
+          borderColor: colors.border,
+          backgroundColor: colors.background,
+          minHeight: 70,
+        }]}
+        placeholder={_DESIGN_PLACEHOLDERS[phIdx]}
+        placeholderTextColor={colors.mutedForeground}
+        value={description}
+        onChangeText={setDescription}
+        multiline
+        maxLength={500}
+        returnKeyType="done"
+        blurOnSubmit
+      />
+
+      <Pressable
+        onPress={handleDesign}
+        disabled={!description.trim() || loading}
+        style={({ pressed }) => [styles.primaryButton, {
+          backgroundColor: colors.primary,
+          opacity: !description.trim() || loading ? 0.45 : pressed ? 0.85 : 1,
+        }]}
+      >
+        {loading
+          ? <ActivityIndicator color={colors.primaryForeground} size="small" />
+          : <Feather name="search" size={15} color={colors.primaryForeground} />
+        }
+        <Text style={[styles.primaryButtonText, { color: colors.primaryForeground }]}>
+          {loading ? 'Matching…' : 'Find matching voices'}
+        </Text>
+      </Pressable>
+
+      {/* Error state */}
+      {!!errorMsg && (
+        <View style={[vdStyles.infoBox, { borderColor: '#ef444444', backgroundColor: '#ef444410' }]}>
+          <Feather name="alert-circle" size={12} color="#ef4444" />
+          <Text style={{ color: '#ef4444', fontSize: 12, fontFamily: 'Inter_400Regular', flex: 1, lineHeight: 17 }}>
+            {errorMsg}
+          </Text>
+        </View>
+      )}
+
+      {/* Results */}
+      {result && (
+        <View style={{ gap: 10 }}>
+          {/* AI interpretation of the description */}
+          {!!result.interpretation && (
+            <View style={[vdStyles.infoBox, { borderColor: colors.primary + '33', backgroundColor: colors.primary + '08' }]}>
+              <Feather name="info" size={12} color={colors.primary} />
+              <Text style={{ color: colors.primary, fontSize: 12, fontFamily: 'Inter_400Regular', flex: 1, lineHeight: 17 }}>
+                {result.interpretation}
+              </Text>
+            </View>
+          )}
+
+          {/* Matched voice cards */}
+          {(result.matches ?? []).slice(0, 3).map((m, i) => {
+            // Prefer the enriched voice from the server; fall back to local catalog
+            const v: VoiceEntry = (m.voice as VoiceEntry | undefined) ??
+              voices.find(vv => vv.id === m.voice_id) ??
+              { id: m.voice_id, name: m.voice_id };
+            const isPlaying = audio.playingKey === `sample-${v.id}`;
+            const sampleUri = `${API}/studio/voices/${encodeURIComponent(v.id)}/sample`;
+            const accentCol = v.accent === 'british' ? '#3b82f6' : '#f59e0b';
+            const genderSym = v.gender === 'feminine' ? '♀' : v.gender === 'masculine' ? '♂' : '◆';
+            const score = m.match_score ?? 0;
+            const scoreColor = score >= 85 ? '#22c55e' : score >= 70 ? '#f59e0b' : colors.mutedForeground;
+
+            return (
+              <View
+                key={v.id}
+                style={[vdStyles.matchCard, {
+                  borderColor: i === 0 ? colors.primary + '55' : colors.border,
+                  backgroundColor: i === 0 ? colors.primary + '06' : colors.card,
+                }]}
+              >
+                {/* Name row */}
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                  {i === 0 && (
+                    <View style={[vdStyles.bestBadge, {
+                      backgroundColor: colors.primary + '20',
+                      borderColor: colors.primary + '44',
+                    }]}>
+                      <Text style={{ fontSize: 9, fontFamily: 'Inter_600SemiBold', color: colors.primary }}>
+                        BEST MATCH
+                      </Text>
+                    </View>
+                  )}
+                  <Text style={{ fontSize: 14, fontFamily: 'Inter_600SemiBold', color: colors.foreground }}>
+                    {v.name}
+                  </Text>
+                  <Text style={{ fontSize: 12, color: colors.mutedForeground }}>{genderSym}</Text>
+                  {v.accent && (
+                    <View style={[vdStyles.accentBadge, {
+                      borderColor: accentCol + '55',
+                      backgroundColor: accentCol + '18',
+                    }]}>
+                      <Text style={{ fontSize: 9, fontFamily: 'Inter_600SemiBold', color: accentCol }}>
+                        {v.accent === 'american' ? 'US' : v.accent === 'british' ? 'UK' : v.accent}
+                      </Text>
+                    </View>
+                  )}
+                  <Text style={{
+                    marginLeft: 'auto' as any,
+                    fontSize: 16, fontFamily: 'Inter_700Bold', color: scoreColor,
+                  }}>
+                    {score}%
+                  </Text>
+                </View>
+
+                {/* AI rationale */}
+                {!!m.why && (
+                  <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: colors.mutedForeground, lineHeight: 17 }}>
+                    {m.why}
+                  </Text>
+                )}
+
+                {/* Genre tags */}
+                {v.tags && v.tags.length > 0 && (
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 4 }}>
+                    {v.tags.slice(0, 3).map(tag => (
+                      <View key={tag} style={[voiceCardStyles.tag, { borderColor: colors.border }]}>
+                        <Text style={[voiceCardStyles.tagText, { color: colors.mutedForeground }]}>{tag}</Text>
+                      </View>
+                    ))}
+                  </View>
+                )}
+
+                {/* Preview + Use actions */}
+                <View style={{ flexDirection: 'row', gap: 8 }}>
+                  <Pressable
+                    onPress={() => audio.toggle(`sample-${v.id}`, sampleUri)}
+                    style={[vdStyles.actionBtn, {
+                      borderColor: isPlaying ? colors.primary : colors.border,
+                      backgroundColor: isPlaying ? colors.primary + '18' : 'transparent',
+                      flex: 1,
+                    }]}
+                  >
+                    <Feather
+                      name={isPlaying ? 'pause' : 'play'}
+                      size={13}
+                      color={isPlaying ? colors.primary : colors.mutedForeground}
+                    />
+                    <Text style={{
+                      fontSize: 12, fontFamily: 'Inter_500Medium',
+                      color: isPlaying ? colors.primary : colors.mutedForeground,
+                    }}>
+                      {isPlaying ? 'Playing…' : 'Preview'}
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => handleUse(v.id)}
+                    style={({ pressed }) => [vdStyles.actionBtn, {
+                      backgroundColor: colors.primary,
+                      borderColor: colors.primary,
+                      flex: 1,
+                      opacity: pressed ? 0.85 : 1,
+                    }]}
+                  >
+                    <Feather name="check" size={13} color={colors.primaryForeground} />
+                    <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: colors.primaryForeground }}>
+                      Use {v.name}
+                    </Text>
+                  </Pressable>
+                </View>
+              </View>
+            );
+          })}
+        </View>
+      )}
+    </View>
+  );
+}
+
+const vdStyles = StyleSheet.create({
+  container: {
+    borderRadius: 10,
+    borderWidth: 1,
+    padding: 14,
+    gap: 12,
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  infoBox: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    padding: 10,
+  },
+  matchCard: {
+    borderRadius: 10,
+    borderWidth: 1,
+    padding: 12,
+    gap: 8,
+  },
+  bestBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    borderWidth: 1,
+  },
+  accentBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    borderWidth: 1,
+  },
+  actionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    paddingVertical: 9,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+});
+
 // ── TTS panel ───────────────────────────────────────────────────────────────────
 
 function TTSPanel({
@@ -596,7 +954,14 @@ function TTSPanel({
       </View>
 
       <View style={styles.field}>
-        <FieldLabel>Voice</FieldLabel>
+        <View style={styles.rowBetween}>
+          <FieldLabel>Voice</FieldLabel>
+        </View>
+        <VoiceDesignerCard
+          voices={voices}
+          audio={audio}
+          onUseVoice={setVoice}
+        />
         <VoiceBrowserCard
           voices={voices}
           selectedId={voice}
