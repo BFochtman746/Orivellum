@@ -1301,4 +1301,9 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         CREATE INDEX IF NOT EXISTS et_work    ON extraction_templates(work_id);
         CREATE INDEX IF NOT EXISTS et_kind_work ON extraction_templates(kind_label, work_id);
     """),
+
+    # v77 — Web search enabled flag per conversation
+    (77, "Add web_search_enabled column to conversations", """
+        ALTER TABLE conversations ADD COLUMN web_search_enabled INTEGER NOT NULL DEFAULT 0;
+    """),
 ]

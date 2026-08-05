@@ -1552,6 +1552,28 @@ class OrivellumDB:
             )
         return self.get_conversation(conv_id)
 
+    def set_conversation_web_search(self, conv_id: str, enabled: bool) -> dict | None:
+        """Toggle web search grounding on/off for a conversation.
+
+        Uses a direct lock-protected UPDATE instead of ``governed_write`` so it
+        stays lightweight — the setting is mutable per-turn and not part of
+        the audit chain.  Returns the refreshed conversation dict, or None when
+        the conversation does not exist.
+        """
+        now = _now()
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT id FROM conversations WHERE id=?", (conv_id,)
+            ).fetchone()
+            if not row:
+                return None
+            self._conn.execute(
+                "UPDATE conversations SET web_search_enabled=?, updated_at=? WHERE id=?",
+                (1 if enabled else 0, now, conv_id),
+            )
+            self._conn.commit()
+        return self.get_conversation(conv_id)
+
     def delete_conversation(self, conv_id: str) -> bool:
         _deleted = False
         with self.governed_write(

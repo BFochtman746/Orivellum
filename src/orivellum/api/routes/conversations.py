@@ -269,6 +269,30 @@ def update_conversation(conv_id: str, body: ConversationUpdate):
     return {"conversation": conv}
 
 
+@router.put("/conversations/{conv_id}/web-search")
+def toggle_web_search(conv_id: str, body: dict):
+    """Enable or disable web search grounding for a conversation.
+
+    Body: ``{"enabled": true | false}``
+    Returns the updated conversation dict.
+    If the TAVILY_API_KEY environment variable is not set, returns 409 with
+    a setup prompt so clients can gate the toggle on configuration status.
+    """
+    import os
+    if not os.environ.get("TAVILY_API_KEY", "").strip():
+        raise HTTPException(
+            409,
+            "Web search requires a TAVILY_API_KEY environment variable. "
+            "Add your Tavily API key to continue.",
+        )
+    enabled = bool(body.get("enabled", False))
+    db = get_db()
+    conv = db.set_conversation_web_search(conv_id, enabled)
+    if not conv:
+        raise HTTPException(404, f"Conversation {conv_id!r} not found")
+    return {"conversation": conv, "web_search_enabled": enabled}
+
+
 @router.delete("/conversations/{conv_id}")
 def delete_conversation(conv_id: str):
     db = get_db()
@@ -1446,6 +1470,48 @@ def _build_messages(
     system_prompt = _build_system_prompt(db, conv, scope=scope,
                                          user_query=new_user_text,
                                          out_sources=out_sources)
+
+    # ── Web search grounding ──────────────────────────────────────────────────
+    # When the conversation has web_search_enabled=1, fetch live Tavily results
+    # and append them to the system prompt so the model can answer from current
+    # web material alongside local library knowledge.  Always runs after local
+    # knowledge injection (local knowledge has priority).
+    # Never raises — any Tavily failure is silently swallowed.
+    if conv.get("web_search_enabled") and new_user_text and new_user_text.strip():
+        try:
+            from orivellum.capabilities.websearch import fetch_web_context
+            web_results = fetch_web_context(new_user_text.strip(), max_results=3, timeout=5)
+            if web_results:
+                web_lines = [
+                    "WEB SOURCES (live web results — use these to answer current/recent questions, "
+                    "cite URLs inline when referencing them):"
+                ]
+                for i, r in enumerate(web_results, 1):
+                    title   = r.get("title", "").strip()
+                    url     = r.get("url", "").strip()
+                    content = r.get("content", "").strip()[:600]
+                    entry = f"[{i}] {title}"
+                    if content:
+                        entry += f"\n{content}"
+                    entry += f"\nURL: {url}"
+                    web_lines.append(entry)
+                system_prompt = system_prompt + "\n\n" + "\n\n".join(web_lines)
+                if out_sources is not None:
+                    _seen_web_urls: set[str] = set()
+                    for r in web_results:
+                        url   = r.get("url", "").strip()
+                        title = r.get("title", "").strip() or url or "Web"
+                        if url and url not in _seen_web_urls:
+                            _seen_web_urls.add(url)
+                            out_sources.append({
+                                "id":    url,
+                                "title": title,
+                                "kind":  "web",
+                                "url":   url,
+                                "isWeb": True,
+                            })
+        except Exception as _ws_exc:
+            logger.debug("web search grounding failed (non-fatal): %s", _ws_exc)
 
     # Fetch recent history (excluding the message we just stored)
     history = db.get_messages(conv["id"], limit=_HISTORY_LIMIT + 1)

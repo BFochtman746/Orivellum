@@ -105,6 +105,59 @@ def web_search(query: str) -> str:
     return f"🌐 **Web Search: {query}**\n\n{block}"
 
 
+def fetch_web_context(
+    query: str,
+    max_results: int = 3,
+    timeout: int = 5,
+) -> list[dict]:
+    """Fetch top web results for context injection into a chat prompt.
+
+    Returns a list of dicts with keys: title, url, content, score.
+    Never raises — returns [] on any error so callers can always proceed.
+
+    Uses the same Tavily API as the rest of this module.  The results are
+    intentionally *not* passed through the local LLM for synthesis here —
+    the raw page content is injected directly into the system prompt as
+    "WEB SOURCES" so the model can answer from the live material without
+    an extra round-trip to the AI service.
+    """
+    key = _api_key()
+    if not key:
+        return []
+    try:
+        payload = json.dumps({
+            "query":        query,
+            "search_depth": "basic",
+            "max_results":  max_results,
+            "include_answer": False,
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            _TAVILY_URL,
+            data=payload,
+            headers={
+                "Authorization": f"Bearer {key}",
+                "Content-Type":  "application/json",
+                "Accept":        "application/json",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        results = data.get("results", [])
+        out: list[dict] = []
+        for r in results[:max_results]:
+            title   = (r.get("title")   or "").strip()[:200]
+            url     = (r.get("url")     or "").strip()
+            content = (r.get("content") or "").strip()[:800]
+            score   = float(r.get("score", 0))
+            if url:
+                out.append({"title": title, "url": url, "content": content, "score": score})
+        return out
+    except Exception as exc:
+        logger.debug("fetch_web_context failed (non-fatal): %s", exc)
+        return []
+
+
 def web_search_synthesize(
     query: str, base_url: str, model: str, db=None
 ) -> tuple[str, list[dict]]:

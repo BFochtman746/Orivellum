@@ -1549,6 +1549,19 @@ class ExtractionTemplateUpdate(BaseModel):
     clear_kind_label: bool = False    # explicitly set kind_label to NULL
 
 
+@router.get("/system/web-search-status")
+def get_web_search_status():
+    """Return whether the Tavily web-search integration is configured.
+
+    The UI uses this to gate the per-conversation web-search toggle: when
+    ``configured`` is false, the globe button is hidden and a setup prompt
+    is shown instead so users know what they need to do.
+    """
+    import os
+    configured = bool(os.environ.get("TAVILY_API_KEY", "").strip())
+    return {"configured": configured, "provider": "tavily" if configured else None}
+
+
 @router.get("/system/extraction-templates")
 def list_extraction_templates(kind_label: str | None = None, work_id: str | None = None):
     """List all extraction templates, optionally filtered by kind or work."""

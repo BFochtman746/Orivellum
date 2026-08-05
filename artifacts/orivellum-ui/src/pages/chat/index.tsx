@@ -1125,10 +1125,23 @@ export default function Chat() {
   const models = modelsData?.models ?? [];
   const defaultModel = modelsData?.default ?? "";
 
-  const [deepMode,   setDeepMode]   = useState(false);
-  const [scopeAll,   setScopeAll]   = useState(false); // false = "This work", true = "All works"
-  const [dragOver,   setDragOver]   = useState(false);
-  const [importing,  setImporting]  = useState(false);
+  const [deepMode,        setDeepMode]        = useState(false);
+  const [scopeAll,        setScopeAll]        = useState(false); // false = "This work", true = "All works"
+  const [webSearchOn,     setWebSearchOn]     = useState(false); // per-conversation web-search toggle
+  const [dragOver,        setDragOver]        = useState(false);
+  const [importing,       setImporting]       = useState(false);
+
+  // Fetch whether Tavily is configured — gates the globe button visibility
+  const { data: webSearchStatus } = useQuery<{ configured: boolean }>({
+    queryKey: ["system", "web-search-status"],
+    queryFn: async () => {
+      const r = await apiFetch(`${API_BASE}/system/web-search-status`);
+      if (!r.ok) return { configured: false };
+      return r.json();
+    },
+    staleTime: 60_000,
+  });
+  const tavilyConfigured = webSearchStatus?.configured ?? false;
 
   // ── Activity panel state ─────────────────────────────────────────────────
   const [activitySteps,      setActivitySteps]      = useState<ActivityStep[]>([]);
@@ -1211,6 +1224,12 @@ export default function Chat() {
       }
     };
   }, [activeId]);
+
+  // Sync webSearchOn from the active conversation (re-runs whenever conversation changes)
+  useEffect(() => {
+    const ws = (activeConv?.conversation as any)?.web_search_enabled;
+    setWebSearchOn(!!ws);
+  }, [activeId, activeConv?.conversation]);
 
   // ── VisualViewport scroll-anchor preservation ────────────────────────────
   // When the iPhone keyboard opens, --visual-viewport-height shrinks.  Without
@@ -2261,6 +2280,40 @@ export default function Chat() {
                   >
                     <ImageIcon className="w-4 h-4" />
                   </button>
+                  {/* Web search toggle — only shown when Tavily is configured */}
+                  {tavilyConfigured && activeId && (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const next = !webSearchOn;
+                        setWebSearchOn(next);
+                        try {
+                          const resp = await apiFetch(`${API_BASE}/conversations/${activeId}/web-search`, {
+                            method: "PUT",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ enabled: next }),
+                          });
+                          if (!resp.ok) {
+                            setWebSearchOn(!next);
+                            const err = await resp.json().catch(() => ({}));
+                            toast.error((err as any).detail ?? "Could not toggle web search");
+                          } else {
+                            queryClient.invalidateQueries({ queryKey: getGetConversationQueryKey(activeId) });
+                          }
+                        } catch {
+                          setWebSearchOn(!next);
+                          toast.error("Could not toggle web search");
+                        }
+                      }}
+                      title={webSearchOn
+                        ? "Web search on — answers augmented with live results (click to disable)"
+                        : "Web search off — click to augment answers with live web results"}
+                      className={`chat-icon-btn h-8 w-8 rounded flex items-center justify-center transition-colors
+                        ${webSearchOn ? "text-primary bg-primary/10 border border-primary/30" : "text-muted-foreground/50 hover:text-muted-foreground"}`}
+                    >
+                      <Globe className="w-4 h-4" />
+                    </button>
+                  )}
                   {/* Deep/Fast toggle */}
                   <button
                     type="button"
