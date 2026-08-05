@@ -943,9 +943,11 @@ function DesignTab({
 function AudiobookTab({
   selectedVoice,
   voices,
+  globalAudio,
 }: {
   selectedVoice: VoiceEntry | null;
   voices: VoiceEntry[];
+  globalAudio: ReturnType<typeof useGlobalAudio>;
 }) {
   const { data: worksResp } = useListWorks();
   const works = (worksResp as any)?.works ?? [];
@@ -965,6 +967,33 @@ function AudiobookTab({
   const [audioName, setAudioName] = useState("audiobook.mp3");
   const [playing, setPlaying] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  // ── Proactive AI voice suggestion ────────────────────────────────────────────
+  // Fires in the background whenever a Work is selected; the card appears
+  // only when the result is ready — nothing blocks the form.
+  const [suggestion, setSuggestion] = useState<Recommendation | null>(null);
+
+  useEffect(() => {
+    if (!workId || mode !== "work") {
+      setSuggestion(null);
+      return;
+    }
+    let cancelled = false;
+    setSuggestion(null);
+    apiFetch(`${BASE}/studio/voices/recommend`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ work_id: workId, top_n: 1 }),
+    })
+      .then(async r => {
+        if (cancelled || !r.ok) return;
+        const data = await r.json();
+        const top = data.recommendations?.[0] ?? null;
+        if (!cancelled) setSuggestion(top);
+      })
+      .catch(() => {/* silently suppress — suggestion is optional */});
+    return () => { cancelled = true; };
+  }, [workId, mode]);
 
   // Sync voice picker when parent selects a voice from another tab
   useEffect(() => {
@@ -1078,6 +1107,75 @@ function AudiobookTab({
             </Select>
           )}
         </div>
+
+        {/* ── AI suggests card — appears silently when a Work is chosen ── */}
+        {mode === "work" && suggestion && suggestion.voice && (
+          <div className="rounded-xl border border-violet-200/70 bg-violet-50/40 dark:bg-violet-950/20 dark:border-violet-800/50 p-3.5 space-y-2.5">
+            {/* Header */}
+            <div className="flex items-center gap-1.5">
+              <Sparkles className="w-3.5 h-3.5 text-violet-500 shrink-0" />
+              <span className="text-[10px] font-mono uppercase text-violet-600 dark:text-violet-400 tracking-wide">
+                AI suggests
+              </span>
+              <span className="ml-auto text-[10px] font-mono font-bold text-emerald-600 dark:text-emerald-500">
+                {suggestion.score}% match
+              </span>
+            </div>
+
+            {/* Voice identity */}
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="flex-1 min-w-0">
+                <span className="text-sm font-semibold">{suggestion.voice.name}</span>
+                {suggestion.voice.accent && (
+                  <span className="text-xs text-muted-foreground ml-1.5 capitalize">
+                    {suggestion.voice.accent}
+                  </span>
+                )}
+                {suggestion.voice.gender && (
+                  <span className="text-xs text-muted-foreground ml-0.5">
+                    · {suggestion.voice.gender}
+                  </span>
+                )}
+              </div>
+
+              {/* Sample preview button */}
+              <button
+                onClick={() => globalAudio.playVoiceSample(suggestion.voice_id)}
+                title={globalAudio.playingId === suggestion.voice_id ? "Stop" : "Preview sample"}
+                className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 transition-colors ${
+                  globalAudio.playingId === suggestion.voice_id
+                    ? "bg-violet-500 text-white"
+                    : "bg-violet-100 text-violet-600 hover:bg-violet-200 dark:bg-violet-900/40 dark:text-violet-400 dark:hover:bg-violet-800/60"
+                }`}
+              >
+                {globalAudio.loadingId === suggestion.voice_id ? (
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                ) : globalAudio.playingId === suggestion.voice_id ? (
+                  <Pause className="w-3 h-3" />
+                ) : (
+                  <Play className="w-3 h-3 ml-px" />
+                )}
+              </button>
+            </div>
+
+            {/* One-line rationale */}
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              {suggestion.headline}
+            </p>
+
+            {/* CTA */}
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 text-xs gap-1 border-violet-300 text-violet-700 hover:bg-violet-100 dark:border-violet-700 dark:text-violet-400 dark:hover:bg-violet-900/30"
+              onClick={() => setVoiceId(suggestion.voice_id)}
+              disabled={voiceId === suggestion.voice_id}
+            >
+              <CheckCircle2 className="w-3 h-3" />
+              {voiceId === suggestion.voice_id ? "Voice selected ✓" : "Use this voice"}
+            </Button>
+          </div>
+        )}
 
         {/* Voice selector */}
         <div className="space-y-3">
@@ -1315,6 +1413,7 @@ export function VoiceStudio() {
           <AudiobookTab
             selectedVoice={audiobookVoice}
             voices={voices}
+            globalAudio={globalAudio}
           />
         )}
       </div>
