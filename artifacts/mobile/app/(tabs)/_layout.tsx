@@ -23,7 +23,7 @@ import {
 // ── Constants ──────────────────────────────────────────────────────────────────
 
 const HEADER_HEIGHT = 56;
-const SHEET_CONTENT_HEIGHT = 420;
+const SHEET_CONTENT_HEIGHT = 500;
 
 // ── Server status ──────────────────────────────────────────────────────────────
 
@@ -49,6 +49,7 @@ function useSectionLabel(): string {
   if (path.includes('/conversations')) return 'Chats';
   if (path.includes('/books')) return 'Books';
   if (path.includes('/learn')) return 'Learn';
+  if (path.includes('/intake')) return 'Load Anything';
   if (path.includes('/works')) return 'Works';
   if (path.includes('/library')) return 'Library';
   return 'Orivellum';
@@ -138,6 +139,7 @@ interface NavItem {
 
 const NAV_ITEMS: NavItem[] = [
   { key: 'index',         label: 'Dashboard', icon: 'home',           route: '/'              },
+  { key: 'intake',        label: 'Load',      icon: 'inbox',          route: '/intake'        },
   { key: 'conversations', label: 'Chats',     icon: 'message-circle', route: '/conversations' },
   { key: 'works',         label: 'Works',     icon: 'book-open',      route: '/works'         },
   { key: 'books',         label: 'Books',     icon: 'book',           route: '/books'         },
@@ -149,6 +151,7 @@ function currentRoute(path: string): string {
   if (path.includes('/conversations')) return '/conversations';
   if (path.includes('/books')) return '/books';
   if (path.includes('/learn')) return '/learn';
+  if (path.includes('/intake')) return '/intake';
   if (path.includes('/works')) return '/works';
   if (path.includes('/library')) return '/library';
   return '/';
@@ -325,6 +328,7 @@ function NativeAppLayout() {
         }}
       >
         <Tabs.Screen name="index" />
+        <Tabs.Screen name="intake" />
         <Tabs.Screen name="conversations" />
         <Tabs.Screen name="works" />
         <Tabs.Screen name="books" />
@@ -379,6 +383,13 @@ function WebTabLayout() {
         options={{
           title: 'Works',
           tabBarIcon: ({ color }) => <Feather name="book-open" size={22} color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="intake"
+        options={{
+          title: 'Load',
+          tabBarIcon: ({ color }) => <Feather name="inbox" size={22} color={color} />,
         }}
       />
       <Tabs.Screen

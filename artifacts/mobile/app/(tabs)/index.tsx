@@ -1,12 +1,14 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
+  Modal,
   Platform,
   Pressable,
   RefreshControl,
   StyleSheet,
   Text,
+  TouchableOpacity,
   View,
 } from 'react-native';
 import { useColors } from '@/hooks/useColors';
@@ -17,6 +19,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { font } from '@/lib/typography';
 import type { Work, ActivityItem } from '@workspace/api-client-react';
 import { OfflineBanner, ErrorScreen } from '@/components/OfflineBanner';
+import * as DocumentPicker from 'expo-document-picker';
+import * as ImagePicker from 'expo-image-picker';
+import { mobileFetch } from '@/lib/api';
 
 function StatCard({ label, value, icon }: { label: string; value: number | undefined; icon: string }) {
   const colors = useColors();

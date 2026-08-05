@@ -276,12 +276,12 @@ def create_app() -> FastAPI:
     from orivellum.api.routes import (
         auth, health, works, conversations, library, knowledge,
         projects, backups, studio, files, system, dashboard, learning, write,
-        mcos, review, claims, pklos,
+        mcos, review, claims, pklos, intake,
     )
     _route_modules = [
         auth, health, works, conversations, library, knowledge,
         projects, backups, studio, files, system, dashboard, learning, write,
-        mcos, review, claims, pklos,
+        mcos, review, claims, pklos, intake,
     ]
     for module in _route_modules:
         app.include_router(module.router)

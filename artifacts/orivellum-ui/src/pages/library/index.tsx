@@ -290,7 +290,15 @@ function ImportDialog({ onSuccess, defaultOpen = false }: ImportDialogProps) {
         const existingId = res.document?.id;
         if (existingId) navigateTo(`/library/${existingId}`);
       } else {
-        toast.success(`${file.name} imported — extraction running`);
+        const newDocId = res.document?.id;
+        toast.success(`${file.name} imported — extraction running`, {
+          description: newDocId ? "View Intake Profile →" : undefined,
+          action: newDocId ? {
+            label: "Intake Profile",
+            onClick: () => navigateTo(`/intake?doc=${newDocId}`),
+          } : undefined,
+          duration: 8000,
+        });
       }
     };
 
