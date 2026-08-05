@@ -61,6 +61,125 @@ def get_run(run_id: str):
     return run
 
 
+@router.get("/runs/{run_id}/log")
+def get_run_log(run_id: str):
+    """Return structured log lines synthesised from run metadata.
+
+    The action_runs table stores outcome fields (error, output_label, etc.)
+    but not a verbatim log stream.  This endpoint assembles those fields into
+    a chronological list of {ts, level, msg} entries suitable for display.
+    """
+    db = get_db()
+    from orivellum.capabilities.actions import get_run as _get_run
+    run = _get_run(db, run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    lines: list[dict] = []
+
+    # Start event
+    lines.append({
+        "ts": run["created_at"],
+        "level": "info",
+        "msg": f"Action '{run['action_name']}' started",
+    })
+
+    # Inputs summary
+    try:
+        inputs = json.loads(run.get("inputs") or "{}")
+    except Exception:
+        inputs = {}
+    if inputs:
+        lines.append({
+            "ts": run["created_at"],
+            "level": "info",
+            "msg": "Inputs: " + json.dumps(inputs, ensure_ascii=False),
+        })
+
+    # Work scope
+    if run.get("work_id"):
+        lines.append({
+            "ts": run["created_at"],
+            "level": "info",
+            "msg": f"Scoped to work: {run['work_id']}",
+        })
+
+    # Outcome
+    status = run.get("status", "running")
+    completed_at = run.get("completed_at") or run["created_at"]
+
+    if status == "done":
+        label = run.get("output_label") or "output ready"
+        lines.append({"ts": completed_at, "level": "info", "msg": f"Completed: {label}"})
+        if run.get("output_path"):
+            lines.append({"ts": completed_at, "level": "info", "msg": f"Output: {run['output_path']}"})
+    elif status == "error":
+        lines.append({
+            "ts": completed_at,
+            "level": "error",
+            "msg": run.get("error") or "Action failed with an unknown error",
+        })
+    else:
+        lines.append({"ts": run["created_at"], "level": "info", "msg": "Action is still running…"})
+
+    # Duration
+    if run.get("completed_at") and run.get("created_at"):
+        try:
+            from datetime import datetime, timezone
+            start = datetime.fromisoformat(run["created_at"].replace("Z", "+00:00"))
+            end   = datetime.fromisoformat(run["completed_at"].replace("Z", "+00:00"))
+            secs  = round((end - start).total_seconds(), 1)
+            lines.append({"ts": completed_at, "level": "info", "msg": f"Duration: {secs}s"})
+        except Exception:
+            pass
+
+    return {"run_id": run_id, "status": status, "lines": lines}
+
+
+@router.post("/runs/{run_id}/retry")
+async def retry_run(run_id: str):
+    """Re-execute a run (typically a failed one) with the same original inputs.
+
+    Creates a new action_runs row and returns its result immediately
+    (actions are synchronous for now).
+    """
+    db = get_db()
+    cfg = get_config()
+    from orivellum.capabilities.actions import get_run as _get_run
+
+    run = _get_run(db, run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    reg = _registry()
+    action = reg.get(run["action_name"])
+    if not action:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Action '{run['action_name']}' is no longer registered",
+        )
+
+    try:
+        inputs = json.loads(run.get("inputs") or "{}")
+    except Exception:
+        inputs = {}
+
+    try:
+        result = action.execute(inputs, db, cfg)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except Exception as exc:
+        logger.error("Retry of %s failed: %s", run["action_name"], exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Retry failed: {exc}")
+
+    download_url: str | None = None
+    if result.get("output_path"):
+        base = (cfg.serving.base_url or "").rstrip("/")
+        download_url = f"{base}/api/studio/outputs/serve?path={result['output_path']}"
+
+    return {**result, "download_url": download_url}
+
+
 @router.post("/{name}/preview")
 async def preview_action(name: str, request: Request):
     """Return the confirmation message for an action without side effects.

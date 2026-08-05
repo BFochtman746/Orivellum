@@ -526,6 +526,464 @@ function DiagnosticsSheet({ visible, onClose }: { visible: boolean; onClose: () 
   );
 }
 
+// ── Automation Activity ───────────────────────────────────────────────────────
+
+interface ActionRun {
+  id: string;
+  action_name: string;
+  inputs: string;
+  status: 'running' | 'done' | 'error';
+  output_path: string | null;
+  output_label: string | null;
+  output_doc_id: string | null;
+  work_id: string | null;
+  error: string | null;
+  created_at: string;
+  completed_at: string | null;
+}
+
+interface LogLine {
+  ts: string | null;
+  level: 'info' | 'error' | 'warn';
+  msg: string;
+}
+
+// Duration between two ISO strings in a human-readable form
+function _duration(start: string | null, end: string | null): string {
+  if (!start || !end) return '';
+  const s = Math.round((new Date(end).getTime() - new Date(start).getTime()) / 1000);
+  if (isNaN(s) || s < 0) return '';
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const rem = s % 60;
+  return rem ? `${m}m ${rem}s` : `${m}m`;
+}
+
+// ── RunLogSheet ───────────────────────────────────────────────────────────────
+
+const _LOG_SHEET_H = 500;
+const _LOG_LEVEL_COLOR: Record<string, string> = {
+  info: '#22c55e', warn: '#f59e0b', error: '#ef4444',
+};
+
+function RunLogSheet({
+  run,
+  visible,
+  onClose,
+  onRetrySuccess,
+}: {
+  run: ActionRun | null;
+  visible: boolean;
+  onClose: () => void;
+  onRetrySuccess: (newRun: ActionRun) => void;
+}) {
+  const colors = useColors();
+  const insets = useSafeAreaInsets();
+  const [rendered, setRendered] = useState(false);
+  const [lines, setLines] = useState<LogLine[]>([]);
+  const [logLoading, setLogLoading] = useState(false);
+  const [logErr, setLogErr] = useState('');
+  const [retrying, setRetrying] = useState(false);
+
+  const slideAnim = useRef(new Animated.Value(_LOG_SHEET_H + 60)).current;
+  const fadeAnim  = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    if (visible) {
+      setRendered(true);
+      Animated.parallel([
+        Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true, tension: 85, friction: 13 }),
+        Animated.timing(fadeAnim,  { toValue: 1, duration: 180, useNativeDriver: true }),
+      ]).start();
+    } else {
+      Animated.parallel([
+        Animated.timing(slideAnim, { toValue: _LOG_SHEET_H + 60, duration: 220, useNativeDriver: true }),
+        Animated.timing(fadeAnim,  { toValue: 0, duration: 180, useNativeDriver: true }),
+      ]).start(() => setRendered(false));
+    }
+  }, [visible]);
+
+  // Load log when run changes and sheet is open
+  useEffect(() => {
+    if (!visible || !run) return;
+    setLines([]);
+    setLogErr('');
+    setLogLoading(true);
+    mobileFetch(`${_SYS_API}/actions/runs/${run.id}/log`)
+      .then(r => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))
+      .then(d => setLines(d.lines ?? []))
+      .catch(e => setLogErr(e?.message ?? 'Could not load log'))
+      .finally(() => setLogLoading(false));
+  }, [visible, run?.id]);
+
+  const handleRetry = useCallback(async () => {
+    if (!run) return;
+    setRetrying(true);
+    try {
+      const resp = await mobileFetch(`${_SYS_API}/actions/runs/${run.id}/retry`, { method: 'POST' });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        throw new Error((err as any).detail ?? `HTTP ${resp.status}`);
+      }
+      const result = await resp.json();
+      // Build a new ActionRun representing the retry result so the old
+      // failed row is left intact in the list and the new run appears at top.
+      const newRun: ActionRun = {
+        id: result.run_id ?? `retry-${run.id}`,
+        action_name: run.action_name,
+        inputs: run.inputs,
+        status: 'done',
+        output_path: result.output_path ?? null,
+        output_label: result.output_label ?? null,
+        output_doc_id: result.output_doc_id ?? null,
+        work_id: run.work_id,
+        error: null,
+        created_at: new Date().toISOString(),
+        completed_at: new Date().toISOString(),
+      };
+      onRetrySuccess(newRun);
+      onClose();
+    } catch (e: any) {
+      setLogErr(e?.message ?? 'Retry failed');
+    } finally {
+      setRetrying(false);
+    }
+  }, [run, onRetrySuccess, onClose]);
+
+  if (!rendered || !run) return null;
+
+  const statusColor = run.status === 'done' ? '#22c55e' : run.status === 'error' ? '#ef4444' : '#f59e0b';
+  const dur = _duration(run.created_at, run.completed_at);
+
+  return (
+    <Modal transparent visible={rendered} animationType="none" onRequestClose={onClose} statusBarTranslucent>
+      <Animated.View
+        style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.42)', opacity: fadeAnim }]}
+        pointerEvents={visible ? 'auto' : 'none'}
+      >
+        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+      </Animated.View>
+
+      <Animated.View
+        style={[
+          sysStyles.sheet,
+          {
+            backgroundColor: colors.card,
+            borderColor: colors.border,
+            paddingBottom: insets.bottom + 16,
+            transform: [{ translateY: slideAnim }],
+          },
+        ]}
+      >
+        <View style={[sysStyles.handle, { backgroundColor: colors.border }]} />
+
+        {/* Header */}
+        <View style={sysStyles.sheetHeader}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 }}>
+            <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: statusColor, flexShrink: 0 }} />
+            <Text
+              style={{ fontSize: 14, fontFamily: 'Inter_600SemiBold', color: colors.foreground, flex: 1 }}
+              numberOfLines={1}
+            >
+              {run.action_name.replace(/_/g, ' ')}
+            </Text>
+            {!!dur && (
+              <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: colors.mutedForeground }}>
+                {dur}
+              </Text>
+            )}
+          </View>
+          <Pressable onPress={onClose} hitSlop={10}>
+            <Feather name="x" size={18} color={colors.mutedForeground} />
+          </Pressable>
+        </View>
+
+        {/* Timestamp strip */}
+        <View style={{ paddingHorizontal: 16, paddingBottom: 8 }}>
+          <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: colors.mutedForeground }}>
+            {relTime(run.created_at)} · {run.status}
+            {run.work_id ? ` · work ${run.work_id.slice(0, 8)}` : ''}
+          </Text>
+        </View>
+
+        {/* Log lines */}
+        <ScrollView
+          style={{ flex: 1 }}
+          contentContainerStyle={{ paddingHorizontal: 16, paddingVertical: 4, gap: 2 }}
+          showsVerticalScrollIndicator={false}
+        >
+          {logLoading && (
+            <View style={{ alignItems: 'center', paddingVertical: 32 }}>
+              <ActivityIndicator color={colors.primary} />
+            </View>
+          )}
+          {!logLoading && !!logErr && (
+            <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: '#ef4444', lineHeight: 18 }}>
+              {logErr}
+            </Text>
+          )}
+          {!logLoading && !logErr && lines.map((line, i) => {
+            const levelColor = _LOG_LEVEL_COLOR[line.level ?? 'info'] ?? colors.mutedForeground;
+            const ts = line.ts ? new Date(line.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '';
+            return (
+              <View
+                key={i}
+                style={{
+                  flexDirection: 'row',
+                  gap: 8,
+                  paddingVertical: 3,
+                  borderBottomWidth: StyleSheet.hairlineWidth,
+                  borderBottomColor: colors.border,
+                }}
+              >
+                {/* Level indicator */}
+                <View style={{ width: 4, borderRadius: 2, backgroundColor: levelColor, alignSelf: 'stretch', flexShrink: 0 }} />
+                <Text style={{ fontSize: 10, fontFamily: 'Inter_400Regular', color: colors.mutedForeground, width: 56, paddingTop: 1, flexShrink: 0 }}>
+                  {ts}
+                </Text>
+                <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: colors.foreground, flex: 1, lineHeight: 18 }}>
+                  {line.msg}
+                </Text>
+              </View>
+            );
+          })}
+        </ScrollView>
+
+        {/* Retry button — only for failed runs */}
+        {run.status === 'error' && (
+          <View style={{ paddingHorizontal: 16, paddingTop: 12 }}>
+            <Pressable
+              onPress={handleRetry}
+              disabled={retrying}
+              style={({ pressed }) => [
+                actStyles.retryBtn,
+                { backgroundColor: pressed ? '#ef444488' : '#ef4444', opacity: retrying ? 0.55 : 1 },
+              ]}
+            >
+              {retrying
+                ? <ActivityIndicator size="small" color="#fff" />
+                : <Feather name="refresh-cw" size={14} color="#fff" />}
+              <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: '#fff' }}>
+                {retrying ? 'Retrying…' : 'Retry this action'}
+              </Text>
+            </Pressable>
+          </View>
+        )}
+      </Animated.View>
+    </Modal>
+  );
+}
+
+// ── AutomationActivityCard ────────────────────────────────────────────────────
+
+const _STATUS_ICON: Record<string, string> = {
+  done: 'check-circle', error: 'x-circle', running: 'loader',
+};
+const _STATUS_COLOR: Record<string, string> = {
+  done: '#22c55e', error: '#ef4444', running: '#f59e0b',
+};
+
+function AutomationActivityCard() {
+  const colors = useColors();
+  const [collapsed, setCollapsed] = useState(false);
+  const [selectedRun, setSelectedRun] = useState<ActionRun | null>(null);
+  const [sheetVisible, setSheetVisible] = useState(false);
+
+  // Optimistically-prepended new run rows created by retry (keyed by new run_id)
+  const [pendingRuns, setPendingRuns] = useState<ActionRun[]>([]);
+
+  const { data, isLoading, refetch } = useQuery<{ runs: ActionRun[]; count: number }>({
+    queryKey: ['actions', 'runs'],
+    queryFn: async () => {
+      const r = await mobileFetch(`${_SYS_API}/actions/runs?limit=10`);
+      if (!r.ok) return { runs: [], count: 0 };
+      return r.json();
+    },
+    refetchInterval: 15_000,
+    staleTime: 12_000,
+  });
+
+  // Merge: prepend pending (new) rows, then server rows, deduplicate by id
+  const serverRuns = data?.runs ?? [];
+  const runIdSet = new Set(serverRuns.map(r => r.id));
+  const runs = [
+    ...pendingRuns.filter(r => !runIdSet.has(r.id)),
+    ...serverRuns,
+  ];
+
+  const handleRowPress = (run: ActionRun) => {
+    setSelectedRun(run);
+    setSheetVisible(true);
+  };
+
+  // Called when retry succeeds: prepend the new run row optimistically,
+  // then refetch twice so the list stays accurate.
+  const handleRetrySuccess = useCallback((newRun: ActionRun) => {
+    setPendingRuns(prev => [newRun, ...prev.filter(r => r.id !== newRun.id)]);
+    refetch();
+    setTimeout(() => refetch().then(() => setPendingRuns([])), 3000);
+  }, [refetch]);
+
+  // Don't render the card at all when there are no runs and not loading
+  if (!isLoading && runs.length === 0) return null;
+
+  const failedCount = runs.filter(r => r.status === 'error').length;
+  const runningCount = runs.filter(r => r.status === 'running').length;
+  const summaryColor = failedCount > 0 ? '#ef4444' : runningCount > 0 ? '#f59e0b' : '#22c55e';
+
+  return (
+    <>
+      <View style={[actStyles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
+        {/* Header row */}
+        <Pressable
+          onPress={() => setCollapsed(c => !c)}
+          style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}
+          hitSlop={6}
+        >
+          <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: summaryColor, flexShrink: 0 }} />
+          <Text
+            style={{
+              flex: 1, fontSize: 11, fontFamily: 'Inter_600SemiBold',
+              color: colors.foreground, textTransform: 'uppercase', letterSpacing: 0.8,
+            }}
+          >
+            Recent Automation
+          </Text>
+          {failedCount > 0 && (
+            <View style={[actStyles.badge, { backgroundColor: '#ef444418', borderColor: '#ef444444' }]}>
+              <Text style={{ fontSize: 10, fontFamily: 'Inter_600SemiBold', color: '#ef4444' }}>
+                {failedCount} failed
+              </Text>
+            </View>
+          )}
+          {runningCount > 0 && (
+            <View style={[actStyles.badge, { backgroundColor: '#f59e0b18', borderColor: '#f59e0b44' }]}>
+              <Text style={{ fontSize: 10, fontFamily: 'Inter_600SemiBold', color: '#f59e0b' }}>
+                {runningCount} running
+              </Text>
+            </View>
+          )}
+          <Feather
+            name={collapsed ? 'chevron-down' : 'chevron-up'}
+            size={14}
+            color={colors.mutedForeground}
+          />
+        </Pressable>
+
+        {!collapsed && (
+          <View style={{ marginTop: 10, gap: 0 }}>
+            {isLoading && runs.length === 0 && (
+              <ActivityIndicator size="small" color={colors.primary} style={{ alignSelf: 'flex-start', marginVertical: 8 }} />
+            )}
+            {runs.map((run, idx) => {
+              const statusColor = _STATUS_COLOR[run.status] ?? colors.mutedForeground;
+              const icon = _STATUS_ICON[run.status] ?? 'activity';
+              const label = run.action_name.replace(/_/g, ' ');
+              const dur = _duration(run.created_at, run.completed_at);
+              const when = relTime(run.created_at);
+              const isLast = idx === runs.length - 1;
+
+              return (
+                <Pressable
+                  key={run.id}
+                  onPress={() => handleRowPress(run)}
+                  style={({ pressed }) => [
+                    actStyles.runRow,
+                    {
+                      borderBottomWidth: isLast ? 0 : StyleSheet.hairlineWidth,
+                      borderBottomColor: colors.border,
+                      opacity: pressed ? 0.65 : 1,
+                    },
+                  ]}
+                >
+                  <Feather
+                    name={icon as any}
+                    size={13}
+                    color={statusColor}
+                    style={run.status === 'running' ? { opacity: 0.8 } : undefined}
+                  />
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <Text
+                      style={{ fontSize: 13, fontFamily: 'Inter_500Medium', color: colors.foreground }}
+                      numberOfLines={1}
+                    >
+                      {label}
+                    </Text>
+                    {run.status === 'error' && !!run.error && (
+                      <Text
+                        style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: '#ef4444', lineHeight: 15 }}
+                        numberOfLines={1}
+                      >
+                        {run.error.slice(0, 80)}
+                      </Text>
+                    )}
+                    {run.status === 'done' && !!run.output_label && (
+                      <Text
+                        style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: colors.mutedForeground, lineHeight: 15 }}
+                        numberOfLines={1}
+                      >
+                        {run.output_label}
+                      </Text>
+                    )}
+                  </View>
+                  <View style={{ alignItems: 'flex-end', gap: 2, flexShrink: 0 }}>
+                    <Text style={{ fontSize: 10, fontFamily: 'Inter_400Regular', color: colors.mutedForeground }}>
+                      {when}
+                    </Text>
+                    {!!dur && (
+                      <Text style={{ fontSize: 10, fontFamily: 'Inter_400Regular', color: colors.mutedForeground }}>
+                        {dur}
+                      </Text>
+                    )}
+                  </View>
+                  <Feather name="chevron-right" size={13} color={colors.mutedForeground} />
+                </Pressable>
+              );
+            })}
+          </View>
+        )}
+      </View>
+
+      <RunLogSheet
+        run={selectedRun}
+        visible={sheetVisible}
+        onClose={() => setSheetVisible(false)}
+        onRetrySuccess={handleRetrySuccess}
+      />
+    </>
+  );
+}
+
+const actStyles = StyleSheet.create({
+  card: {
+    borderRadius: 10,
+    borderWidth: 1,
+    padding: 14,
+    marginBottom: 0,
+  },
+  badge: {
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 5,
+    borderWidth: 1,
+  },
+  runRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 9,
+    paddingVertical: 10,
+    minHeight: 44,
+  },
+  retryBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 7,
+    paddingVertical: 11,
+    borderRadius: 10,
+  },
+});
+
 // ── SystemHealthCard ──────────────────────────────────────────────────────────
 
 function SystemHealthCard() {
@@ -869,6 +1327,12 @@ export default function DashboardScreen() {
               </Text>
             </View>
           )}
+
+          {/* Automation activity — recent action runs */}
+          <Text style={[styles.sectionLabel, { color: colors.mutedForeground, marginTop: 24 }]}>
+            AUTOMATION
+          </Text>
+          <AutomationActivityCard />
 
           {/* System health — pinned at bottom so users can self-diagnose */}
           <Text style={[styles.sectionLabel, { color: colors.mutedForeground, marginTop: 24 }]}>
