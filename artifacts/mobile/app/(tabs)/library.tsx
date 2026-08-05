@@ -523,6 +523,38 @@ export default function LibraryScreen() {
         </ScrollView>
       )}
 
+      {/* Topics shortcut — browse library by semantic cluster */}
+      {!isSearching && (
+        <Pressable
+          onPress={() => router.push('/topics' as any)}
+          style={({ pressed }) => ({
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 8,
+            marginHorizontal: 16,
+            marginTop: 10,
+            marginBottom: 2,
+            paddingHorizontal: 14,
+            paddingVertical: 10,
+            borderRadius: 10,
+            borderWidth: 1,
+            borderColor: colors.border,
+            backgroundColor: pressed ? colors.muted : colors.card,
+          })}
+          accessibilityRole="link"
+          accessibilityLabel="Browse by Topic"
+        >
+          <Feather name="layers" size={15} color={colors.primary} />
+          <Text style={{ flex: 1, fontSize: 13, fontFamily: 'Inter_500Medium', color: colors.foreground }}>
+            Browse by Topic
+          </Text>
+          <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: colors.mutedForeground }}>
+            Semantic clusters
+          </Text>
+          <Feather name="chevron-right" size={14} color={colors.mutedForeground} />
+        </Pressable>
+      )}
+
       {/* Sort chips — only shown when not searching */}
       {!isSearching && (
         <ScrollView

@@ -164,6 +164,7 @@ function RootLayoutNav() {
       <Stack.Screen name="graph"   options={{ headerShown: false }} />
       <Stack.Screen name="backups" options={{ headerShown: false }} />
       <Stack.Screen name="review"  options={{ headerShown: false }} />
+      <Stack.Screen name="topics"  options={{ headerShown: false }} />
     </Stack>
   );
 }
