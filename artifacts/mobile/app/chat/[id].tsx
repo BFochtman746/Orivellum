@@ -233,6 +233,15 @@ function MessageBubble({ message, colors, isDark, onResend }: { message: LocalMe
               : '—'}
           </Text>
         )}
+        {/* Source citations — shown when knowledge was injected for this reply */}
+        {!isUser && !isErr &&
+          (message as any).meta?.sources &&
+          ((message as any).meta.sources as any[]).length > 0 && (
+          <MobileSourcesFooter
+            sources={(message as any).meta.sources as any[]}
+            colors={colors}
+          />
+        )}
         {copied && (
           <Text style={{ fontSize: 10, color: colors.mutedForeground, marginTop: 2, fontFamily: 'Inter_400Regular' }}>
             Copied ✓
@@ -240,6 +249,106 @@ function MessageBubble({ message, colors, isDark, onResend }: { message: LocalMe
         )}
       </View>
     </Pressable>
+  );
+}
+
+// ── Mobile sources footer ─────────────────────────────────────────────────────
+
+/**
+ * Collapsible "Sources (N)" section rendered below an assistant message.
+ * Tapping a source navigates to the library document page when a doc_id is set.
+ */
+function MobileSourcesFooter({ sources, colors }: { sources: any[]; colors: any }) {
+  const [open, setOpen] = useState(false);
+  const router = useRouter();
+
+  // Normalize + dedupe by stable id
+  const normalized = (sources ?? []).filter(Boolean).map((s: any) => ({
+    id: String(s.id ?? s.url ?? s.source_doc_id ?? s.doc_id ?? s.title ?? ''),
+    title: s.title ?? s.doc_title ?? s.url ?? 'Document',
+    docId: s.source_doc_id ?? s.doc_id ?? null,
+    workId: s.work_id ?? null,
+    passage: s.passage ?? null,
+    isWeb: s.kind === 'web',
+  }));
+  const seen = new Set<string>();
+  const unique = normalized.filter((s) => {
+    if (!s.id || seen.has(s.id)) return false;
+    seen.add(s.id);
+    return true;
+  });
+  if (unique.length === 0) return null;
+
+  return (
+    <View style={{ marginTop: 6 }}>
+      <Pressable
+        onPress={() => setOpen((v) => !v)}
+        hitSlop={8}
+        style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}
+      >
+        <Feather name="book-open" size={11} color={colors.mutedForeground} />
+        <Text style={{ fontSize: 10, fontFamily: 'Inter_500Medium', color: colors.mutedForeground, opacity: 0.6 }}>
+          Sources ({unique.length})
+        </Text>
+        <Feather name={open ? 'chevron-up' : 'chevron-right'} size={10} color={colors.mutedForeground} />
+      </Pressable>
+
+      {open && (
+        <View style={{ marginTop: 4 }}>
+          {unique.map((s, i) => (
+            <Pressable
+              key={i}
+              onPress={() => {
+                if (s.docId) {
+                  router.push(`/library/${s.docId}` as any);
+                }
+              }}
+              style={({ pressed }) => ({
+                flexDirection: 'row',
+                alignItems: 'flex-start',
+                gap: 6,
+                paddingHorizontal: 8,
+                paddingVertical: 6,
+                borderRadius: 8,
+                backgroundColor: pressed ? colors.muted : 'transparent',
+              })}
+            >
+              <Feather
+                name={s.isWeb ? 'globe' : 'file-text'}
+                size={12}
+                color={colors.primary}
+                style={{ marginTop: 1, opacity: 0.7 }}
+              />
+              <View style={{ flex: 1 }}>
+                <Text
+                  style={{ fontSize: 12, fontFamily: 'Inter_500Medium', color: colors.foreground }}
+                  numberOfLines={1}
+                >
+                  {s.title}
+                </Text>
+                {!!s.passage && (
+                  <Text
+                    style={{
+                      fontSize: 11,
+                      fontFamily: 'Inter_400Regular',
+                      color: colors.mutedForeground,
+                      marginTop: 2,
+                      lineHeight: 15,
+                    }}
+                    numberOfLines={2}
+                  >
+                    {s.passage}
+                  </Text>
+                )}
+              </View>
+              {s.docId && (
+                <Feather name="chevron-right" size={11} color={colors.mutedForeground} style={{ opacity: 0.4, marginTop: 1 }} />
+              )}
+            </Pressable>
+          ))}
+        </View>
+      )}
+    </View>
   );
 }
 
