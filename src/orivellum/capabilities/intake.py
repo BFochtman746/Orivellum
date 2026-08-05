@@ -459,9 +459,29 @@ def run_intake(
                     model_name = _c.llm.model if hasattr(_c, "llm") else model_name
                 except Exception:
                     pass
-                research_summary, research_sources = web_search_synthesize(
-                    query, None, model_name, db=db
-                )
+                # Wall-clock timeout guard: web_search_synthesize is a blocking
+                # call (Tavily fetch + LLM synthesis).  If it stalls, we abandon
+                # and return a graceful profile without research results rather
+                # than hanging indefinitely.
+                import concurrent.futures as _cf
+                _SYNTH_TIMEOUT_SEC = 60
+                with _cf.ThreadPoolExecutor(max_workers=1) as _synth_ex:
+                    _synth_fut = _synth_ex.submit(web_search_synthesize, query, None, model_name, db)
+                    try:
+                        research_summary, research_sources = _synth_fut.result(
+                            timeout=_SYNTH_TIMEOUT_SEC
+                        )
+                    except _cf.TimeoutError:
+                        logger.warning(
+                            "Intake research synthesis timed out after %ss for doc %s",
+                            _SYNTH_TIMEOUT_SEC, doc_id,
+                        )
+                        research_summary = None
+                        research_sources = []
+                    except Exception as _synth_exc:
+                        logger.warning("Intake research synthesis failed for %s: %s", doc_id, _synth_exc)
+                        research_summary = None
+                        research_sources = []
                 # Persist as a recallable note linked to this document.
                 # Two stores:
                 #   1. Knowledge item (work-scoped, for the Works knowledge tab)

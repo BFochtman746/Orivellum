@@ -1226,6 +1226,7 @@ async def _stream_response(
         # just for the initial connection) using asyncio.wait_for per __anext__.
         _CHUNK_TIMEOUT_SEC = 30
         _first_token_received = False
+        _timed_out = False  # set True on asyncio.TimeoutError to mark message incomplete
 
         try:
             import httpx
@@ -1332,9 +1333,14 @@ async def _stream_response(
                         except Exception:
                             pass
         except asyncio.TimeoutError:
-            logger.warning("AI stream timed out after %ss of silence", _CHUNK_TIMEOUT_SEC)
+            logger.warning("AI stream timed out after %ss of silence (conv=%s)",
+                           _CHUNK_TIMEOUT_SEC, conv_id)
             _stream_ok = False
+            _timed_out = True
             _stream_err = f"stream silent for {_CHUNK_TIMEOUT_SEC}s"
+            # Emit a [TIMEOUT] sentinel so the client can show the re-send affordance
+            # immediately without waiting for the [DONE] event.
+            yield f"data: {json.dumps({'timeout': True, 'message_id': _assist_id})}\n\n"
             if not full_reply:
                 full_reply = _UNAVAILABLE
                 yield f"data: {json.dumps({'token': full_reply})}\n\n"
@@ -1360,6 +1366,11 @@ async def _stream_response(
         if _cut_short:
             meta["cut_short"] = True
             meta["partial_text"] = full_reply  # clean text; no suffix appended
+        # Mark stalled/timed-out messages so the frontend knows to offer re-send
+        # (the re-send button watches for meta.incomplete == true).
+        if _timed_out:
+            meta["incomplete"] = True
+            meta["partial_text"] = full_reply  # preserve whatever arrived before stall
         if full_reply:
             # Update text + metadata on the stub, then set terminal state
             with db._lock:
@@ -1511,6 +1522,9 @@ async def _stream_continuation(db: Any, conv: dict, cut_short_msg: dict):
     _stream_ok = True
     _stream_err: str | None = None
 
+    # Per-chunk wall-clock timeout — same policy as _stream_response.
+    _CONT_TIMEOUT_SEC = 30
+    _cont_timed_out = False
     try:
         import httpx
         async with httpx.AsyncClient(timeout=cfg.serving.timeout_sec) as client:
@@ -1520,7 +1534,24 @@ async def _stream_continuation(db: Any, conv: dict, cut_short_msg: dict):
                 json={"model": model, "messages": messages, "stream": True},
             ) as resp:
                 resp.raise_for_status()
-                async for line in resp.aiter_lines():
+                _cont_iter = resp.aiter_lines().__aiter__()
+                while True:
+                    try:
+                        line = await asyncio.wait_for(
+                            _cont_iter.__anext__(), timeout=_CONT_TIMEOUT_SEC
+                        )
+                    except StopAsyncIteration:
+                        break
+                    except asyncio.TimeoutError:
+                        logger.warning(
+                            "Continuation stream timed out after %ss of silence (conv=%s)",
+                            _CONT_TIMEOUT_SEC, conv_id,
+                        )
+                        _stream_ok = False
+                        _cont_timed_out = True
+                        _stream_err = f"continuation silent for {_CONT_TIMEOUT_SEC}s"
+                        yield f"data: {json.dumps({'timeout': True, 'message_id': orig_id})}\n\n"
+                        break
                     if not line.startswith("data: "):
                         continue
                     chunk = line[6:]
@@ -1538,6 +1569,13 @@ async def _stream_continuation(db: Any, conv: dict, cut_short_msg: dict):
                             yield f"data: {json.dumps({'token': raw})}\n\n"
                     except Exception:
                         pass
+    except asyncio.TimeoutError:
+        # Catch timeout bubbling out of the outer httpx context manager
+        logger.warning("Continuation stream outer timeout (conv=%s)", conv_id)
+        _stream_ok = False
+        _cont_timed_out = True
+        _stream_err = f"continuation silent for {_CONT_TIMEOUT_SEC}s"
+        yield f"data: {json.dumps({'timeout': True, 'message_id': orig_id})}\n\n"
     except Exception as exc:
         _stream_ok = False
         _stream_err = f"{type(exc).__name__}: {exc}"[:500]
