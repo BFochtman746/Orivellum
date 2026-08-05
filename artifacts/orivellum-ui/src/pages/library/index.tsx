@@ -20,7 +20,7 @@ import {
   Search, Upload, FileText, Database, Filter,
   Library as LibraryIcon, AlertCircle, RefreshCw, Trash2,
   CheckCircle2, Clock, FileQuestion, X, Package, Layers,
-  FolderOpen, Sparkles, GitMerge, Star, GitBranch, Download,
+  FolderOpen, Sparkles, GitMerge, Star, GitBranch, Download, Network,
 } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
@@ -689,6 +689,16 @@ export default function Library() {
               >
                 <Layers className="w-3.5 h-3.5" />
                 By Topic
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1.5 text-xs"
+                onClick={() => navigate("/graph")}
+                title="View the entity knowledge graph across your library"
+              >
+                <Network className="w-3.5 h-3.5" />
+                Graph
               </Button>
               <ImportDialog onSuccess={invalidate} defaultOpen={openImport} />
             </div>

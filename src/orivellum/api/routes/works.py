@@ -564,17 +564,52 @@ def get_entity(entity_id: str):
     return entity
 
 
+@router.get("/graph")
+def global_graph(
+    work_id: str | None = None,
+    entity_kinds: str | None = None,
+    limit: int = 200,
+):
+    """Return a knowledge graph across all Works (or scoped to one).
+
+    Query parameters:
+    - ``work_id`` — when set, restricts the graph to a single Work.
+    - ``entity_kinds`` — comma-separated allow-list of entity kinds
+      (e.g. ``person,place,concept``). Document nodes are always included.
+    - ``limit`` — max number of nodes (capped at 300).
+
+    Response shape: ``{nodes, edges, node_count, edge_count}``.
+    Each node has ``{id, label, type, kind}``; entity nodes from the global
+    view additionally carry ``{work_id, work_title}`` when available.
+    Each edge has ``{source, target, label, type}``.
+    """
+    db = get_db()
+    kinds = [k.strip() for k in entity_kinds.split(",") if k.strip()] if entity_kinds else None
+    graph = db.get_global_graph(
+        work_id=work_id,
+        entity_kinds=kinds,
+        limit=min(limit, 300),
+    )
+    return graph
+
+
 @router.get("/works/{work_id}/graph")
-def works_graph(work_id: str, limit: int = 100):
+def works_graph(work_id: str, limit: int = 100, entity_kinds: str | None = None):
     """Return entity graph nodes and edges for a Work.
 
     Uses real entity/edge tables when populated, falls back to a
     knowledge-item projection for works processed before graph support.
+    Optional ``entity_kinds`` comma-separated allow-list filters node types.
     """
     db = get_db()
     if not db.get_work(work_id):
         raise HTTPException(404, f"Work {work_id!r} not found")
-    graph = db.get_work_graph(work_id, limit=min(limit, 200))
+    kinds = [k.strip() for k in entity_kinds.split(",") if k.strip()] if entity_kinds else None
+    graph = db.get_global_graph(
+        work_id=work_id,
+        entity_kinds=kinds,
+        limit=min(limit, 200),
+    )
     return {"work_id": work_id, **graph}
 
 

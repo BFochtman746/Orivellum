@@ -2155,6 +2155,211 @@ class OrivellumDB:
             "edge_count": len(edges),
         }
 
+    def get_global_graph(
+        self,
+        work_id: str | None = None,
+        entity_kinds: list[str] | None = None,
+        limit: int = 200,
+    ) -> dict:
+        """Build a cross-work knowledge graph payload.
+
+        When ``work_id`` is given, returns a work-scoped graph (delegates to
+        ``get_work_graph`` and then applies the entity_kinds filter post-hoc).
+        When ``work_id`` is None, returns the top entities by mention count
+        across all Works.
+
+        ``entity_kinds`` is an optional allow-list of entity kind values
+        (e.g. ``["person","place"]``). Document nodes are always included so
+        that entities have at least one visible connection.
+        """
+        if work_id:
+            graph = self.get_work_graph(work_id, limit=limit)
+            if entity_kinds:
+                allowed = set(entity_kinds)
+                allowed.add("document")  # always keep document nodes
+                filtered_nodes = [n for n in graph["nodes"]
+                                  if n["type"] == "document" or n.get("kind") in allowed]
+                filtered_ids = {n["id"] for n in filtered_nodes}
+                filtered_edges = [e for e in graph["edges"]
+                                  if e["source"] in filtered_ids and e["target"] in filtered_ids]
+                graph["nodes"] = filtered_nodes
+                graph["edges"] = filtered_edges
+                graph["node_count"] = len(filtered_nodes)
+                graph["edge_count"] = len(filtered_edges)
+            return graph
+
+        # ── Global (cross-work) graph ─────────────────────────────────────────
+        nodes: list[dict] = []
+        edges: list[dict] = []
+        seen: set[str] = set()
+
+        DOC_CAP = max(20, limit // 4)
+        entity_limit = max(0, limit - DOC_CAP)
+
+        kind_filter = ""
+        kind_args: list = []
+        if entity_kinds:
+            kind_phs = ",".join("?" * len(entity_kinds))
+            kind_filter = f" AND e.kind IN ({kind_phs})"
+            kind_args = list(entity_kinds)
+
+        with self._lock:
+            entity_rows = self._conn.execute(
+                f"""SELECT e.id, e.name, e.kind, COUNT(r.id) AS mention_count
+                    FROM entities e
+                    JOIN relationships r ON r.source_id = e.id AND r.kind = 'MENTIONS'
+                    WHERE 1=1 {kind_filter}
+                    GROUP BY e.id
+                    ORDER BY mention_count DESC
+                    LIMIT ?""",
+                (*kind_args, entity_limit),
+            ).fetchall()
+
+        entity_ids: list[str] = []
+        for r in entity_rows:
+            nid = r["id"]
+            if nid not in seen:
+                seen.add(nid)
+                nodes.append({
+                    "id": nid,
+                    "label": r["name"],
+                    "type": "entity",
+                    "kind": r["kind"],
+                })
+            entity_ids.append(nid)
+
+        if not entity_ids:
+            # Fall back: return a knowledge-item projection across all works.
+            # In this path every projected node has kind="concept"; respect
+            # entity_kinds by skipping rows when "concept" is not allowed.
+            allowed_in_fallback: set[str] | None = set(entity_kinds) if entity_kinds else None
+            include_concepts = allowed_in_fallback is None or "concept" in allowed_in_fallback
+
+            candidate_edges: list[dict] = []
+            if include_concepts:
+                with self._lock:
+                    kn_rows = self._conn.execute(
+                        """SELECT id, kind, text, subject, predicate, object
+                           FROM knowledge
+                           WHERE kind IN ('entity','relationship')
+                           LIMIT ?""",
+                        (limit * 2,),
+                    ).fetchall()
+                for row in kn_rows:
+                    r = dict(row)
+                    if r["kind"] == "entity" and r["text"]:
+                        key = r["id"]
+                        if key not in seen:
+                            seen.add(key)
+                            nodes.append({"id": key, "label": r["text"],
+                                          "type": "entity", "kind": "concept"})
+                    elif r["kind"] == "relationship" and r["subject"] and r["object"]:
+                        for label in (r["subject"], r["object"]):
+                            nk = f"kn-{label.lower()[:32]}"
+                            if nk not in seen:
+                                seen.add(nk)
+                                nodes.append({"id": nk, "label": label,
+                                              "type": "entity", "kind": "concept"})
+                        candidate_edges.append({
+                            "source": f"kn-{r['subject'].lower()[:32]}",
+                            "target": f"kn-{r['object'].lower()[:32]}",
+                            "label": r.get("predicate") or "relates to",
+                            "type": "RELATES",
+                        })
+
+            # Truncate nodes first, then build the edge set so no dangling edges
+            bounded_nodes = nodes[:limit]
+            bounded_ids   = {n["id"] for n in bounded_nodes}
+            bounded_edges = [
+                e for e in candidate_edges
+                if e["source"] in bounded_ids and e["target"] in bounded_ids
+            ]
+            return {
+                "nodes":      bounded_nodes,
+                "edges":      bounded_edges,
+                "node_count": len(bounded_nodes),
+                "edge_count": len(bounded_edges),
+            }
+
+        ent_ph = ",".join("?" * len(entity_ids))
+
+        # Document nodes: docs mentioned by the top entities
+        with self._lock:
+            doc_rows = self._conn.execute(
+                f"""SELECT DISTINCT d.id, d.title, d.kind, w.id as work_id, w.title as work_title
+                    FROM relationships r
+                    JOIN documents d ON d.id = r.target_id
+                    LEFT JOIN works w ON w.id = d.work_id
+                    WHERE r.source_id IN ({ent_ph}) AND r.kind = 'MENTIONS'
+                    LIMIT ?""",
+                (*entity_ids, DOC_CAP),
+            ).fetchall()
+
+        doc_ids: list[str] = []
+        for r in doc_rows:
+            nid = r["id"]
+            if nid not in seen:
+                seen.add(nid)
+                nodes.append({
+                    "id": nid,
+                    "label": r["title"] or "Untitled",
+                    "type": "document",
+                    "kind": r["kind"] or "file",
+                    "work_id": r["work_id"],
+                    "work_title": r["work_title"],
+                })
+            doc_ids.append(nid)
+
+        # MENTIONS edges
+        if doc_ids:
+            doc_ph = ",".join("?" * len(doc_ids))
+            with self._lock:
+                mention_rows = self._conn.execute(
+                    f"""SELECT source_id, target_id FROM relationships
+                        WHERE source_id IN ({ent_ph}) AND target_id IN ({doc_ph})
+                        AND kind='MENTIONS'""",
+                    (*entity_ids, *doc_ids),
+                ).fetchall()
+            for r in mention_rows:
+                if r["source_id"] in seen and r["target_id"] in seen:
+                    edges.append({
+                        "source": r["source_id"],
+                        "target": r["target_id"],
+                        "label": "mentions",
+                        "type": "MENTIONS",
+                    })
+
+        # Entity-entity edges
+        with self._lock:
+            edge_rows = self._conn.execute(
+                f"""SELECT source_id, target_id, relation FROM edges
+                    WHERE source_id IN ({ent_ph}) OR target_id IN ({ent_ph})
+                    LIMIT ?""",
+                (*entity_ids, *entity_ids, limit),
+            ).fetchall()
+        for r in edge_rows:
+            if r["source_id"] in seen and r["target_id"] in seen:
+                edges.append({
+                    "source": r["source_id"],
+                    "target": r["target_id"],
+                    "label": r["relation"],
+                    "type": r["relation"],
+                })
+
+        # Truncate nodes first so edges can never reference a missing node
+        bounded_nodes = nodes[:limit]
+        bounded_ids   = {n["id"] for n in bounded_nodes}
+        bounded_edges = [
+            e for e in edges
+            if e["source"] in bounded_ids and e["target"] in bounded_ids
+        ]
+        return {
+            "nodes":      bounded_nodes,
+            "edges":      bounded_edges,
+            "node_count": len(bounded_nodes),
+            "edge_count": len(bounded_edges),
+        }
+
     def list_entities(
         self,
         kind: str | None = None,

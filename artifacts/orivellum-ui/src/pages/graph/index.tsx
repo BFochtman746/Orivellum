@@ -1,0 +1,161 @@
+/**
+ * Global Knowledge Graph page — cross-work entity graph with Work and
+ * entity-type filters.  Accessible via /graph; linked from the Library header.
+ */
+import { useState } from "react";
+import { Link, useLocation } from "wouter";
+import { useQuery } from "@tanstack/react-query";
+import { ArrowLeft, RefreshCw } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select";
+import { KnowledgeGraph, GNode } from "@/components/knowledge-graph";
+import { apiFetch } from "@/lib/auth";
+import { useListWorks } from "@workspace/api-client-react";
+
+const API_BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
+
+// Entity kind filter config
+const ENTITY_KINDS = [
+  { value: "concept",   label: "Concepts",   color: "#8b5cf6" },
+  { value: "person",    label: "People",     color: "#6366f1" },
+  { value: "place",     label: "Places",     color: "#10b981" },
+  { value: "theme",     label: "Themes",     color: "#f59e0b" },
+  { value: "scripture", label: "Scripture",  color: "#ef4444" },
+];
+
+export default function GraphPage() {
+  const [, navigate]    = useLocation();
+  const [workId,    setWorkId]    = useState<string>("all");
+  const [hiddenKinds, setHiddenKinds] = useState<Set<string>>(new Set());
+  const [refreshKey,  setRefreshKey]  = useState(0);
+
+  const { data: worksData } = useListWorks();
+  const works = worksData?.works ?? [];
+
+  // Build query params
+  const params = new URLSearchParams({ limit: "250" });
+  if (workId !== "all") params.set("work_id", workId);
+
+  const queryKey = ["globalGraph", workId, refreshKey];
+  const { data: graphData, isLoading, error } = useQuery({
+    queryKey,
+    queryFn: async () => {
+      const r = await apiFetch(`${API_BASE}/graph?${params}`);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return r.json() as Promise<{
+        nodes: any[];
+        edges: any[];
+        node_count: number;
+        edge_count: number;
+      }>;
+    },
+    staleTime: 60_000,
+  });
+
+  const toggleKind = (kind: string) => {
+    setHiddenKinds(prev => {
+      const next = new Set(prev);
+      if (next.has(kind)) next.delete(kind); else next.add(kind);
+      return next;
+    });
+  };
+
+  const handleNavigate = (node: GNode) => {
+    if (node.type === "document") {
+      navigate(`/library/${node.id}`);
+    }
+  };
+
+  return (
+    <div className="space-y-6 animate-in fade-in duration-500">
+      {/* Header */}
+      <div className="flex items-center gap-3 flex-wrap">
+        <Link href="/library">
+          <Button variant="ghost" size="sm" className="gap-1.5 text-xs">
+            <ArrowLeft className="w-3.5 h-3.5" />
+            Library
+          </Button>
+        </Link>
+        <div className="flex-1 min-w-0">
+          <h1 className="text-2xl font-serif font-semibold tracking-tight">
+            Knowledge Graph
+          </h1>
+          <p className="text-sm text-muted-foreground mt-0.5">
+            Entities, documents, and their connections across your library
+          </p>
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          className="gap-1.5 text-xs"
+          onClick={() => setRefreshKey(k => k + 1)}
+          disabled={isLoading}
+        >
+          <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? "animate-spin" : ""}`} />
+          Refresh
+        </Button>
+      </div>
+
+      {/* Filters */}
+      <div className="flex items-center gap-3 flex-wrap border border-border/40 rounded-lg p-3 bg-muted/10">
+        {/* Work selector */}
+        <div className="flex items-center gap-2 text-xs text-muted-foreground shrink-0">
+          <span className="font-medium">Work:</span>
+          <Select value={workId} onValueChange={setWorkId}>
+            <SelectTrigger className="h-7 w-[160px] text-xs">
+              <SelectValue placeholder="All works" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Works</SelectItem>
+              {works.filter(w => w.id).map(w => (
+                <SelectItem key={w.id} value={w.id!}>
+                  {w.title}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div className="h-5 w-px bg-border shrink-0" />
+
+        {/* Entity type filter chips */}
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <span className="text-xs text-muted-foreground font-medium shrink-0">Show:</span>
+          {ENTITY_KINDS.map(({ value, label, color }) => {
+            const on = !hiddenKinds.has(value);
+            return (
+              <button
+                key={value}
+                onClick={() => toggleKind(value)}
+                className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-medium border transition-all
+                  ${on
+                    ? "bg-background border-border text-foreground"
+                    : "bg-transparent border-border/30 text-muted-foreground/50"
+                  }`}
+              >
+                <span className="w-2 h-2 rounded-full shrink-0"
+                  style={{ background: on ? color : "#94a3b8" }} />
+                {label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Graph */}
+      <KnowledgeGraph
+        nodes={graphData?.nodes ?? []}
+        edges={graphData?.edges ?? []}
+        hiddenKinds={hiddenKinds}
+        onNavigate={handleNavigate}
+        height={560}
+        loading={isLoading}
+        error={error ? String(error) : ""}
+        nodeCount={graphData?.node_count}
+        edgeCount={graphData?.edge_count}
+      />
+    </div>
+  );
+}
