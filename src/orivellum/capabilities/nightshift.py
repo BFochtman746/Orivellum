@@ -145,11 +145,62 @@ def _write_report(data_dir: Path, date_str: str, items: list[str]) -> str:
 
 # ── Passes ────────────────────────────────────────────────────────────────────
 
+# ── Testable helpers for the DB optimise pass ─────────────────────────────────
+
+def _get_freelist_ratio(conn: "Any") -> "tuple[float, int, int]":
+    """Return ``(ratio, freelist_count, page_count)`` for *conn*.
+
+    Extracted so tests can monkeypatch this function to simulate arbitrary
+    fragmentation without touching C-extension sqlite3.Connection attributes.
+    """
+    freelist = conn.execute("PRAGMA freelist_count").fetchone()[0]
+    page_cnt = conn.execute("PRAGMA page_count").fetchone()[0]
+    ratio    = freelist / max(1, page_cnt)
+    return ratio, freelist, page_cnt
+
+
+def _run_vacuum(conn: "Any") -> None:
+    """Execute VACUUM on *conn*.
+
+    Extracted so tests can monkeypatch this function to simulate a slow
+    VACUUM without touching C-extension sqlite3.Connection attributes.
+    """
+    conn.execute("VACUUM")
+
+
 def _pass_db_optimise(db: "OrivellumDB", report: list[str]) -> None:
-    """VACUUM + ANALYZE + integrity check.  Keeps SQLite fast and healthy."""
+    """WAL checkpoint + ANALYZE + conditional VACUUM + integrity check.
+
+    All work runs inside a single ``with db._lock`` block so the implementation
+    is correct regardless of how long VACUUM takes:
+
+    Reads
+        ``db.read_conn()`` uses a *separate per-thread connection* with
+        ``PRAGMA query_only=ON``.  It never touches ``db._lock``, so read-heavy
+        endpoints (settings, prompts, list queries) are completely unaffected
+        by any maintenance work done here.
+
+    Writes
+        Calls that go through ``governed_write`` or ``db._lock`` queue at the
+        Python mutex level until the lock is released.  They never see
+        ``SQLITE_BUSY`` because only one SQLite connection (``db._conn``) ever
+        writes, and VACUUM runs on that same connection under the same lock.
+
+    Conditional VACUUM
+        A full ``VACUUM`` is only triggered when
+        ``freelist_count / page_count > 30 %`` (more than a third of the file
+        is wasted space).  A routine ``PRAGMA wal_checkpoint(TRUNCATE)`` keeps
+        fragmentation low enough that VACUUM is rarely needed.
+
+    Nightshift runs at 03:00 local time when write activity is near-zero, so
+    the lock hold during VACUUM (up to ~60 s on a very large DB) has minimal
+    user-visible impact.  Reads remain unaffected throughout.
+    """
+    _FREELIST_VACUUM_RATIO = 0.30
+
     try:
         with db._lock:
-            # integrity_check returns list of rows; "ok" means clean
+            # ── integrity check ────────────────────────────────────────────────
             result = db._conn.execute("PRAGMA integrity_check(10)").fetchall()
             ok = len(result) == 1 and result[0][0] == "ok"
             if not ok:
@@ -159,35 +210,52 @@ def _pass_db_optimise(db: "OrivellumDB", report: list[str]) -> None:
             else:
                 logger.debug("DB integrity: ok")
 
-            # WAL checkpoint — flush WAL to main DB file
+            # ── WAL checkpoint + ANALYZE ───────────────────────────────────────
             db._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-            # ANALYZE updates query-planner statistics
             db._conn.execute("ANALYZE")
             db._conn.commit()
 
-        # VACUUM — run on the main serialized connection while holding the
-        # app lock so our own writers cannot race it (avoids SQLITE_BUSY).
-        # VACUUM cannot run inside a transaction, so commit first.
-        with db._lock:
-            db_path = None
+            # ── freelist ratio (consistent snapshot while lock is held) ────────
+            db_path: str | None = None
             try:
                 row = db._conn.execute("PRAGMA database_list").fetchone()
-                if row:
-                    db_path = row[2]  # filename column
+                db_path = row[2] if row else None
             except Exception:
                 pass
 
-            size_before = os.path.getsize(db_path) if db_path and os.path.exists(db_path) else None
-            db._conn.commit()
-            db._conn.execute("VACUUM")
+            try:
+                ratio, freelist, page_cnt = _get_freelist_ratio(db._conn)
+                do_vacuum = ratio > _FREELIST_VACUUM_RATIO
+            except Exception:
+                ratio, freelist, page_cnt = 0.0, 0, 0
+                do_vacuum = False
 
-        if size_before is not None:
-            size_after = os.path.getsize(db_path)
-            saved_mb = max(0, (size_before - size_after) / 1_048_576)
-            msg = f"DB optimised — VACUUM saved {saved_mb:.1f} MB" if saved_mb > 0.05 \
-                  else "DB optimised — VACUUM (no size change)"
-        else:
-            msg = "DB optimised — VACUUM + ANALYZE + WAL checkpoint"
+            # ── conditional VACUUM (still under db._lock) ──────────────────────
+            # Holding db._lock ensures:
+            #   - No other Python writer races with VACUUM on db._conn
+            #   - Writers queue at the Python mutex (not SQLITE_BUSY) and
+            #     proceed cleanly once the lock is released
+            #   - Reads via db.read_conn() are never blocked (separate conn)
+            if do_vacuum and db_path:
+                size_before = (os.path.getsize(db_path)
+                               if os.path.exists(db_path) else None)
+                db._conn.commit()   # close any implicit read transaction first
+                _run_vacuum(db._conn)
+
+                if size_before is not None:
+                    size_after = os.path.getsize(db_path)
+                    saved_mb   = max(0, (size_before - size_after) / 1_048_576)
+                    msg = (f"DB optimised — VACUUM saved {saved_mb:.1f} MB "
+                           f"(freelist {ratio:.0%})")
+                else:
+                    msg = (f"DB optimised — VACUUM + checkpoint + ANALYZE "
+                           f"(freelist {ratio:.0%})")
+            else:
+                reason = (f"< {_FREELIST_VACUUM_RATIO:.0%}, VACUUM skipped"
+                          if not do_vacuum else "VACUUM skipped — no DB path")
+                msg = (f"DB optimised — checkpoint + ANALYZE "
+                       f"(freelist {ratio:.0%}, {reason})")
+
         report.append(msg)
         logger.info(msg)
 

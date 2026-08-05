@@ -1266,4 +1266,22 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         INSERT INTO messages_fts(text, role, msg_id, conversation_id)
             SELECT text, role, id, conversation_id FROM messages
     """),
+
+    # v75 — Explicit named work_id index on graph_layouts.
+    #
+    # graph_layouts (v19) has UNIQUE(work_id) which creates an implicit B-tree
+    # index usable by the query planner, but no named index.  Adding gl_work
+    # makes it visible to EXPLAIN QUERY PLAN and index-maintenance tooling.
+    #
+    # The three companion statements (ds_work, mem_work, fl_work) already exist
+    # from their originating migrations (v18, v20, and forge_learning's migration
+    # respectively).  They are repeated here as IF NOT EXISTS no-ops to document
+    # the complete set of work_id FK indexes in one place, and to cover any edge
+    # case where a partial migration left a gap.  All four are fully idempotent.
+    (75, "Named work_id index on graph_layouts (+ idempotent guards for daily_stats, memories, forge_learning)", """
+        CREATE INDEX IF NOT EXISTS gl_work  ON graph_layouts(work_id);
+        CREATE INDEX IF NOT EXISTS ds_work  ON daily_stats(work_id);
+        CREATE INDEX IF NOT EXISTS mem_work ON memories(work_id);
+        CREATE INDEX IF NOT EXISTS fl_work  ON forge_learning(work_id)
+    """),
 ]

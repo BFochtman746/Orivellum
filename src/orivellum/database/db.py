@@ -87,6 +87,7 @@ class OrivellumDB:
     def __init__(self, path: str) -> None:
         self._path = path
         self._lock = threading.RLock()
+        self._local = threading.local()   # per-thread read connections
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
@@ -102,6 +103,53 @@ class OrivellumDB:
         self._conn.execute("PRAGMA foreign_keys=ON")
         self._conn.execute("PRAGMA busy_timeout=5000")
         self._conn.execute("PRAGMA synchronous=NORMAL")
+
+    def read_conn(self) -> "sqlite3.Connection":
+        """Return a per-thread read-only SQLite connection.
+
+        SQLite's WAL mode allows any number of concurrent readers to run
+        without blocking each other or the single writer.  This method
+        creates one lightweight read-only connection per OS thread
+        (via ``threading.local``) so high-frequency reads — settings,
+        prompts, list queries — do not have to contend on ``self._lock``.
+
+        Properties of each returned connection:
+        - ``PRAGMA query_only=ON``  — SQLite refuses any mutating statement,
+          giving us a cheap safety net against accidental writes.
+        - Shares the same WAL file as ``self._conn``, so it always reads
+          committed data (default SQLite isolation).
+        - ``PRAGMA busy_timeout=5000`` — waits up to 5 s during a WAL
+          checkpoint rather than immediately returning SQLITE_BUSY.
+
+        In-memory databases (path is ``":memory:"`` or ``""``):
+            A second ``sqlite3.connect(":memory:")`` opens a completely
+            separate, empty database — not a view of the existing one.
+            For in-memory DBs we fall back to ``self._conn`` (the single
+            shared connection) and skip the per-thread pool.  Callers must
+            hold ``self._lock`` when using the returned connection in this
+            case; the code paths that call read_conn() (get_setting,
+            get_active_prompt) do *not* hold the lock, which is fine
+            because in-memory DBs are only used in tests that are
+            single-threaded or accept that trade-off.
+
+        Connections are cached for the lifetime of each thread and are
+        closed by ``close()`` for the main thread only; background threads
+        are daemon threads and their connections are reclaimed by the OS on
+        exit.
+        """
+        # In-memory (or unnamed) databases cannot share data across connections.
+        if not self._path or self._path == ":memory:":
+            return self._conn
+
+        conn = getattr(self._local, "_read_conn", None)
+        if conn is None:
+            conn = sqlite3.connect(self._path, check_same_thread=False)
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA query_only=ON")
+            conn.execute("PRAGMA busy_timeout=5000")
+            self._local._read_conn = conn
+        return conn
 
     def _run_migrations(self) -> None:
         """Apply any pending migrations in version order."""
@@ -166,8 +214,13 @@ class OrivellumDB:
         )
 
     def get_setting(self, key: str, default: str = "") -> str:
-        with self._lock:
-            return self._get_setting(key, default)
+        # Hot path — uses the per-thread read connection so concurrent callers
+        # don't queue on self._lock.  PRAGMA query_only=ON on read_conn()
+        # ensures this path can never accidentally write.
+        row = self.read_conn().execute(
+            "SELECT value FROM settings WHERE scope='global' AND key=?", (key,)
+        ).fetchone()
+        return row["value"] if row and row["value"] is not None else default
 
     # Keys whose values must never appear in audit detail (secrets/tokens)
     _AUDIT_SECRET_KEYS: frozenset[str] = frozenset({"api_key", "session_secret", "token"})
@@ -191,13 +244,14 @@ class OrivellumDB:
         Never raises — returns None if the prompts table is missing/empty or
         anything goes wrong, so callers can safely fall back to a hardcoded
         default (e.g. the chat base persona).
+
+        Uses the per-thread read connection (no write-lock contention).
         """
         try:
-            with self._lock:
-                row = self._conn.execute(
-                    "SELECT content FROM prompts WHERE slot=? AND active=1 LIMIT 1",
-                    (slot,),
-                ).fetchone()
+            row = self.read_conn().execute(
+                "SELECT content FROM prompts WHERE slot=? AND active=1 LIMIT 1",
+                (slot,),
+            ).fetchone()
             return row["content"] if row and row["content"] else None
         except Exception:
             return None
@@ -3756,4 +3810,13 @@ class OrivellumDB:
 
     def close(self) -> None:
         with self._lock:
+            # Close the main writer connection.
             self._conn.close()
+            # Close this thread's read connection if one was opened.
+            rc = getattr(self._local, "_read_conn", None)
+            if rc is not None:
+                try:
+                    rc.close()
+                except Exception:
+                    pass
+                self._local._read_conn = None
