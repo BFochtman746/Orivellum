@@ -804,6 +804,60 @@ def _pass_version_suggestions(db: "OrivellumDB", report: list[str]) -> None:
         report.append("Version suggestions: no new version pairs found")
 
 
+def _pass_zip_provenance_backfill(db: "OrivellumDB", report: list[str]) -> None:
+    """Back-fill object_provenance rows for ZIP child documents that were created
+    before this feature was introduced (or on runs where record_provenance failed).
+
+    A document is a ZIP child when its ``meta`` JSON contains a ``"from_zip"``
+    key (written by ``_explode_zip_into_documents``).  For each such document
+    that has no existing provenance row we insert one with source='zip_extract'
+    and origin_id=<parent_zip_doc_id>.
+
+    Capped at 500 documents per run to stay bounded; a second run catches the
+    rest if the library is very large.
+    """
+    try:
+        from orivellum.capabilities.persist import record_provenance as _rp
+
+        # Find ZIP child docs missing provenance rows.  Uses json_extract so only
+        # documents with a well-formed from_zip value are candidates.
+        with db._lock:
+            candidates = db._conn.execute(
+                """SELECT d.id, d.work_id, json_extract(d.meta, '$.from_zip') AS parent_id
+                   FROM documents d
+                   WHERE json_extract(d.meta, '$.from_zip') IS NOT NULL
+                     AND NOT EXISTS (
+                         SELECT 1 FROM object_provenance op
+                         WHERE op.object_id = d.id
+                           AND op.source = 'zip_extract'
+                     )
+                   LIMIT 500""",
+            ).fetchall()
+
+        if not candidates:
+            logger.debug("ZIP provenance backfill: nothing to do")
+            return
+
+        backfilled = 0
+        for row in candidates:
+            doc_id = row["id"]
+            parent_id = row["parent_id"]
+            work_id = row["work_id"]
+            try:
+                _rp(doc_id, "zip_extract", db,
+                    origin_id=parent_id, work_id=work_id)
+                backfilled += 1
+            except Exception as exc:
+                logger.debug("ZIP provenance backfill: failed for %s: %s", doc_id, exc)
+
+        if backfilled:
+            report.append(f"ZIP provenance backfill: {backfilled} document(s) recorded")
+            logger.info("Nightshift ZIP provenance backfill: %d rows written", backfilled)
+    except Exception as exc:
+        logger.warning("ZIP provenance backfill pass failed: %s", exc)
+        report.append(f"ZIP provenance backfill: failed — {exc}")
+
+
 def _pass_clustering(db: "OrivellumDB", report: list[str]) -> None:
     """Rebuild topic clusters over all vectorised documents.
 
@@ -888,8 +942,12 @@ def _run_nightshift_passes(db: "OrivellumDB", cfg: "OrivellumConfig") -> None:
     logger.info("Nightshift pass 14/15: version-relationship suggestions")
     _pass_version_suggestions(db, report)
 
-    # 15 — Topic clustering
-    logger.info("Nightshift pass 15/16: topic clustering")
+    # 15 — ZIP child provenance back-fill
+    logger.info("Nightshift pass 15/17: ZIP provenance backfill")
+    _pass_zip_provenance_backfill(db, report)
+
+    # 16 — Topic clustering
+    logger.info("Nightshift pass 16/17: topic clustering")
     _pass_clustering(db, report)
 
     # 16 — Proactive custodian: staleness nudges
