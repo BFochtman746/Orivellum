@@ -389,6 +389,15 @@ def process_document(doc_id: str, file_path: str, kind: str,
             return
 
         # Step 1: extract text
+        # For audio, flag the document as "transcribing" so the UI shows a
+        # meaningful status while waiting for Whisper (which can take minutes
+        # for long recordings).
+        if kind == "audio":
+            try:
+                db.update_document_extracted(doc_id, "", 0, readiness="transcribing")
+            except Exception:
+                pass  # non-fatal — pipeline continues regardless
+
         result = extract(path, kind, db=db)
         if not result.ok:
             # Use the extractor's own diagnostic when available (e.g. ZIP manifest)

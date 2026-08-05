@@ -701,8 +701,14 @@ def _extract_audio(path: Path, db=None) -> ExtractionResult:
 
     base_url: str = ""
     try:
-        from orivellum.config import get_config
-        base_url = get_config().serving.base_url.rstrip("/")
+        # Prefer the request-scoped config when running inside the FastAPI server.
+        # Fall back to load_config() when called from a standalone script or test.
+        try:
+            from orivellum.api._deps import get_config as _get_cfg
+            base_url = _get_cfg().serving.base_url.rstrip("/")
+        except Exception:
+            from orivellum.configuration.config import load_config as _load_cfg
+            base_url = _load_cfg().serving.base_url.rstrip("/")
     except Exception:
         pass
 

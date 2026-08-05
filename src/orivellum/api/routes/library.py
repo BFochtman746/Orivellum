@@ -106,7 +106,7 @@ _KIND_MAP = {
     ".pptx": "pptx", ".ppt": "pptx",
     ".txt": "text", ".md": "markdown",
     ".png": "image", ".jpg": "image", ".jpeg": "image", ".webp": "image", ".gif": "image",
-    ".mp3": "audio", ".wav": "audio", ".m4a": "audio",
+    ".mp3": "audio", ".wav": "audio", ".m4a": "audio", ".ogg": "audio", ".flac": "audio",
     ".py": "code", ".js": "code", ".ts": "code",
     ".jsx": "code", ".tsx": "code", ".java": "code", ".cpp": "code",
     ".c": "code", ".cs": "code", ".go": "code", ".rs": "code", ".rb": "code",
@@ -138,6 +138,9 @@ _MIME_SIGNATURES: list[tuple[frozenset[str], bytes, int]] = [
     (frozenset({".wav"}),                       b"RIFF",             0),
     (frozenset({".mp3"}),                       b"ID3",              0),
     (frozenset({".mp3"}),                       b"\xff\xfb",         0),  # MP3 without ID3
+    (frozenset({".mp3"}),                       b"\xff\xfa",         0),  # MP3 without ID3 (MPEG-1 Layer 3)
+    (frozenset({".flac"}),                      b"fLaC",             0),
+    (frozenset({".m4a"}),                       b"ftyp",             4),  # ISO base media container
     (frozenset({".webp"}),                      b"WEBP",             8),  # RIFF????WEBP
     (frozenset({".gif"}),                       b"GIF8",             0),
 ]
@@ -515,7 +518,7 @@ def _ingest_file(
                 )
                 kind = doc.get("kind") or _kind_for(name)
                 _EXTRACTABLE = {"pdf", "docx", "excel", "csv", "pptx", "text", "markdown",
-                               "code", "html", "json", "zip", "file"}
+                               "code", "html", "json", "zip", "file", "audio", "image"}
                 if kind in _EXTRACTABLE:
                     logger.info(
                         "Re-queuing extraction for duplicate doc=%s kind=%s (force=%s readiness_was=%s)",
@@ -600,7 +603,7 @@ def _ingest_file(
     # Fire extraction + chunking + knowledge harvest in the background.
     # BackgroundTasks runs after the response is sent — safe with SQLite WAL mode.
     _EXTRACTABLE = {"pdf", "docx", "excel", "csv", "pptx", "text", "markdown",
-                   "code", "html", "json", "zip", "file"}
+                   "code", "html", "json", "zip", "file", "audio", "image"}
     if kind in _EXTRACTABLE:
         logger.info("Queuing extraction for doc=%s kind=%s", doc["id"], kind)
         background_tasks.add_task(

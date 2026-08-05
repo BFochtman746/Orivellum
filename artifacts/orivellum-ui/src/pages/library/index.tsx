@@ -191,10 +191,11 @@ function DuplicatesBanner() {
 // ── Readiness config ─────────────────────────────────────────────────────────
 
 const READINESS = {
-  ready:    { label: "READY",      icon: CheckCircle2, cls: "text-emerald-600 border-emerald-200 bg-emerald-50" },
-  imported: { label: "PROCESSING", icon: Clock,        cls: "text-amber-600 border-amber-200 bg-amber-50" },
-  no_text:  { label: "NO TEXT",    icon: FileQuestion, cls: "text-orange-600 border-orange-200 bg-orange-50" },
-  error:    { label: "ERROR",      icon: AlertCircle,  cls: "text-red-600 border-red-200 bg-red-50" },
+  ready:        { label: "READY",        icon: CheckCircle2, cls: "text-emerald-600 border-emerald-200 bg-emerald-50" },
+  imported:     { label: "PROCESSING",   icon: Clock,        cls: "text-amber-600 border-amber-200 bg-amber-50" },
+  transcribing: { label: "TRANSCRIBING", icon: Clock,        cls: "text-violet-600 border-violet-200 bg-violet-50" },
+  no_text:      { label: "NO TEXT",      icon: FileQuestion, cls: "text-orange-600 border-orange-200 bg-orange-50" },
+  error:        { label: "ERROR",        icon: AlertCircle,  cls: "text-red-600 border-red-200 bg-red-50" },
 } as const;
 
 type Readiness = keyof typeof READINESS;
@@ -343,7 +344,7 @@ function ImportDialog({ onSuccess, defaultOpen = false }: ImportDialogProps) {
             ref={inputRef}
             type="file"
             className="hidden"
-            accept=".pdf,application/pdf,.docx,.doc,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,.csv,text/csv,.pptx,.ppt,application/vnd.openxmlformats-officedocument.presentationml.presentation,.txt,text/plain,.md,text/markdown,.png,.jpg,.jpeg,.webp,.gif,image/*,.py,.js,.ts,.jsx,.tsx,.java,.cpp,.c,.cs,.go,.rs,.rb,.html,.htm,text/html,.json,application/json,.zip,application/zip,.rtf,.epub,.xml"
+            accept=".pdf,application/pdf,.docx,.doc,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,.csv,text/csv,.pptx,.ppt,application/vnd.openxmlformats-officedocument.presentationml.presentation,.txt,text/plain,.md,text/markdown,.png,.jpg,.jpeg,.webp,.gif,image/*,.mp3,audio/mpeg,.wav,audio/wav,.m4a,audio/mp4,.ogg,audio/ogg,.flac,audio/flac,audio/*,.py,.js,.ts,.jsx,.tsx,.java,.cpp,.c,.cs,.go,.rs,.rb,.html,.htm,text/html,.json,application/json,.zip,application/zip,.rtf,.epub,.xml"
             multiple
             onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }}
           />

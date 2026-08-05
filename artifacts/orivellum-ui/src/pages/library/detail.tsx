@@ -143,10 +143,11 @@ function EditableTitle({ docId: _docId, title, onSave }: { docId: string; title:
 // ── Readiness badge ───────────────────────────────────────────────────────────
 
 const READINESS_CFG = {
-  ready:    { label: "READY",      Icon: CheckCircle2, cls: "text-emerald-600 border-emerald-200 bg-emerald-50" },
-  imported: { label: "PROCESSING", Icon: Clock,        cls: "text-amber-600 border-amber-200 bg-amber-50" },
-  no_text:  { label: "NO TEXT",    Icon: FileQuestion, cls: "text-orange-600 border-orange-200 bg-orange-50" },
-  error:    { label: "ERROR",      Icon: AlertCircle,  cls: "text-red-600 border-red-200 bg-red-50" },
+  ready:        { label: "READY",        Icon: CheckCircle2, cls: "text-emerald-600 border-emerald-200 bg-emerald-50" },
+  imported:     { label: "PROCESSING",   Icon: Clock,        cls: "text-amber-600 border-amber-200 bg-amber-50" },
+  transcribing: { label: "TRANSCRIBING", Icon: Clock,        cls: "text-violet-600 border-violet-200 bg-violet-50" },
+  no_text:      { label: "NO TEXT",      Icon: FileQuestion, cls: "text-orange-600 border-orange-200 bg-orange-50" },
+  error:        { label: "ERROR",        Icon: AlertCircle,  cls: "text-red-600 border-red-200 bg-red-50" },
 } as const;
 
 function ReadinessBadge({ readiness }: { readiness: string }) {
@@ -1265,6 +1266,26 @@ export default function DocumentDetail() {
             </div>
           </div>
         </div>
+
+        {/* Native audio player — shown for uploaded audio files (kind === "audio") */}
+        {doc.kind === "audio" && doc.readiness === "ready" && (
+          <div className="mt-3 p-3 rounded-lg bg-muted/30 border border-border/50">
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-xs font-mono text-muted-foreground uppercase tracking-wide">
+                Original audio
+              </span>
+            </div>
+            <audio
+              controls
+              className="w-full h-9"
+              src={`${BASE}/library/${docId}/download`}
+              style={{ minWidth: 200 }}
+              preload="metadata"
+            >
+              Your browser does not support the audio element.
+            </audio>
+          </div>
+        )}
 
         {/* Read Aloud playback bar */}
         {ttsAudioUrl && (

@@ -113,6 +113,7 @@ const READINESS_COLOR: Record<string, string> = {
   error: '#dc2626',
   failed: '#dc2626',
   imported: '#d97706',
+  transcribing: '#7c3aed',
 };
 
 const READINESS_LABEL: Record<string, string> = {
@@ -120,6 +121,7 @@ const READINESS_LABEL: Record<string, string> = {
   error: 'Error',
   failed: 'Failed',
   imported: 'Processing…',
+  transcribing: 'Transcribing…',
 };
 
 export default function LibraryDocDetail() {
@@ -154,6 +156,52 @@ export default function LibraryDocDetail() {
     } catch {
       Alert.alert('Error', 'Could not queue reprocess');
       setReprocessing(false);
+    }
+  };
+
+  // ── Native audio player (for uploaded audio documents) ─────────────────────
+  type AudioState = 'idle' | 'loading' | 'playing' | 'paused' | 'error';
+  const [audioState, setAudioState] = useState<AudioState>('idle');
+  const audioPlayerRef = useRef<AudioPlayer | null>(null);
+
+  useEffect(() => {
+    return () => { audioPlayerRef.current?.remove(); };
+  }, []);
+
+  const handlePlayOriginal = async () => {
+    if (audioState === 'playing') {
+      audioPlayerRef.current?.pause();
+      setAudioState('paused');
+      return;
+    }
+    if (audioState === 'paused' && audioPlayerRef.current) {
+      audioPlayerRef.current.play();
+      setAudioState('playing');
+      return;
+    }
+    setAudioState('loading');
+    try {
+      await setAudioModeAsync({ playsInSilentMode: true });
+      const token = getApiToken();
+      const uri = `https://${domain}/api/library/${id}/download`;
+      const player = createAudioPlayer({
+        uri,
+        headers: token ? { authorization: `Bearer ${token}` } : undefined,
+      });
+      audioPlayerRef.current = player;
+      player.play();
+      setAudioState('playing');
+      player.addListener('playbackStatusUpdate', (status) => {
+        if (!status.playing && status.currentTime > 0 && status.duration > 0
+            && status.currentTime >= status.duration - 0.5) {
+          setAudioState('idle');
+          audioPlayerRef.current = null;
+        }
+      });
+    } catch (e: any) {
+      setAudioState('error');
+      Alert.alert('Playback failed', e?.message ?? 'Could not play audio file');
+      setTimeout(() => setAudioState('idle'), 2000);
     }
   };
 
@@ -508,6 +556,31 @@ export default function LibraryDocDetail() {
             </Pressable>
           );
         })()}
+
+        {/* Play Original button — only for uploaded audio documents */}
+        {doc.readiness === 'ready' && doc.kind === 'audio' && (
+          <Pressable
+            onPress={handlePlayOriginal}
+            disabled={audioState === 'loading' || audioState === 'error'}
+            style={[styles.listenBtn, { borderColor: '#7c3aed55', backgroundColor: '#7c3aed0f', marginRight: 6 }]}
+          >
+            {audioState === 'loading' ? (
+              <ActivityIndicator size="small" color="#7c3aed" />
+            ) : (
+              <Feather
+                name={audioState === 'playing' ? 'pause' : audioState === 'paused' ? 'play' : 'music'}
+                size={14}
+                color="#7c3aed"
+              />
+            )}
+            <Text style={[styles.listenBtnText, { color: '#7c3aed' }]}>
+              {audioState === 'loading' ? 'Loading…'
+                : audioState === 'playing' ? 'Pause'
+                : audioState === 'paused' ? 'Resume'
+                : 'Play'}
+            </Text>
+          </Pressable>
+        )}
 
         {doc.readiness === 'ready' && (
           <Pressable
