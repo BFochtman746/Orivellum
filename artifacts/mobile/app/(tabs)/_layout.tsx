@@ -1,4 +1,5 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { mobileFetch } from '@/lib/api';
 import {
   Animated,
   Modal,
@@ -25,6 +26,36 @@ import {
 const HEADER_HEIGHT = 56;
 const SHEET_CONTENT_HEIGHT = 500;
 
+// ── Review queue badge ──────────────────────────────────────────────────────
+
+const _REVIEW_DOMAIN = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
+const _REVIEW_API = `https://${_REVIEW_DOMAIN}/api`;
+
+/**
+ * Polls GET /api/review/queue every 60 s and returns the pending item count.
+ * Used to drive the red badge on the menu button (native) and Works tab (web).
+ */
+function useReviewCount(): number {
+  const [count, setCount] = useState(0);
+  const poll = useCallback(async () => {
+    try {
+      const r = await mobileFetch(`${_REVIEW_API}/review/queue`);
+      if (r.ok) {
+        const data = await r.json();
+        setCount((data.count as number) ?? 0);
+      }
+    } catch {
+      // silently fail — badge just won't update until next poll
+    }
+  }, []);
+  useEffect(() => {
+    poll();
+    const t = setInterval(poll, 60_000);
+    return () => clearInterval(t);
+  }, [poll]);
+  return count;
+}
+
 // ── Server status ──────────────────────────────────────────────────────────────
 
 function useServerDotColor(): string {
@@ -50,6 +81,7 @@ function useSectionLabel(): string {
   if (path.includes('/books')) return 'Books';
   if (path.includes('/learn')) return 'Learn';
   if (path.includes('/intake')) return 'Load Anything';
+  if (path.includes('/review')) return 'Review';
   if (path.includes('/works')) return 'Works';
   if (path.includes('/library')) return 'Library';
   return 'Orivellum';
@@ -59,9 +91,10 @@ function useSectionLabel(): string {
 
 interface AppHeaderProps {
   onMenuPress: () => void;
+  reviewCount?: number;
 }
 
-function AppHeader({ onMenuPress }: AppHeaderProps) {
+function AppHeader({ onMenuPress, reviewCount = 0 }: AppHeaderProps) {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const dotColor = useServerDotColor();
@@ -110,18 +143,35 @@ function AppHeader({ onMenuPress }: AppHeaderProps) {
           {section}
         </Text>
 
-        {/* Right: server dot + menu button */}
+        {/* Right: server dot + menu button (+ review badge when > 0) */}
         <View style={styles.headerRight}>
           <View style={[styles.serverDot, { backgroundColor: dotColor }]} />
-          <TouchableOpacity
-            onPress={onMenuPress}
-            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-            style={styles.menuButton}
-            accessibilityLabel="Open navigation"
-            accessibilityRole="button"
-          >
-            <Feather name="menu" size={22} color={colors.foreground} />
-          </TouchableOpacity>
+          <View style={{ position: 'relative' }}>
+            <TouchableOpacity
+              onPress={onMenuPress}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              style={styles.menuButton}
+              accessibilityLabel={
+                reviewCount > 0
+                  ? `Open navigation (${reviewCount} review item${reviewCount !== 1 ? 's' : ''} pending)`
+                  : 'Open navigation'
+              }
+              accessibilityRole="button"
+            >
+              <Feather name="menu" size={22} color={colors.foreground} />
+            </TouchableOpacity>
+            {reviewCount > 0 && (
+              <View
+                style={styles.reviewBadge}
+                accessibilityElementsHidden
+                importantForAccessibility="no"
+              >
+                <Text style={styles.reviewBadgeText}>
+                  {reviewCount > 99 ? '99+' : String(reviewCount)}
+                </Text>
+              </View>
+            )}
+          </View>
         </View>
       </View>
     </View>
@@ -145,6 +195,7 @@ const NAV_ITEMS: NavItem[] = [
   { key: 'books',         label: 'Books',     icon: 'book',           route: '/books'         },
   { key: 'learn',         label: 'Learn',     icon: 'award',          route: '/learn'         },
   { key: 'library',       label: 'Library',   icon: 'folder',         route: '/library'       },
+  { key: 'review',        label: 'Review',    icon: 'shield',         route: '/review'        },
 ];
 
 function currentRoute(path: string): string {
@@ -152,6 +203,7 @@ function currentRoute(path: string): string {
   if (path.includes('/books')) return '/books';
   if (path.includes('/learn')) return '/learn';
   if (path.includes('/intake')) return '/intake';
+  if (path.includes('/review')) return '/review';
   if (path.includes('/works')) return '/works';
   if (path.includes('/library')) return '/library';
   return '/';
@@ -317,10 +369,14 @@ function NavBottomSheet({ visible, onClose }: NavBottomSheetProps) {
 
 function NativeAppLayout() {
   const [menuOpen, setMenuOpen] = useState(false);
+  const reviewCount = useReviewCount();
 
   return (
     <View style={{ flex: 1 }}>
-      <AppHeader onMenuPress={() => setMenuOpen(true)} />
+      <AppHeader
+        onMenuPress={() => setMenuOpen(true)}
+        reviewCount={reviewCount}
+      />
       <Tabs
         screenOptions={{
           headerShown: false,
@@ -345,6 +401,7 @@ function NativeAppLayout() {
 function WebTabLayout() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
+  const reviewCount = useReviewCount();
 
   return (
     <Tabs
@@ -383,6 +440,7 @@ function WebTabLayout() {
         options={{
           title: 'Works',
           tabBarIcon: ({ color }) => <Feather name="book-open" size={22} color={color} />,
+          tabBarBadge: reviewCount > 0 ? reviewCount : undefined,
         }}
       />
       <Tabs.Screen
@@ -538,5 +596,25 @@ const styles = StyleSheet.create({
   navCheck: {
     width: 24,
     alignItems: 'center',
+  },
+
+  // Review badge — red dot on the menu button
+  reviewBadge: {
+    position: 'absolute',
+    top: 7,
+    right: 7,
+    minWidth: 15,
+    height: 15,
+    borderRadius: 8,
+    backgroundColor: '#ef4444',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 2,
+  },
+  reviewBadgeText: {
+    color: '#fff',
+    fontSize: 9,
+    fontFamily: 'Inter_700Bold',
+    lineHeight: 10,
   },
 });
