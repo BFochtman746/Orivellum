@@ -1,73 +1,68 @@
 # Orivellum configuration
-# Optimized for: AMD Ryzen AI Max+ 395 (Strix Halo)
-# CPU  : 16 × Zen 5 cores / 32 threads
-# GPU  : 40 RDNA 3.5 Compute Units  (≈ RTX 4070 Laptop)  — gfx1150 / gfx1151
-# NPU  : XDNA2 — 50 TOPS
-# RAM  : 128 GB LPDDR5X unified (≈ 112 GB allocatable to GPU/LLM layers)
-# BW   : ~256 GB/s  →  ~20–35 tok/s on a 70 B Q4 model, full GPU offload
+# Optimised for: Nimo's Office & Gaming AI PC — AMD Ryzen AI Max+ 395 (Strix Halo)
+# LLM backend: Lemonade Server (AMD's official NPU + iGPU inference server)
 #
-# To apply a different hardware profile, edit the values below and restart.
-# All values can also be overridden via ORIVELLUM_* environment variables.
+# Hardware summary
+#   CPU  : 16 × Zen 5 cores / 32 threads
+#   GPU  : 40 RDNA 3.5 Compute Units  ≈ RTX 4070 Laptop  (gfx1150/gfx1151)
+#   NPU  : XDNA2, 50 TOPS  ← Lemonade uses this for primary inference
+#   RAM  : 128 GB LPDDR5X unified  (≈ 112 GB allocatable to GPU/LLM layers)
+#   BW   : ~256 GB/s
+#
+# Lemonade vs Ollama
+#   Lemonade Server is AMD's own inference stack — it schedules automatically
+#   across NPU, iGPU, and CPU; you do NOT need HSA_OVERRIDE_GFX_VERSION or
+#   OLLAMA_GPU_LAYERS.  Just install Lemonade and it handles acceleration.
+#   See: https://lemonade-server.ai  and  scripts/windows/lemonade-setup.md
 
 serving:
-  # ── LLM backend ─────────────────────────────────────────────────────────────
-  # Ollama (recommended): install from https://ollama.com/download
-  # After install, run the GPU-unlock lines from scripts/windows/ryzen-ai-max-395.md
-  # then pull models (see below).
-  base_url: "http://127.0.0.1:11434/v1"
+  # ── Lemonade Server endpoint ─────────────────────────────────────────────────
+  # Lemonade exposes an OpenAI-compatible API on port 8000 (primary) and an
+  # Ollama-compatible bridge on port 11434.  Use 8000 for best compatibility.
+  # If you see connection errors, try: http://127.0.0.1:11434/v1  (Ollama-compat)
+  base_url: "http://127.0.0.1:8000/v1"
 
   # ── Model selection ──────────────────────────────────────────────────────────
-  # With 112 GB unified VRAM the full 70 B Q4_K_M weight set (~40 GB) sits
-  # entirely on the iGPU KV-cache — no CPU offload, maximum throughput.
+  # Pull models with: lemonade pull <name>
+  # Lemonade optimises automatically — NPU for 7-14 B, iGPU for 32-70 B.
+  # Use  lemonade list  to see downloaded models;  lemonade models  for all.
   #
-  # Pull once:  ollama pull llama3.3:70b-instruct-q4_K_M
-  #             ollama pull qwen2.5:72b-instruct-q4_K_M
-  #             ollama pull qwen2.5-coder:32b-instruct-q4_K_M
-  #             ollama pull mxbai-embed-large
+  # Recommended for Ryzen AI Max+ 395 (128 GB unified RAM):
+  #   lemonade pull phi4          # 14B — fast NPU inference, best daily driver
+  #   lemonade pull llama3.3-70b  # 70B — iGPU, full quality, 128K context
+  #   lemonade pull qwen2.5-7b    # 7B  — very fast NPU, low-latency Q&A
+  #   lemonade pull phi3.5-mini   # 3.8B NPU — near-instant responses
   #
-  # Lighter alternatives (faster first-response, still excellent quality):
-  #   workhorse: qwen2.5:32b-instruct-q4_K_M   (~20 GB — fits with room to spare)
-  #   workhorse: phi4:14b-q8_0                  (~15 GB — very fast on RDNA 3.5)
-
-  workhorse_model: "llama3.3:70b-instruct-q4_K_M"
-  reasoner_model:  "qwen2.5:72b-instruct-q4_K_M"
-  coder_model:     "qwen2.5-coder:32b-instruct-q4_K_M"
-  # mxbai-embed-large: 335 M params, 1024-dim vectors — best recall/speed trade-off
-  # on an iGPU with this much memory.  nomic-embed-text is a lighter fallback.
-  embedder_model:  "mxbai-embed-large"
-  # Vision: LLaVA-based or llama3.2-vision if image extraction is needed.
-  # Leave blank to fall back to workhorse_model for vision tasks.
+  # Model names must match exactly what  `lemonade list`  shows after pulling.
+  workhorse_model: "llama3.3-70b"
+  reasoner_model:  "phi4"
+  coder_model:     "qwen2.5-coder-32b"
+  # Embeddings: Lemonade supports OpenAI-compatible /v1/embeddings.
+  # Use nomic-embed-text or a HuggingFace embedding model via Lemonade.
+  # If Lemonade's embedding endpoint is not enabled, Orivellum falls back
+  # to keyword-only search automatically (no data loss, just lower recall).
+  embedder_model:  "nomic-embed-text"
   vision_model: ""
 
   # ── Context window ───────────────────────────────────────────────────────────
-  # llama3.3:70b supports 128 K tokens natively.  The Ryzen AI Max+ 395 iGPU
-  # KV-cache lives in unified LPDDR5X — no eviction to system RAM — so the full
-  # 128 K window is usable without performance cliffs.
-  #
-  # Orivellum uses this value to:
-  #   • Gate how many knowledge items are injected per chat turn (30 % budget)
-  #   • Trim conversation history before it overflows the model (80 % budget)
-  # Set to 131072 (128 K).  Drop to 32768 if you switch to a smaller model.
+  # llama3.3-70b supports 128 K tokens.  The Ryzen AI Max+ 395 iGPU KV-cache
+  # lives in unified LPDDR5X — no CPU spill — so the full window is usable.
+  # For NPU models (phi4, qwen2.5-7b) Lemonade manages context internally;
+  # setting 131072 here ensures Orivellum never prematurely trims prompts for
+  # the 70B model.  Reduce to 32768 if you prefer phi4 as the daily driver.
   context_window: 131072
 
   # ── Timeouts ─────────────────────────────────────────────────────────────────
-  # 70 B models at ~25 tok/s: a 2 000-token reply takes ~80 s; a complex
-  # extraction pass may produce 3–4 K tokens.  Set generously to avoid
-  # cut-short replies on heavy reasoning tasks.
+  # 70 B iGPU at ~25 tok/s: a 2 000-token reply ≈ 80 s.
+  # NPU models (phi4, qwen2.5-7b) are much faster — these are safe upper bounds.
   timeout_sec: 300
-  # Background document extraction uses a separate, shorter budget so a
-  # slow/absent model never blocks the pipeline indefinitely.
   extraction_timeout_sec: 120
 
 server:
-  # Port the FastAPI backend listens on.  The web UI is served from the same
-  # process at /orivellum-ui/.
   port: 8080
   host: "0.0.0.0"
-  # Optional bearer-token auth for the API (leave blank to disable).
   api_key: ""
 
-# ── Hardware notes (not read by the server) ──────────────────────────────────
-# For AMD GPU acceleration in Ollama see:
-#   scripts/windows/ryzen-ai-max-395.md   ← Windows / start.ps1 env vars
-#   https://rocm.blogs.amd.com/artificial-intelligence/ryzen-uma-llm/README.html
+# ── Setup notes ──────────────────────────────────────────────────────────────
+# Full Lemonade setup guide: scripts/windows/lemonade-setup.md
+# After installing Lemonade, pull models then run: .\scripts\start.ps1

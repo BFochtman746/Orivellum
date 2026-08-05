@@ -150,21 +150,17 @@ if ($SkipBuild -and (Test-Path $uiDist)) {
   Write-Host "[ui]   Build complete [OK]" -ForegroundColor $Green
 }
 
-# ---- AMD GPU acceleration (Ryzen AI Max+ 395 / Strix Halo) ----------------
-# These variables enable full iGPU offloading when Ollama is running with ROCm.
-# They are safe no-ops on hardware that lacks ROCm — set unconditionally.
+# ---- Lemonade Server (AMD Ryzen AI Max+ 395) --------------------------------
+# Lemonade Server manages NPU / iGPU acceleration automatically — no manual
+# ROCm / HSA environment variables are needed.  Just ensure Lemonade is running
+# before starting Orivellum; it starts automatically on login after install.
 #
-#   HSA_OVERRIDE_GFX_VERSION : tells ROCm to treat gfx1150/gfx1151 (Strix Halo
-#     RDNA 3.5) as gfx1100 so that precompiled HIP kernels load correctly.
-#   OLLAMA_GPU_LAYERS         : push all transformer layers onto the iGPU.
-#     With 112 GB allocatable unified VRAM a 70 B Q4_K_M model (~40 GB) fits
-#     entirely on-chip; reduce to e.g. 50 if you run into OOM.
-#   HIP_VISIBLE_DEVICES       : target the integrated GPU (index 0).
+# Install guide : scripts\windows\lemonade-setup.md
+# Lemonade docs : https://lemonade-server.ai
 #
-# Full guide: scripts\windows\ryzen-ai-max-395.md
-if (-not $env:HSA_OVERRIDE_GFX_VERSION) { $env:HSA_OVERRIDE_GFX_VERSION = "11.0.0" }
-if (-not $env:OLLAMA_GPU_LAYERS)         { $env:OLLAMA_GPU_LAYERS = "99" }
-if (-not $env:HIP_VISIBLE_DEVICES)       { $env:HIP_VISIBLE_DEVICES = "0" }
+# Verify Lemonade is up:
+#   Invoke-WebRequest http://127.0.0.1:8000/api/v0/health -UseBasicParsing
+Write-Host "[lmnd] Lemonade Server should be running on http://127.0.0.1:8000" -ForegroundColor DarkCyan
 
 # ---- Step 2: Start API (serves both /api/* and /orivellum-ui/*) -----------
 Write-Host "[api]  Starting API server on port $ApiPort ..." -ForegroundColor $Cyan
