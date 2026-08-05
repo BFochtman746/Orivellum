@@ -1108,10 +1108,14 @@ function KnowledgeTab({ workId }: { workId: string }) {
   };
   const applyConfFilter = (k: any) => {
     if (confFilter === "all") return true;
-    const pct = Math.round((k.confidence ?? 0) * 100);
-    if (confFilter === "high") return pct >= 80;
-    if (confFilter === "med")  return pct >= 50 && pct < 80;
-    if (confFilter === "low")  return pct < 50;
+    // Compare against the unrounded confidence value (0–1) so the tier boundary
+    // matches exactly what the badge and Search tab display: ≥0.80=High, ≥0.50=Med, <0.50=Low.
+    // Using Math.round first would misclassify borderline values (e.g. 0.795 rounds
+    // to 80 and enters the "High" bucket even though the badge shows "Med").
+    const raw = k.confidence ?? 0;
+    if (confFilter === "high") return raw >= 0.80;
+    if (confFilter === "med")  return raw >= 0.50 && raw < 0.80;
+    if (confFilter === "low")  return raw < 0.50;
     return true;
   };
 
@@ -2071,11 +2075,18 @@ function SearchTab({ workId, initialQuery = "" }: { workId: string; initialQuery
                           </p>
                         )}
                       </div>
-                      {item.confidence != null && (
-                        <span className="text-[10px] font-mono text-muted-foreground shrink-0">
-                          {Math.round(item.confidence * 100)}%
-                        </span>
-                      )}
+                      {item.confidence != null && (() => {
+                        const pct = item.confidence * 100;
+                        const tier =
+                          pct >= 80 ? { label: "High", color: "text-emerald-700 bg-emerald-50 border-emerald-200" }
+                          : pct >= 50 ? { label: "Med", color: "text-amber-700 bg-amber-50 border-amber-200" }
+                          : { label: "Low", color: "text-red-700 bg-red-50 border-red-200" };
+                        return (
+                          <span className={`text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded border shrink-0 ${tier.color}`}>
+                            {pct.toFixed(0)}% {tier.label}
+                          </span>
+                        );
+                      })()}
                     </div>
                   </Card>
                 ))}

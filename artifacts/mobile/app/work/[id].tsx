@@ -125,7 +125,9 @@ function DocItem({ doc, onReprocess }: { doc: Document; onReprocess?: (docId: st
 
 function KnowledgeRow({ item, onReviewed, onDelete }: { item: KnowledgeItem; onReviewed?: () => void; onDelete?: () => void }) {
   const colors = useColors();
-  const conf = Math.round((item.confidence ?? 0) * 100);
+  const confRaw = (item.confidence ?? 0) * 100;  // unrounded — used for tier classification
+  const conf = Math.round(confRaw);               // rounded — used for display only
+  const confTier = confRaw >= 80 ? 'High' : confRaw >= 50 ? 'Med' : 'Low';
   const [localStatus, setLocalStatus] = useState<string | null>(null);
   const [reviewing, setReviewing] = useState(false);
 
@@ -175,7 +177,7 @@ function KnowledgeRow({ item, onReviewed, onDelete }: { item: KnowledgeItem; onR
           {item.text}
         </Text>
         <Text style={[styles.itemMeta, { color: colors.mutedForeground }]}>
-          {item.kind} · {conf}% · {isAiAuto ? '✦ AI' : 'rule'}
+          {item.kind} · {conf}% {confTier} · {isAiAuto ? '✦ AI' : 'rule'}
           {status === 'approved' ? ' · ✓ approved' : status === 'rejected' ? ' · ✗ rejected' : ''}
         </Text>
         {isAiAuto && status !== 'approved' && status !== 'rejected' && (
