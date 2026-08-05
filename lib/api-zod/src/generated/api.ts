@@ -337,6 +337,41 @@ export const GetWorkKnowledgeResponse = zod.object({
 
 
 /**
+ * @summary Manually add a knowledge item to a Work
+ */
+export const CreateWorkKnowledgeParams = zod.object({
+  "workId": zod.coerce.string()
+})
+
+export const createWorkKnowledgeBodyKindDefault = `fact`;
+export const createWorkKnowledgeBodyConfidenceDefault = 1;
+
+export const CreateWorkKnowledgeBody = zod.object({
+  "kind": zod.string().default(createWorkKnowledgeBodyKindDefault),
+  "text": zod.string(),
+  "subject": zod.string().nullish(),
+  "predicate": zod.string().nullish(),
+  "object": zod.string().nullish(),
+  "confidence": zod.number().default(createWorkKnowledgeBodyConfidenceDefault)
+})
+
+export const CreateWorkKnowledgeResponse = zod.object({
+  "item": zod.object({
+  "id": zod.string().optional(),
+  "work_id": zod.string().nullish(),
+  "kind": zod.string().optional(),
+  "text": zod.string().optional(),
+  "subject": zod.string().nullish(),
+  "predicate": zod.string().nullish(),
+  "object": zod.string().nullish(),
+  "confidence": zod.number().optional(),
+  "review_status": zod.string().optional(),
+  "created_at": zod.string().optional()
+}).optional()
+})
+
+
+/**
  * @summary Update a task (status, text)
  */
 export const UpdateWorkTaskParams = zod.object({
@@ -360,6 +395,17 @@ export const UpdateWorkTaskResponse = zod.object({
   "created_at": zod.string().optional()
 }).optional()
 })
+
+
+/**
+ * @summary Delete a task
+ */
+export const DeleteWorkTaskParams = zod.object({
+  "workId": zod.coerce.string(),
+  "taskId": zod.coerce.string()
+})
+
+export const DeleteWorkTaskResponse = zod.void()
 
 
 /**
@@ -422,7 +468,8 @@ export const GetWorkGraphParams = zod.object({
 export const getWorkGraphQueryLimitDefault = 100;
 
 export const GetWorkGraphQueryParams = zod.object({
-  "limit": zod.coerce.number().int().default(getWorkGraphQueryLimitDefault)
+  "limit": zod.coerce.number().int().default(getWorkGraphQueryLimitDefault),
+  "entity_kinds": zod.coerce.string().optional()
 })
 
 export const GetWorkGraphResponse = zod.object({
@@ -982,6 +1029,27 @@ export const SearchKnowledgeResponse = zod.object({
 
 
 /**
+ * @summary Get a single knowledge item
+ */
+export const GetKnowledgeItemParams = zod.object({
+  "itemId": zod.coerce.string()
+})
+
+export const GetKnowledgeItemResponse = zod.object({
+  "id": zod.string().optional(),
+  "work_id": zod.string().nullish(),
+  "kind": zod.string().optional(),
+  "text": zod.string().optional(),
+  "subject": zod.string().nullish(),
+  "predicate": zod.string().nullish(),
+  "object": zod.string().nullish(),
+  "confidence": zod.number().optional(),
+  "review_status": zod.string().optional(),
+  "created_at": zod.string().optional()
+})
+
+
+/**
  * @summary Permanently delete a knowledge item
  */
 export const DeleteKnowledgeItemParams = zod.object({
@@ -1258,3 +1326,2269 @@ export const GetBriefingResponse = zod.object({
 }).optional(),
   "greeting": zod.string().optional()
 })
+
+
+/**
+ * @summary Cross-work entity and document knowledge graph
+ */
+export const getGlobalGraphQueryLimitDefault = 200;
+
+export const GetGlobalGraphQueryParams = zod.object({
+  "work_id": zod.coerce.string().optional(),
+  "entity_kinds": zod.coerce.string().optional(),
+  "limit": zod.coerce.number().int().default(getGlobalGraphQueryLimitDefault)
+})
+
+export const GetGlobalGraphResponse = zod.object({
+  "nodes": zod.array(zod.object({
+  "id": zod.string().optional(),
+  "label": zod.string().optional(),
+  "type": zod.string().optional().describe('entity | document'),
+  "kind": zod.string().optional().describe('person | place | concept | theme | document | etc.')
+})).optional(),
+  "edges": zod.array(zod.object({
+  "source": zod.string().optional(),
+  "target": zod.string().optional(),
+  "label": zod.string().optional(),
+  "type": zod.string().optional()
+})).optional(),
+  "node_count": zod.int().optional(),
+  "edge_count": zod.int().optional()
+})
+
+
+/**
+ * @summary Workspace-wide top knowledge gaps across all Works
+ */
+export const getTopGapsQueryLimitDefault = 3;
+export const getTopGapsQueryRefreshDefault = false;
+
+export const GetTopGapsQueryParams = zod.object({
+  "limit": zod.coerce.number().int().default(getTopGapsQueryLimitDefault),
+  "refresh": zod.coerce.boolean().default(getTopGapsQueryRefreshDefault)
+})
+
+export const GetTopGapsResponse = zod.object({
+  "gaps": zod.array(zod.object({
+  "kind": zod.string().optional().describe('undocumented_doc | uncovered_chapter | weak_coverage | missing_sources | orphaned_research | stale_source | duplicate_research | no_structure'),
+  "title": zod.string().optional(),
+  "description": zod.string().optional(),
+  "severity": zod.string().optional().describe('high | medium | low'),
+  "metadata": zod.record(zod.string(), zod.unknown()).optional()
+}).and(zod.object({
+  "work_id": zod.string().optional(),
+  "work_title": zod.string().optional()
+}))).optional(),
+  "total_works_analyzed": zod.int().optional()
+})
+
+
+/**
+ * @summary Knowledge gap analysis for a Work
+ */
+export const GetWorkGapsParams = zod.object({
+  "workId": zod.coerce.string()
+})
+
+export const getWorkGapsQueryRefreshDefault = false;
+
+export const GetWorkGapsQueryParams = zod.object({
+  "refresh": zod.coerce.boolean().default(getWorkGapsQueryRefreshDefault)
+})
+
+export const GetWorkGapsResponse = zod.object({
+  "work_id": zod.string().optional(),
+  "coverage_pct": zod.int().optional().describe('0-100 — chapters with sufficient coverage'),
+  "total_chapters": zod.int().optional(),
+  "suggested_queries": zod.array(zod.string()).optional(),
+  "evaluated_at": zod.string().optional(),
+  "gaps": zod.array(zod.object({
+  "kind": zod.string().optional().describe('undocumented_doc | uncovered_chapter | weak_coverage | missing_sources | orphaned_research | stale_source | duplicate_research | no_structure'),
+  "title": zod.string().optional(),
+  "description": zod.string().optional(),
+  "severity": zod.string().optional().describe('high | medium | low'),
+  "metadata": zod.record(zod.string(), zod.unknown()).optional()
+})).optional()
+})
+
+
+/**
+ * @summary Book-level intelligence analysis for a Work
+ */
+export const GetWorkBookIntelligenceParams = zod.object({
+  "workId": zod.coerce.string()
+})
+
+export const GetWorkBookIntelligenceResponse = zod.looseObject({
+
+})
+
+
+/**
+ * @summary Chapter structure for a Work
+ */
+export const GetWorkChaptersParams = zod.object({
+  "workId": zod.coerce.string()
+})
+
+export const GetWorkChaptersResponse = zod.object({
+  "chapters": zod.array(zod.looseObject({
+
+})).optional()
+})
+
+
+/**
+ * @summary Get compass (strategic direction) for a Work
+ */
+export const GetWorkCompassParams = zod.object({
+  "workId": zod.coerce.string()
+})
+
+export const GetWorkCompassResponse = zod.looseObject({
+
+})
+
+
+/**
+ * @summary Update compass for a Work
+ */
+export const UpdateWorkCompassParams = zod.object({
+  "workId": zod.coerce.string()
+})
+
+export const UpdateWorkCompassBody = zod.looseObject({
+
+})
+
+export const UpdateWorkCompassResponse = zod.looseObject({
+
+})
+
+
+/**
+ * @summary Near-duplicate document pairs within a Work
+ */
+export const GetWorkDuplicatesParams = zod.object({
+  "workId": zod.coerce.string()
+})
+
+export const getWorkDuplicatesQueryResolvedDefault = false;
+
+export const GetWorkDuplicatesQueryParams = zod.object({
+  "resolved": zod.coerce.boolean().default(getWorkDuplicatesQueryResolvedDefault)
+})
+
+export const GetWorkDuplicatesResponse = zod.object({
+  "pairs": zod.array(zod.object({
+  "id": zod.string().optional(),
+  "doc_a_id": zod.string().optional(),
+  "doc_b_id": zod.string().optional(),
+  "doc_a_title": zod.string().nullish(),
+  "doc_b_title": zod.string().nullish(),
+  "similarity": zod.number().optional(),
+  "kind": zod.string().optional().describe('near_duplicate | likely_revision'),
+  "resolved": zod.int().optional(),
+  "resolution": zod.string().nullish(),
+  "created_at": zod.string().optional()
+})).optional(),
+  "count": zod.int().optional()
+})
+
+
+/**
+ * @summary Search within a Work's knowledge base
+ */
+export const SearchWorkParams = zod.object({
+  "workId": zod.coerce.string()
+})
+
+export const searchWorkQueryLimitDefault = 20;
+
+export const SearchWorkQueryParams = zod.object({
+  "q": zod.coerce.string(),
+  "limit": zod.coerce.number().int().default(searchWorkQueryLimitDefault)
+})
+
+export const SearchWorkResponse = zod.object({
+  "results": zod.array(zod.looseObject({
+
+})).optional()
+})
+
+
+/**
+ * @summary Generate a quiz for a Work
+ */
+export const GenerateWorkQuizParams = zod.object({
+  "workId": zod.coerce.string()
+})
+
+export const generateWorkQuizQueryCountDefault = 5;
+
+export const GenerateWorkQuizQueryParams = zod.object({
+  "count": zod.coerce.number().int().default(generateWorkQuizQueryCountDefault)
+})
+
+export const GenerateWorkQuizResponse = zod.object({
+  "questions": zod.array(zod.looseObject({
+
+})).optional()
+})
+
+
+/**
+ * @summary Re-score all evidence items for a Work
+ */
+export const RescoreWorkEvidenceParams = zod.object({
+  "workId": zod.coerce.string()
+})
+
+export const RescoreWorkEvidenceResponse = zod.object({
+  "ok": zod.boolean().optional()
+})
+
+
+/**
+ * @summary Initialise the book production pipeline for a Work
+ */
+export const CreateWorkPipelineParams = zod.object({
+  "workId": zod.coerce.string()
+})
+
+export const CreateWorkPipelineBody = zod.object({
+  "target_word_count": zod.int().optional()
+})
+
+export const CreateWorkPipelineResponse = zod.object({
+  "work_id": zod.string().optional(),
+  "state": zod.string().optional(),
+  "stage": zod.string().optional(),
+  "target_word_count": zod.int().nullish(),
+  "findings": zod.array(zod.looseObject({
+
+})).optional(),
+  "history": zod.array(zod.looseObject({
+
+})).optional(),
+  "created_at": zod.string().optional(),
+  "updated_at": zod.string().optional()
+})
+
+
+/**
+ * @summary Get the current pipeline state for a Work
+ */
+export const GetWorkPipelineParams = zod.object({
+  "workId": zod.coerce.string()
+})
+
+export const GetWorkPipelineResponse = zod.object({
+  "work_id": zod.string().optional(),
+  "state": zod.string().optional(),
+  "stage": zod.string().optional(),
+  "target_word_count": zod.int().nullish(),
+  "findings": zod.array(zod.looseObject({
+
+})).optional(),
+  "history": zod.array(zod.looseObject({
+
+})).optional(),
+  "created_at": zod.string().optional(),
+  "updated_at": zod.string().optional()
+})
+
+
+/**
+ * @summary Advance the pipeline to the next stage
+ */
+export const AdvanceWorkPipelineParams = zod.object({
+  "workId": zod.coerce.string()
+})
+
+export const AdvanceWorkPipelineResponse = zod.looseObject({
+
+})
+
+
+/**
+ * @summary Execute the current pipeline stage
+ */
+export const RunWorkPipelineStageParams = zod.object({
+  "workId": zod.coerce.string()
+})
+
+export const RunWorkPipelineStageResponse = zod.looseObject({
+
+})
+
+
+/**
+ * @summary List brainstorm sessions for a Work
+ */
+export const ListBrainstormSessionsParams = zod.object({
+  "workId": zod.coerce.string()
+})
+
+export const listBrainstormSessionsQueryLimitDefault = 20;
+
+export const ListBrainstormSessionsQueryParams = zod.object({
+  "limit": zod.coerce.number().int().default(listBrainstormSessionsQueryLimitDefault)
+})
+
+export const ListBrainstormSessionsResponse = zod.object({
+  "sessions": zod.array(zod.looseObject({
+
+})).optional()
+})
+
+
+/**
+ * @summary Start a brainstorm session for a Work
+ */
+export const RunBrainstormParams = zod.object({
+  "workId": zod.coerce.string()
+})
+
+export const RunBrainstormBody = zod.object({
+  "prompt": zod.string(),
+  "mode": zod.string().optional()
+})
+
+export const RunBrainstormResponse = zod.looseObject({
+
+})
+
+
+/**
+ * @summary Get a brainstorm session
+ */
+export const GetBrainstormSessionParams = zod.object({
+  "workId": zod.coerce.string(),
+  "sessionId": zod.coerce.string()
+})
+
+export const GetBrainstormSessionResponse = zod.looseObject({
+
+})
+
+
+/**
+ * @summary Approve a brainstorm idea
+ */
+export const ApproveBrainstormIdeaParams = zod.object({
+  "workId": zod.coerce.string(),
+  "sessionId": zod.coerce.string(),
+  "ideaId": zod.coerce.string()
+})
+
+export const ApproveBrainstormIdeaResponse = zod.looseObject({
+
+})
+
+
+/**
+ * @summary Learning progress summary for a Work
+ */
+export const GetLearningSummaryParams = zod.object({
+  "workId": zod.coerce.string()
+})
+
+export const GetLearningSummaryResponse = zod.object({
+  "work_id": zod.string().optional(),
+  "total_concepts": zod.int().optional(),
+  "mastered": zod.int().optional(),
+  "in_progress": zod.int().optional(),
+  "not_started": zod.int().optional(),
+  "mastery_pct": zod.number().optional()
+})
+
+
+/**
+ * @summary List learning concepts for a Work
+ */
+export const GetWorkConceptsParams = zod.object({
+  "workId": zod.coerce.string()
+})
+
+export const GetWorkConceptsResponse = zod.object({
+  "concepts": zod.array(zod.object({
+  "id": zod.string().optional(),
+  "work_id": zod.string().optional(),
+  "title": zod.string().optional(),
+  "mastery": zod.number().optional(),
+  "attempts": zod.int().optional(),
+  "last_reviewed": zod.string().nullish()
+})).optional()
+})
+
+
+/**
+ * @summary Seed learning concepts from Work knowledge
+ */
+export const SeedLearningParams = zod.object({
+  "workId": zod.coerce.string()
+})
+
+export const SeedLearningResponse = zod.object({
+  "ok": zod.boolean().optional()
+})
+
+
+/**
+ * @summary Get the next learning question for a Work
+ */
+export const GetLearningQuestionParams = zod.object({
+  "workId": zod.coerce.string()
+})
+
+export const GetLearningQuestionQueryParams = zod.object({
+  "concept_id": zod.coerce.string().optional()
+})
+
+export const GetLearningQuestionResponse = zod.object({
+  "concept_id": zod.string().optional(),
+  "concept_title": zod.string().optional(),
+  "question": zod.string().optional(),
+  "kind": zod.string().optional().describe('multiple_choice | open'),
+  "options": zod.array(zod.string()).nullish()
+})
+
+
+/**
+ * @summary Reset all learning progress for a Work
+ */
+export const ResetLearningParams = zod.object({
+  "workId": zod.coerce.string()
+})
+
+export const ResetLearningResponse = zod.object({
+  "ok": zod.boolean().optional()
+})
+
+
+/**
+ * @summary Reset learning progress for a single concept
+ */
+export const ResetLearningConceptParams = zod.object({
+  "workId": zod.coerce.string(),
+  "conceptId": zod.coerce.string()
+})
+
+export const ResetLearningConceptResponse = zod.object({
+  "ok": zod.boolean().optional()
+})
+
+
+/**
+ * @summary Submit a learning answer for assessment
+ */
+export const AssessLearningParams = zod.object({
+  "workId": zod.coerce.string()
+})
+
+export const AssessLearningBody = zod.object({
+  "concept_id": zod.string(),
+  "answer": zod.string(),
+  "question": zod.string().optional()
+})
+
+export const AssessLearningResponse = zod.object({
+  "correct": zod.boolean().optional(),
+  "score": zod.number().optional(),
+  "feedback": zod.string().optional(),
+  "mastery": zod.number().optional(),
+  "explanation": zod.string().nullish()
+})
+
+
+/**
+ * @summary Unified review queue (knowledge, duplicates, suggestions, reclassifications)
+ */
+export const getReviewQueueQueryLimitDefault = 200;
+
+export const GetReviewQueueQueryParams = zod.object({
+  "limit": zod.coerce.number().int().default(getReviewQueueQueryLimitDefault)
+})
+
+export const GetReviewQueueResponse = zod.object({
+  "items": zod.array(zod.object({
+  "id": zod.string().optional(),
+  "item_type": zod.string().optional(),
+  "item_id": zod.string().optional(),
+  "title": zod.string().optional(),
+  "description": zod.string().nullish(),
+  "severity": zod.string().nullish(),
+  "created_at": zod.string().optional(),
+  "meta": zod.looseObject({
+
+}).optional()
+})).optional(),
+  "total": zod.int().optional()
+})
+
+
+/**
+ * @summary Resolve a review queue item
+ */
+export const ResolveReviewItemParams = zod.object({
+  "itemType": zod.coerce.string(),
+  "itemId": zod.coerce.string()
+})
+
+export const ResolveReviewItemBody = zod.object({
+  "action": zod.string(),
+  "reason": zod.string().nullish(),
+  "target_id": zod.string().nullish()
+})
+
+export const ResolveReviewItemResponse = zod.looseObject({
+
+})
+
+
+/**
+ * @summary Full-text search across conversation messages
+ */
+export const searchConversationsQueryLimitDefault = 50;
+
+export const SearchConversationsQueryParams = zod.object({
+  "q": zod.coerce.string(),
+  "limit": zod.coerce.number().int().default(searchConversationsQueryLimitDefault)
+})
+
+export const SearchConversationsResponse = zod.object({
+  "results": zod.array(zod.looseObject({
+
+})).optional()
+})
+
+
+/**
+ * @summary Enable or disable web search grounding for a conversation
+ */
+export const ToggleConversationWebSearchParams = zod.object({
+  "convId": zod.coerce.string()
+})
+
+export const ToggleConversationWebSearchBody = zod.object({
+  "enabled": zod.boolean()
+})
+
+export const ToggleConversationWebSearchResponse = zod.object({
+  "conversation": zod.object({
+  "id": zod.string().optional(),
+  "work_id": zod.string().nullish(),
+  "work_title": zod.string().nullish(),
+  "title": zod.string().nullish(),
+  "archived": zod.int().optional(),
+  "model": zod.string().nullish(),
+  "last_message": zod.string().nullish(),
+  "message_count": zod.int().optional(),
+  "created_at": zod.string().optional(),
+  "updated_at": zod.string().optional()
+}).optional()
+})
+
+
+/**
+ * @summary Continue a cut-short AI reply in a conversation
+ */
+export const ContinueConversationMessageParams = zod.object({
+  "convId": zod.coerce.string()
+})
+
+export const continueConversationMessageBodyStreamDefault = false;
+
+export const ContinueConversationMessageBody = zod.object({
+  "stream": zod.boolean().default(continueConversationMessageBodyStreamDefault)
+})
+
+export const ContinueConversationMessageResponse = zod.object({
+  "message": zod.object({
+  "id": zod.string().optional(),
+  "conversation_id": zod.string().optional(),
+  "role": zod.string().optional(),
+  "text": zod.string().optional(),
+  "meta": zod.looseObject({
+
+}).optional(),
+  "created_at": zod.string().optional()
+}).optional()
+})
+
+
+/**
+ * @summary List all inferred user memory facts
+ */
+export const GetUserMemoryResponse = zod.object({
+  "facts": zod.array(zod.object({
+  "id": zod.string().optional(),
+  "key": zod.string().optional(),
+  "value": zod.string().optional(),
+  "source": zod.string().nullish(),
+  "created_at": zod.string().optional()
+})).optional()
+})
+
+
+/**
+ * @summary Actionable workspace nudges / suggestions
+ */
+export const getDashboardNudgesQueryLimitDefault = 5;
+
+export const GetDashboardNudgesQueryParams = zod.object({
+  "limit": zod.coerce.number().int().default(getDashboardNudgesQueryLimitDefault)
+})
+
+export const GetDashboardNudgesResponse = zod.object({
+  "nudges": zod.array(zod.looseObject({
+
+})).optional()
+})
+
+
+/**
+ * @summary Dismiss or act on a nudge
+ */
+export const ResolveDashboardNudgeBody = zod.object({
+  "nudge_id": zod.string()
+})
+
+export const ResolveDashboardNudgeResponse = zod.object({
+  "ok": zod.boolean().optional()
+})
+
+
+/**
+ * @summary Regenerate nudges from current workspace state
+ */
+export const RebuildDashboardNudgesResponse = zod.object({
+  "ok": zod.boolean().optional()
+})
+
+
+/**
+ * @summary Get AI-generated suggestions for the workspace
+ */
+export const getSuggestionsQueryLimitDefault = 5;
+
+export const GetSuggestionsQueryParams = zod.object({
+  "work_id": zod.coerce.string().optional(),
+  "limit": zod.coerce.number().int().default(getSuggestionsQueryLimitDefault)
+})
+
+export const GetSuggestionsResponse = zod.object({
+  "suggestions": zod.array(zod.looseObject({
+
+})).optional()
+})
+
+
+/**
+ * @summary Generate new AI suggestions
+ */
+export const generateSuggestionsBodyLimitDefault = 6;
+
+export const GenerateSuggestionsBody = zod.object({
+  "work_id": zod.string().optional(),
+  "limit": zod.int().default(generateSuggestionsBodyLimitDefault)
+})
+
+export const GenerateSuggestionsResponse = zod.object({
+  "suggestions": zod.array(zod.looseObject({
+
+})).optional()
+})
+
+
+/**
+ * @summary List all Works of type book with health summary
+ */
+export const ListBooksResponse = zod.object({
+  "books": zod.array(zod.looseObject({
+
+})).optional()
+})
+
+
+/**
+ * @summary List all Works eligible for learning/quiz
+ */
+export const ListLearnWorksResponse = zod.object({
+  "works": zod.array(zod.object({
+  "id": zod.string().optional(),
+  "title": zod.string().optional(),
+  "work_type": zod.string().optional(),
+  "description": zod.string().nullish(),
+  "status": zod.string().optional(),
+  "meta": zod.looseObject({
+
+}).optional(),
+  "doc_count": zod.int().optional(),
+  "knowledge_count": zod.int().optional(),
+  "pending_tasks": zod.int().optional(),
+  "created_at": zod.string().optional(),
+  "updated_at": zod.string().optional()
+})).optional()
+})
+
+
+/**
+ * @summary Upload a document to the library via streaming multipart form
+ */
+export const UploadLibraryDocumentBody = zod.object({
+  "file": zod.string().describe('Binary file content (sent as FormData)'),
+  "work_id": zod.string().optional()
+})
+
+export const UploadLibraryDocumentResponse = zod.object({
+  "document": zod.object({
+  "id": zod.string().optional(),
+  "work_id": zod.string().nullish(),
+  "title": zod.string().nullish(),
+  "source": zod.string().nullish(),
+  "sha256": zod.string().nullish(),
+  "kind": zod.string().nullish(),
+  "classification": zod.string().nullish(),
+  "readiness": zod.string().optional(),
+  "lifecycle": zod.string().nullish().describe('draft | canonical | superseded | reference'),
+  "word_count": zod.int().nullish(),
+  "error_message": zod.string().nullish(),
+  "meta": zod.looseObject({
+
+}).optional(),
+  "created_at": zod.string().optional()
+}).optional(),
+  "duplicate": zod.boolean().optional()
+})
+
+
+/**
+ * @summary Get the currently active Work for library operations
+ */
+export const GetActiveWorkResponse = zod.object({
+  "work_id": zod.string().nullish()
+})
+
+
+/**
+ * @summary Set the active Work for library operations
+ */
+export const SetActiveWorkBody = zod.object({
+  "work_id": zod.string().nullish()
+})
+
+export const SetActiveWorkResponse = zod.object({
+  "ok": zod.boolean().optional()
+})
+
+
+/**
+ * @summary Extract and import all ZIP archives in the library
+ */
+export const ExplodeZipDocumentsResponse = zod.object({
+  "queued": zod.int().optional()
+})
+
+
+/**
+ * @summary Re-queue extraction for all stuck or errored documents
+ */
+export const ReprocessAllDocumentsResponse = zod.object({
+  "queued": zod.int().optional(),
+  "total": zod.int().optional()
+})
+
+
+/**
+ * @summary AI-powered library organisation (group by topic / suggest titles)
+ */
+export const SmartOrganizeLibraryResponse = zod.looseObject({
+
+})
+
+
+/**
+ * @summary List knowledge items extracted from a specific document
+ */
+export const GetDocumentKnowledgeParams = zod.object({
+  "docId": zod.coerce.string()
+})
+
+export const getDocumentKnowledgeQueryLimitDefault = 200;
+
+export const GetDocumentKnowledgeQueryParams = zod.object({
+  "limit": zod.coerce.number().int().default(getDocumentKnowledgeQueryLimitDefault)
+})
+
+export const GetDocumentKnowledgeResponse = zod.object({
+  "knowledge": zod.array(zod.object({
+  "id": zod.string().optional(),
+  "work_id": zod.string().nullish(),
+  "kind": zod.string().optional(),
+  "text": zod.string().optional(),
+  "subject": zod.string().nullish(),
+  "predicate": zod.string().nullish(),
+  "object": zod.string().nullish(),
+  "confidence": zod.number().optional(),
+  "review_status": zod.string().optional(),
+  "created_at": zod.string().optional()
+})).optional(),
+  "count": zod.int().optional()
+})
+
+
+/**
+ * @summary List declared versions of a document
+ */
+export const GetDocumentVersionsParams = zod.object({
+  "docId": zod.coerce.string()
+})
+
+export const GetDocumentVersionsResponse = zod.object({
+  "versions": zod.array(zod.looseObject({
+
+})).optional()
+})
+
+
+/**
+ * @summary Declare a new version of a document
+ */
+export const CreateDocumentVersionParams = zod.object({
+  "docId": zod.coerce.string()
+})
+
+export const CreateDocumentVersionBody = zod.looseObject({
+
+})
+
+export const CreateDocumentVersionResponse = zod.looseObject({
+
+})
+
+
+/**
+ * @summary Declare a version as the canonical source
+ */
+export const SetDocumentVersionCanonicalParams = zod.object({
+  "docId": zod.coerce.string(),
+  "versionId": zod.coerce.string()
+})
+
+export const SetDocumentVersionCanonicalResponse = zod.object({
+  "ok": zod.boolean().optional()
+})
+
+
+/**
+ * @summary List detected chapters for a document
+ */
+export const GetDocumentChaptersParams = zod.object({
+  "docId": zod.coerce.string()
+})
+
+export const GetDocumentChaptersResponse = zod.object({
+  "chapters": zod.array(zod.looseObject({
+
+})).optional()
+})
+
+
+/**
+ * @summary List text chunks for a document
+ */
+export const GetDocumentChunksParams = zod.object({
+  "docId": zod.coerce.string()
+})
+
+export const GetDocumentChunksResponse = zod.object({
+  "chunks": zod.array(zod.looseObject({
+
+})).optional(),
+  "count": zod.int().optional()
+})
+
+
+/**
+ * @summary Trigger immediate extraction for a document
+ */
+export const ExtractDocumentParams = zod.object({
+  "docId": zod.coerce.string()
+})
+
+export const ExtractDocumentResponse = zod.object({
+  "ok": zod.boolean().optional()
+})
+
+
+/**
+ * @summary Download the original document file
+ */
+export const DownloadDocumentParams = zod.object({
+  "docId": zod.coerce.string()
+})
+
+export const DownloadDocumentResponse = zod.unknown()
+
+
+/**
+ * @summary Ask a question against the knowledge base
+ */
+export const askKnowledgeQueryLimitDefault = 10;
+
+export const AskKnowledgeQueryParams = zod.object({
+  "q": zod.coerce.string(),
+  "work_id": zod.coerce.string().optional(),
+  "limit": zod.coerce.number().int().default(askKnowledgeQueryLimitDefault)
+})
+
+export const AskKnowledgeResponse = zod.object({
+  "answer": zod.string().optional(),
+  "items": zod.array(zod.object({
+  "id": zod.string().optional(),
+  "work_id": zod.string().nullish(),
+  "kind": zod.string().optional(),
+  "text": zod.string().optional(),
+  "subject": zod.string().nullish(),
+  "predicate": zod.string().nullish(),
+  "object": zod.string().nullish(),
+  "confidence": zod.number().optional(),
+  "review_status": zod.string().optional(),
+  "created_at": zod.string().optional()
+})).optional()
+})
+
+
+/**
+ * @summary List mastery concepts for a project
+ */
+export const GetProjectConceptsParams = zod.object({
+  "projectId": zod.coerce.string()
+})
+
+export const GetProjectConceptsResponse = zod.object({
+  "concepts": zod.array(zod.looseObject({
+
+})).optional()
+})
+
+
+/**
+ * @summary Download a backup file
+ */
+export const DownloadBackupParams = zod.object({
+  "name": zod.coerce.string()
+})
+
+export const DownloadBackupResponse = zod.unknown()
+
+
+/**
+ * @summary Synthesize text to speech
+ */
+export const synthesizeSpeechBodyReturnUrlDefault = false;
+
+export const SynthesizeSpeechBody = zod.object({
+  "text": zod.string(),
+  "voice": zod.string().nullish(),
+  "return_url": zod.boolean().default(synthesizeSpeechBodyReturnUrlDefault)
+})
+
+export const SynthesizeSpeechResponse = zod.object({
+  "ok": zod.boolean().optional(),
+  "path": zod.string().optional(),
+  "filename": zod.string().optional()
+})
+
+
+/**
+ * @summary Synthesize an entire document to speech
+ */
+export const synthesizeDocumentBodyReturnUrlDefault = true;
+
+export const SynthesizeDocumentBody = zod.object({
+  "doc_id": zod.string(),
+  "voice": zod.string().nullish(),
+  "return_url": zod.boolean().default(synthesizeDocumentBodyReturnUrlDefault)
+})
+
+export const SynthesizeDocumentResponse = zod.object({
+  "ok": zod.boolean().optional(),
+  "path": zod.string().optional(),
+  "filename": zod.string().optional()
+})
+
+
+/**
+ * @summary Stream/serve a studio output file by path
+ */
+export const ServeStudioOutputQueryParams = zod.object({
+  "path": zod.coerce.string()
+})
+
+export const ServeStudioOutputResponse = zod.unknown()
+
+
+/**
+ * @summary Delete / archive a studio output file
+ */
+export const ArchiveStudioOutputQueryParams = zod.object({
+  "path": zod.coerce.string()
+})
+
+export const ArchiveStudioOutputResponse = zod.object({
+  "ok": zod.boolean().optional()
+})
+
+
+/**
+ * @summary Generate an image via the configured image-gen backend
+ */
+export const generateImageBodyWidthDefault = 512;
+export const generateImageBodyHeightDefault = 512;
+export const generateImageBodyStepsDefault = 20;
+
+export const GenerateImageBody = zod.object({
+  "prompt": zod.string(),
+  "negative_prompt": zod.string().nullish(),
+  "width": zod.int().default(generateImageBodyWidthDefault),
+  "height": zod.int().default(generateImageBodyHeightDefault),
+  "steps": zod.int().default(generateImageBodyStepsDefault)
+})
+
+export const GenerateImageResponse = zod.looseObject({
+
+})
+
+
+/**
+ * @summary Status of all studio capabilities (TTS, OCR, image gen)
+ */
+export const GetStudioStatusResponse = zod.looseObject({
+
+})
+
+
+/**
+ * @summary Status of the image generation backend
+ */
+export const GetImageGenStatusResponse = zod.looseObject({
+
+})
+
+
+/**
+ * @summary Extract text from an image using OCR
+ */
+export const runOcrBodyLangDefault = `eng`;
+
+export const RunOcrBody = zod.object({
+  "image_b64": zod.string(),
+  "lang": zod.string().default(runOcrBodyLangDefault)
+})
+
+export const RunOcrResponse = zod.object({
+  "text": zod.string().optional(),
+  "word_count": zod.int().optional()
+})
+
+
+/**
+ * @summary Check whether Tavily web search is configured
+ */
+export const GetWebSearchStatusResponse = zod.object({
+  "configured": zod.boolean().optional(),
+  "provider": zod.string().optional()
+})
+
+
+/**
+ * @summary Live health check of the configured LLM endpoint
+ */
+export const GetLlmHealthResponse = zod.object({
+  "ok": zod.boolean().optional(),
+  "model": zod.string().optional(),
+  "latency_ms": zod.number().optional()
+})
+
+
+/**
+ * @summary System hardware and resource usage
+ */
+export const GetSystemHardwareResponse = zod.object({
+  "cpu_pct": zod.number().optional(),
+  "mem_total_mb": zod.number().optional(),
+  "mem_used_mb": zod.number().optional(),
+  "disk_total_gb": zod.number().optional(),
+  "disk_used_gb": zod.number().optional()
+})
+
+
+/**
+ * @summary Trigger the nightshift maintenance pass (background)
+ */
+export const TriggerNightshiftResponse = zod.object({
+  "ok": zod.boolean().optional()
+})
+
+
+/**
+ * @summary Run the nightshift pass synchronously (blocks until done)
+ */
+export const RunNightshiftNowResponse = zod.looseObject({
+
+})
+
+
+/**
+ * @summary Get nightshift daemon status
+ */
+export const GetNightshiftStatusResponse = zod.looseObject({
+
+})
+
+
+/**
+ * @summary Get the last nightshift execution report
+ */
+export const GetNightshiftLastReportResponse = zod.looseObject({
+
+})
+
+
+/**
+ * @summary Current document extraction queue
+ */
+export const GetSystemDocumentQueueResponse = zod.looseObject({
+
+})
+
+
+/**
+ * @summary Get a background job by ID
+ */
+export const GetSystemJobParams = zod.object({
+  "jobId": zod.coerce.string()
+})
+
+export const GetSystemJobResponse = zod.object({
+  "id": zod.string().optional(),
+  "kind": zod.string().optional(),
+  "state": zod.string().optional(),
+  "doc_id": zod.string().nullish(),
+  "meta": zod.looseObject({
+
+}).optional(),
+  "started_at": zod.string().nullish(),
+  "finished_at": zod.string().nullish(),
+  "created_at": zod.string().optional()
+})
+
+
+/**
+ * @summary Update the state of a background job
+ */
+export const UpdateSystemJobStateParams = zod.object({
+  "jobId": zod.coerce.string()
+})
+
+export const UpdateSystemJobStateBody = zod.object({
+  "state": zod.string(),
+  "meta": zod.looseObject({
+
+}).optional()
+})
+
+export const UpdateSystemJobStateResponse = zod.object({
+  "id": zod.string().optional(),
+  "kind": zod.string().optional(),
+  "state": zod.string().optional(),
+  "doc_id": zod.string().nullish(),
+  "meta": zod.looseObject({
+
+}).optional(),
+  "started_at": zod.string().nullish(),
+  "finished_at": zod.string().nullish(),
+  "created_at": zod.string().optional()
+})
+
+
+/**
+ * @summary List user memory entries stored by the AI
+ */
+export const ListSystemUserMemoryResponse = zod.object({
+  "memory": zod.array(zod.looseObject({
+
+})).optional()
+})
+
+
+/**
+ * @summary Delete a user memory entry
+ */
+export const DeleteSystemUserMemoryParams = zod.object({
+  "memoryId": zod.coerce.string()
+})
+
+export const DeleteSystemUserMemoryResponse = zod.object({
+  "ok": zod.boolean().optional()
+})
+
+
+/**
+ * @summary Get AI extraction enabled/disabled setting
+ */
+export const GetAiExtractionSettingResponse = zod.object({
+  "enabled": zod.boolean().optional()
+})
+
+
+/**
+ * @summary Enable or disable AI extraction
+ */
+export const SetAiExtractionSettingBody = zod.object({
+  "enabled": zod.boolean()
+})
+
+export const SetAiExtractionSettingResponse = zod.object({
+  "enabled": zod.boolean().optional()
+})
+
+
+/**
+ * @summary Get the configured vision model
+ */
+export const GetVisionModelSettingResponse = zod.looseObject({
+
+})
+
+
+/**
+ * @summary Set the vision model
+ */
+export const SetVisionModelSettingBody = zod.object({
+  "model": zod.string().optional()
+})
+
+export const SetVisionModelSettingResponse = zod.looseObject({
+
+})
+
+
+/**
+ * @summary Get the context window configuration
+ */
+export const GetContextWindowSettingResponse = zod.looseObject({
+
+})
+
+
+/**
+ * @summary Set the context window size
+ */
+export const SetContextWindowSettingBody = zod.object({
+  "tokens": zod.int().optional()
+})
+
+export const SetContextWindowSettingResponse = zod.looseObject({
+
+})
+
+
+/**
+ * @summary Get the image generation URL setting
+ */
+export const GetImageGenSettingResponse = zod.looseObject({
+
+})
+
+
+/**
+ * @summary Set the image generation endpoint URL
+ */
+export const SetImageGenSettingBody = zod.object({
+  "url": zod.string().optional()
+})
+
+export const SetImageGenSettingResponse = zod.looseObject({
+
+})
+
+
+/**
+ * @summary Get embeddings service circuit-breaker state (no network call)
+ */
+export const GetEmbeddingsStatusResponse = zod.object({
+  "circuit_open": zod.boolean().optional().describe('true when the embeddings endpoint is in cooldown'),
+  "available_at": zod.number().nullish().describe('monotonic timestamp when the circuit will close; null when circuit is closed')
+})
+
+
+/**
+ * @summary Live-test the embeddings endpoint and reset the circuit breaker on success
+ */
+export const ProbeEmbeddingsResponse = zod.object({
+  "ok": zod.boolean().optional(),
+  "latency_ms": zod.number().optional()
+})
+
+
+/**
+ * @summary Detailed workspace database statistics
+ */
+export const GetSystemStatsResponse = zod.looseObject({
+
+})
+
+
+/**
+ * @summary List available MCP/agent tools
+ */
+export const GetSystemToolsResponse = zod.object({
+  "tools": zod.array(zod.looseObject({
+
+})).optional()
+})
+
+
+/**
+ * @summary Live-test the vision model endpoint
+ */
+export const ProbeVisionModelResponse = zod.object({
+  "ok": zod.boolean().optional()
+})
+
+
+/**
+ * @summary Cryptographic audit chain for governed writes
+ */
+export const GetGovernanceAuditChainResponse = zod.object({
+  "entries": zod.array(zod.looseObject({
+
+})).optional(),
+  "count": zod.int().optional()
+})
+
+
+/**
+ * @summary Pending governance outbox events
+ */
+export const getGovernanceOutboxQueryPendingOnlyDefault = true;
+export const getGovernanceOutboxQueryLimitDefault = 100;
+
+export const GetGovernanceOutboxQueryParams = zod.object({
+  "pending_only": zod.coerce.boolean().default(getGovernanceOutboxQueryPendingOnlyDefault),
+  "limit": zod.coerce.number().int().default(getGovernanceOutboxQueryLimitDefault)
+})
+
+export const GetGovernanceOutboxResponse = zod.object({
+  "events": zod.array(zod.looseObject({
+
+})).optional(),
+  "count": zod.int().optional()
+})
+
+
+/**
+ * @summary List available automation actions
+ */
+export const ListActionsResponse = zod.object({
+  "actions": zod.array(zod.object({
+  "name": zod.string().optional(),
+  "label": zod.string().optional(),
+  "description": zod.string().optional(),
+  "input_schema": zod.looseObject({
+
+}).optional()
+})).optional()
+})
+
+
+/**
+ * @summary List action execution runs
+ */
+export const listActionRunsQueryLimitDefault = 20;
+
+export const ListActionRunsQueryParams = zod.object({
+  "action_name": zod.coerce.string().optional(),
+  "limit": zod.coerce.number().int().default(listActionRunsQueryLimitDefault)
+})
+
+export const ListActionRunsResponse = zod.object({
+  "runs": zod.array(zod.object({
+  "id": zod.string().optional(),
+  "action_name": zod.string().optional(),
+  "state": zod.string().optional(),
+  "inputs": zod.looseObject({
+
+}).optional(),
+  "outputs": zod.looseObject({
+
+}).nullish(),
+  "error": zod.string().nullish(),
+  "created_at": zod.string().optional(),
+  "finished_at": zod.string().nullish()
+})).optional()
+})
+
+
+/**
+ * @summary Get an action run by ID
+ */
+export const GetActionRunParams = zod.object({
+  "runId": zod.coerce.string()
+})
+
+export const GetActionRunResponse = zod.object({
+  "id": zod.string().optional(),
+  "action_name": zod.string().optional(),
+  "state": zod.string().optional(),
+  "inputs": zod.looseObject({
+
+}).optional(),
+  "outputs": zod.looseObject({
+
+}).nullish(),
+  "error": zod.string().nullish(),
+  "created_at": zod.string().optional(),
+  "finished_at": zod.string().nullish()
+})
+
+
+/**
+ * @summary Preview an action without executing it
+ */
+export const PreviewActionParams = zod.object({
+  "name": zod.coerce.string()
+})
+
+export const PreviewActionBody = zod.looseObject({
+
+}).describe('Action-specific input parameters')
+
+export const PreviewActionResponse = zod.looseObject({
+
+})
+
+
+/**
+ * @summary Execute an action
+ */
+export const ExecuteActionParams = zod.object({
+  "name": zod.coerce.string()
+})
+
+export const ExecuteActionBody = zod.looseObject({
+
+}).describe('Action-specific input parameters')
+
+export const ExecuteActionResponse = zod.object({
+  "id": zod.string().optional(),
+  "action_name": zod.string().optional(),
+  "state": zod.string().optional(),
+  "inputs": zod.looseObject({
+
+}).optional(),
+  "outputs": zod.looseObject({
+
+}).nullish(),
+  "error": zod.string().nullish(),
+  "created_at": zod.string().optional(),
+  "finished_at": zod.string().nullish()
+})
+
+
+/**
+ * @summary List MCOS benchmark definitions
+ */
+export const ListMcosBenchmarksResponse = zod.object({
+  "benchmarks": zod.array(zod.object({
+  "id": zod.string().optional(),
+  "name": zod.string().optional(),
+  "description": zod.string().optional(),
+  "prompt_slot": zod.string().optional(),
+  "weight": zod.number().optional()
+})).optional()
+})
+
+
+/**
+ * @summary Seed initial MCOS benchmark definitions
+ */
+export const SeedMcosResponse = zod.object({
+  "ok": zod.boolean().optional()
+})
+
+
+/**
+ * @summary Run a specific MCOS benchmark
+ */
+export const RunMcosBenchmarkParams = zod.object({
+  "benchmarkId": zod.coerce.string()
+})
+
+export const RunMcosBenchmarkResponse = zod.object({
+  "run_id": zod.string().optional()
+})
+
+
+/**
+ * @summary Run all MCOS benchmarks
+ */
+export const RunAllMcosBenchmarksResponse = zod.object({
+  "run_ids": zod.array(zod.string()).optional()
+})
+
+
+/**
+ * @summary List MCOS benchmark runs
+ */
+export const listMcosRunsQueryLimitDefault = 20;
+
+export const ListMcosRunsQueryParams = zod.object({
+  "benchmark_id": zod.coerce.string().optional(),
+  "limit": zod.coerce.number().int().default(listMcosRunsQueryLimitDefault)
+})
+
+export const ListMcosRunsResponse = zod.object({
+  "runs": zod.array(zod.object({
+  "id": zod.string().optional(),
+  "benchmark_id": zod.string().optional(),
+  "state": zod.string().optional(),
+  "score": zod.number().nullish(),
+  "delta": zod.number().nullish(),
+  "findings": zod.array(zod.looseObject({
+
+})).optional(),
+  "started_at": zod.string().optional(),
+  "finished_at": zod.string().nullish()
+})).optional()
+})
+
+
+/**
+ * @summary Get a single MCOS run with scores and findings
+ */
+export const GetMcosRunParams = zod.object({
+  "runId": zod.coerce.string()
+})
+
+export const GetMcosRunResponse = zod.object({
+  "id": zod.string().optional(),
+  "benchmark_id": zod.string().optional(),
+  "state": zod.string().optional(),
+  "score": zod.number().nullish(),
+  "delta": zod.number().nullish(),
+  "findings": zod.array(zod.looseObject({
+
+})).optional(),
+  "started_at": zod.string().optional(),
+  "finished_at": zod.string().nullish()
+})
+
+
+/**
+ * @summary MCOS scoring telemetry over time
+ */
+export const getMcosTelemetryQueryDaysDefault = 7;
+
+export const GetMcosTelemetryQueryParams = zod.object({
+  "days": zod.coerce.number().int().default(getMcosTelemetryQueryDaysDefault)
+})
+
+export const GetMcosTelemetryResponse = zod.object({
+  "series": zod.array(zod.looseObject({
+
+})).optional()
+})
+
+
+/**
+ * @summary List unacknowledged MCOS score regressions
+ */
+export const listMcosRegressionsQueryLimitDefault = 20;
+
+export const ListMcosRegressionsQueryParams = zod.object({
+  "limit": zod.coerce.number().int().default(listMcosRegressionsQueryLimitDefault)
+})
+
+export const ListMcosRegressionsResponse = zod.object({
+  "regressions": zod.array(zod.looseObject({
+
+})).optional()
+})
+
+
+/**
+ * @summary Acknowledge a MCOS regression
+ */
+export const AckMcosRegressionParams = zod.object({
+  "runId": zod.coerce.string()
+})
+
+export const AckMcosRegressionResponse = zod.object({
+  "ok": zod.boolean().optional()
+})
+
+
+/**
+ * @summary List MCOS prompt variants
+ */
+export const ListMcosPromptsQueryParams = zod.object({
+  "slot": zod.coerce.string().optional()
+})
+
+export const ListMcosPromptsResponse = zod.object({
+  "prompts": zod.array(zod.object({
+  "id": zod.string().optional(),
+  "slot": zod.string().optional(),
+  "text": zod.string().optional(),
+  "active": zod.boolean().optional(),
+  "created_at": zod.string().optional()
+})).optional()
+})
+
+
+/**
+ * @summary Create a new MCOS prompt variant
+ */
+export const CreateMcosPromptBody = zod.object({
+  "slot": zod.string(),
+  "text": zod.string()
+})
+
+export const CreateMcosPromptResponse = zod.object({
+  "id": zod.string().optional(),
+  "slot": zod.string().optional(),
+  "text": zod.string().optional(),
+  "active": zod.boolean().optional(),
+  "created_at": zod.string().optional()
+})
+
+
+/**
+ * @summary List available prompt slot names
+ */
+export const ListMcosPromptSlotsResponse = zod.object({
+  "slots": zod.array(zod.string()).optional()
+})
+
+
+/**
+ * @summary Delete a MCOS prompt variant
+ */
+export const DeleteMcosPromptParams = zod.object({
+  "promptId": zod.coerce.string()
+})
+
+export const DeleteMcosPromptResponse = zod.void()
+
+
+/**
+ * @summary Run benchmark on a specific prompt variant
+ */
+export const BenchmarkMcosPromptParams = zod.object({
+  "promptId": zod.coerce.string()
+})
+
+export const BenchmarkMcosPromptResponse = zod.looseObject({
+
+})
+
+
+/**
+ * @summary Get benchmark status for a prompt variant
+ */
+export const GetMcosPromptBenchmarkParams = zod.object({
+  "promptId": zod.coerce.string()
+})
+
+export const GetMcosPromptBenchmarkResponse = zod.looseObject({
+
+})
+
+
+/**
+ * @summary Activate a prompt variant as the live system prompt
+ */
+export const ActivateMcosPromptParams = zod.object({
+  "promptId": zod.coerce.string()
+})
+
+export const ActivateMcosPromptResponse = zod.object({
+  "ok": zod.boolean().optional()
+})
+
+
+/**
+ * @summary Get current RAG / retrieval configuration
+ */
+export const GetMcosRagConfigResponse = zod.looseObject({
+
+})
+
+
+/**
+ * @summary Start a RAG parameter sweep
+ */
+export const StartMcosRagSweepResponse = zod.looseObject({
+
+})
+
+
+/**
+ * @summary List RAG sweep runs
+ */
+export const listMcosRagSweepsQueryLimitDefault = 5;
+
+export const ListMcosRagSweepsQueryParams = zod.object({
+  "limit": zod.coerce.number().int().default(listMcosRagSweepsQueryLimitDefault)
+})
+
+export const ListMcosRagSweepsResponse = zod.object({
+  "sweeps": zod.array(zod.looseObject({
+
+})).optional()
+})
+
+
+/**
+ * @summary Apply a RAG configuration from a sweep result
+ */
+export const ApplyMcosRagConfigBody = zod.object({
+  "sweep_id": zod.string().optional(),
+  "config": zod.looseObject({
+
+}).optional()
+})
+
+export const ApplyMcosRagConfigResponse = zod.object({
+  "ok": zod.boolean().optional()
+})
+
+
+/**
+ * @summary Status of the RAG reprocess pass
+ */
+export const GetMcosRagReprocessStatusResponse = zod.looseObject({
+
+})
+
+
+/**
+ * @summary Create a new knowledge claim
+ */
+export const CreateClaimBody = zod.object({
+  "text": zod.string(),
+  "subject": zod.string().nullish(),
+  "predicate": zod.string().nullish(),
+  "object": zod.string().nullish(),
+  "work_id": zod.string().nullish(),
+  "source_doc_id": zod.string().nullish()
+})
+
+export const CreateClaimResponse = zod.object({
+  "id": zod.string().optional(),
+  "text": zod.string().optional(),
+  "subject": zod.string().nullish(),
+  "predicate": zod.string().nullish(),
+  "object": zod.string().nullish(),
+  "status": zod.string().optional(),
+  "work_id": zod.string().nullish(),
+  "source_doc_id": zod.string().nullish(),
+  "created_at": zod.string().optional()
+})
+
+
+/**
+ * @summary List all knowledge claims
+ */
+export const listClaimsQueryLimitDefault = 100;
+
+export const ListClaimsQueryParams = zod.object({
+  "status": zod.coerce.string().optional(),
+  "work_id": zod.coerce.string().optional(),
+  "limit": zod.coerce.number().int().default(listClaimsQueryLimitDefault)
+})
+
+export const ListClaimsResponse = zod.object({
+  "claims": zod.array(zod.object({
+  "id": zod.string().optional(),
+  "text": zod.string().optional(),
+  "subject": zod.string().nullish(),
+  "predicate": zod.string().nullish(),
+  "object": zod.string().nullish(),
+  "status": zod.string().optional(),
+  "work_id": zod.string().nullish(),
+  "source_doc_id": zod.string().nullish(),
+  "created_at": zod.string().optional()
+})).optional()
+})
+
+
+/**
+ * @summary Search claims by text similarity
+ */
+export const searchClaimsBodyLimitDefault = 20;
+
+export const SearchClaimsBody = zod.object({
+  "query": zod.string(),
+  "limit": zod.int().default(searchClaimsBodyLimitDefault)
+})
+
+export const SearchClaimsResponse = zod.object({
+  "results": zod.array(zod.object({
+  "id": zod.string().optional(),
+  "text": zod.string().optional(),
+  "subject": zod.string().nullish(),
+  "predicate": zod.string().nullish(),
+  "object": zod.string().nullish(),
+  "status": zod.string().optional(),
+  "work_id": zod.string().nullish(),
+  "source_doc_id": zod.string().nullish(),
+  "created_at": zod.string().optional()
+})).optional()
+})
+
+
+/**
+ * @summary Get all claims for a given subject entity
+ */
+export const GetClaimsBySubjectParams = zod.object({
+  "subject": zod.coerce.string()
+})
+
+export const GetClaimsBySubjectResponse = zod.object({
+  "claims": zod.array(zod.object({
+  "id": zod.string().optional(),
+  "text": zod.string().optional(),
+  "subject": zod.string().nullish(),
+  "predicate": zod.string().nullish(),
+  "object": zod.string().nullish(),
+  "status": zod.string().optional(),
+  "work_id": zod.string().nullish(),
+  "source_doc_id": zod.string().nullish(),
+  "created_at": zod.string().optional()
+})).optional()
+})
+
+
+/**
+ * @summary Get a single claim
+ */
+export const GetClaimParams = zod.object({
+  "claimId": zod.coerce.string()
+})
+
+export const GetClaimResponse = zod.object({
+  "id": zod.string().optional(),
+  "text": zod.string().optional(),
+  "subject": zod.string().nullish(),
+  "predicate": zod.string().nullish(),
+  "object": zod.string().nullish(),
+  "status": zod.string().optional(),
+  "work_id": zod.string().nullish(),
+  "source_doc_id": zod.string().nullish(),
+  "created_at": zod.string().optional()
+})
+
+
+/**
+ * @summary Delete a claim
+ */
+export const DeleteClaimParams = zod.object({
+  "claimId": zod.coerce.string()
+})
+
+export const DeleteClaimResponse = zod.object({
+  "ok": zod.boolean().optional()
+})
+
+
+/**
+ * @summary Update the verification status of a claim
+ */
+export const UpdateClaimStatusParams = zod.object({
+  "claimId": zod.coerce.string()
+})
+
+export const UpdateClaimStatusBody = zod.object({
+  "status": zod.string(),
+  "notes": zod.string().nullish()
+})
+
+export const UpdateClaimStatusResponse = zod.object({
+  "id": zod.string().optional(),
+  "text": zod.string().optional(),
+  "subject": zod.string().nullish(),
+  "predicate": zod.string().nullish(),
+  "object": zod.string().nullish(),
+  "status": zod.string().optional(),
+  "work_id": zod.string().nullish(),
+  "source_doc_id": zod.string().nullish(),
+  "created_at": zod.string().optional()
+})
+
+
+/**
+ * @summary Submit a PKLOS knowledge inventory assertion
+ */
+export const CreatePklosInventoryBody = zod.looseObject({
+
+})
+
+export const CreatePklosInventoryResponse = zod.looseObject({
+
+})
+
+
+/**
+ * @summary List PKLOS inventory entries
+ */
+export const ListPklosInventoryResponse = zod.object({
+  "entries": zod.array(zod.looseObject({
+
+})).optional()
+})
+
+
+/**
+ * @summary PKLOS Layer-0 authority status
+ */
+export const GetPklosStatusResponse = zod.looseObject({
+
+})
+
+
+/**
+ * @summary Verify a proposed action against PKLOS enforcement rules
+ */
+export const CheckPklosEnforcementBody = zod.looseObject({
+
+})
+
+export const CheckPklosEnforcementResponse = zod.looseObject({
+
+})
+
+
+/**
+ * @summary List all auto-detected knowledge topics
+ */
+export const listTopicsQueryLimitDefault = 50;
+
+export const ListTopicsQueryParams = zod.object({
+  "work_id": zod.coerce.string().optional(),
+  "limit": zod.coerce.number().int().default(listTopicsQueryLimitDefault)
+})
+
+export const ListTopicsResponse = zod.object({
+  "topics": zod.array(zod.looseObject({
+
+})).optional()
+})
+
+
+/**
+ * @summary Get a single topic with its knowledge items
+ */
+export const GetTopicParams = zod.object({
+  "topicId": zod.coerce.string()
+})
+
+export const GetTopicResponse = zod.looseObject({
+
+})
+
+
+/**
+ * @summary Rebuild topic clusters from current knowledge items
+ */
+export const RebuildTopicsBody = zod.object({
+  "work_id": zod.string().nullish()
+})
+
+export const RebuildTopicsResponse = zod.object({
+  "ok": zod.boolean().optional()
+})
+
+
+/**
+ * @summary Get documents topically related to this document
+ */
+export const GetRelatedDocumentsParams = zod.object({
+  "docId": zod.coerce.string()
+})
+
+export const getRelatedDocumentsQueryLimitDefault = 5;
+
+export const GetRelatedDocumentsQueryParams = zod.object({
+  "limit": zod.coerce.number().int().default(getRelatedDocumentsQueryLimitDefault)
+})
+
+export const GetRelatedDocumentsResponse = zod.object({
+  "related": zod.array(zod.object({
+  "id": zod.string().optional(),
+  "work_id": zod.string().nullish(),
+  "title": zod.string().nullish(),
+  "source": zod.string().nullish(),
+  "sha256": zod.string().nullish(),
+  "kind": zod.string().nullish(),
+  "classification": zod.string().nullish(),
+  "readiness": zod.string().optional(),
+  "lifecycle": zod.string().nullish().describe('draft | canonical | superseded | reference'),
+  "word_count": zod.int().nullish(),
+  "error_message": zod.string().nullish(),
+  "meta": zod.looseObject({
+
+}).optional(),
+  "created_at": zod.string().optional()
+})).optional()
+})
+
+
+/**
+ * @summary Generate an Excel report from knowledge data
+ */
+export const GenerateExcelBody = zod.object({
+  "work_id": zod.string().optional(),
+  "include": zod.array(zod.string()).optional()
+})
+
+export const GenerateExcelResponse = zod.looseObject({
+
+})
+
+
+/**
+ * @summary Generate a Markdown/HTML report for a Work
+ */
+export const generateReportBodyFormatDefault = `markdown`;
+
+export const GenerateReportBody = zod.object({
+  "work_id": zod.string().optional(),
+  "format": zod.string().default(generateReportBodyFormatDefault)
+})
+
+export const GenerateReportResponse = zod.looseObject({
+
+})
+
+
+/**
+ * @summary Generate a slide deck for a Work
+ */
+export const GenerateSlidesBody = zod.object({
+  "work_id": zod.string().optional(),
+  "title": zod.string().optional()
+})
+
+export const GenerateSlidesResponse = zod.looseObject({
+
+})
+
+
+/**
+ * @summary Generate a downloadable bundle (ZIP) of all generated outputs
+ */
+export const GenerateBundleBody = zod.object({
+  "work_id": zod.string().optional()
+})
+
+export const GenerateBundleResponse = zod.looseObject({
+
+})
+
+
+/**
+ * @summary Download a previously generated output
+ */
+export const DownloadGeneratedQueryParams = zod.object({
+  "path": zod.coerce.string()
+})
+
+export const DownloadGeneratedResponse = zod.unknown()
+
+
+/**
+ * @summary Submit a document or URL for automated intake and Work assignment
+ */
+export const SubmitIntakeBody = zod.object({
+  "url": zod.string().nullish(),
+  "text": zod.string().nullish(),
+  "work_id": zod.string().nullish(),
+  "title": zod.string().nullish()
+})
+
+export const SubmitIntakeResponse = zod.object({
+  "doc_id": zod.string().optional(),
+  "work_id": zod.string().nullish()
+})
+
+
+/**
+ * @summary Intake a research topic — triggers web search + document creation
+ */
+export const submitResearchIntakeBodyDepthDefault = `standard`;
+
+export const SubmitResearchIntakeBody = zod.object({
+  "query": zod.string(),
+  "work_id": zod.string().nullish(),
+  "depth": zod.string().default(submitResearchIntakeBodyDepthDefault)
+})
+
+export const SubmitResearchIntakeResponse = zod.looseObject({
+
+})
+
+
+/**
+ * @summary Get the intake processing status of a document
+ */
+export const GetIntakeStatusParams = zod.object({
+  "docId": zod.coerce.string()
+})
+
+export const GetIntakeStatusResponse = zod.looseObject({
+
+})
+
+
+/**
+ * @summary List AI-assisted write documents
+ */
+export const listWriteDocumentsQueryLimitDefault = 50;
+
+export const ListWriteDocumentsQueryParams = zod.object({
+  "work_id": zod.coerce.string().optional(),
+  "limit": zod.coerce.number().int().default(listWriteDocumentsQueryLimitDefault)
+})
+
+export const ListWriteDocumentsResponse = zod.object({
+  "documents": zod.array(zod.object({
+  "id": zod.string().optional(),
+  "work_id": zod.string().nullish(),
+  "title": zod.string().optional(),
+  "content": zod.string().optional(),
+  "kind": zod.string().optional(),
+  "created_at": zod.string().optional(),
+  "updated_at": zod.string().optional()
+})).optional()
+})
+
+
+/**
+ * @summary Create a new AI-assisted write document
+ */
+export const createWriteDocumentBodyKindDefault = `document`;
+export const createWriteDocumentBodyContentDefault = ``;
+
+export const CreateWriteDocumentBody = zod.object({
+  "title": zod.string(),
+  "work_id": zod.string().nullish(),
+  "kind": zod.string().default(createWriteDocumentBodyKindDefault),
+  "content": zod.string().default(createWriteDocumentBodyContentDefault)
+})
+
+export const CreateWriteDocumentResponse = zod.object({
+  "id": zod.string().optional(),
+  "work_id": zod.string().nullish(),
+  "title": zod.string().optional(),
+  "content": zod.string().optional(),
+  "kind": zod.string().optional(),
+  "created_at": zod.string().optional(),
+  "updated_at": zod.string().optional()
+})
+
+
+/**
+ * @summary Get a write document by ID
+ */
+export const GetWriteDocumentParams = zod.object({
+  "docId": zod.coerce.string()
+})
+
+export const GetWriteDocumentResponse = zod.object({
+  "id": zod.string().optional(),
+  "work_id": zod.string().nullish(),
+  "title": zod.string().optional(),
+  "content": zod.string().optional(),
+  "kind": zod.string().optional(),
+  "created_at": zod.string().optional(),
+  "updated_at": zod.string().optional()
+})
+
+
+/**
+ * @summary Update a write document
+ */
+export const UpdateWriteDocumentParams = zod.object({
+  "docId": zod.coerce.string()
+})
+
+export const UpdateWriteDocumentBody = zod.looseObject({
+
+})
+
+export const UpdateWriteDocumentResponse = zod.object({
+  "id": zod.string().optional(),
+  "work_id": zod.string().nullish(),
+  "title": zod.string().optional(),
+  "content": zod.string().optional(),
+  "kind": zod.string().optional(),
+  "created_at": zod.string().optional(),
+  "updated_at": zod.string().optional()
+})
+
+
+/**
+ * @summary Delete a write document
+ */
+export const DeleteWriteDocumentParams = zod.object({
+  "docId": zod.coerce.string()
+})
+
+export const DeleteWriteDocumentResponse = zod.object({
+  "ok": zod.boolean().optional()
+})
+
+
+/**
+ * @summary Generate or improve content for a write document using AI
+ */
+export const AiAssistWriteDocumentParams = zod.object({
+  "docId": zod.coerce.string()
+})
+
+export const aiAssistWriteDocumentBodyModeDefault = `improve`;
+
+export const AiAssistWriteDocumentBody = zod.object({
+  "instruction": zod.string(),
+  "mode": zod.string().default(aiAssistWriteDocumentBodyModeDefault)
+})
+
+export const AiAssistWriteDocumentResponse = zod.looseObject({
+
+})
+
+
+/**
+ * @summary Export a write document as plain text
+ */
+export const ExportWriteDocumentTxtParams = zod.object({
+  "docId": zod.coerce.string()
+})
+
+export const ExportWriteDocumentTxtResponse = zod.string()
+
+
+/**
+ * @summary Download a file by path
+ */
+export const DownloadFileParams = zod.object({
+  "filePath": zod.coerce.string().describe('Forward-slash-separated path to the file')
+})
+
+export const DownloadFileResponse = zod.unknown()

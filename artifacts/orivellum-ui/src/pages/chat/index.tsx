@@ -21,6 +21,7 @@ import {
   getGetWorkQueryKey,
   useGetWorkDocuments,
   getGetWorkDocumentsQueryKey,
+  useGetWebSearchStatus,
 } from "@workspace/api-client-react";
 import { useConnectivity } from "@/lib/useConnectivity";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
@@ -1131,16 +1132,8 @@ export default function Chat() {
   const [dragOver,        setDragOver]        = useState(false);
   const [importing,       setImporting]       = useState(false);
 
-  // Fetch whether Tavily is configured — gates the globe button visibility
-  const { data: webSearchStatus } = useQuery<{ configured: boolean }>({
-    queryKey: ["system", "web-search-status"],
-    queryFn: async () => {
-      const r = await apiFetch(`${API_BASE}/system/web-search-status`);
-      if (!r.ok) return { configured: false };
-      return r.json();
-    },
-    staleTime: 60_000,
-  });
+  // Whether Tavily is configured — gates the globe button visibility
+  const { data: webSearchStatus } = useGetWebSearchStatus();
   const tavilyConfigured = webSearchStatus?.configured ?? false;
 
   // ── Activity panel state ─────────────────────────────────────────────────

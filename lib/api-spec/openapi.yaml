@@ -253,6 +253,29 @@ paths:
                 properties:
                   knowledge: { type: array, items: { $ref: "#/components/schemas/KnowledgeItem" } }
                   count: { type: integer }
+    post:
+      operationId: createWorkKnowledge
+      summary: Manually add a knowledge item to a Work
+      tags: [works]
+      parameters:
+        - name: workId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/KnowledgeCreate" }
+      responses:
+        "200":
+          description: Created knowledge item
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  item: { $ref: "#/components/schemas/KnowledgeItem" }
 
   /works/{workId}/tasks/{taskId}:
     patch:
@@ -282,6 +305,22 @@ paths:
                 type: object
                 properties:
                   task: { $ref: "#/components/schemas/Task" }
+    delete:
+      operationId: deleteWorkTask
+      summary: Delete a task
+      tags: [works]
+      parameters:
+        - name: workId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: taskId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "204":
+          description: Deleted
 
   /works/{workId}/tasks:
     get:
@@ -343,6 +382,9 @@ paths:
         - name: limit
           in: query
           schema: { type: integer, default: 100 }
+        - name: entity_kinds
+          in: query
+          schema: { type: string, description: "Comma-separated list of entity kinds to include (person,place,concept,theme,scripture)" }
       responses:
         "200":
           description: Work entity graph
@@ -848,6 +890,23 @@ paths:
                   count: { type: integer }
 
   /knowledge/{itemId}:
+    get:
+      operationId: getKnowledgeItem
+      summary: Get a single knowledge item
+      tags: [knowledge]
+      parameters:
+        - name: itemId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Knowledge item
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/KnowledgeItem" }
+        "404":
+          description: Not found
     delete:
       operationId: deleteKnowledgeItem
       summary: Permanently delete a knowledge item
@@ -1122,6 +1181,2779 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Briefing" }
+
+  # ─── Global Knowledge Graph ─────────────────────────────────────────────────
+  /graph:
+    get:
+      operationId: getGlobalGraph
+      summary: Cross-work entity and document knowledge graph
+      tags: [works]
+      parameters:
+        - name: work_id
+          in: query
+          schema: { type: string }
+        - name: entity_kinds
+          in: query
+          schema: { type: string, description: "Comma-separated entity kinds to include" }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 200 }
+      responses:
+        "200":
+          description: Global graph payload
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GlobalGraph" }
+
+  # ─── Gaps ────────────────────────────────────────────────────────────────────
+  /gaps/top:
+    get:
+      operationId: getTopGaps
+      summary: Workspace-wide top knowledge gaps across all Works
+      tags: [works]
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, default: 3 }
+        - name: refresh
+          in: query
+          schema: { type: boolean, default: false }
+      responses:
+        "200":
+          description: Top gaps
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TopGapsResponse" }
+
+  /works/{workId}/gaps:
+    get:
+      operationId: getWorkGaps
+      summary: Knowledge gap analysis for a Work
+      tags: [works]
+      parameters:
+        - name: workId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: refresh
+          in: query
+          schema: { type: boolean, default: false }
+      responses:
+        "200":
+          description: Gap report
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GapReport" }
+
+  # ─── Works extras ────────────────────────────────────────────────────────────
+  /works/{workId}/book-intelligence:
+    get:
+      operationId: getWorkBookIntelligence
+      summary: Book-level intelligence analysis for a Work
+      tags: [works]
+      parameters:
+        - name: workId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Book intelligence
+          content:
+            application/json:
+              schema: { type: object }
+
+  /works/{workId}/chapters:
+    get:
+      operationId: getWorkChapters
+      summary: Chapter structure for a Work
+      tags: [works]
+      parameters:
+        - name: workId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Chapters
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  chapters: { type: array, items: { type: object } }
+
+  /works/{workId}/compass:
+    get:
+      operationId: getWorkCompass
+      summary: Get compass (strategic direction) for a Work
+      tags: [works]
+      parameters:
+        - name: workId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Compass
+          content:
+            application/json:
+              schema: { type: object }
+    patch:
+      operationId: updateWorkCompass
+      summary: Update compass for a Work
+      tags: [works]
+      parameters:
+        - name: workId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "200":
+          description: Updated compass
+          content:
+            application/json:
+              schema: { type: object }
+
+  /works/{workId}/duplicates:
+    get:
+      operationId: getWorkDuplicates
+      summary: Near-duplicate document pairs within a Work
+      tags: [works]
+      parameters:
+        - name: workId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: resolved
+          in: query
+          schema: { type: boolean, default: false }
+      responses:
+        "200":
+          description: Duplicate pairs
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  pairs: { type: array, items: { $ref: "#/components/schemas/DuplicatePair" } }
+                  count: { type: integer }
+
+  /works/{workId}/search:
+    get:
+      operationId: searchWork
+      summary: Search within a Work's knowledge base
+      tags: [works]
+      parameters:
+        - name: workId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: q
+          in: query
+          required: true
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 20 }
+      responses:
+        "200":
+          description: Search results
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  results: { type: array, items: { type: object } }
+
+  /works/{workId}/quiz:
+    post:
+      operationId: generateWorkQuiz
+      summary: Generate a quiz for a Work
+      tags: [works]
+      parameters:
+        - name: workId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: count
+          in: query
+          schema: { type: integer, default: 5 }
+      responses:
+        "200":
+          description: Quiz questions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  questions: { type: array, items: { type: object } }
+
+  /works/{workId}/evidence/rescore:
+    post:
+      operationId: rescoreWorkEvidence
+      summary: Re-score all evidence items for a Work
+      tags: [works]
+      parameters:
+        - name: workId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Rescore result
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OkResponse" }
+
+  # ─── Pipeline ────────────────────────────────────────────────────────────────
+  /works/{workId}/pipeline:
+    post:
+      operationId: createWorkPipeline
+      summary: Initialise the book production pipeline for a Work
+      tags: [works]
+      parameters:
+        - name: workId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                target_word_count: { type: integer }
+      responses:
+        "200":
+          description: Created pipeline
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Pipeline" }
+    get:
+      operationId: getWorkPipeline
+      summary: Get the current pipeline state for a Work
+      tags: [works]
+      parameters:
+        - name: workId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Pipeline state
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Pipeline" }
+        "404":
+          description: No pipeline for this Work
+
+  /works/{workId}/pipeline/advance:
+    post:
+      operationId: advanceWorkPipeline
+      summary: Advance the pipeline to the next stage
+      tags: [works]
+      parameters:
+        - name: workId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Advance result
+          content:
+            application/json:
+              schema: { type: object }
+
+  /works/{workId}/pipeline/run-stage:
+    post:
+      operationId: runWorkPipelineStage
+      summary: Execute the current pipeline stage
+      tags: [works]
+      parameters:
+        - name: workId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Stage result
+          content:
+            application/json:
+              schema: { type: object }
+
+  # ─── Brainstorm ──────────────────────────────────────────────────────────────
+  /works/{workId}/brainstorm:
+    get:
+      operationId: listBrainstormSessions
+      summary: List brainstorm sessions for a Work
+      tags: [works]
+      parameters:
+        - name: workId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 20 }
+      responses:
+        "200":
+          description: Brainstorm sessions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sessions: { type: array, items: { type: object } }
+    post:
+      operationId: runBrainstorm
+      summary: Start a brainstorm session for a Work
+      tags: [works]
+      parameters:
+        - name: workId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [prompt]
+              properties:
+                prompt: { type: string }
+                mode: { type: string }
+      responses:
+        "200":
+          description: Brainstorm session
+          content:
+            application/json:
+              schema: { type: object }
+
+  /works/{workId}/brainstorm/{sessionId}:
+    get:
+      operationId: getBrainstormSession
+      summary: Get a brainstorm session
+      tags: [works]
+      parameters:
+        - name: workId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: sessionId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Brainstorm session
+          content:
+            application/json:
+              schema: { type: object }
+
+  /works/{workId}/brainstorm/{sessionId}/ideas/{ideaId}/approve:
+    post:
+      operationId: approveBrainstormIdea
+      summary: Approve a brainstorm idea
+      tags: [works]
+      parameters:
+        - name: workId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: sessionId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: ideaId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Idea approved
+          content:
+            application/json:
+              schema: { type: object }
+
+  # ─── Learning ────────────────────────────────────────────────────────────────
+  /works/{workId}/learning/summary:
+    get:
+      operationId: getLearningSummary
+      summary: Learning progress summary for a Work
+      tags: [learning]
+      parameters:
+        - name: workId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Learning summary
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LearningSummary" }
+
+  /works/{workId}/learning/concepts:
+    get:
+      operationId: getWorkConcepts
+      summary: List learning concepts for a Work
+      tags: [learning]
+      parameters:
+        - name: workId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Concepts
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  concepts: { type: array, items: { $ref: "#/components/schemas/LearningConcept" } }
+
+  /works/{workId}/learning/seed:
+    post:
+      operationId: seedLearning
+      summary: Seed learning concepts from Work knowledge
+      tags: [learning]
+      parameters:
+        - name: workId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Seeded
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OkResponse" }
+
+  /works/{workId}/learning/question:
+    get:
+      operationId: getLearningQuestion
+      summary: Get the next learning question for a Work
+      tags: [learning]
+      parameters:
+        - name: workId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: concept_id
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Learning question
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LearningQuestion" }
+
+  /works/{workId}/learning/reset:
+    post:
+      operationId: resetLearning
+      summary: Reset all learning progress for a Work
+      tags: [learning]
+      parameters:
+        - name: workId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Reset
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OkResponse" }
+
+  /works/{workId}/learning/concepts/{conceptId}/reset:
+    post:
+      operationId: resetLearningConcept
+      summary: Reset learning progress for a single concept
+      tags: [learning]
+      parameters:
+        - name: workId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: conceptId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Concept reset
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OkResponse" }
+
+  /works/{workId}/learning/assess:
+    post:
+      operationId: assessLearning
+      summary: Submit a learning answer for assessment
+      tags: [learning]
+      parameters:
+        - name: workId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LearningAssessBody" }
+      responses:
+        "200":
+          description: Assessment result
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LearningAssessResult" }
+
+  # ─── Review queue ─────────────────────────────────────────────────────────────
+  /review/queue:
+    get:
+      operationId: getReviewQueue
+      summary: Unified review queue (knowledge, duplicates, suggestions, reclassifications)
+      tags: [review]
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, default: 200 }
+      responses:
+        "200":
+          description: Review queue items
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/ReviewItem" } }
+                  total: { type: integer }
+
+  /review/{itemType}:{itemId}/resolve:
+    post:
+      operationId: resolveReviewItem
+      summary: Resolve a review queue item
+      tags: [review]
+      parameters:
+        - name: itemType
+          in: path
+          required: true
+          schema: { type: string }
+        - name: itemId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReviewResolveBody" }
+      responses:
+        "200":
+          description: Resolved
+          content:
+            application/json:
+              schema: { type: object }
+
+  # ─── Conversations extras ─────────────────────────────────────────────────────
+  /conversations/search:
+    get:
+      operationId: searchConversations
+      summary: Full-text search across conversation messages
+      tags: [conversations]
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 50 }
+      responses:
+        "200":
+          description: Matching messages
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  results: { type: array, items: { type: object } }
+
+  /conversations/{convId}/web-search:
+    put:
+      operationId: toggleConversationWebSearch
+      summary: Enable or disable web search grounding for a conversation
+      tags: [conversations]
+      parameters:
+        - name: convId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled: { type: boolean }
+      responses:
+        "200":
+          description: Web search toggled
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  conversation: { $ref: "#/components/schemas/Conversation" }
+        "404":
+          description: Conversation not found
+        "409":
+          description: Tavily API key not configured
+
+  /conversations/{convId}/continue:
+    post:
+      operationId: continueConversationMessage
+      summary: Continue a cut-short AI reply in a conversation
+      tags: [conversations]
+      parameters:
+        - name: convId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                stream: { type: boolean, default: false }
+      responses:
+        "200":
+          description: Continuation
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { $ref: "#/components/schemas/Message" }
+
+  /memory:
+    get:
+      operationId: getUserMemory
+      summary: List all inferred user memory facts
+      tags: [conversations]
+      responses:
+        "200":
+          description: Memory facts
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  facts: { type: array, items: { $ref: "#/components/schemas/MemoryFact" } }
+
+  # ─── Dashboard extras ────────────────────────────────────────────────────────
+  /dashboard/nudges:
+    get:
+      operationId: getDashboardNudges
+      summary: Actionable workspace nudges / suggestions
+      tags: [dashboard]
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, default: 5 }
+      responses:
+        "200":
+          description: Nudges
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  nudges: { type: array, items: { type: object } }
+
+  /dashboard/nudges/resolve:
+    post:
+      operationId: resolveDashboardNudge
+      summary: Dismiss or act on a nudge
+      tags: [dashboard]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [nudge_id]
+              properties:
+                nudge_id: { type: string }
+      responses:
+        "200":
+          description: Resolved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OkResponse" }
+
+  /dashboard/nudges/rebuild:
+    post:
+      operationId: rebuildDashboardNudges
+      summary: Regenerate nudges from current workspace state
+      tags: [dashboard]
+      responses:
+        "200":
+          description: Rebuilt
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OkResponse" }
+
+  # ─── Suggestions ─────────────────────────────────────────────────────────────
+  /suggestions:
+    get:
+      operationId: getSuggestions
+      summary: Get AI-generated suggestions for the workspace
+      tags: [system]
+      parameters:
+        - name: work_id
+          in: query
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 5 }
+      responses:
+        "200":
+          description: Suggestions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  suggestions: { type: array, items: { type: object } }
+
+  /suggestions/generate:
+    post:
+      operationId: generateSuggestions
+      summary: Generate new AI suggestions
+      tags: [system]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                work_id: { type: string }
+                limit: { type: integer, default: 6 }
+      responses:
+        "200":
+          description: Generated suggestions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  suggestions: { type: array, items: { type: object } }
+
+  # ─── Books / Learn ───────────────────────────────────────────────────────────
+  /books:
+    get:
+      operationId: listBooks
+      summary: List all Works of type book with health summary
+      tags: [works]
+      responses:
+        "200":
+          description: Books
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  books: { type: array, items: { type: object } }
+
+  /learn:
+    get:
+      operationId: listLearnWorks
+      summary: List all Works eligible for learning/quiz
+      tags: [learning]
+      responses:
+        "200":
+          description: Learn-eligible Works
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  works: { type: array, items: { $ref: "#/components/schemas/Work" } }
+
+  # ─── Library extras ──────────────────────────────────────────────────────────
+  /library/upload:
+    post:
+      operationId: uploadLibraryDocument
+      summary: Upload a document to the library via streaming multipart form
+      tags: [library]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, description: "Binary file content (sent as FormData)" }
+                work_id: { type: string }
+      responses:
+        "200":
+          description: Uploaded document
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  document: { $ref: "#/components/schemas/Document" }
+                  duplicate: { type: boolean }
+
+  /library/active-work:
+    get:
+      operationId: getActiveWork
+      summary: Get the currently active Work for library operations
+      tags: [library]
+      responses:
+        "200":
+          description: Active work
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  work_id: { type: string, nullable: true }
+    post:
+      operationId: setActiveWork
+      summary: Set the active Work for library operations
+      tags: [library]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                work_id: { type: string, nullable: true }
+      responses:
+        "200":
+          description: Active work set
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OkResponse" }
+
+  /library/explode-zips:
+    post:
+      operationId: explodeZipDocuments
+      summary: Extract and import all ZIP archives in the library
+      tags: [library]
+      responses:
+        "200":
+          description: Extraction result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  queued: { type: integer }
+
+  /library/reprocess-all:
+    post:
+      operationId: reprocessAllDocuments
+      summary: Re-queue extraction for all stuck or errored documents
+      tags: [library]
+      responses:
+        "200":
+          description: Reprocess result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  queued: { type: integer }
+                  total: { type: integer }
+
+  /library/smart-organize:
+    post:
+      operationId: smartOrganizeLibrary
+      summary: AI-powered library organisation (group by topic / suggest titles)
+      tags: [library]
+      responses:
+        "200":
+          description: Organisation result
+          content:
+            application/json:
+              schema: { type: object }
+
+  /library/{docId}/knowledge:
+    get:
+      operationId: getDocumentKnowledge
+      summary: List knowledge items extracted from a specific document
+      tags: [library]
+      parameters:
+        - name: docId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 200 }
+      responses:
+        "200":
+          description: Knowledge items
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  knowledge: { type: array, items: { $ref: "#/components/schemas/KnowledgeItem" } }
+                  count: { type: integer }
+
+  /library/{docId}/versions:
+    get:
+      operationId: getDocumentVersions
+      summary: List declared versions of a document
+      tags: [library]
+      parameters:
+        - name: docId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Versions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  versions: { type: array, items: { type: object } }
+    post:
+      operationId: createDocumentVersion
+      summary: Declare a new version of a document
+      tags: [library]
+      parameters:
+        - name: docId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "200":
+          description: Created version
+          content:
+            application/json:
+              schema: { type: object }
+
+  /library/{docId}/versions/{versionId}/canonical:
+    patch:
+      operationId: setDocumentVersionCanonical
+      summary: Declare a version as the canonical source
+      tags: [library]
+      parameters:
+        - name: docId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: versionId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Canonical set
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OkResponse" }
+
+  /library/{docId}/chapters:
+    get:
+      operationId: getDocumentChapters
+      summary: List detected chapters for a document
+      tags: [library]
+      parameters:
+        - name: docId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Chapters
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  chapters: { type: array, items: { type: object } }
+
+  /library/{docId}/chunks:
+    get:
+      operationId: getDocumentChunks
+      summary: List text chunks for a document
+      tags: [library]
+      parameters:
+        - name: docId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Chunks
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  chunks: { type: array, items: { type: object } }
+                  count: { type: integer }
+
+  /library/{docId}/extract:
+    post:
+      operationId: extractDocument
+      summary: Trigger immediate extraction for a document
+      tags: [library]
+      parameters:
+        - name: docId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Extraction queued
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OkResponse" }
+
+  /library/{docId}/download:
+    get:
+      operationId: downloadDocument
+      summary: Download the original document file
+      tags: [library]
+      parameters:
+        - name: docId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Document file
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        "404":
+          description: Document or file not found
+
+  # ─── Knowledge ask ─────────────────────────────────────────────────────────
+  /knowledge/ask:
+    get:
+      operationId: askKnowledge
+      summary: Ask a question against the knowledge base
+      tags: [knowledge]
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema: { type: string }
+        - name: work_id
+          in: query
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 10 }
+      responses:
+        "200":
+          description: Answer and supporting items
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  answer: { type: string }
+                  items: { type: array, items: { $ref: "#/components/schemas/KnowledgeItem" } }
+
+  # ─── Projects extras ─────────────────────────────────────────────────────────
+  /projects/{projectId}/concepts:
+    get:
+      operationId: getProjectConcepts
+      summary: List mastery concepts for a project
+      tags: [projects]
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Concepts
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  concepts: { type: array, items: { type: object } }
+
+  # ─── Backups extras ──────────────────────────────────────────────────────────
+  /backups/{name}/download:
+    get:
+      operationId: downloadBackup
+      summary: Download a backup file
+      tags: [backups]
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Backup file
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+
+  # ─── Studio extras ───────────────────────────────────────────────────────────
+  /studio/tts:
+    post:
+      operationId: synthesizeSpeech
+      summary: Synthesize text to speech
+      tags: [studio]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TTSRequest" }
+      responses:
+        "200":
+          description: Audio file (or JSON if return_url=true)
+          content:
+            audio/mpeg:
+              schema: { type: string, format: binary }
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  path: { type: string }
+                  filename: { type: string }
+
+  /studio/tts/document:
+    post:
+      operationId: synthesizeDocument
+      summary: Synthesize an entire document to speech
+      tags: [studio]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DocumentTTSRequest" }
+      responses:
+        "200":
+          description: Audio path
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  path: { type: string }
+                  filename: { type: string }
+
+  /studio/outputs/serve:
+    get:
+      operationId: serveStudioOutput
+      summary: Stream/serve a studio output file by path
+      tags: [studio]
+      parameters:
+        - name: path
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: File content
+          content:
+            audio/mpeg:
+              schema: { type: string, format: binary }
+            application/octet-stream:
+              schema: { type: string, format: binary }
+
+  /studio/outputs/archive:
+    delete:
+      operationId: archiveStudioOutput
+      summary: Delete / archive a studio output file
+      tags: [studio]
+      parameters:
+        - name: path
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Archived
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OkResponse" }
+
+  /studio/image:
+    post:
+      operationId: generateImage
+      summary: Generate an image via the configured image-gen backend
+      tags: [studio]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ImageGenRequest" }
+      responses:
+        "200":
+          description: Generated image metadata
+          content:
+            application/json:
+              schema: { type: object }
+
+  /studio/status:
+    get:
+      operationId: getStudioStatus
+      summary: Status of all studio capabilities (TTS, OCR, image gen)
+      tags: [studio]
+      responses:
+        "200":
+          description: Studio status
+          content:
+            application/json:
+              schema: { type: object }
+
+  /studio/image-status:
+    get:
+      operationId: getImageGenStatus
+      summary: Status of the image generation backend
+      tags: [studio]
+      responses:
+        "200":
+          description: Image gen status
+          content:
+            application/json:
+              schema: { type: object }
+
+  /studio/ocr:
+    post:
+      operationId: runOcr
+      summary: Extract text from an image using OCR
+      tags: [studio]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [image_b64]
+              properties:
+                image_b64: { type: string }
+                lang: { type: string, default: eng }
+      responses:
+        "200":
+          description: OCR result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  text: { type: string }
+                  word_count: { type: integer }
+
+  # ─── System extras ───────────────────────────────────────────────────────────
+  /system/web-search-status:
+    get:
+      operationId: getWebSearchStatus
+      summary: Check whether Tavily web search is configured
+      tags: [system]
+      responses:
+        "200":
+          description: Web search status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  configured: { type: boolean }
+                  provider: { type: string }
+
+  /system/llm-health:
+    get:
+      operationId: getLlmHealth
+      summary: Live health check of the configured LLM endpoint
+      tags: [system]
+      responses:
+        "200":
+          description: LLM health
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  model: { type: string }
+                  latency_ms: { type: number }
+
+  /system/hardware:
+    get:
+      operationId: getSystemHardware
+      summary: System hardware and resource usage
+      tags: [system]
+      responses:
+        "200":
+          description: Hardware info
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  cpu_pct: { type: number }
+                  mem_total_mb: { type: number }
+                  mem_used_mb: { type: number }
+                  disk_total_gb: { type: number }
+                  disk_used_gb: { type: number }
+
+  /system/nightshift/run:
+    post:
+      operationId: triggerNightshift
+      summary: Trigger the nightshift maintenance pass (background)
+      tags: [system]
+      responses:
+        "200":
+          description: Nightshift triggered
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OkResponse" }
+
+  /system/nightshift/run-now:
+    post:
+      operationId: runNightshiftNow
+      summary: Run the nightshift pass synchronously (blocks until done)
+      tags: [system]
+      responses:
+        "200":
+          description: Nightshift result
+          content:
+            application/json:
+              schema: { type: object }
+
+  /system/nightshift/status:
+    get:
+      operationId: getNightshiftStatus
+      summary: Get nightshift daemon status
+      tags: [system]
+      responses:
+        "200":
+          description: Nightshift status
+          content:
+            application/json:
+              schema: { type: object }
+
+  /system/nightshift/last-report:
+    get:
+      operationId: getNightshiftLastReport
+      summary: Get the last nightshift execution report
+      tags: [system]
+      responses:
+        "200":
+          description: Nightshift report
+          content:
+            application/json:
+              schema: { type: object }
+
+  /system/document-queue:
+    get:
+      operationId: getSystemDocumentQueue
+      summary: Current document extraction queue
+      tags: [system]
+      responses:
+        "200":
+          description: Queue state
+          content:
+            application/json:
+              schema: { type: object }
+
+  /system/jobs/{jobId}:
+    get:
+      operationId: getSystemJob
+      summary: Get a background job by ID
+      tags: [system]
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Job state
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SystemJob" }
+
+  /system/jobs/{jobId}/state:
+    patch:
+      operationId: updateSystemJobState
+      summary: Update the state of a background job
+      tags: [system]
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [state]
+              properties:
+                state: { type: string }
+                meta: { type: object }
+      responses:
+        "200":
+          description: Updated job
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SystemJob" }
+
+  /system/user-memory:
+    get:
+      operationId: listSystemUserMemory
+      summary: List user memory entries stored by the AI
+      tags: [system]
+      responses:
+        "200":
+          description: Memory entries
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  memory: { type: array, items: { type: object } }
+
+  /system/user-memory/{memoryId}:
+    delete:
+      operationId: deleteSystemUserMemory
+      summary: Delete a user memory entry
+      tags: [system]
+      parameters:
+        - name: memoryId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OkResponse" }
+
+  /system/settings/ai-extraction:
+    get:
+      operationId: getAiExtractionSetting
+      summary: Get AI extraction enabled/disabled setting
+      tags: [system]
+      responses:
+        "200":
+          description: Setting
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  enabled: { type: boolean }
+    put:
+      operationId: setAiExtractionSetting
+      summary: Enable or disable AI extraction
+      tags: [system]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled: { type: boolean }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  enabled: { type: boolean }
+
+  /system/settings/vision-model:
+    get:
+      operationId: getVisionModelSetting
+      summary: Get the configured vision model
+      tags: [system]
+      responses:
+        "200":
+          description: Vision model setting
+          content:
+            application/json:
+              schema: { type: object }
+    put:
+      operationId: setVisionModelSetting
+      summary: Set the vision model
+      tags: [system]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                model: { type: string }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { type: object }
+
+  /system/settings/context-window:
+    get:
+      operationId: getContextWindowSetting
+      summary: Get the context window configuration
+      tags: [system]
+      responses:
+        "200":
+          description: Context window setting
+          content:
+            application/json:
+              schema: { type: object }
+    put:
+      operationId: setContextWindowSetting
+      summary: Set the context window size
+      tags: [system]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                tokens: { type: integer }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { type: object }
+
+  /system/settings/image-gen:
+    get:
+      operationId: getImageGenSetting
+      summary: Get the image generation URL setting
+      tags: [system]
+      responses:
+        "200":
+          description: Image gen setting
+          content:
+            application/json:
+              schema: { type: object }
+    put:
+      operationId: setImageGenSetting
+      summary: Set the image generation endpoint URL
+      tags: [system]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                url: { type: string }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { type: object }
+
+  /system/embeddings/status:
+    get:
+      operationId: getEmbeddingsStatus
+      summary: Get embeddings service circuit-breaker state (no network call)
+      tags: [system]
+      responses:
+        "200":
+          description: Embeddings circuit-breaker state
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  circuit_open: { type: boolean, description: "true when the embeddings endpoint is in cooldown" }
+                  available_at: { type: number, nullable: true, description: "monotonic timestamp when the circuit will close; null when circuit is closed" }
+
+  /system/embeddings/probe:
+    post:
+      operationId: probeEmbeddings
+      summary: Live-test the embeddings endpoint and reset the circuit breaker on success
+      tags: [system]
+      responses:
+        "200":
+          description: Probe result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  latency_ms: { type: number }
+
+  /system/stats:
+    get:
+      operationId: getSystemStats
+      summary: Detailed workspace database statistics
+      tags: [system]
+      responses:
+        "200":
+          description: Stats
+          content:
+            application/json:
+              schema: { type: object }
+
+  /system/tools:
+    get:
+      operationId: getSystemTools
+      summary: List available MCP/agent tools
+      tags: [system]
+      responses:
+        "200":
+          description: Tools
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tools: { type: array, items: { type: object } }
+
+  /system/vision/probe:
+    post:
+      operationId: probeVisionModel
+      summary: Live-test the vision model endpoint
+      tags: [system]
+      responses:
+        "200":
+          description: Vision probe result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+
+  # ─── Governance ──────────────────────────────────────────────────────────────
+  /governance/audit-chain:
+    get:
+      operationId: getGovernanceAuditChain
+      summary: Cryptographic audit chain for governed writes
+      tags: [system]
+      responses:
+        "200":
+          description: Audit chain
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  entries: { type: array, items: { type: object } }
+                  count: { type: integer }
+
+  /governance/outbox:
+    get:
+      operationId: getGovernanceOutbox
+      summary: Pending governance outbox events
+      tags: [system]
+      parameters:
+        - name: pending_only
+          in: query
+          schema: { type: boolean, default: true }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 100 }
+      responses:
+        "200":
+          description: Outbox events
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  events: { type: array, items: { type: object } }
+                  count: { type: integer }
+
+  # ─── Actions ─────────────────────────────────────────────────────────────────
+  /actions:
+    get:
+      operationId: listActions
+      summary: List available automation actions
+      tags: [actions]
+      responses:
+        "200":
+          description: Actions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  actions: { type: array, items: { $ref: "#/components/schemas/Action" } }
+
+  /actions/runs:
+    get:
+      operationId: listActionRuns
+      summary: List action execution runs
+      tags: [actions]
+      parameters:
+        - name: action_name
+          in: query
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 20 }
+      responses:
+        "200":
+          description: Runs
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  runs: { type: array, items: { $ref: "#/components/schemas/ActionRun" } }
+
+  /actions/runs/{runId}:
+    get:
+      operationId: getActionRun
+      summary: Get an action run by ID
+      tags: [actions]
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Action run
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ActionRun" }
+        "404":
+          description: Not found
+
+  /actions/{name}/preview:
+    post:
+      operationId: previewAction
+      summary: Preview an action without executing it
+      tags: [actions]
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, description: "Action-specific input parameters" }
+      responses:
+        "200":
+          description: Preview result
+          content:
+            application/json:
+              schema: { type: object }
+
+  /actions/{name}/execute:
+    post:
+      operationId: executeAction
+      summary: Execute an action
+      tags: [actions]
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, description: "Action-specific input parameters" }
+      responses:
+        "200":
+          description: Execution result
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ActionRun" }
+
+  # ─── MCOS ────────────────────────────────────────────────────────────────────
+  /mcos/benchmarks:
+    get:
+      operationId: listMcosBenchmarks
+      summary: List MCOS benchmark definitions
+      tags: [mcos]
+      responses:
+        "200":
+          description: Benchmarks
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  benchmarks: { type: array, items: { $ref: "#/components/schemas/McoBenchmark" } }
+
+  /mcos/seed:
+    post:
+      operationId: seedMcos
+      summary: Seed initial MCOS benchmark definitions
+      tags: [mcos]
+      responses:
+        "200":
+          description: Seeded
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OkResponse" }
+
+  /mcos/run/{benchmarkId}:
+    post:
+      operationId: runMcosBenchmark
+      summary: Run a specific MCOS benchmark
+      tags: [mcos]
+      parameters:
+        - name: benchmarkId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "202":
+          description: Run started
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  run_id: { type: string }
+
+  /mcos/run-all:
+    post:
+      operationId: runAllMcosBenchmarks
+      summary: Run all MCOS benchmarks
+      tags: [mcos]
+      responses:
+        "202":
+          description: Runs started
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  run_ids: { type: array, items: { type: string } }
+
+  /mcos/runs:
+    get:
+      operationId: listMcosRuns
+      summary: List MCOS benchmark runs
+      tags: [mcos]
+      parameters:
+        - name: benchmark_id
+          in: query
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 20 }
+      responses:
+        "200":
+          description: Runs
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  runs: { type: array, items: { $ref: "#/components/schemas/McosRun" } }
+
+  /mcos/runs/{runId}:
+    get:
+      operationId: getMcosRun
+      summary: Get a single MCOS run with scores and findings
+      tags: [mcos]
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Run detail
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/McosRun" }
+
+  /mcos/telemetry:
+    get:
+      operationId: getMcosTelemetry
+      summary: MCOS scoring telemetry over time
+      tags: [mcos]
+      parameters:
+        - name: days
+          in: query
+          schema: { type: integer, default: 7 }
+      responses:
+        "200":
+          description: Telemetry
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  series: { type: array, items: { type: object } }
+
+  /mcos/regressions:
+    get:
+      operationId: listMcosRegressions
+      summary: List unacknowledged MCOS score regressions
+      tags: [mcos]
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, default: 20 }
+      responses:
+        "200":
+          description: Regressions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  regressions: { type: array, items: { type: object } }
+
+  /mcos/regressions/{runId}/ack:
+    post:
+      operationId: ackMcosRegression
+      summary: Acknowledge a MCOS regression
+      tags: [mcos]
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Acknowledged
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OkResponse" }
+
+  /mcos/prompts:
+    get:
+      operationId: listMcosPrompts
+      summary: List MCOS prompt variants
+      tags: [mcos]
+      parameters:
+        - name: slot
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Prompts
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  prompts: { type: array, items: { $ref: "#/components/schemas/McosPrompt" } }
+    post:
+      operationId: createMcosPrompt
+      summary: Create a new MCOS prompt variant
+      tags: [mcos]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/McosPromptCreate" }
+      responses:
+        "200":
+          description: Created prompt
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/McosPrompt" }
+
+  /mcos/prompts/slots:
+    get:
+      operationId: listMcosPromptSlots
+      summary: List available prompt slot names
+      tags: [mcos]
+      responses:
+        "200":
+          description: Prompt slots
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  slots: { type: array, items: { type: string } }
+
+  /mcos/prompts/{promptId}:
+    delete:
+      operationId: deleteMcosPrompt
+      summary: Delete a MCOS prompt variant
+      tags: [mcos]
+      parameters:
+        - name: promptId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "204":
+          description: Deleted
+
+  /mcos/prompts/{promptId}/benchmark:
+    post:
+      operationId: benchmarkMcosPrompt
+      summary: Run benchmark on a specific prompt variant
+      tags: [mcos]
+      parameters:
+        - name: promptId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Benchmark started
+          content:
+            application/json:
+              schema: { type: object }
+    get:
+      operationId: getMcosPromptBenchmark
+      summary: Get benchmark status for a prompt variant
+      tags: [mcos]
+      parameters:
+        - name: promptId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Benchmark status
+          content:
+            application/json:
+              schema: { type: object }
+
+  /mcos/prompts/{promptId}/activate:
+    post:
+      operationId: activateMcosPrompt
+      summary: Activate a prompt variant as the live system prompt
+      tags: [mcos]
+      parameters:
+        - name: promptId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Activated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OkResponse" }
+
+  /mcos/rag/config:
+    get:
+      operationId: getMcosRagConfig
+      summary: Get current RAG / retrieval configuration
+      tags: [mcos]
+      responses:
+        "200":
+          description: RAG config
+          content:
+            application/json:
+              schema: { type: object }
+
+  /mcos/rag/sweep:
+    post:
+      operationId: startMcosRagSweep
+      summary: Start a RAG parameter sweep
+      tags: [mcos]
+      responses:
+        "202":
+          description: Sweep started
+          content:
+            application/json:
+              schema: { type: object }
+
+  /mcos/rag/sweeps:
+    get:
+      operationId: listMcosRagSweeps
+      summary: List RAG sweep runs
+      tags: [mcos]
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, default: 5 }
+      responses:
+        "200":
+          description: Sweeps
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sweeps: { type: array, items: { type: object } }
+
+  /mcos/rag/apply:
+    post:
+      operationId: applyMcosRagConfig
+      summary: Apply a RAG configuration from a sweep result
+      tags: [mcos]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                sweep_id: { type: string }
+                config: { type: object }
+      responses:
+        "200":
+          description: Applied
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OkResponse" }
+
+  /mcos/rag/reprocess-status:
+    get:
+      operationId: getMcosRagReprocessStatus
+      summary: Status of the RAG reprocess pass
+      tags: [mcos]
+      responses:
+        "200":
+          description: Reprocess status
+          content:
+            application/json:
+              schema: { type: object }
+
+
+
+  # ─── Claims ──────────────────────────────────────────────────────────────────
+  /claims:
+    post:
+      operationId: createClaim
+      summary: Create a new knowledge claim
+      tags: [claims]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ClaimCreate" }
+      responses:
+        "200":
+          description: Created claim
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Claim" }
+    get:
+      operationId: listClaims
+      summary: List all knowledge claims
+      tags: [claims]
+      parameters:
+        - name: status
+          in: query
+          schema: { type: string }
+        - name: work_id
+          in: query
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 100 }
+      responses:
+        "200":
+          description: Claims
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  claims: { type: array, items: { $ref: "#/components/schemas/Claim" } }
+
+  /claims/search:
+    post:
+      operationId: searchClaims
+      summary: Search claims by text similarity
+      tags: [claims]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [query]
+              properties:
+                query: { type: string }
+                limit: { type: integer, default: 20 }
+      responses:
+        "200":
+          description: Matching claims
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  results: { type: array, items: { $ref: "#/components/schemas/Claim" } }
+
+  /claims/subject/{subject}:
+    get:
+      operationId: getClaimsBySubject
+      summary: Get all claims for a given subject entity
+      tags: [claims]
+      parameters:
+        - name: subject
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Claims for subject
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  claims: { type: array, items: { $ref: "#/components/schemas/Claim" } }
+
+  /claims/{claimId}:
+    get:
+      operationId: getClaim
+      summary: Get a single claim
+      tags: [claims]
+      parameters:
+        - name: claimId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Claim
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Claim" }
+        "404":
+          description: Not found
+    delete:
+      operationId: deleteClaim
+      summary: Delete a claim
+      tags: [claims]
+      parameters:
+        - name: claimId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OkResponse" }
+
+  /claims/{claimId}/status:
+    patch:
+      operationId: updateClaimStatus
+      summary: Update the verification status of a claim
+      tags: [claims]
+      parameters:
+        - name: claimId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string }
+                notes: { type: string, nullable: true }
+      responses:
+        "200":
+          description: Updated claim
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Claim" }
+
+  # ─── PKLOS ───────────────────────────────────────────────────────────────────
+  /pklos/inventory:
+    post:
+      operationId: createPklosInventory
+      summary: Submit a PKLOS knowledge inventory assertion
+      tags: [pklos]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "200":
+          description: Inventory result
+          content:
+            application/json:
+              schema: { type: object }
+    get:
+      operationId: listPklosInventory
+      summary: List PKLOS inventory entries
+      tags: [pklos]
+      responses:
+        "200":
+          description: Inventory entries
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  entries: { type: array, items: { type: object } }
+
+  /pklos/status:
+    get:
+      operationId: getPklosStatus
+      summary: PKLOS Layer-0 authority status
+      tags: [pklos]
+      responses:
+        "200":
+          description: PKLOS status
+          content:
+            application/json:
+              schema: { type: object }
+
+  /pklos/enforcement/check:
+    post:
+      operationId: checkPklosEnforcement
+      summary: Verify a proposed action against PKLOS enforcement rules
+      tags: [pklos]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "200":
+          description: Enforcement result
+          content:
+            application/json:
+              schema: { type: object }
+
+  # ─── Topics ──────────────────────────────────────────────────────────────────
+  /topics:
+    get:
+      operationId: listTopics
+      summary: List all auto-detected knowledge topics
+      tags: [knowledge]
+      parameters:
+        - name: work_id
+          in: query
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 50 }
+      responses:
+        "200":
+          description: Topics
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  topics: { type: array, items: { type: object } }
+
+  /topics/{topicId}:
+    get:
+      operationId: getTopic
+      summary: Get a single topic with its knowledge items
+      tags: [knowledge]
+      parameters:
+        - name: topicId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Topic detail
+          content:
+            application/json:
+              schema: { type: object }
+
+  /topics/rebuild:
+    post:
+      operationId: rebuildTopics
+      summary: Rebuild topic clusters from current knowledge items
+      tags: [knowledge]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                work_id: { type: string, nullable: true }
+      responses:
+        "200":
+          description: Rebuild result
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OkResponse" }
+
+  /library/{docId}/related:
+    get:
+      operationId: getRelatedDocuments
+      summary: Get documents topically related to this document
+      tags: [library]
+      parameters:
+        - name: docId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 5 }
+      responses:
+        "200":
+          description: Related documents
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  related: { type: array, items: { $ref: "#/components/schemas/Document" } }
+
+  # ─── Generate / export ───────────────────────────────────────────────────────
+  /generate/excel:
+    post:
+      operationId: generateExcel
+      summary: Generate an Excel report from knowledge data
+      tags: [studio]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                work_id: { type: string }
+                include: { type: array, items: { type: string } }
+      responses:
+        "200":
+          description: Excel generation queued
+          content:
+            application/json:
+              schema: { type: object }
+
+  /generate/report:
+    post:
+      operationId: generateReport
+      summary: Generate a Markdown/HTML report for a Work
+      tags: [studio]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                work_id: { type: string }
+                format: { type: string, default: markdown }
+      responses:
+        "200":
+          description: Report generation queued
+          content:
+            application/json:
+              schema: { type: object }
+
+  /generate/slides:
+    post:
+      operationId: generateSlides
+      summary: Generate a slide deck for a Work
+      tags: [studio]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                work_id: { type: string }
+                title: { type: string }
+      responses:
+        "200":
+          description: Slides generation queued
+          content:
+            application/json:
+              schema: { type: object }
+
+  /generate/bundle:
+    post:
+      operationId: generateBundle
+      summary: Generate a downloadable bundle (ZIP) of all generated outputs
+      tags: [studio]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                work_id: { type: string }
+      responses:
+        "200":
+          description: Bundle generation queued
+          content:
+            application/json:
+              schema: { type: object }
+
+  /generate/download:
+    get:
+      operationId: downloadGenerated
+      summary: Download a previously generated output
+      tags: [studio]
+      parameters:
+        - name: path
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Generated file
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+
+  # ─── Intake ──────────────────────────────────────────────────────────────────
+  /intake:
+    post:
+      operationId: submitIntake
+      summary: Submit a document or URL for automated intake and Work assignment
+      tags: [library]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/IntakeRequest" }
+      responses:
+        "200":
+          description: Intake result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  doc_id: { type: string }
+                  work_id: { type: string, nullable: true }
+
+  /intake/research:
+    post:
+      operationId: submitResearchIntake
+      summary: Intake a research topic — triggers web search + document creation
+      tags: [library]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [query]
+              properties:
+                query: { type: string }
+                work_id: { type: string, nullable: true }
+                depth: { type: string, default: standard }
+      responses:
+        "200":
+          description: Research intake queued
+          content:
+            application/json:
+              schema: { type: object }
+
+  /intake/{docId}:
+    get:
+      operationId: getIntakeStatus
+      summary: Get the intake processing status of a document
+      tags: [library]
+      parameters:
+        - name: docId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Intake status
+          content:
+            application/json:
+              schema: { type: object }
+
+  # ─── Write documents ─────────────────────────────────────────────────────────
+  /write/documents:
+    get:
+      operationId: listWriteDocuments
+      summary: List AI-assisted write documents
+      tags: [studio]
+      parameters:
+        - name: work_id
+          in: query
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 50 }
+      responses:
+        "200":
+          description: Write documents
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  documents: { type: array, items: { $ref: "#/components/schemas/WriteDocument" } }
+    post:
+      operationId: createWriteDocument
+      summary: Create a new AI-assisted write document
+      tags: [studio]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WriteDocumentCreate" }
+      responses:
+        "200":
+          description: Created write document
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WriteDocument" }
+
+  /write/documents/{docId}:
+    get:
+      operationId: getWriteDocument
+      summary: Get a write document by ID
+      tags: [studio]
+      parameters:
+        - name: docId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Write document
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WriteDocument" }
+        "404":
+          description: Not found
+    patch:
+      operationId: updateWriteDocument
+      summary: Update a write document
+      tags: [studio]
+      parameters:
+        - name: docId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "200":
+          description: Updated write document
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WriteDocument" }
+    delete:
+      operationId: deleteWriteDocument
+      summary: Delete a write document
+      tags: [studio]
+      parameters:
+        - name: docId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OkResponse" }
+
+  /write/documents/{docId}/ai:
+    post:
+      operationId: aiAssistWriteDocument
+      summary: Generate or improve content for a write document using AI
+      tags: [studio]
+      parameters:
+        - name: docId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [instruction]
+              properties:
+                instruction: { type: string }
+                mode: { type: string, default: improve }
+      responses:
+        "200":
+          description: AI-generated content
+          content:
+            application/json:
+              schema: { type: object }
+
+  /write/documents/{docId}/export/txt:
+    get:
+      operationId: exportWriteDocumentTxt
+      summary: Export a write document as plain text
+      tags: [studio]
+      parameters:
+        - name: docId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Plain-text export
+          content:
+            text/plain:
+              schema: { type: string }
+
+
+  /download/{filePath}:
+    get:
+      operationId: downloadFile
+      summary: Download a file by path
+      tags: [files]
+      parameters:
+        - name: filePath
+          in: path
+          required: true
+          schema: { type: string }
+          description: Forward-slash-separated path to the file
+      responses:
+        "200":
+          description: File content
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+
 
 components:
   schemas:
@@ -1555,3 +4387,256 @@ components:
       type: object
       properties:
         ok: { type: boolean }
+
+    GlobalGraph:
+      type: object
+      properties:
+        nodes: { type: array, items: { $ref: "#/components/schemas/GraphNode" } }
+        edges: { type: array, items: { $ref: "#/components/schemas/GraphEdge" } }
+        node_count: { type: integer }
+        edge_count: { type: integer }
+
+    Pipeline:
+      type: object
+      properties:
+        work_id: { type: string }
+        state: { type: string }
+        stage: { type: string }
+        target_word_count: { type: integer, nullable: true }
+        findings: { type: array, items: { type: object } }
+        history: { type: array, items: { type: object } }
+        created_at: { type: string }
+        updated_at: { type: string }
+
+    LearningSummary:
+      type: object
+      properties:
+        work_id: { type: string }
+        total_concepts: { type: integer }
+        mastered: { type: integer }
+        in_progress: { type: integer }
+        not_started: { type: integer }
+        mastery_pct: { type: number }
+
+    LearningConcept:
+      type: object
+      properties:
+        id: { type: string }
+        work_id: { type: string }
+        title: { type: string }
+        mastery: { type: number }
+        attempts: { type: integer }
+        last_reviewed: { type: string, nullable: true }
+
+    LearningQuestion:
+      type: object
+      properties:
+        concept_id: { type: string }
+        concept_title: { type: string }
+        question: { type: string }
+        kind: { type: string, description: "multiple_choice | open" }
+        options: { type: array, items: { type: string }, nullable: true }
+
+    LearningAssessBody:
+      type: object
+      required: [concept_id, answer]
+      properties:
+        concept_id: { type: string }
+        answer: { type: string }
+        question: { type: string }
+
+    LearningAssessResult:
+      type: object
+      properties:
+        correct: { type: boolean }
+        score: { type: number }
+        feedback: { type: string }
+        mastery: { type: number }
+        explanation: { type: string, nullable: true }
+
+    ReviewItem:
+      type: object
+      properties:
+        id: { type: string }
+        item_type: { type: string }
+        item_id: { type: string }
+        title: { type: string }
+        description: { type: string, nullable: true }
+        severity: { type: string, nullable: true }
+        created_at: { type: string }
+        meta: { type: object }
+
+    ReviewResolveBody:
+      type: object
+      required: [action]
+      properties:
+        action: { type: string }
+        reason: { type: string, nullable: true }
+        target_id: { type: string, nullable: true }
+
+    MemoryFact:
+      type: object
+      properties:
+        id: { type: string }
+        key: { type: string }
+        value: { type: string }
+        source: { type: string, nullable: true }
+        created_at: { type: string }
+
+    SystemJob:
+      type: object
+      properties:
+        id: { type: string }
+        kind: { type: string }
+        state: { type: string }
+        doc_id: { type: string, nullable: true }
+        meta: { type: object }
+        started_at: { type: string, nullable: true }
+        finished_at: { type: string, nullable: true }
+        created_at: { type: string }
+
+    Action:
+      type: object
+      properties:
+        name: { type: string }
+        label: { type: string }
+        description: { type: string }
+        input_schema: { type: object }
+
+    ActionRun:
+      type: object
+      properties:
+        id: { type: string }
+        action_name: { type: string }
+        state: { type: string }
+        inputs: { type: object }
+        outputs: { type: object, nullable: true }
+        error: { type: string, nullable: true }
+        created_at: { type: string }
+        finished_at: { type: string, nullable: true }
+
+    McoBenchmark:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        description: { type: string }
+        prompt_slot: { type: string }
+        weight: { type: number }
+
+    McosRun:
+      type: object
+      properties:
+        id: { type: string }
+        benchmark_id: { type: string }
+        state: { type: string }
+        score: { type: number, nullable: true }
+        delta: { type: number, nullable: true }
+        findings: { type: array, items: { type: object } }
+        started_at: { type: string }
+        finished_at: { type: string, nullable: true }
+
+    McosPrompt:
+      type: object
+      properties:
+        id: { type: string }
+        slot: { type: string }
+        text: { type: string }
+        active: { type: boolean }
+        created_at: { type: string }
+
+    McosPromptCreate:
+      type: object
+      required: [slot, text]
+      properties:
+        slot: { type: string }
+        text: { type: string }
+
+    KnowledgeCreate:
+      type: object
+      required: [text]
+      properties:
+        kind: { type: string, default: fact }
+        text: { type: string }
+        subject: { type: string, nullable: true }
+        predicate: { type: string, nullable: true }
+        object: { type: string, nullable: true }
+        confidence: { type: number, default: 1.0 }
+
+    TTSRequest:
+      type: object
+      required: [text]
+      properties:
+        text: { type: string }
+        voice: { type: string, nullable: true }
+        return_url: { type: boolean, default: false }
+
+    DocumentTTSRequest:
+      type: object
+      required: [doc_id]
+      properties:
+        doc_id: { type: string }
+        voice: { type: string, nullable: true }
+        return_url: { type: boolean, default: true }
+
+    ImageGenRequest:
+      type: object
+      required: [prompt]
+      properties:
+        prompt: { type: string }
+        negative_prompt: { type: string, nullable: true }
+        width: { type: integer, default: 512 }
+        height: { type: integer, default: 512 }
+        steps: { type: integer, default: 20 }
+
+    Claim:
+      type: object
+      properties:
+        id: { type: string }
+        text: { type: string }
+        subject: { type: string, nullable: true }
+        predicate: { type: string, nullable: true }
+        object: { type: string, nullable: true }
+        status: { type: string }
+        work_id: { type: string, nullable: true }
+        source_doc_id: { type: string, nullable: true }
+        created_at: { type: string }
+
+    ClaimCreate:
+      type: object
+      required: [text]
+      properties:
+        text: { type: string }
+        subject: { type: string, nullable: true }
+        predicate: { type: string, nullable: true }
+        object: { type: string, nullable: true }
+        work_id: { type: string, nullable: true }
+        source_doc_id: { type: string, nullable: true }
+
+    IntakeRequest:
+      type: object
+      properties:
+        url: { type: string, nullable: true }
+        text: { type: string, nullable: true }
+        work_id: { type: string, nullable: true }
+        title: { type: string, nullable: true }
+
+    WriteDocument:
+      type: object
+      properties:
+        id: { type: string }
+        work_id: { type: string, nullable: true }
+        title: { type: string }
+        content: { type: string }
+        kind: { type: string }
+        created_at: { type: string }
+        updated_at: { type: string }
+
+    WriteDocumentCreate:
+      type: object
+      required: [title]
+      properties:
+        title: { type: string }
+        work_id: { type: string, nullable: true }
+        kind: { type: string, default: document }
+        content: { type: string, default: "" }

@@ -23,6 +23,8 @@ import {
   getGetWorkKnowledgeQueryKey,
   getGetWorkConversationsQueryKey,
   getListConversationsQueryKey,
+  useGetEmbeddingsStatus,
+  getGetEmbeddingsStatusQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { format } from "date-fns";
@@ -1947,21 +1949,9 @@ function SearchTab({ workId, initialQuery = "" }: { workId: string; initialQuery
   // Monotonic counter so a slow earlier response can't clobber a newer one.
   const searchSeq = useRef(0);
 
-  // Embeddings circuit-breaker status (#203)
-  const { data: embedStatus } = useQuery<{ circuit_open: boolean; available_at: number | null } | null>({
-    queryKey: ["system", "embeddings", "status"],
-    queryFn: async () => {
-      const base = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
-      try {
-        const res = await apiFetch(`${base}/system/embeddings/status`);
-        if (!res.ok) return null;
-        return res.json();
-      } catch {
-        return null;
-      }
-    },
-    staleTime: 30_000,
-    refetchInterval: 30_000,
+  // Embeddings circuit-breaker status (#203) — no network call, just reads in-process state
+  const { data: embedStatus } = useGetEmbeddingsStatus({
+    query: { queryKey: getGetEmbeddingsStatusQueryKey(), staleTime: 30_000, refetchInterval: 30_000 },
   });
 
   // Focus the input when the tab is first activated (mount). Deferred so it

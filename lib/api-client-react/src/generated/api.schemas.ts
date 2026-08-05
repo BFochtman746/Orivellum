@@ -468,6 +468,284 @@ export interface OkResponse {
   ok?: boolean;
 }
 
+export interface GlobalGraph {
+  nodes?: GraphNode[];
+  edges?: GraphEdge[];
+  node_count?: number;
+  edge_count?: number;
+}
+
+export type PipelineFindingsItem = { [key: string]: unknown };
+
+export type PipelineHistoryItem = { [key: string]: unknown };
+
+export interface Pipeline {
+  work_id?: string;
+  state?: string;
+  stage?: string;
+  /** @nullable */
+  target_word_count?: number | null;
+  findings?: PipelineFindingsItem[];
+  history?: PipelineHistoryItem[];
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface LearningSummary {
+  work_id?: string;
+  total_concepts?: number;
+  mastered?: number;
+  in_progress?: number;
+  not_started?: number;
+  mastery_pct?: number;
+}
+
+export interface LearningConcept {
+  id?: string;
+  work_id?: string;
+  title?: string;
+  mastery?: number;
+  attempts?: number;
+  /** @nullable */
+  last_reviewed?: string | null;
+}
+
+export interface LearningQuestion {
+  concept_id?: string;
+  concept_title?: string;
+  question?: string;
+  /** multiple_choice | open */
+  kind?: string;
+  /** @nullable */
+  options?: string[] | null;
+}
+
+export interface LearningAssessBody {
+  concept_id: string;
+  answer: string;
+  question?: string;
+}
+
+export interface LearningAssessResult {
+  correct?: boolean;
+  score?: number;
+  feedback?: string;
+  mastery?: number;
+  /** @nullable */
+  explanation?: string | null;
+}
+
+export type ReviewItemMeta = { [key: string]: unknown };
+
+export interface ReviewItem {
+  id?: string;
+  item_type?: string;
+  item_id?: string;
+  title?: string;
+  /** @nullable */
+  description?: string | null;
+  /** @nullable */
+  severity?: string | null;
+  created_at?: string;
+  meta?: ReviewItemMeta;
+}
+
+export interface ReviewResolveBody {
+  action: string;
+  /** @nullable */
+  reason?: string | null;
+  /** @nullable */
+  target_id?: string | null;
+}
+
+export interface MemoryFact {
+  id?: string;
+  key?: string;
+  value?: string;
+  /** @nullable */
+  source?: string | null;
+  created_at?: string;
+}
+
+export type SystemJobMeta = { [key: string]: unknown };
+
+export interface SystemJob {
+  id?: string;
+  kind?: string;
+  state?: string;
+  /** @nullable */
+  doc_id?: string | null;
+  meta?: SystemJobMeta;
+  /** @nullable */
+  started_at?: string | null;
+  /** @nullable */
+  finished_at?: string | null;
+  created_at?: string;
+}
+
+export type ActionInputSchema = { [key: string]: unknown };
+
+export interface Action {
+  name?: string;
+  label?: string;
+  description?: string;
+  input_schema?: ActionInputSchema;
+}
+
+export type ActionRunInputs = { [key: string]: unknown };
+
+/**
+ * @nullable
+ */
+export type ActionRunOutputs = { [key: string]: unknown } | null;
+
+export interface ActionRun {
+  id?: string;
+  action_name?: string;
+  state?: string;
+  inputs?: ActionRunInputs;
+  /** @nullable */
+  outputs?: ActionRunOutputs;
+  /** @nullable */
+  error?: string | null;
+  created_at?: string;
+  /** @nullable */
+  finished_at?: string | null;
+}
+
+export interface McoBenchmark {
+  id?: string;
+  name?: string;
+  description?: string;
+  prompt_slot?: string;
+  weight?: number;
+}
+
+export type McosRunFindingsItem = { [key: string]: unknown };
+
+export interface McosRun {
+  id?: string;
+  benchmark_id?: string;
+  state?: string;
+  /** @nullable */
+  score?: number | null;
+  /** @nullable */
+  delta?: number | null;
+  findings?: McosRunFindingsItem[];
+  started_at?: string;
+  /** @nullable */
+  finished_at?: string | null;
+}
+
+export interface McosPrompt {
+  id?: string;
+  slot?: string;
+  text?: string;
+  active?: boolean;
+  created_at?: string;
+}
+
+export interface McosPromptCreate {
+  slot: string;
+  text: string;
+}
+
+export interface KnowledgeCreate {
+  kind?: string;
+  text: string;
+  /** @nullable */
+  subject?: string | null;
+  /** @nullable */
+  predicate?: string | null;
+  /** @nullable */
+  object?: string | null;
+  confidence?: number;
+}
+
+export interface TTSRequest {
+  text: string;
+  /** @nullable */
+  voice?: string | null;
+  return_url?: boolean;
+}
+
+export interface DocumentTTSRequest {
+  doc_id: string;
+  /** @nullable */
+  voice?: string | null;
+  return_url?: boolean;
+}
+
+export interface ImageGenRequest {
+  prompt: string;
+  /** @nullable */
+  negative_prompt?: string | null;
+  width?: number;
+  height?: number;
+  steps?: number;
+}
+
+export interface Claim {
+  id?: string;
+  text?: string;
+  /** @nullable */
+  subject?: string | null;
+  /** @nullable */
+  predicate?: string | null;
+  /** @nullable */
+  object?: string | null;
+  status?: string;
+  /** @nullable */
+  work_id?: string | null;
+  /** @nullable */
+  source_doc_id?: string | null;
+  created_at?: string;
+}
+
+export interface ClaimCreate {
+  text: string;
+  /** @nullable */
+  subject?: string | null;
+  /** @nullable */
+  predicate?: string | null;
+  /** @nullable */
+  object?: string | null;
+  /** @nullable */
+  work_id?: string | null;
+  /** @nullable */
+  source_doc_id?: string | null;
+}
+
+export interface IntakeRequest {
+  /** @nullable */
+  url?: string | null;
+  /** @nullable */
+  text?: string | null;
+  /** @nullable */
+  work_id?: string | null;
+  /** @nullable */
+  title?: string | null;
+}
+
+export interface WriteDocument {
+  id?: string;
+  /** @nullable */
+  work_id?: string | null;
+  title?: string;
+  content?: string;
+  kind?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface WriteDocumentCreate {
+  title: string;
+  /** @nullable */
+  work_id?: string | null;
+  kind?: string;
+  content?: string;
+}
+
 export type GetDashboardActivityParams = {
 limit?: number;
 };
@@ -525,6 +803,10 @@ export type GetWorkKnowledge200 = {
   count?: number;
 };
 
+export type CreateWorkKnowledge200 = {
+  item?: KnowledgeItem;
+};
+
 export type UpdateWorkTask200 = {
   task?: Task;
 };
@@ -544,6 +826,10 @@ export type CreateWorkTask200 = {
 
 export type GetWorkGraphParams = {
 limit?: number;
+/**
+ * Comma-separated list of entity kinds to include (person,place,concept,theme,scripture)
+ */
+entity_kinds?: string;
 };
 
 export type GetWorkConversations200 = {
@@ -773,4 +1059,672 @@ subdir?: string;
 export type ListCapabilities200 = {
   capabilities?: Capability[];
 };
+
+export type GetGlobalGraphParams = {
+work_id?: string;
+/**
+ * Comma-separated entity kinds to include
+ */
+entity_kinds?: string;
+limit?: number;
+};
+
+export type GetTopGapsParams = {
+limit?: number;
+refresh?: boolean;
+};
+
+export type GetWorkGapsParams = {
+refresh?: boolean;
+};
+
+export type GetWorkBookIntelligence200 = { [key: string]: unknown };
+
+export type GetWorkChapters200ChaptersItem = { [key: string]: unknown };
+
+export type GetWorkChapters200 = {
+  chapters?: GetWorkChapters200ChaptersItem[];
+};
+
+export type GetWorkCompass200 = { [key: string]: unknown };
+
+export type UpdateWorkCompassBody = { [key: string]: unknown };
+
+export type UpdateWorkCompass200 = { [key: string]: unknown };
+
+export type GetWorkDuplicatesParams = {
+resolved?: boolean;
+};
+
+export type GetWorkDuplicates200 = {
+  pairs?: DuplicatePair[];
+  count?: number;
+};
+
+export type SearchWorkParams = {
+q: string;
+limit?: number;
+};
+
+export type SearchWork200ResultsItem = { [key: string]: unknown };
+
+export type SearchWork200 = {
+  results?: SearchWork200ResultsItem[];
+};
+
+export type GenerateWorkQuizParams = {
+count?: number;
+};
+
+export type GenerateWorkQuiz200QuestionsItem = { [key: string]: unknown };
+
+export type GenerateWorkQuiz200 = {
+  questions?: GenerateWorkQuiz200QuestionsItem[];
+};
+
+export type CreateWorkPipelineBody = {
+  target_word_count?: number;
+};
+
+export type AdvanceWorkPipeline200 = { [key: string]: unknown };
+
+export type RunWorkPipelineStage200 = { [key: string]: unknown };
+
+export type ListBrainstormSessionsParams = {
+limit?: number;
+};
+
+export type ListBrainstormSessions200SessionsItem = { [key: string]: unknown };
+
+export type ListBrainstormSessions200 = {
+  sessions?: ListBrainstormSessions200SessionsItem[];
+};
+
+export type RunBrainstormBody = {
+  prompt: string;
+  mode?: string;
+};
+
+export type RunBrainstorm200 = { [key: string]: unknown };
+
+export type GetBrainstormSession200 = { [key: string]: unknown };
+
+export type ApproveBrainstormIdea200 = { [key: string]: unknown };
+
+export type GetWorkConcepts200 = {
+  concepts?: LearningConcept[];
+};
+
+export type GetLearningQuestionParams = {
+concept_id?: string;
+};
+
+export type GetReviewQueueParams = {
+limit?: number;
+};
+
+export type GetReviewQueue200 = {
+  items?: ReviewItem[];
+  total?: number;
+};
+
+export type ResolveReviewItem200 = { [key: string]: unknown };
+
+export type SearchConversationsParams = {
+q: string;
+limit?: number;
+};
+
+export type SearchConversations200ResultsItem = { [key: string]: unknown };
+
+export type SearchConversations200 = {
+  results?: SearchConversations200ResultsItem[];
+};
+
+export type ToggleConversationWebSearchBody = {
+  enabled: boolean;
+};
+
+export type ToggleConversationWebSearch200 = {
+  conversation?: Conversation;
+};
+
+export type ContinueConversationMessageBody = {
+  stream?: boolean;
+};
+
+export type ContinueConversationMessage200 = {
+  message?: Message;
+};
+
+export type GetUserMemory200 = {
+  facts?: MemoryFact[];
+};
+
+export type GetDashboardNudgesParams = {
+limit?: number;
+};
+
+export type GetDashboardNudges200NudgesItem = { [key: string]: unknown };
+
+export type GetDashboardNudges200 = {
+  nudges?: GetDashboardNudges200NudgesItem[];
+};
+
+export type ResolveDashboardNudgeBody = {
+  nudge_id: string;
+};
+
+export type GetSuggestionsParams = {
+work_id?: string;
+limit?: number;
+};
+
+export type GetSuggestions200SuggestionsItem = { [key: string]: unknown };
+
+export type GetSuggestions200 = {
+  suggestions?: GetSuggestions200SuggestionsItem[];
+};
+
+export type GenerateSuggestionsBody = {
+  work_id?: string;
+  limit?: number;
+};
+
+export type GenerateSuggestions200SuggestionsItem = { [key: string]: unknown };
+
+export type GenerateSuggestions200 = {
+  suggestions?: GenerateSuggestions200SuggestionsItem[];
+};
+
+export type ListBooks200BooksItem = { [key: string]: unknown };
+
+export type ListBooks200 = {
+  books?: ListBooks200BooksItem[];
+};
+
+export type ListLearnWorks200 = {
+  works?: Work[];
+};
+
+export type UploadLibraryDocumentBody = {
+  /** Binary file content (sent as FormData) */
+  file: string;
+  work_id?: string;
+};
+
+export type UploadLibraryDocument200 = {
+  document?: Document;
+  duplicate?: boolean;
+};
+
+export type GetActiveWork200 = {
+  /** @nullable */
+  work_id?: string | null;
+};
+
+export type SetActiveWorkBody = {
+  /** @nullable */
+  work_id?: string | null;
+};
+
+export type ExplodeZipDocuments200 = {
+  queued?: number;
+};
+
+export type ReprocessAllDocuments200 = {
+  queued?: number;
+  total?: number;
+};
+
+export type SmartOrganizeLibrary200 = { [key: string]: unknown };
+
+export type GetDocumentKnowledgeParams = {
+limit?: number;
+};
+
+export type GetDocumentKnowledge200 = {
+  knowledge?: KnowledgeItem[];
+  count?: number;
+};
+
+export type GetDocumentVersions200VersionsItem = { [key: string]: unknown };
+
+export type GetDocumentVersions200 = {
+  versions?: GetDocumentVersions200VersionsItem[];
+};
+
+export type CreateDocumentVersionBody = { [key: string]: unknown };
+
+export type CreateDocumentVersion200 = { [key: string]: unknown };
+
+export type GetDocumentChapters200ChaptersItem = { [key: string]: unknown };
+
+export type GetDocumentChapters200 = {
+  chapters?: GetDocumentChapters200ChaptersItem[];
+};
+
+export type GetDocumentChunks200ChunksItem = { [key: string]: unknown };
+
+export type GetDocumentChunks200 = {
+  chunks?: GetDocumentChunks200ChunksItem[];
+  count?: number;
+};
+
+export type AskKnowledgeParams = {
+q: string;
+work_id?: string;
+limit?: number;
+};
+
+export type AskKnowledge200 = {
+  answer?: string;
+  items?: KnowledgeItem[];
+};
+
+export type GetProjectConcepts200ConceptsItem = { [key: string]: unknown };
+
+export type GetProjectConcepts200 = {
+  concepts?: GetProjectConcepts200ConceptsItem[];
+};
+
+export type SynthesizeSpeech200Two = {
+  ok?: boolean;
+  path?: string;
+  filename?: string;
+};
+
+export type SynthesizeDocument200 = {
+  ok?: boolean;
+  path?: string;
+  filename?: string;
+};
+
+export type ServeStudioOutputParams = {
+path: string;
+};
+
+export type ArchiveStudioOutputParams = {
+path: string;
+};
+
+export type GenerateImage200 = { [key: string]: unknown };
+
+export type GetStudioStatus200 = { [key: string]: unknown };
+
+export type GetImageGenStatus200 = { [key: string]: unknown };
+
+export type RunOcrBody = {
+  image_b64: string;
+  lang?: string;
+};
+
+export type RunOcr200 = {
+  text?: string;
+  word_count?: number;
+};
+
+export type GetWebSearchStatus200 = {
+  configured?: boolean;
+  provider?: string;
+};
+
+export type GetLlmHealth200 = {
+  ok?: boolean;
+  model?: string;
+  latency_ms?: number;
+};
+
+export type GetSystemHardware200 = {
+  cpu_pct?: number;
+  mem_total_mb?: number;
+  mem_used_mb?: number;
+  disk_total_gb?: number;
+  disk_used_gb?: number;
+};
+
+export type RunNightshiftNow200 = { [key: string]: unknown };
+
+export type GetNightshiftStatus200 = { [key: string]: unknown };
+
+export type GetNightshiftLastReport200 = { [key: string]: unknown };
+
+export type GetSystemDocumentQueue200 = { [key: string]: unknown };
+
+export type UpdateSystemJobStateBodyMeta = { [key: string]: unknown };
+
+export type UpdateSystemJobStateBody = {
+  state: string;
+  meta?: UpdateSystemJobStateBodyMeta;
+};
+
+export type ListSystemUserMemory200MemoryItem = { [key: string]: unknown };
+
+export type ListSystemUserMemory200 = {
+  memory?: ListSystemUserMemory200MemoryItem[];
+};
+
+export type GetAiExtractionSetting200 = {
+  enabled?: boolean;
+};
+
+export type SetAiExtractionSettingBody = {
+  enabled: boolean;
+};
+
+export type SetAiExtractionSetting200 = {
+  enabled?: boolean;
+};
+
+export type GetVisionModelSetting200 = { [key: string]: unknown };
+
+export type SetVisionModelSettingBody = {
+  model?: string;
+};
+
+export type SetVisionModelSetting200 = { [key: string]: unknown };
+
+export type GetContextWindowSetting200 = { [key: string]: unknown };
+
+export type SetContextWindowSettingBody = {
+  tokens?: number;
+};
+
+export type SetContextWindowSetting200 = { [key: string]: unknown };
+
+export type GetImageGenSetting200 = { [key: string]: unknown };
+
+export type SetImageGenSettingBody = {
+  url?: string;
+};
+
+export type SetImageGenSetting200 = { [key: string]: unknown };
+
+export type GetEmbeddingsStatus200 = {
+  /** true when the embeddings endpoint is in cooldown */
+  circuit_open?: boolean;
+  /**
+     * monotonic timestamp when the circuit will close; null when circuit is closed
+     * @nullable
+     */
+  available_at?: number | null;
+};
+
+export type ProbeEmbeddings200 = {
+  ok?: boolean;
+  latency_ms?: number;
+};
+
+export type GetSystemStats200 = { [key: string]: unknown };
+
+export type GetSystemTools200ToolsItem = { [key: string]: unknown };
+
+export type GetSystemTools200 = {
+  tools?: GetSystemTools200ToolsItem[];
+};
+
+export type ProbeVisionModel200 = {
+  ok?: boolean;
+};
+
+export type GetGovernanceAuditChain200EntriesItem = { [key: string]: unknown };
+
+export type GetGovernanceAuditChain200 = {
+  entries?: GetGovernanceAuditChain200EntriesItem[];
+  count?: number;
+};
+
+export type GetGovernanceOutboxParams = {
+pending_only?: boolean;
+limit?: number;
+};
+
+export type GetGovernanceOutbox200EventsItem = { [key: string]: unknown };
+
+export type GetGovernanceOutbox200 = {
+  events?: GetGovernanceOutbox200EventsItem[];
+  count?: number;
+};
+
+export type ListActions200 = {
+  actions?: Action[];
+};
+
+export type ListActionRunsParams = {
+action_name?: string;
+limit?: number;
+};
+
+export type ListActionRuns200 = {
+  runs?: ActionRun[];
+};
+
+/**
+ * Action-specific input parameters
+ */
+export type PreviewActionBody = { [key: string]: unknown };
+
+export type PreviewAction200 = { [key: string]: unknown };
+
+/**
+ * Action-specific input parameters
+ */
+export type ExecuteActionBody = { [key: string]: unknown };
+
+export type ListMcosBenchmarks200 = {
+  benchmarks?: McoBenchmark[];
+};
+
+export type RunMcosBenchmark202 = {
+  run_id?: string;
+};
+
+export type RunAllMcosBenchmarks202 = {
+  run_ids?: string[];
+};
+
+export type ListMcosRunsParams = {
+benchmark_id?: string;
+limit?: number;
+};
+
+export type ListMcosRuns200 = {
+  runs?: McosRun[];
+};
+
+export type GetMcosTelemetryParams = {
+days?: number;
+};
+
+export type GetMcosTelemetry200SeriesItem = { [key: string]: unknown };
+
+export type GetMcosTelemetry200 = {
+  series?: GetMcosTelemetry200SeriesItem[];
+};
+
+export type ListMcosRegressionsParams = {
+limit?: number;
+};
+
+export type ListMcosRegressions200RegressionsItem = { [key: string]: unknown };
+
+export type ListMcosRegressions200 = {
+  regressions?: ListMcosRegressions200RegressionsItem[];
+};
+
+export type ListMcosPromptsParams = {
+slot?: string;
+};
+
+export type ListMcosPrompts200 = {
+  prompts?: McosPrompt[];
+};
+
+export type ListMcosPromptSlots200 = {
+  slots?: string[];
+};
+
+export type BenchmarkMcosPrompt200 = { [key: string]: unknown };
+
+export type GetMcosPromptBenchmark200 = { [key: string]: unknown };
+
+export type GetMcosRagConfig200 = { [key: string]: unknown };
+
+export type StartMcosRagSweep202 = { [key: string]: unknown };
+
+export type ListMcosRagSweepsParams = {
+limit?: number;
+};
+
+export type ListMcosRagSweeps200SweepsItem = { [key: string]: unknown };
+
+export type ListMcosRagSweeps200 = {
+  sweeps?: ListMcosRagSweeps200SweepsItem[];
+};
+
+export type ApplyMcosRagConfigBodyConfig = { [key: string]: unknown };
+
+export type ApplyMcosRagConfigBody = {
+  sweep_id?: string;
+  config?: ApplyMcosRagConfigBodyConfig;
+};
+
+export type GetMcosRagReprocessStatus200 = { [key: string]: unknown };
+
+export type ListClaimsParams = {
+status?: string;
+work_id?: string;
+limit?: number;
+};
+
+export type ListClaims200 = {
+  claims?: Claim[];
+};
+
+export type SearchClaimsBody = {
+  query: string;
+  limit?: number;
+};
+
+export type SearchClaims200 = {
+  results?: Claim[];
+};
+
+export type GetClaimsBySubject200 = {
+  claims?: Claim[];
+};
+
+export type UpdateClaimStatusBody = {
+  status: string;
+  /** @nullable */
+  notes?: string | null;
+};
+
+export type CreatePklosInventoryBody = { [key: string]: unknown };
+
+export type CreatePklosInventory200 = { [key: string]: unknown };
+
+export type ListPklosInventory200EntriesItem = { [key: string]: unknown };
+
+export type ListPklosInventory200 = {
+  entries?: ListPklosInventory200EntriesItem[];
+};
+
+export type GetPklosStatus200 = { [key: string]: unknown };
+
+export type CheckPklosEnforcementBody = { [key: string]: unknown };
+
+export type CheckPklosEnforcement200 = { [key: string]: unknown };
+
+export type ListTopicsParams = {
+work_id?: string;
+limit?: number;
+};
+
+export type ListTopics200TopicsItem = { [key: string]: unknown };
+
+export type ListTopics200 = {
+  topics?: ListTopics200TopicsItem[];
+};
+
+export type GetTopic200 = { [key: string]: unknown };
+
+export type RebuildTopicsBody = {
+  /** @nullable */
+  work_id?: string | null;
+};
+
+export type GetRelatedDocumentsParams = {
+limit?: number;
+};
+
+export type GetRelatedDocuments200 = {
+  related?: Document[];
+};
+
+export type GenerateExcelBody = {
+  work_id?: string;
+  include?: string[];
+};
+
+export type GenerateExcel200 = { [key: string]: unknown };
+
+export type GenerateReportBody = {
+  work_id?: string;
+  format?: string;
+};
+
+export type GenerateReport200 = { [key: string]: unknown };
+
+export type GenerateSlidesBody = {
+  work_id?: string;
+  title?: string;
+};
+
+export type GenerateSlides200 = { [key: string]: unknown };
+
+export type GenerateBundleBody = {
+  work_id?: string;
+};
+
+export type GenerateBundle200 = { [key: string]: unknown };
+
+export type DownloadGeneratedParams = {
+path: string;
+};
+
+export type SubmitIntake200 = {
+  doc_id?: string;
+  /** @nullable */
+  work_id?: string | null;
+};
+
+export type SubmitResearchIntakeBody = {
+  query: string;
+  /** @nullable */
+  work_id?: string | null;
+  depth?: string;
+};
+
+export type SubmitResearchIntake200 = { [key: string]: unknown };
+
+export type GetIntakeStatus200 = { [key: string]: unknown };
+
+export type ListWriteDocumentsParams = {
+work_id?: string;
+limit?: number;
+};
+
+export type ListWriteDocuments200 = {
+  documents?: WriteDocument[];
+};
+
+export type UpdateWriteDocumentBody = { [key: string]: unknown };
+
+export type AiAssistWriteDocumentBody = {
+  instruction: string;
+  mode?: string;
+};
+
+export type AiAssistWriteDocument200 = { [key: string]: unknown };
 
