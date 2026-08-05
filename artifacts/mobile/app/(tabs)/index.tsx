@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
-  Modal,
   Platform,
   Pressable,
   RefreshControl,
@@ -14,6 +13,7 @@ import {
 import { useColors } from '@/hooks/useColors';
 import { Feather } from '@expo/vector-icons';
 import { useGetDashboardSummary, useGetDashboardActivity, useGetBriefing } from '@workspace/api-client-react';
+import { useQuery } from '@tanstack/react-query';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { font } from '@/lib/typography';
@@ -96,6 +96,126 @@ function ActivityRow({ item }: { item: ActivityItem }) {
       <Text style={[styles.activityDate, { color: colors.mutedForeground }]}>{when}</Text>
       {tappable && <Feather name="chevron-right" size={13} color={colors.mutedForeground} />}
     </Pressable>
+  );
+}
+
+// ── Server hardware summary (compact) ─────────────────────────────────────────
+
+interface MobileHwData {
+  cpu_percent?: number;
+  cpu_count?: number;
+  ram?: { used_gb: number; total_gb: number; percent: number } | null;
+  disk?: { used_gb: number; total_gb: number; percent: number } | null;
+  gpus?: Array<{ name: string; vram_used_mb: number | null; vram_total_mb: number | null; utilization_percent: number | null }>;
+  gpu_available?: boolean;
+  error?: string | null;
+}
+
+function MiniGauge({
+  pct,
+  label,
+  value,
+  colors,
+}: {
+  pct: number;
+  label: string;
+  value: string;
+  colors: ReturnType<typeof useColors>;
+}) {
+  const fill = pct > 90 ? '#ef4444' : pct > 70 ? '#f59e0b' : '#22c55e';
+  return (
+    <View style={{ flex: 1, minWidth: 80, gap: 4 }}>
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+        <Text style={{ fontSize: 10, ...font('medium'), color: colors.mutedForeground, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+          {label}
+        </Text>
+        <Text style={{ fontSize: 10, ...font('semibold'), color: colors.foreground }}>{value}</Text>
+      </View>
+      <View style={{ height: 4, borderRadius: 2, backgroundColor: colors.muted, overflow: 'hidden' }}>
+        <View style={{ width: `${Math.min(pct, 100)}%`, height: '100%', borderRadius: 2, backgroundColor: fill }} />
+      </View>
+    </View>
+  );
+}
+
+const _HW_API = `https://${process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000'}/api/system/hardware`;
+
+function ServerHealthCard() {
+  const colors = useColors();
+  const { data, isLoading } = useQuery<MobileHwData | null>({
+    queryKey: ['system', 'hardware'],
+    queryFn: async () => {
+      const r = await mobileFetch(_HW_API);
+      if (!r.ok) return null;
+      return r.json();
+    },
+    refetchInterval: 15_000,
+    staleTime: 13_000,
+  });
+
+  if (isLoading) {
+    return (
+      <View style={[styles.hwCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+        <ActivityIndicator size="small" color={colors.primary} />
+      </View>
+    );
+  }
+
+  if (!data || data.error === 'psutil not installed') return null;
+
+  const gpu = data.gpus?.[0];
+  const vramPct =
+    gpu?.vram_used_mb && gpu?.vram_total_mb
+      ? (gpu.vram_used_mb / gpu.vram_total_mb) * 100
+      : null;
+
+  return (
+    <View style={[styles.hwCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 10 }}>
+        <Feather name="cpu" size={13} color={colors.primary} />
+        <Text style={{ fontSize: 11, ...font('semibold'), color: colors.foreground }}>
+          Server
+        </Text>
+        {data.cpu_count != null && (
+          <Text style={{ fontSize: 10, ...font('regular'), color: colors.mutedForeground }}>
+            {data.cpu_count} cores
+          </Text>
+        )}
+      </View>
+
+      <View style={{ flexDirection: 'row', gap: 12, flexWrap: 'wrap' }}>
+        <MiniGauge
+          label="CPU"
+          pct={data.cpu_percent ?? 0}
+          value={`${(data.cpu_percent ?? 0).toFixed(0)}%`}
+          colors={colors}
+        />
+        {data.ram && (
+          <MiniGauge
+            label="RAM"
+            pct={data.ram.percent}
+            value={`${data.ram.used_gb.toFixed(1)}/${data.ram.total_gb.toFixed(1)}G`}
+            colors={colors}
+          />
+        )}
+        {data.disk && (
+          <MiniGauge
+            label="Disk"
+            pct={data.disk.percent}
+            value={`${data.disk.used_gb.toFixed(0)}/${data.disk.total_gb.toFixed(0)}G`}
+            colors={colors}
+          />
+        )}
+        {data.gpu_available && vramPct != null && gpu && (
+          <MiniGauge
+            label="VRAM"
+            pct={vramPct}
+            value={`${((gpu.vram_used_mb ?? 0) / 1024).toFixed(1)}G`}
+            colors={colors}
+          />
+        )}
+      </View>
+    </View>
   );
 }
 
@@ -204,6 +324,9 @@ export default function DashboardScreen() {
               {briefing?.greeting ?? 'Your research workspace'}
             </Text>
           </View>
+
+          {/* Server hardware summary */}
+          <ServerHealthCard />
 
           {/* Studio quick action */}
           <StudioCard />
@@ -355,5 +478,11 @@ const styles = StyleSheet.create({
     ...font('regular'),
     textAlign: 'center',
     lineHeight: 22,
+  },
+  hwCard: {
+    borderRadius: 10,
+    borderWidth: 1,
+    padding: 14,
+    marginBottom: 16,
   },
 });

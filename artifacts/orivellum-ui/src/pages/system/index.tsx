@@ -1219,35 +1219,54 @@ $env:ORIVELLUM_AI_URL="http://127.0.0.1:11434/v1"`}
 
 // ─── Hardware telemetry card ─────────────────────────────────────────────────
 
+interface HwGpu {
+  name: string;
+  vram_used_mb: number | null;
+  vram_total_mb: number | null;
+  utilization_percent: number | null;
+  temp_c: number | null;
+}
+
+interface HwData {
+  cpu_percent: number;
+  cpu_count: number;
+  ram: { used_gb: number; total_gb: number; percent: number } | null;
+  disk: { used_gb: number; total_gb: number; percent: number } | null;
+  gpus: HwGpu[];
+  gpu_available: boolean;
+  uptime_seconds: number | null;
+  error: string | null;
+}
+
 function HardwareCard() {
-  const { data, isLoading, refetch, isFetching } = useQuery<{
-    cpu_percent: number;
-    ram_total_mb: number;
-    ram_used_mb: number;
-    ram_percent: number;
-    disk_total_gb: number;
-    disk_used_gb: number;
-    disk_percent: number;
-    gpu: { name: string; memory_used_mb: number; memory_total_mb: number; utilization: number } | null;
-    cpu_count: number;
-  }>({
+  const { data, isLoading, refetch, isFetching } = useQuery<HwData | null>({
     queryKey: ["system", "hardware"],
     queryFn: async () => {
       const r = await apiFetch(`${API_BASE}/api/system/hardware`);
       if (!r.ok) return null;
       return r.json();
     },
-    refetchInterval: 10_000,
-    staleTime: 8_000,
+    // Task spec: live gauges that update every 15 seconds
+    refetchInterval: 15_000,
+    staleTime: 13_000,
   });
 
-  function bar(pct: number) {
-    const color = pct > 90 ? "bg-destructive" : pct > 70 ? "bg-amber-500" : "bg-emerald-500";
+  function bar(pct: number | null | undefined) {
+    const p = pct ?? 0;
+    const color = p > 90 ? "bg-destructive" : p > 70 ? "bg-amber-500" : "bg-emerald-500";
     return (
       <div className="h-1.5 w-full bg-muted rounded-full overflow-hidden">
-        <div className={`h-full rounded-full ${color}`} style={{ width: `${Math.min(pct, 100)}%` }} />
+        <div className={`h-full rounded-full transition-all duration-700 ${color}`}
+             style={{ width: `${Math.min(p, 100)}%` }} />
       </div>
     );
+  }
+
+  function uptimeLabel(secs: number | null | undefined): string {
+    if (!secs) return "";
+    if (secs < 3600) return `up ${Math.round(secs / 60)}m`;
+    if (secs < 86400) return `up ${Math.round(secs / 3600)}h`;
+    return `up ${Math.floor(secs / 86400)}d ${Math.round((secs % 86400) / 3600)}h`;
   }
 
   return (
@@ -1256,46 +1275,106 @@ function HardwareCard() {
         <h2 className="text-xl font-serif font-medium flex items-center gap-2">
           <Cpu className="w-5 h-5 text-muted-foreground" />
           Hardware
+          {data?.uptime_seconds != null && (
+            <span className="text-xs font-mono text-muted-foreground/60">
+              {uptimeLabel(data.uptime_seconds)}
+            </span>
+          )}
         </h2>
         <button onClick={() => refetch()} disabled={isFetching}
           className="text-xs font-mono text-muted-foreground hover:text-foreground transition-colors">
           {isFetching ? "refreshing…" : "refresh"}
         </button>
       </div>
-      {isLoading ? [1,2,3].map(i => <Skeleton key={i} className="h-8 w-full" />) : !data ? (
-        <p className="text-sm text-muted-foreground">Hardware telemetry unavailable (psutil may not be installed).</p>
+
+      {isLoading ? (
+        [1, 2, 3].map(i => <Skeleton key={i} className="h-8 w-full" />)
+      ) : !data || data.error === "psutil not installed" ? (
+        <p className="text-sm text-muted-foreground">
+          Hardware telemetry unavailable —{" "}
+          <code className="text-xs bg-muted px-1 rounded">psutil</code> is not installed on this server.
+        </p>
       ) : (
         <div className="grid md:grid-cols-3 gap-4">
+          {/* CPU */}
           <div className="space-y-1.5 p-4 rounded-lg border border-border/50 bg-muted/10">
             <div className="flex items-center justify-between text-xs font-mono mb-2">
               <span className="text-muted-foreground">CPU</span>
-              <span className="font-medium">{data.cpu_percent?.toFixed(1)}% · {data.cpu_count} cores</span>
+              <span className="font-medium">
+                {(data.cpu_percent ?? 0).toFixed(1)}%
+                {data.cpu_count > 0 && <span className="text-muted-foreground"> · {data.cpu_count} cores</span>}
+              </span>
             </div>
-            {bar(data.cpu_percent ?? 0)}
+            {bar(data.cpu_percent)}
           </div>
+
+          {/* RAM */}
           <div className="space-y-1.5 p-4 rounded-lg border border-border/50 bg-muted/10">
             <div className="flex items-center justify-between text-xs font-mono mb-2">
               <span className="text-muted-foreground">RAM</span>
-              <span className="font-medium">{((data.ram_used_mb ?? 0) / 1024).toFixed(1)} / {((data.ram_total_mb ?? 0) / 1024).toFixed(1)} GB</span>
+              {data.ram ? (
+                <span className="font-medium">
+                  {data.ram.used_gb.toFixed(1)} / {data.ram.total_gb.toFixed(1)} GB
+                </span>
+              ) : (
+                <span className="text-muted-foreground">—</span>
+              )}
             </div>
-            {bar(data.ram_percent ?? 0)}
+            {bar(data.ram?.percent)}
           </div>
+
+          {/* Disk */}
           <div className="space-y-1.5 p-4 rounded-lg border border-border/50 bg-muted/10">
             <div className="flex items-center justify-between text-xs font-mono mb-2">
               <span className="text-muted-foreground">Disk</span>
-              <span className="font-medium">{(data.disk_used_gb ?? 0).toFixed(1)} / {(data.disk_total_gb ?? 0).toFixed(1)} GB</span>
-            </div>
-            {bar(data.disk_percent ?? 0)}
-          </div>
-          {data.gpu && (
-            <div className="md:col-span-3 space-y-1.5 p-4 rounded-lg border border-border/50 bg-muted/10">
-              <div className="flex items-center justify-between text-xs font-mono mb-2">
-                <span className="text-muted-foreground">GPU — {data.gpu.name}</span>
+              {data.disk ? (
                 <span className="font-medium">
-                  {(data.gpu.memory_used_mb / 1024).toFixed(1)} / {(data.gpu.memory_total_mb / 1024).toFixed(1)} GB VRAM · {data.gpu.utilization}% util
+                  {data.disk.used_gb.toFixed(1)} / {data.disk.total_gb.toFixed(1)} GB
                 </span>
-              </div>
-              {bar(data.gpu.utilization)}
+              ) : (
+                <span className="text-muted-foreground">—</span>
+              )}
+            </div>
+            {bar(data.disk?.percent)}
+          </div>
+
+          {/* GPU(s) — full-width row per GPU */}
+          {data.gpu_available && data.gpus.length > 0 ? (
+            data.gpus.map((gpu, i) => {
+              const vramPct = gpu.vram_used_mb && gpu.vram_total_mb
+                ? (gpu.vram_used_mb / gpu.vram_total_mb) * 100
+                : null;
+              return (
+                <div key={i} className="md:col-span-3 space-y-1.5 p-4 rounded-lg border border-border/50 bg-muted/10">
+                  <div className="flex items-center justify-between text-xs font-mono mb-2 gap-2">
+                    <span className="text-muted-foreground truncate">
+                      GPU{data.gpus.length > 1 ? ` ${i + 1}` : ""} — {gpu.name}
+                    </span>
+                    <span className="font-medium shrink-0 flex items-center gap-3">
+                      {gpu.vram_used_mb != null && gpu.vram_total_mb != null && (
+                        <span>
+                          {(gpu.vram_used_mb / 1024).toFixed(1)} / {(gpu.vram_total_mb / 1024).toFixed(1)} GB VRAM
+                        </span>
+                      )}
+                      {gpu.utilization_percent != null && (
+                        <span className="text-muted-foreground">{gpu.utilization_percent}% util</span>
+                      )}
+                      {gpu.temp_c != null && (
+                        <span className={gpu.temp_c > 85 ? "text-destructive" : gpu.temp_c > 70 ? "text-amber-600" : "text-muted-foreground"}>
+                          {gpu.temp_c}°C
+                        </span>
+                      )}
+                    </span>
+                  </div>
+                  {vramPct != null ? bar(vramPct) : (
+                    gpu.utilization_percent != null ? bar(gpu.utilization_percent) : null
+                  )}
+                </div>
+              );
+            })
+          ) : (
+            <div className="md:col-span-3 p-4 rounded-lg border border-dashed border-border/40 text-xs font-mono text-muted-foreground/60">
+              GPU — Not available (no nvidia-smi or rocm-smi detected)
             </div>
           )}
         </div>

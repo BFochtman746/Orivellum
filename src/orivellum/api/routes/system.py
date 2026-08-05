@@ -1278,6 +1278,7 @@ def system_hardware():
     try:
         import psutil
         result["cpu_percent"] = psutil.cpu_percent(interval=0.1)
+        result["cpu_count"] = psutil.cpu_count(logical=True) or 1
         mem = psutil.virtual_memory()
         result["ram"] = {
             "used_gb": round(mem.used / 1e9, 2),
