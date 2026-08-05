@@ -353,7 +353,12 @@ export default function ConversationsScreen() {
             keyExtractor={(item) => item.id}
             renderItem={({ item }) => (
               <Pressable
-                onPress={() => router.push(`/chat/${item.conversation_id}`)}
+                onPress={() =>
+                  router.push({
+                    pathname: `/chat/${item.conversation_id}`,
+                    params: { msgId: item.id },
+                  } as any)
+                }
                 style={({ pressed }) => [
                   styles.msgResultRow,
                   { backgroundColor: pressed ? colors.muted : colors.card, borderColor: colors.border },

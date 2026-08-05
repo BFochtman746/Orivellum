@@ -39,7 +39,7 @@ const LAST_MODEL_KEY = 'orivellum:lastModel';
 
 type LocalMessage = Message & { isError?: boolean; localImageUri?: string };
 
-function MessageBubble({ message, colors, isDark, onResend }: { message: LocalMessage; colors: any; isDark: boolean; onResend?: () => void }) {
+function MessageBubble({ message, colors, isDark, onResend, highlighted }: { message: LocalMessage; colors: any; isDark: boolean; onResend?: () => void; highlighted?: boolean }) {
   const isUser = message.role === 'user';
   const isErr = (message as any).isError;
   const textColor = isUser ? colors.primaryForeground : isErr ? colors.mutedForeground : colors.foreground;
@@ -130,7 +130,16 @@ function MessageBubble({ message, colors, isDark, onResend }: { message: LocalMe
     <Pressable
       onLongPress={handleLongPress}
       delayLongPress={400}
-      style={[styles.bubbleRow, isUser ? styles.bubbleRight : styles.bubbleLeft]}
+      style={[
+        styles.bubbleRow,
+        isUser ? styles.bubbleRight : styles.bubbleLeft,
+        highlighted && {
+          backgroundColor: colors.primary + '18',
+          borderRadius: 12,
+          marginHorizontal: -4,
+          paddingHorizontal: 4,
+        },
+      ]}
     >
       {!isUser && (
         <View
@@ -422,15 +431,19 @@ export default function ChatScreen() {
   const isWeb = Platform.OS === 'web';
   const colorScheme = useColorScheme();
   const isDark = colorScheme === 'dark';
-  const { id, draft } = useLocalSearchParams<{ id: string; draft?: string }>();
+  const { id, draft, msgId } = useLocalSearchParams<{ id: string; draft?: string; msgId?: string }>();
   const navigation = useNavigation();
   const router = useRouter();
   const inputRef = useRef<TextInput>(null);
+  const flatListRef = useRef<FlatList>(null);
 
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
   const [localMessages, setLocalMessages] = useState<LocalMessage[]>([]);
   const [initialized, setInitialized] = useState(false);
+  const [highlightedMsgId, setHighlightedMsgId] = useState<string | null>(null);
+  const scrolledToMsgRef = useRef(false);
+  const scrollTargetRef = useRef<number | null>(null);
   const [sendFailed, setSendFailed] = useState(false);
   const [modelPickerVisible, setModelPickerVisible] = useState(false);
   const [deepMode, setDeepMode] = useState(false);
@@ -526,6 +539,38 @@ export default function ChatScreen() {
       seededRef.current = true;
     }
   }, [draft]);
+
+  // Scroll to a specific message (from search-result navigation) and briefly highlight it.
+  // displayMessages is the reversed copy of localMessages so the display index is
+  // (localMessages.length - 1 - originalIndex).  The FlatList is inverted so index 0
+  // sits at the bottom — scrollToIndex still works correctly with the inverted prop.
+  //
+  // Because FlatList only measures items in its initial render window, scrollToIndex
+  // fails for older messages (onScrollToIndexFailed fires).  The failure handler jumps
+  // to an estimated offset, causing the list to extend further, and then retries the
+  // exact scroll via scrollTargetRef so the highlight always lands on the right item.
+  useEffect(() => {
+    if (!msgId || scrolledToMsgRef.current || localMessages.length === 0) return;
+    const originalIndex = localMessages.findIndex((m) => m.id === msgId);
+    if (originalIndex === -1) return;
+    scrolledToMsgRef.current = true;
+    const displayIndex = localMessages.length - 1 - originalIndex;
+    scrollTargetRef.current = displayIndex;
+
+    // Track both timers so effect cleanup can cancel them even if the component unmounts
+    // or a re-render interrupts before they fire.
+    let highlightTimer: ReturnType<typeof setTimeout> | null = null;
+    const scrollTimer = setTimeout(() => {
+      flatListRef.current?.scrollToIndex({ index: displayIndex, animated: true, viewPosition: 0.5 });
+      setHighlightedMsgId(msgId);
+      highlightTimer = setTimeout(() => setHighlightedMsgId(null), 2000);
+    }, 400);
+
+    return () => {
+      clearTimeout(scrollTimer);
+      if (highlightTimer) clearTimeout(highlightTimer);
+    };
+  }, [msgId, localMessages]);
 
   const displayMessages = [...localMessages].reverse();
 
@@ -904,6 +949,7 @@ export default function ChatScreen() {
         )}
 
         <FlatList
+          ref={flatListRef}
           data={displayMessages}
           keyExtractor={(m) => m.id ?? ''}
           renderItem={({ item }) => {
@@ -913,6 +959,7 @@ export default function ChatScreen() {
                 message={item}
                 colors={colors}
                 isDark={isDark}
+                highlighted={item.id === highlightedMsgId}
                 onResend={isCutShort ? () => handleContinue(item.id ?? '') : undefined}
               />
             );
@@ -922,6 +969,25 @@ export default function ChatScreen() {
           keyboardDismissMode="interactive"
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
+          onScrollToIndexFailed={({ highestMeasuredFrameIndex, averageItemLength }) => {
+            // The target item hasn't been measured yet.  Jump to an estimated offset so
+            // the list extends its render window to cover the target, then retry the
+            // exact scrollToIndex after a layout pass.
+            const target = scrollTargetRef.current ?? highestMeasuredFrameIndex;
+            flatListRef.current?.scrollToOffset({
+              offset: target * averageItemLength,
+              animated: false,
+            });
+            setTimeout(() => {
+              if (scrollTargetRef.current !== null) {
+                flatListRef.current?.scrollToIndex({
+                  index: scrollTargetRef.current,
+                  animated: true,
+                  viewPosition: 0.5,
+                });
+              }
+            }, 200);
+          }}
           ListHeaderComponent={sending ? <TypingIndicator colors={colors} /> : null}
           ListEmptyComponent={
             !sending ? (

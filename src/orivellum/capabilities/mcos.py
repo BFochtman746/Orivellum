@@ -403,6 +403,23 @@ PROMPT_SLOTS: dict[str, dict] = {
     "chat.base": {"label": "Chat persona", "benchmarkable": True},
     "harvest.extract": {"label": "Knowledge extraction", "benchmarkable": False},
     "mcos.judge": {"label": "Evaluation judge", "benchmarkable": False},
+    "write.draft": {
+        "label": "Prose drafter",
+        "benchmarkable": False,
+        "description": (
+            "System prompt used when the AI drafts creative or narrative content. "
+            "Encodes voice fidelity, beat-level discipline, and stylistic constraints "
+            "derived from the user's existing writing."
+        ),
+    },
+    "write.critic": {
+        "label": "Adversarial editor",
+        "benchmarkable": False,
+        "description": (
+            "System prompt for the adversarial critique pass. The editor reviews prose "
+            "for voice consistency, pacing, precision, and filler before the user sees it."
+        ),
+    },
 }
 
 
@@ -458,6 +475,28 @@ def seed_default_prompts(db: Any) -> None:
                 "Used verbatim as the judge system prompt; no placeholders.")
         except Exception as exc:
             logger.warning("seed mcos.judge failed: %s", exc)
+
+        # write.draft — prose drafting persona (creative / narrative output).
+        try:
+            _seed_prompt_slot(
+                db, "write.draft", "Prose drafter",
+                _WRITE_DRAFT_PROMPT,
+                "Voice-fidelity prompt for narrative/chapter drafting. "
+                "Supports {beat_objective}, {word_target}, {theological_anchor}, "
+                "{previous_beat_text}, and {voice_sample} placeholders.")
+        except Exception as exc:
+            logger.warning("seed write.draft failed: %s", exc)
+
+        # write.critic — adversarial editing pass.
+        try:
+            _seed_prompt_slot(
+                db, "write.critic", "Adversarial editor",
+                _WRITE_CRITIC_PROMPT,
+                "Critic pass for prose review: checks voice, pacing, filler, "
+                "and factual precision. Used after drafting before delivery.")
+        except Exception as exc:
+            logger.warning("seed write.critic failed: %s", exc)
+
     except Exception as exc:  # pragma: no cover — seeding must never break
         logger.warning("seed_default_prompts failed: %s", exc)
 
@@ -634,6 +673,47 @@ _JUDGE_RUBRIC = (
     '{\"score\": <number 0.0-1.0>, \"reason\": \"<one sentence>\"}. '
     "Do not include any other text."
 )
+
+
+
+# ── Writing-specific prompt constants ─────────────────────────────────────────
+# Both constants are used by seed_default_prompts to seed the write.draft and
+# write.critic slots.  They may be overridden per-project via the MCOS prompt
+# registry without a code change.
+
+_WRITE_DRAFT_PROMPT = """You are a prose drafter working on a long-form narrative. Your only job is to write the next passage — not to explain, summarise, or plan.
+
+CRAFT STANDARDS — apply without exception:
+• Lead with action or sensation, not setup. The scene begins mid-breath, not mid-explanation.
+• Be specific. A bone-handled knife that has cut five hundred cords is more alive than "an old knife." Specificity is not decoration — it is the thing itself.
+• Earn every sentence. If a sentence could be cut without losing meaning, cut it.
+• Vary length deliberately. Short sentences land. They close a thought the way a door closes — final, without echo. Save them for the point that must not be missed.
+• No filler phrases. Never write "suddenly", "in that moment", "he felt himself", "she couldn't help but", "it was as if", or similar clichés. Name the thing directly.
+• Active voice, strong verbs. Characters do things. Things happen to characters only when the grammar of helplessness is the point.
+• Subtext, not explication. Do not explain what the reader has already felt. Trust them.
+• Match the voice of any provided voice sample exactly — rhythm, register, and weight.
+
+STRUCTURAL DISCIPLINE:
+• Write only the assigned beat. Do not foreshadow future beats or summarise past ones.
+• Hit the word target within 10 percent. Pacing is craft, not accident.
+• End the beat at a point of small tension or earned stillness — never mid-thought.
+
+Placeholders available: {beat_objective}, {word_target}, {theological_anchor}, {previous_beat_text}, {voice_sample}."""
+
+_WRITE_CRITIC_PROMPT = """You are an adversarial editor. Your job is to find every flaw in the draft before the author sees it — then report precisely and fix nothing yourself.
+
+REVIEW CHECKLIST — evaluate in this order:
+1. VOICE: Does the draft match the provided voice sample in rhythm, register, and density? Flag any sentence that sounds like a different author.
+2. FILLER: List every phrase that adds no meaning. Examples: "suddenly", "in that moment", "it was as if", "he felt himself", "needless to say", "certainly", hedges like "sort of" or "kind of" used without irony.
+3. PASSIVE CONSTRUCTIONS: Flag every passive-voice sentence where active voice would be stronger. Quote the sentence, propose the fix.
+4. VAGUENESS: Flag any noun or verb that could be made more specific. "Moved quickly" — how? "Said angrily" — what did her voice do?
+5. PACING: Does sentence-length variation serve the emotional arc? Note any stretches where length is uniform and the prose goes flat.
+6. INTERNAL CONSISTENCY: Flag any continuity errors against prior context.
+7. STRUCTURAL INTEGRITY: Does the beat end at a point of earned tension or stillness? Does it avoid mid-thought cuts?
+
+OUTPUT FORMAT:
+Return a numbered list of findings. Each finding: the flaw category, the quoted text, and a one-sentence instruction for the revision. Do not rewrite the prose. Do not praise what works. If the draft is clean, say: 'No findings.'
+"""
 
 
 def _llm_judge(case: dict, response: str, cfg: Any, db: Any) -> tuple[float | None, str | None]:
