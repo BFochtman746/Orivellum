@@ -26,13 +26,53 @@ import { getApiToken } from '@/lib/token';
 const DOMAIN = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
 const API = `https://${DOMAIN}/api`;
 
-// Fallback voices — mirror the built-in voices exposed by studio.py.
-const FALLBACK_VOICES = [
-  { id: 'af_heart', name: 'Heart (AF)' },
-  { id: 'af_bella', name: 'Bella (AF)' },
-  { id: 'am_adam', name: 'Adam (AM)' },
-  { id: 'bf_emma', name: 'Emma (BF)' },
-  { id: 'bm_george', name: 'George (BM)' },
+// ── Voice catalog — mirrors _VOICE_CATALOG in studio.py ──────────────────────
+// Full 28-voice catalog with perceptual dimensions and genre tags.
+// Serves as the offline fallback; the server returns the same data at
+// GET /api/studio/voices and may include additional custom profiles.
+export interface VoiceEntry {
+  id: string;
+  name: string;
+  accent?: string;   // 'american' | 'british' | 'custom'
+  gender?: string;   // 'feminine' | 'masculine'
+  description?: string;
+  tags?: string[];
+  builtin?: boolean;
+}
+
+const FALLBACK_VOICES: VoiceEntry[] = [
+  // American Female
+  { id: 'af_heart',   name: 'Heart',   accent: 'american', gender: 'feminine',  tags: ['literary fiction', 'memoir', 'spiritual'] },
+  { id: 'af_bella',   name: 'Bella',   accent: 'american', gender: 'feminine',  tags: ['thriller', 'young adult', 'adventure'] },
+  { id: 'af_nova',    name: 'Nova',    accent: 'american', gender: 'feminine',  tags: ['non-fiction', 'documentary', 'academic'] },
+  { id: 'af_alloy',   name: 'Alloy',   accent: 'american', gender: 'feminine',  tags: ['academic', 'news', 'instructional'] },
+  { id: 'af_sarah',   name: 'Sarah',   accent: 'american', gender: 'feminine',  tags: ['literary fiction', 'memoir', 'spiritual'] },
+  { id: 'af_sky',     name: 'Sky',     accent: 'american', gender: 'feminine',  tags: ['children', 'young adult', 'fantasy'] },
+  { id: 'af_jessica', name: 'Jessica', accent: 'american', gender: 'feminine',  tags: ['mystery', 'literary fiction', 'thriller'] },
+  { id: 'af_kore',    name: 'Kore',    accent: 'american', gender: 'feminine',  tags: ['epic', 'literary fiction', 'mythology'] },
+  { id: 'af_nicole',  name: 'Nicole',  accent: 'american', gender: 'feminine',  tags: ['memoir', 'self-help', 'romance'] },
+  { id: 'af_aoede',   name: 'Aoede',   accent: 'american', gender: 'feminine',  tags: ['literary fiction', 'poetry', 'spiritual'] },
+  { id: 'af_river',   name: 'River',   accent: 'american', gender: 'feminine',  tags: ['meditation', 'spiritual', 'nature'] },
+  // American Male
+  { id: 'am_adam',    name: 'Adam',    accent: 'american', gender: 'masculine', tags: ['epic', 'historical', 'thriller'], builtin: true },
+  { id: 'am_echo',    name: 'Echo',    accent: 'american', gender: 'masculine', tags: ['non-fiction', 'documentary', 'news'] },
+  { id: 'am_eric',    name: 'Eric',    accent: 'american', gender: 'masculine', tags: ['memoir', 'literary fiction', 'thriller'] },
+  { id: 'am_fenrir',  name: 'Fenrir',  accent: 'american', gender: 'masculine', tags: ['epic', 'mythology', 'horror'] },
+  { id: 'am_liam',    name: 'Liam',    accent: 'american', gender: 'masculine', tags: ['young adult', 'adventure', 'sci-fi'] },
+  { id: 'am_michael', name: 'Michael', accent: 'american', gender: 'masculine', tags: ['non-fiction', 'historical', 'documentary'] },
+  { id: 'am_onyx',    name: 'Onyx',    accent: 'american', gender: 'masculine', tags: ['epic', 'thriller', 'historical'] },
+  { id: 'am_puck',    name: 'Puck',    accent: 'american', gender: 'masculine', tags: ['young adult', 'adventure', 'comedy', 'fantasy'] },
+  { id: 'am_santa',   name: 'Santa',   accent: 'american', gender: 'masculine', tags: ['children', 'family', 'holiday', 'feel-good'] },
+  // British Female
+  { id: 'bf_emma',     name: 'Emma',     accent: 'british', gender: 'feminine',  tags: ['literary fiction', 'historical', 'mystery'], builtin: true },
+  { id: 'bf_alice',    name: 'Alice',    accent: 'british', gender: 'feminine',  tags: ['academic', 'documentary', 'historical'] },
+  { id: 'bf_isabella', name: 'Isabella', accent: 'british', gender: 'feminine',  tags: ['literary fiction', 'romance', 'historical'] },
+  { id: 'bf_lily',     name: 'Lily',     accent: 'british', gender: 'feminine',  tags: ['children', 'young adult', 'romance'] },
+  // British Male
+  { id: 'bm_george', name: 'George', accent: 'british', gender: 'masculine', tags: ['historical', 'literary fiction', 'epic'], builtin: true },
+  { id: 'bm_daniel', name: 'Daniel', accent: 'british', gender: 'masculine', tags: ['literary fiction', 'memoir', 'mystery'] },
+  { id: 'bm_fable',  name: 'Fable',  accent: 'british', gender: 'masculine', tags: ['epic', 'mythology', 'fantasy'] },
+  { id: 'bm_lewis',  name: 'Lewis',  accent: 'british', gender: 'masculine', tags: ['non-fiction', 'academic', 'historical'] },
 ];
 
 const SIZES = [256, 512, 768, 1024];
@@ -231,6 +271,195 @@ function PillPicker<T>({
   );
 }
 
+// ── Voice browser with sample preview ────────────────────────────────────────────
+
+/**
+ * Horizontally scrollable voice card row.
+ * Tapping a card selects it; the ▶ button streams the cached sample
+ * from GET /api/studio/voices/{id}/sample (generated on first request).
+ */
+function VoiceBrowserCard({
+  voices,
+  selectedId,
+  onSelect,
+  audio,
+}: {
+  voices: VoiceEntry[];
+  selectedId: string;
+  onSelect: (id: string) => void;
+  audio: ReturnType<typeof useSharedAudio>;
+}) {
+  const colors = useColors();
+  const selected = voices.find((v) => v.id === selectedId) ?? voices[0];
+
+  const accentColor = (v: VoiceEntry) =>
+    v.accent === 'british' ? '#3b82f6' : '#f59e0b';
+
+  const genderSymbol = (v: VoiceEntry) =>
+    v.gender === 'feminine' ? '♀' : v.gender === 'masculine' ? '♂' : '◆';
+
+  return (
+    <View style={{ gap: 10 }}>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={{ flexDirection: 'row', gap: 8, paddingVertical: 2 }}
+      >
+        {voices.map((v) => {
+          const isSelected = v.id === selectedId;
+          const isPlaying  = audio.playingKey === `sample-${v.id}`;
+          const sampleUri  = `${API}/studio/voices/${encodeURIComponent(v.id)}/sample`;
+
+          return (
+            <Pressable
+              key={v.id}
+              onPress={() => onSelect(v.id)}
+              style={[
+                voiceCardStyles.card,
+                {
+                  borderColor:       isSelected ? colors.primary : colors.border,
+                  backgroundColor:   isSelected ? colors.primary + '15' : colors.card,
+                },
+              ]}
+            >
+              {/* Name + gender */}
+              <View style={voiceCardStyles.nameRow}>
+                <Text
+                  style={[
+                    voiceCardStyles.name,
+                    { color: isSelected ? colors.primary : colors.foreground },
+                  ]}
+                  numberOfLines={1}
+                >
+                  {v.name}
+                </Text>
+                <Text style={[voiceCardStyles.gender, { color: colors.mutedForeground }]}>
+                  {genderSymbol(v)}
+                </Text>
+              </View>
+
+              {/* Accent badge */}
+              {v.accent && (
+                <View
+                  style={[
+                    voiceCardStyles.accentBadge,
+                    { borderColor: accentColor(v) + '55', backgroundColor: accentColor(v) + '18' },
+                  ]}
+                >
+                  <Text style={[voiceCardStyles.accentText, { color: accentColor(v) }]}>
+                    {v.accent === 'american' ? 'US' : v.accent === 'british' ? 'UK' : v.accent}
+                  </Text>
+                </View>
+              )}
+
+              {/* Sample preview button */}
+              <Pressable
+                onPress={(e) => {
+                  e.stopPropagation?.();
+                  audio.toggle(`sample-${v.id}`, sampleUri);
+                }}
+                hitSlop={6}
+                style={[
+                  voiceCardStyles.playBtn,
+                  {
+                    backgroundColor: isPlaying ? colors.primary : colors.muted,
+                  },
+                ]}
+              >
+                <Feather
+                  name={isPlaying ? 'pause' : 'play'}
+                  size={11}
+                  color={isPlaying ? colors.primaryForeground : colors.mutedForeground}
+                />
+              </Pressable>
+            </Pressable>
+          );
+        })}
+      </ScrollView>
+
+      {/* Selected voice info */}
+      {selected && (
+        <View
+          style={[
+            voiceCardStyles.selectedInfo,
+            { borderColor: colors.border, backgroundColor: colors.muted + '60' },
+          ]}
+        >
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+            <Text style={[voiceCardStyles.selectedName, { color: colors.foreground }]}>
+              {selected.name}
+            </Text>
+            {selected.accent && (
+              <Text style={[voiceCardStyles.selectedMeta, { color: colors.mutedForeground }]}>
+                {selected.accent === 'american' ? 'American' : selected.accent === 'british' ? 'British' : selected.accent}
+                {selected.gender ? ` · ${selected.gender}` : ''}
+              </Text>
+            )}
+          </View>
+          {selected.tags && selected.tags.length > 0 && (
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 4 }}>
+              {selected.tags.slice(0, 3).map((tag) => (
+                <View
+                  key={tag}
+                  style={[voiceCardStyles.tag, { borderColor: colors.border }]}
+                >
+                  <Text style={[voiceCardStyles.tagText, { color: colors.mutedForeground }]}>
+                    {tag}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          )}
+        </View>
+      )}
+    </View>
+  );
+}
+
+const voiceCardStyles = StyleSheet.create({
+  card: {
+    width: 110,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    padding: 10,
+    gap: 6,
+  },
+  nameRow: { flexDirection: 'row', alignItems: 'center', gap: 3 },
+  name: { fontSize: 13, fontFamily: 'Inter_600SemiBold', flex: 1 },
+  gender: { fontSize: 11 },
+  accentBadge: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    borderWidth: 1,
+  },
+  accentText: { fontSize: 9, fontFamily: 'Inter_600SemiBold' },
+  playBtn: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
+    alignSelf: 'flex-start',
+    marginTop: 2,
+  },
+  selectedInfo: {
+    borderRadius: 8,
+    borderWidth: 1,
+    padding: 10,
+  },
+  selectedName: { fontSize: 13, fontFamily: 'Inter_600SemiBold' },
+  selectedMeta: { fontSize: 11, fontFamily: 'Inter_400Regular' },
+  tag: {
+    borderRadius: 4,
+    borderWidth: 1,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  tagText: { fontSize: 9, fontFamily: 'Inter_400Regular' },
+});
+
 // ── Playback (single shared player) ─────────────────────────────────────────────
 
 function useSharedAudio() {
@@ -303,7 +532,7 @@ function TTSPanel({
   onGenerated,
   audio,
 }: {
-  voices: { id: string; name: string }[];
+  voices: VoiceEntry[];
   onGenerated: () => void;
   audio: ReturnType<typeof useSharedAudio>;
 }) {
@@ -366,11 +595,11 @@ function TTSPanel({
 
       <View style={styles.field}>
         <FieldLabel>Voice</FieldLabel>
-        <PillPicker
-          options={voices}
-          value={voices.find((v) => v.id === voice) ?? voices[0]}
-          onChange={(v) => setVoice(v.id)}
-          render={(v) => v.name}
+        <VoiceBrowserCard
+          voices={voices}
+          selectedId={voice}
+          onSelect={setVoice}
+          audio={audio}
         />
       </View>
 
@@ -640,7 +869,7 @@ export default function StudioScreen() {
   const isWeb = Platform.OS === 'web';
   const audio = useSharedAudio();
 
-  const [voices, setVoices] = useState<{ id: string; name: string }[]>(FALLBACK_VOICES);
+  const [voices, setVoices] = useState<VoiceEntry[]>(FALLBACK_VOICES);
   const [outputs, setOutputs] = useState<any[]>([]);
   const [loadingOutputs, setLoadingOutputs] = useState(true);
 
@@ -649,9 +878,17 @@ export default function StudioScreen() {
       const r = await mobileFetch(`${API}/studio/voices`);
       if (r.ok) {
         const data = await r.json();
-        const list = (data.voices ?? [])
+        const list: VoiceEntry[] = (data.voices ?? [])
           .filter((v: any) => v.id && v.name)
-          .map((v: any) => ({ id: v.id, name: v.name }));
+          .map((v: any) => ({
+            id:          v.id,
+            name:        v.name,
+            accent:      v.accent,
+            gender:      v.gender,
+            description: v.description,
+            tags:        Array.isArray(v.tags) ? v.tags : [],
+            builtin:     v.builtin ?? false,
+          }));
         if (list.length) setVoices(list);
       }
     } catch {

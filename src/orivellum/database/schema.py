@@ -1306,4 +1306,15 @@ MIGRATIONS: list[tuple[int, str, str]] = [
     (77, "Add web_search_enabled column to conversations", """
         ALTER TABLE conversations ADD COLUMN web_search_enabled INTEGER NOT NULL DEFAULT 0;
     """),
+
+    # v78 — Voice sample cache: paths to pre-generated sample audio per voice
+    (78, "Voice sample cache table", """
+        CREATE TABLE IF NOT EXISTS voice_samples (
+            voice_id    TEXT PRIMARY KEY,
+            sample_path TEXT NOT NULL,
+            engine      TEXT NOT NULL DEFAULT 'kokoro',
+            created_at  TEXT NOT NULL,
+            updated_at  TEXT NOT NULL
+        );
+    """),
 ]

@@ -1,6 +1,6 @@
-import { useRef, useState } from "react";
+import { useRef, useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useListVoices, useListStudioOutputs, useGetSystemHealth, useListLibrary, useListWorks } from "@workspace/api-client-react";
+import { useListStudioOutputs, useListVoices, useListLibrary, useListWorks } from "@workspace/api-client-react";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -24,6 +24,7 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { apiFetch } from "@/lib/auth";
+import { VoiceStudio } from "./VoiceStudio";
 
 const BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
 
@@ -1385,32 +1386,90 @@ function DocumentWorkshopPanel() {
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function Studio() {
+  const [mainTab, setMainTab] = useState<"voice" | "image" | "workshop" | "outputs">("voice");
+
+  const MAIN_TABS = [
+    { id: "voice",    label: "Voice Studio",       icon: Volume2 },
+    { id: "image",    label: "Image Generation",   icon: ImageIcon },
+    { id: "workshop", label: "Document Workshop",  icon: Wand2 },
+    { id: "outputs",  label: "Recent Outputs",     icon: Video },
+  ] as const;
+
   return (
-    <div className="space-y-8 animate-in fade-in duration-500">
-      <div className="flex items-center justify-between border-b border-border/50 pb-4">
+    <div className="flex flex-col animate-in fade-in duration-500" style={{ height: "calc(100vh - 4rem)", minHeight: 0 }}>
+      {/* Page header */}
+      <div className="flex items-center justify-between px-6 py-4 border-b border-border/50 shrink-0">
         <div>
-          <h1 className="text-3xl font-serif font-semibold tracking-tight">Studio</h1>
-          <p className="text-muted-foreground mt-1 font-serif">
-            Voice synthesis, image generation, and media outputs.
+          <h1 className="text-2xl font-serif font-semibold tracking-tight">Studio</h1>
+          <p className="text-sm text-muted-foreground font-serif">
+            Voice narration · Image generation · Document workshop
           </p>
         </div>
-        <Button asChild variant="outline" className="gap-2">
-          <Link href="/system"><Settings2 className="w-4 h-4" /> Engine Settings</Link>
-        </Button>
+        <div className="flex items-center gap-2">
+          <ErrorBoundary label="service status bar">
+            <ServiceStatusBar />
+          </ErrorBoundary>
+          <Button asChild variant="outline" size="sm" className="gap-2 shrink-0">
+            <Link href="/system"><Settings2 className="w-4 h-4" /> Settings</Link>
+          </Button>
+        </div>
       </div>
 
-      <ErrorBoundary label="service status bar"><ServiceStatusBar /></ErrorBoundary>
-
-      <div className="grid lg:grid-cols-2 gap-6">
-        <ErrorBoundary label="TTS panel"><TTSPanel /></ErrorBoundary>
-        <ErrorBoundary label="image generation panel"><ImageGenPanel /></ErrorBoundary>
+      {/* Main tab bar */}
+      <div className="flex items-center gap-0 border-b border-border/50 px-6 shrink-0 bg-muted/20">
+        {MAIN_TABS.map(tab => {
+          const Icon = tab.icon;
+          return (
+            <button
+              key={tab.id}
+              onClick={() => setMainTab(tab.id)}
+              className={`
+                flex items-center gap-1.5 px-4 py-3 text-sm border-b-2 transition-colors whitespace-nowrap
+                ${mainTab === tab.id
+                  ? "border-primary text-primary font-medium"
+                  : "border-transparent text-muted-foreground hover:text-foreground"
+                }
+              `}
+            >
+              <Icon className="w-4 h-4" />
+              {tab.label}
+            </button>
+          );
+        })}
       </div>
 
-      <ErrorBoundary label="audiobook panel"><AudiobookPanel /></ErrorBoundary>
+      {/* Tab content — full height */}
+      <div className="flex-1 overflow-hidden">
+        {mainTab === "voice" && (
+          <ErrorBoundary label="voice studio">
+            <VoiceStudio />
+          </ErrorBoundary>
+        )}
 
-      <ErrorBoundary label="document workshop"><DocumentWorkshopPanel /></ErrorBoundary>
+        {mainTab === "image" && (
+          <ScrollArea className="h-full">
+            <div className="p-6 max-w-3xl mx-auto space-y-6">
+              <ErrorBoundary label="image generation panel"><ImageGenPanel /></ErrorBoundary>
+            </div>
+          </ScrollArea>
+        )}
 
-      <ErrorBoundary label="outputs gallery"><OutputsGallery /></ErrorBoundary>
+        {mainTab === "workshop" && (
+          <ScrollArea className="h-full">
+            <div className="p-6 max-w-3xl mx-auto space-y-6">
+              <ErrorBoundary label="document workshop"><DocumentWorkshopPanel /></ErrorBoundary>
+            </div>
+          </ScrollArea>
+        )}
+
+        {mainTab === "outputs" && (
+          <ScrollArea className="h-full">
+            <div className="p-6 space-y-6">
+              <ErrorBoundary label="outputs gallery"><OutputsGallery /></ErrorBoundary>
+            </div>
+          </ScrollArea>
+        )}
+      </div>
     </div>
   );
 }

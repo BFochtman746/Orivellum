@@ -124,33 +124,1088 @@ def _get_kokoro():
 
 # ── Voices ────────────────────────────────────────────────────────────────────
 
-# Built-in voices: map studio voice IDs → espeak-ng voice strings
+# espeak-ng fallback map (robotic but always available)
 _ESPEAK_VOICE_MAP: dict[str, str] = {
-    "af_heart":  "en+f4",
-    "af_bella":  "en+f1",
-    "am_adam":   "en+m1",
-    "bf_emma":   "en+f2",
-    "bm_george": "en+m3",
+    "af_heart": "en+f4", "af_bella": "en+f1", "af_nova": "en+f3",
+    "af_alloy": "en+f5", "af_sarah": "en+f4", "af_sky": "en+f2",
+    "af_jessica": "en+f3", "af_kore": "en+f4", "af_nicole": "en+f1",
+    "af_aoede": "en+f3", "af_river": "en+f5",
+    "am_adam": "en+m1", "am_echo": "en+m4", "am_eric": "en+m3",
+    "am_fenrir": "en+m5", "am_liam": "en+m2", "am_michael": "en+m1",
+    "am_onyx": "en+m5", "am_puck": "en+m2", "am_santa": "en+m3",
+    "bf_emma": "en+f2", "bf_alice": "en+f3",
+    "bf_isabella": "en+f1", "bf_lily": "en+f2",
+    "bm_george": "en+m3", "bm_daniel": "en+m2", "bm_fable": "en+m4",
+    "bm_lewis": "en+m5",
 }
 
-_BUILTIN_VOICES = [
-    {"id": "af_heart",  "name": "Heart (AF)",   "engine": "kokoro", "builtin": True},
-    {"id": "af_bella",  "name": "Bella (AF)",   "engine": "kokoro", "builtin": True},
-    {"id": "am_adam",   "name": "Adam (AM)",    "engine": "kokoro", "builtin": True},
-    {"id": "bf_emma",   "name": "Emma (BF)",    "engine": "kokoro", "builtin": True},
-    {"id": "bm_george", "name": "George (BM)", "engine": "kokoro", "builtin": True},
+# Standard sample sentence — tests prosody, pacing, and emotional register
+_SAMPLE_SENTENCE = (
+    "In the beginning was the word — and the word carried the weight of all "
+    "things yet to come. We remember not what was written, but how it was spoken."
+)
+
+# ── Full voice catalog with perceptual dimensions ─────────────────────────────
+# Dimensions (1–10 scale):
+#   warmth    — cold/clinical → warm/intimate
+#   authority — soft/gentle → commanding/authoritative
+#   gravitas  — light/bright → heavy/solemn
+#   pace      — fast/urgent → slow/measured (higher = slower)
+#   brightness — dark/rich → bright/clear
+#   age       — youthful → elder
+# Genre tags indicate best-fit content categories.
+_VOICE_CATALOG: list[dict] = [
+    # ── American Female ───────────────────────────────────────────────────────
+    {
+        "id": "af_heart", "name": "Heart", "accent": "american", "gender": "feminine",
+        "description": (
+            "Warm and intimate — feels like a close friend telling a personal story. "
+            "Natural pauses and conversational rhythm that draws listeners in."
+        ),
+        "dimensions": {"warmth": 9, "authority": 5, "gravitas": 4, "pace": 5, "brightness": 7, "age": 5},
+        "tags": ["literary fiction", "memoir", "spiritual", "romance"],
+        "builtin": True, "engine": "kokoro",
+    },
+    {
+        "id": "af_bella", "name": "Bella", "accent": "american", "gender": "feminine",
+        "description": (
+            "Bright and engaging with clear diction. Suits energetic prose "
+            "and stories with forward momentum and optimistic energy."
+        ),
+        "dimensions": {"warmth": 7, "authority": 6, "gravitas": 3, "pace": 7, "brightness": 9, "age": 4},
+        "tags": ["thriller", "young adult", "adventure", "commercial"],
+        "builtin": True, "engine": "kokoro",
+    },
+    {
+        "id": "af_nova", "name": "Nova", "accent": "american", "gender": "feminine",
+        "description": (
+            "Smooth and professional with natural warmth. The go-to for non-fiction, "
+            "documentary narration, and authoritative storytelling."
+        ),
+        "dimensions": {"warmth": 6, "authority": 8, "gravitas": 6, "pace": 5, "brightness": 6, "age": 6},
+        "tags": ["non-fiction", "documentary", "academic", "thriller"],
+        "builtin": False, "engine": "kokoro",
+    },
+    {
+        "id": "af_alloy", "name": "Alloy", "accent": "american", "gender": "feminine",
+        "description": (
+            "Neutral, clean, and precise. Excellent for texts requiring clarity "
+            "above all else — instructional, academic, or technical content."
+        ),
+        "dimensions": {"warmth": 5, "authority": 7, "gravitas": 5, "pace": 6, "brightness": 6, "age": 5},
+        "tags": ["academic", "news", "instructional", "documentary"],
+        "builtin": False, "engine": "kokoro",
+    },
+    {
+        "id": "af_sarah", "name": "Sarah", "accent": "american", "gender": "feminine",
+        "description": (
+            "Natural and unhurried storytelling voice with genuine warmth. "
+            "Sounds like a gifted author reading their own work aloud."
+        ),
+        "dimensions": {"warmth": 8, "authority": 5, "gravitas": 5, "pace": 4, "brightness": 6, "age": 6},
+        "tags": ["literary fiction", "memoir", "spiritual", "romance"],
+        "builtin": False, "engine": "kokoro",
+    },
+    {
+        "id": "af_sky", "name": "Sky", "accent": "american", "gender": "feminine",
+        "description": (
+            "Light and youthful with crystalline clarity. Perfect for whimsical prose "
+            "and stories with an optimistic or magical tone."
+        ),
+        "dimensions": {"warmth": 7, "authority": 3, "gravitas": 2, "pace": 6, "brightness": 10, "age": 2},
+        "tags": ["children", "young adult", "fantasy", "romance"],
+        "builtin": False, "engine": "kokoro",
+    },
+    {
+        "id": "af_jessica", "name": "Jessica", "accent": "american", "gender": "feminine",
+        "description": (
+            "Confident and measured — projects quiet authority without sounding remote. "
+            "Ideal for mystery, suspense, and literary fiction with dark themes."
+        ),
+        "dimensions": {"warmth": 6, "authority": 8, "gravitas": 7, "pace": 4, "brightness": 5, "age": 7},
+        "tags": ["mystery", "literary fiction", "thriller", "historical"],
+        "builtin": False, "engine": "kokoro",
+    },
+    {
+        "id": "af_kore", "name": "Kore", "accent": "american", "gender": "feminine",
+        "description": (
+            "Rich and theatrical with expressive emotional range. "
+            "Handles dramatic peaks, mythological weight, and tense scenes with natural intensity."
+        ),
+        "dimensions": {"warmth": 7, "authority": 7, "gravitas": 7, "pace": 4, "brightness": 6, "age": 6},
+        "tags": ["epic", "literary fiction", "mythology", "drama"],
+        "builtin": False, "engine": "kokoro",
+    },
+    {
+        "id": "af_nicole", "name": "Nicole", "accent": "american", "gender": "feminine",
+        "description": (
+            "Warm and engaging with a natural conversational quality. "
+            "Listeners feel spoken to, not read at — excellent for personal narratives."
+        ),
+        "dimensions": {"warmth": 9, "authority": 4, "gravitas": 4, "pace": 5, "brightness": 7, "age": 5},
+        "tags": ["memoir", "self-help", "romance", "literary fiction"],
+        "builtin": False, "engine": "kokoro",
+    },
+    {
+        "id": "af_aoede", "name": "Aoede", "accent": "american", "gender": "feminine",
+        "description": (
+            "Poetic and expressive with natural musicality — named after the muse of song. "
+            "Suited for language-forward, lyrical, or spiritual prose."
+        ),
+        "dimensions": {"warmth": 8, "authority": 5, "gravitas": 6, "pace": 3, "brightness": 7, "age": 5},
+        "tags": ["literary fiction", "poetry", "spiritual", "mythology"],
+        "builtin": False, "engine": "kokoro",
+    },
+    {
+        "id": "af_river", "name": "River", "accent": "american", "gender": "feminine",
+        "description": (
+            "Calm and unhurried — flows steadily through long passages without losing "
+            "the listener's attention. Perfect for contemplative or meditative content."
+        ),
+        "dimensions": {"warmth": 7, "authority": 5, "gravitas": 6, "pace": 3, "brightness": 5, "age": 6},
+        "tags": ["meditation", "spiritual", "literary fiction", "nature"],
+        "builtin": False, "engine": "kokoro",
+    },
+    # ── American Male ─────────────────────────────────────────────────────────
+    {
+        "id": "am_adam", "name": "Adam", "accent": "american", "gender": "masculine",
+        "description": (
+            "Deep and authoritative with natural gravitas. The voice of a historian, "
+            "a prophet, or a general — serious, commanding, and completely trustworthy."
+        ),
+        "dimensions": {"warmth": 5, "authority": 9, "gravitas": 8, "pace": 4, "brightness": 3, "age": 7},
+        "tags": ["epic", "historical", "thriller", "non-fiction", "spiritual"],
+        "builtin": True, "engine": "kokoro",
+    },
+    {
+        "id": "am_echo", "name": "Echo", "accent": "american", "gender": "masculine",
+        "description": (
+            "Broadcast-quality clarity with neutral authority. Clean, dependable, "
+            "and never intrusive — the professional narrator."
+        ),
+        "dimensions": {"warmth": 5, "authority": 8, "gravitas": 6, "pace": 5, "brightness": 5, "age": 6},
+        "tags": ["non-fiction", "documentary", "news", "academic"],
+        "builtin": False, "engine": "kokoro",
+    },
+    {
+        "id": "am_eric", "name": "Eric", "accent": "american", "gender": "masculine",
+        "description": (
+            "Warm and conversational with a natural storytelling cadence. "
+            "Approachable authority — thinks out loud in a way that sounds genuine."
+        ),
+        "dimensions": {"warmth": 8, "authority": 6, "gravitas": 5, "pace": 5, "brightness": 5, "age": 5},
+        "tags": ["memoir", "literary fiction", "thriller", "self-help"],
+        "builtin": False, "engine": "kokoro",
+    },
+    {
+        "id": "am_fenrir", "name": "Fenrir", "accent": "american", "gender": "masculine",
+        "description": (
+            "Deeply resonant with dramatic gravitas — named after the great wolf. "
+            "Powerful, ancient, and absolutely commanding. Best for mythological or epic material."
+        ),
+        "dimensions": {"warmth": 3, "authority": 10, "gravitas": 10, "pace": 3, "brightness": 1, "age": 9},
+        "tags": ["epic", "mythology", "thriller", "horror", "spiritual"],
+        "builtin": False, "engine": "kokoro",
+    },
+    {
+        "id": "am_liam", "name": "Liam", "accent": "american", "gender": "masculine",
+        "description": (
+            "Youthful and energetic — narrates with forward momentum and genuine "
+            "enthusiasm for the story. Ideal for adventure and action-driven prose."
+        ),
+        "dimensions": {"warmth": 7, "authority": 4, "gravitas": 2, "pace": 8, "brightness": 7, "age": 2},
+        "tags": ["young adult", "adventure", "thriller", "science fiction"],
+        "builtin": False, "engine": "kokoro",
+    },
+    {
+        "id": "am_michael", "name": "Michael", "accent": "american", "gender": "masculine",
+        "description": (
+            "Authoritative and neutral — sounds like a seasoned professional. "
+            "Clear pronunciation, consistent pacing, never draws attention to itself."
+        ),
+        "dimensions": {"warmth": 5, "authority": 8, "gravitas": 7, "pace": 5, "brightness": 4, "age": 7},
+        "tags": ["non-fiction", "historical", "documentary", "academic"],
+        "builtin": False, "engine": "kokoro",
+    },
+    {
+        "id": "am_onyx", "name": "Onyx", "accent": "american", "gender": "masculine",
+        "description": (
+            "Deep, rich, and powerful — the richest bass register in the catalog. "
+            "Commands attention the moment it speaks. Built for gravitas."
+        ),
+        "dimensions": {"warmth": 4, "authority": 10, "gravitas": 10, "pace": 3, "brightness": 1, "age": 8},
+        "tags": ["epic", "thriller", "historical", "mystery", "spiritual"],
+        "builtin": False, "engine": "kokoro",
+    },
+    {
+        "id": "am_puck", "name": "Puck", "accent": "american", "gender": "masculine",
+        "description": (
+            "Energetic and playful with surprising depth — moves between comedy "
+            "and earnestness naturally. Perfect for young adult, adventure, and wit-driven stories."
+        ),
+        "dimensions": {"warmth": 8, "authority": 4, "gravitas": 3, "pace": 7, "brightness": 8, "age": 3},
+        "tags": ["young adult", "adventure", "comedy", "fantasy"],
+        "builtin": False, "engine": "kokoro",
+    },
+    # ── British Female ────────────────────────────────────────────────────────
+    {
+        "id": "bf_emma", "name": "Emma", "accent": "british", "gender": "feminine",
+        "description": (
+            "Refined, authoritative, and precise — the literary narrator par excellence. "
+            "Crisp vowels and measured delivery give every sentence weight."
+        ),
+        "dimensions": {"warmth": 6, "authority": 8, "gravitas": 7, "pace": 4, "brightness": 5, "age": 6},
+        "tags": ["literary fiction", "historical", "mystery", "non-fiction"],
+        "builtin": True, "engine": "kokoro",
+    },
+    {
+        "id": "bf_alice", "name": "Alice", "accent": "british", "gender": "feminine",
+        "description": (
+            "Clear, crisp, and professional — cuts through complex text with "
+            "effortless legibility. Trusted, dependable, never theatrical."
+        ),
+        "dimensions": {"warmth": 5, "authority": 8, "gravitas": 6, "pace": 5, "brightness": 7, "age": 5},
+        "tags": ["academic", "documentary", "historical", "mystery"],
+        "builtin": False, "engine": "kokoro",
+    },
+    {
+        "id": "am_santa", "name": "Santa", "accent": "american", "gender": "masculine",
+        "description": (
+            "Jovial and rich with natural warmth — commanding without sternness. "
+            "Suited for celebratory, family, and feel-good storytelling."
+        ),
+        "dimensions": {"warmth": 10, "authority": 6, "gravitas": 4, "pace": 4, "brightness": 6, "age": 9},
+        "tags": ["children", "family", "holiday", "feel-good"],
+        "builtin": False, "engine": "kokoro",
+    },
+    {
+        "id": "bf_isabella", "name": "Isabella", "accent": "british", "gender": "feminine",
+        "description": (
+            "Warm and sophisticated — warmth contained within elegance. "
+            "Brings aristocratic grace to lyrical prose without coldness."
+        ),
+        "dimensions": {"warmth": 8, "authority": 6, "gravitas": 6, "pace": 4, "brightness": 6, "age": 6},
+        "tags": ["literary fiction", "romance", "historical", "memoir"],
+        "builtin": False, "engine": "kokoro",
+    },
+    {
+        "id": "bf_lily", "name": "Lily", "accent": "british", "gender": "feminine",
+        "description": (
+            "Bright and charming with crystal-clear diction. Brings warmth and light "
+            "to stories without losing credibility — ideal for uplifting content."
+        ),
+        "dimensions": {"warmth": 8, "authority": 4, "gravitas": 3, "pace": 6, "brightness": 9, "age": 3},
+        "tags": ["children", "young adult", "romance", "comedy"],
+        "builtin": False, "engine": "kokoro",
+    },
+    # ── British Male ──────────────────────────────────────────────────────────
+    {
+        "id": "bm_george", "name": "George", "accent": "british", "gender": "masculine",
+        "description": (
+            "Deep, distinguished, and authoritative. The voice of a scholar who has "
+            "lived every page — measured, resonant, completely trustworthy."
+        ),
+        "dimensions": {"warmth": 6, "authority": 9, "gravitas": 9, "pace": 3, "brightness": 3, "age": 8},
+        "tags": ["historical", "literary fiction", "epic", "spiritual", "non-fiction"],
+        "builtin": True, "engine": "kokoro",
+    },
+    {
+        "id": "bm_daniel", "name": "Daniel", "accent": "british", "gender": "masculine",
+        "description": (
+            "Warm and storytelling-focused with natural, unhurried quality. "
+            "Sounds like someone who genuinely loves the story they are telling."
+        ),
+        "dimensions": {"warmth": 8, "authority": 6, "gravitas": 7, "pace": 4, "brightness": 4, "age": 6},
+        "tags": ["literary fiction", "memoir", "mystery", "historical"],
+        "builtin": False, "engine": "kokoro",
+    },
+    {
+        "id": "bm_fable", "name": "Fable", "accent": "british", "gender": "masculine",
+        "description": (
+            "Theatrical and expressive — built for dramatic stories. Handles character "
+            "voices, emotional peaks, and mythological tension with natural skill."
+        ),
+        "dimensions": {"warmth": 6, "authority": 7, "gravitas": 8, "pace": 4, "brightness": 5, "age": 7},
+        "tags": ["epic", "mythology", "literary fiction", "fantasy", "drama"],
+        "builtin": False, "engine": "kokoro",
+    },
+    {
+        "id": "bm_lewis", "name": "Lewis", "accent": "british", "gender": "masculine",
+        "description": (
+            "Clear, professional, and confident. Brings intellectual authority "
+            "to dense text without sounding stiff — ideal for non-fiction."
+        ),
+        "dimensions": {"warmth": 5, "authority": 8, "gravitas": 7, "pace": 5, "brightness": 5, "age": 6},
+        "tags": ["non-fiction", "academic", "historical", "documentary"],
+        "builtin": False, "engine": "kokoro",
+    },
 ]
+
+# Index by ID for fast lookup
+_VOICE_BY_ID: dict[str, dict] = {v["id"]: v for v in _VOICE_CATALOG}
+
+# All known Kokoro voice IDs (for synthesis routing)
+_ALL_KOKORO_IDS: set[str] = {v["id"] for v in _VOICE_CATALOG}
+
+# Guaranteed-working builtin IDs (tested in CI)
+_BUILTIN_IDS: set[str] = {v["id"] for v in _VOICE_CATALOG if v.get("builtin")}
+
+
+def _resolve_kokoro_voice(voice_id: str) -> str:
+    """Return the best Kokoro voice ID — falls back to af_heart if unknown."""
+    if voice_id in _ALL_KOKORO_IDS:
+        return voice_id
+    return "af_heart"
+
+
+# ── ACX audio mastering ───────────────────────────────────────────────────────
+
+def _apply_acx_mastering(input_path: str, output_path: str) -> bool:
+    """Apply ACX-compliant loudness normalization via ffmpeg loudnorm.
+
+    Targets: -20 LUFS integrated loudness (within ACX window -18 to -23 dBRMS),
+    true peak ceiling -3 dBTP, LRA 7 LU.  Outputs 192 kbps joint-stereo MP3
+    at 44.1 kHz — meeting ACX technical requirements.
+
+    Returns True on success, False on failure (caller should use raw file instead).
+    """
+    try:
+        result = subprocess.run(
+            [
+                "ffmpeg", "-y", "-i", input_path,
+                "-af", "loudnorm=I=-20:TP=-3:LRA=7:print_format=none",
+                "-codec:a", "libmp3lame", "-b:a", "192k",
+                "-ar", "44100", "-ac", "2",
+                output_path,
+            ],
+            capture_output=True, timeout=300,
+        )
+        return result.returncode == 0
+    except Exception as exc:
+        logger.warning("ACX mastering failed (%s)", exc)
+        return False
 
 
 @router.get("/studio/voices")
 def list_voices():
+    """Return the full voice catalog plus any custom voice profiles."""
     db = get_db()
     with db._lock:
         rows = db._conn.execute(
             "SELECT * FROM voice_profiles ORDER BY is_default DESC, name"
         ).fetchall()
     profiles = [dict(r) for r in rows]
-    return {"voices": profiles + _BUILTIN_VOICES, "profile_count": len(profiles)}
+    # Mark custom profiles and add missing catalog fields
+    for p in profiles:
+        p.setdefault("accent", "custom")
+        p.setdefault("gender", "unknown")
+        p.setdefault("description", p.get("name", "Custom voice"))
+        p.setdefault("dimensions", {})
+        p.setdefault("tags", [])
+        p["builtin"] = False
+        p["custom"] = True
+
+    return {
+        "voices": _VOICE_CATALOG + profiles,
+        "catalog_count": len(_VOICE_CATALOG),
+        "profile_count": len(profiles),
+    }
+
+
+# ── Voice sample generation and caching ───────────────────────────────────────
+
+def _get_sample_cache_path(cfg, voice_id: str) -> Path:
+    p = Path(cfg.data_dir) / "voice_samples"
+    p.mkdir(parents=True, exist_ok=True)
+    return p / f"{voice_id}.mp3"
+
+
+def _upsert_voice_sample_db(db, voice_id: str, sample_path: str, engine: str) -> None:
+    """Upsert a voice_samples row — records which file backs this voice's sample."""
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
+    with db._lock:
+        db._conn.execute(
+            """INSERT INTO voice_samples (voice_id, sample_path, engine, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT(voice_id) DO UPDATE SET
+                   sample_path=excluded.sample_path,
+                   engine=excluded.engine,
+                   updated_at=excluded.updated_at""",
+            (voice_id, sample_path, engine, now, now),
+        )
+        db._conn.commit()
+
+
+def _lookup_voice_sample_db(db, voice_id: str) -> str | None:
+    """Return the cached sample_path for *voice_id*, or None if not recorded."""
+    with db._lock:
+        row = db._conn.execute(
+            "SELECT sample_path FROM voice_samples WHERE voice_id=?",
+            (voice_id,),
+        ).fetchone()
+    return row["sample_path"] if row else None
+
+
+def _synthesize_sample_sync(voice_id: str) -> Path | None:
+    """Generate a sample MP3 for *voice_id* using the best available engine.
+
+    Checks the voice_samples DB table first, then the file cache.
+    On successful generation writes the result to both the file system
+    and the voice_samples table so subsequent calls skip synthesis.
+
+    Returns the file Path on success, None on failure.  Always synchronous —
+    call inside a thread when needed from async routes.
+    """
+    from orivellum.api._deps import get_config as _cfg
+    cfg = _cfg()
+    db  = get_db()
+
+    # ── DB-backed cache check ────────────────────────────────────────────────
+    cached_path = _lookup_voice_sample_db(db, voice_id)
+    if cached_path:
+        p = Path(cached_path)
+        if p.exists() and p.stat().st_size > 1000:
+            return p
+        # Stale DB row — file was rotated away; fall through to re-generate
+
+    # ── File-based fallback check (pre-DB entries) ────────────────────────────
+    out_path = _get_sample_cache_path(cfg, voice_id)
+    if out_path.exists() and out_path.stat().st_size > 1000:
+        # Backfill the DB row for this already-generated file
+        _upsert_voice_sample_db(db, voice_id, str(out_path), "kokoro")
+        return out_path
+
+    # ── Generate ──────────────────────────────────────────────────────────────
+    tmp_wav = out_path.with_suffix(".tmp.wav")
+    engine_used = "espeak"
+    try:
+        # Strategy 1: Kokoro ONNX
+        kokoro = _get_kokoro()
+        if kokoro is not None:
+            try:
+                import soundfile as sf
+                samples, sr = kokoro.create(
+                    _SAMPLE_SENTENCE,
+                    voice=_resolve_kokoro_voice(voice_id),
+                    speed=1.0, lang="en-us",
+                )
+                sf.write(str(tmp_wav), samples, sr)
+                result = subprocess.run(
+                    ["ffmpeg", "-y", "-i", str(tmp_wav),
+                     "-af", "loudnorm=I=-20:TP=-3:LRA=7:print_format=none",
+                     "-codec:a", "libmp3lame", "-b:a", "128k",
+                     str(out_path)],
+                    capture_output=True, timeout=60,
+                )
+                if result.returncode == 0:
+                    engine_used = "kokoro"
+                    _upsert_voice_sample_db(db, voice_id, str(out_path), engine_used)
+                    return out_path
+            except Exception as exc:
+                logger.debug("Kokoro sample gen failed for %s: %s", voice_id, exc)
+
+        # Strategy 2: espeak-ng
+        espeak_v = _ESPEAK_VOICE_MAP.get(voice_id, "en+m3")
+        r = subprocess.run(
+            ["espeak-ng", "-v", espeak_v, "-w", str(tmp_wav), _SAMPLE_SENTENCE],
+            capture_output=True, timeout=30,
+        )
+        if r.returncode == 0:
+            ff = subprocess.run(
+                ["ffmpeg", "-y", "-i", str(tmp_wav),
+                 "-codec:a", "libmp3lame", "-b:a", "128k", str(out_path)],
+                capture_output=True, timeout=30,
+            )
+            if ff.returncode == 0:
+                _upsert_voice_sample_db(db, voice_id, str(out_path), engine_used)
+                return out_path
+    except Exception as exc:
+        logger.warning("Sample generation failed for %s: %s", voice_id, exc)
+    finally:
+        tmp_wav.unlink(missing_ok=True)
+
+    return None
+
+
+@router.get("/studio/voices/{voice_id}/sample")
+async def get_voice_sample(voice_id: str):
+    """Return a cached MP3 sample for *voice_id*, generating it on first call.
+
+    Cache hierarchy:
+      1. voice_samples DB row → file path (fast lookup, survives restarts)
+      2. Deterministic file path in data/voice_samples/ (pre-DB back-compat)
+      3. Generate on-demand via Kokoro ONNX → espeak-ng fallback
+    """
+    if voice_id not in _VOICE_BY_ID:
+        raise HTTPException(404, f"Unknown voice: {voice_id!r}")
+
+    # Quick DB lookup before spawning a thread
+    db = get_db()
+    cached_path = await asyncio.to_thread(_lookup_voice_sample_db, db, voice_id)
+    if cached_path:
+        p = Path(cached_path)
+        if p.exists() and p.stat().st_size > 1000:
+            return FileResponse(str(p), media_type="audio/mpeg",
+                                filename=f"sample_{voice_id}.mp3",
+                                headers={"Cache-Control": "public, max-age=86400"})
+
+    # Generate (also writes to DB on success)
+    result = await asyncio.to_thread(_synthesize_sample_sync, voice_id)
+    if result is None:
+        raise HTTPException(503, "Could not generate voice sample — TTS backend unavailable")
+
+    return FileResponse(str(result), media_type="audio/mpeg",
+                        filename=f"sample_{voice_id}.mp3",
+                        headers={"Cache-Control": "public, max-age=86400"})
+
+
+# ── AI Narrator Recommender ────────────────────────────────────────────────────
+
+class VoiceRecommendRequest(BaseModel):
+    work_id: str
+    top_n: int = 5  # number of recommendations to return
+
+
+def _build_voice_catalog_summary() -> str:
+    lines = []
+    for v in _VOICE_CATALOG:
+        d = v["dimensions"]
+        lines.append(
+            f"  {v['id']} | {v['name']} ({v['accent']} {v['gender']}) | "
+            f"warmth={d['warmth']} authority={d['authority']} gravitas={d['gravitas']} "
+            f"pace={d['pace']} brightness={d['brightness']} age={d['age']} | "
+            f"tags={','.join(v['tags'][:3])}"
+        )
+    return "\n".join(lines)
+
+
+@router.post("/studio/voices/recommend")
+async def recommend_voices(body: VoiceRecommendRequest):
+    """Analyze a Work and recommend the best narrator voices using the LLM."""
+    from starlette.concurrency import run_in_threadpool
+    from orivellum.capabilities.llm import llm_call
+
+    db  = get_db()
+    cfg = get_config()
+
+    # ── Fetch work context ─────────────────────────────────────────────────────
+    with db._lock:
+        work_row = db._conn.execute(
+            "SELECT id, title, work_type, description FROM works WHERE id=?",
+            (body.work_id,),
+        ).fetchone()
+    if not work_row:
+        raise HTTPException(404, f"Work {body.work_id!r} not found")
+
+    work = dict(work_row)
+    work_title = work.get("title") or "Untitled"
+    work_desc  = work.get("description") or ""
+
+    # Fetch top knowledge items for richer context
+    with db._lock:
+        ki_rows = db._conn.execute(
+            """SELECT ki.title, ki.content FROM knowledge_items ki
+               JOIN objects o ON o.id = ki.id
+               WHERE ki.work_id=? AND ki.review_status != 'rejected'
+               ORDER BY o.created_at DESC LIMIT 12""",
+            (body.work_id,),
+        ).fetchall()
+        # Fetch a sample of text chunks from work documents
+        chunk_rows = db._conn.execute(
+            """SELECT c.text FROM chunks c
+               JOIN documents d ON d.id = c.doc_id
+               WHERE d.work_id=? ORDER BY d.rowid, c.page LIMIT 8""",
+            (body.work_id,),
+        ).fetchall()
+
+    knowledge_text = "\n".join(
+        f"- {r['title']}: {(r['content'] or '')[:200]}" for r in ki_rows
+    ) or "(no knowledge items yet)"
+
+    sample_text = " ".join(r["text"][:300] for r in chunk_rows)[:800] or "(no document text)"
+
+    voice_table = _build_voice_catalog_summary()
+
+    system_prompt = (
+        "You are an expert audiobook casting director with 20 years of experience. "
+        "Your job is to analyze a written work and recommend the best narrator voices "
+        "based on the genre, tone, emotional register, narrative distance, and intended audience. "
+        "You always return valid JSON and nothing else."
+    )
+
+    user_prompt = f"""Analyze this work and recommend the {body.top_n} best narrator voices from the catalog below.
+
+## Work
+Title: {work_title}
+Type: {work.get('work_type', 'unknown')}
+Description: {work_desc or '(no description)'}
+
+## Sample Knowledge Items
+{knowledge_text}
+
+## Sample Text From the Book
+{sample_text}
+
+## Available Voice Catalog
+Format: voice_id | name (accent gender) | warmth=N authority=N gravitas=N pace=N brightness=N age=N | tags
+(All dimensions 1–10: warmth=intimate warmth; authority=command; gravitas=weight/solemnity; pace=slowness; brightness=clarity; age=perceived elder quality)
+{voice_table}
+
+## Your Task
+Return a JSON object with this exact structure. No other text, just JSON:
+{{
+  "genre_analysis": "2-3 sentences on the work's genre, tone, and narrative style",
+  "narrator_profile": "Describe the ideal narrator in 2-3 sentences (warmth/authority/gravitas/pace needed)",
+  "recommendations": [
+    {{
+      "voice_id": "the_voice_id",
+      "score": 92,
+      "headline": "One punchy sentence on why this voice suits the work",
+      "rationale": "2-3 sentences explaining the match in detail",
+      "dimension_match": "Which specific dimensions align perfectly"
+    }}
+  ]
+}}
+
+Return exactly {body.top_n} recommendations, ranked best first."""
+
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user",   "content": user_prompt},
+    ]
+
+    result = await run_in_threadpool(
+        llm_call, messages,
+        base_url=cfg.serving.base_url,
+        model=cfg.serving.workhorse_model,
+        timeout=45.0,
+        purpose="studio.voice_recommend",
+        db=db,
+        temperature=0.3,
+        max_tokens=1200,
+    )
+
+    if not result.ok or not result.text:
+        # Deterministic fallback — score by genre tag overlap
+        return _fallback_recommendation(work_title, body.top_n)
+
+    # Parse JSON response
+    try:
+        import json as _json
+        raw = result.text.strip()
+        # Strip markdown code fences if present
+        if raw.startswith("```"):
+            raw = re.sub(r"^```[a-z]*\n?", "", raw).rstrip("` \n")
+        data = _json.loads(raw)
+        recs = data.get("recommendations", [])
+        # Validate and enrich each recommendation
+        enriched = []
+        for r in recs[:body.top_n]:
+            vid = r.get("voice_id", "")
+            if vid not in _VOICE_BY_ID:
+                continue
+            voice = _VOICE_BY_ID[vid]
+            enriched.append({
+                **r,
+                "voice": voice,
+            })
+        return {
+            "work_id": body.work_id,
+            "work_title": work_title,
+            "genre_analysis": data.get("genre_analysis", ""),
+            "narrator_profile": data.get("narrator_profile", ""),
+            "recommendations": enriched,
+        }
+    except Exception as exc:
+        logger.warning("Voice recommend JSON parse failed: %s", exc)
+        return _fallback_recommendation(work_title, body.top_n)
+
+
+def _fallback_recommendation(work_title: str, top_n: int) -> dict:
+    """Return sensible defaults when the LLM is unavailable."""
+    defaults = ["bm_george", "am_puck", "af_sarah", "bf_emma", "am_adam"]
+    recs = []
+    for vid in defaults[:top_n]:
+        if vid in _VOICE_BY_ID:
+            v = _VOICE_BY_ID[vid]
+            recs.append({
+                "voice_id": vid,
+                "score": 80,
+                "headline": f"{v['name']} suits a wide range of narrative content",
+                "rationale": v["description"],
+                "dimension_match": "Well-rounded dimensions suitable for most audiobook narration",
+                "voice": v,
+            })
+    return {
+        "work_id": "",
+        "work_title": work_title,
+        "genre_analysis": "AI analysis unavailable — showing curated defaults",
+        "narrator_profile": "Well-rounded narrator voices that suit most content",
+        "recommendations": recs,
+    }
+
+
+# ── Voice Designer ─────────────────────────────────────────────────────────────
+
+class VoiceDesignRequest(BaseModel):
+    description: str  # e.g. "deep, ancient male voice with gravitas and reverence"
+
+
+@router.post("/studio/voices/design")
+async def design_voice(body: VoiceDesignRequest):
+    """Map a natural-language narrator description to the closest catalog voices."""
+    import math
+    from starlette.concurrency import run_in_threadpool
+    from orivellum.capabilities.llm import llm_call
+
+    if not body.description.strip():
+        raise HTTPException(400, "description must not be empty")
+    if len(body.description) > 500:
+        raise HTTPException(400, "description too long (max 500 chars)")
+
+    cfg = get_config()
+    db  = get_db()
+
+    voice_table = _build_voice_catalog_summary()
+
+    system_prompt = (
+        "You are a voice casting assistant. Map the user's narrator description to "
+        "dimension scores, then identify the best matching voice from the catalog. "
+        "Always respond with valid JSON only — no other text."
+    )
+    user_prompt = f"""The user wants this narrator voice: "{body.description}"
+
+Available voices:
+{voice_table}
+
+Step 1 — Score what the user is describing (1–10 each):
+  warmth, authority, gravitas, pace, brightness, age
+
+Step 2 — Find the 3 best matching voice IDs (closest to those scores).
+
+Return this JSON structure exactly:
+{{
+  "target_dimensions": {{"warmth": N, "authority": N, "gravitas": N, "pace": N, "brightness": N, "age": N}},
+  "interpretation": "1-2 sentences on how you interpreted the description",
+  "matches": [
+    {{
+      "voice_id": "voice_id_here",
+      "match_score": 94,
+      "why": "1-2 sentences on the dimensional alignment"
+    }}
+  ]
+}}"""
+
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user",   "content": user_prompt},
+    ]
+
+    result = await run_in_threadpool(
+        llm_call, messages,
+        base_url=cfg.serving.base_url,
+        model=cfg.serving.workhorse_model,
+        timeout=30.0,
+        purpose="studio.voice_design",
+        db=db,
+        temperature=0.2,
+        max_tokens=500,
+    )
+
+    if result.ok and result.text:
+        try:
+            import json as _json
+            raw = result.text.strip()
+            if raw.startswith("```"):
+                raw = re.sub(r"^```[a-z]*\n?", "", raw).rstrip("` \n")
+            data = _json.loads(raw)
+            matches = []
+            for m in (data.get("matches") or [])[:3]:
+                vid = m.get("voice_id", "")
+                if vid in _VOICE_BY_ID:
+                    matches.append({**m, "voice": _VOICE_BY_ID[vid]})
+            return {
+                "description": body.description,
+                "target_dimensions": data.get("target_dimensions", {}),
+                "interpretation": data.get("interpretation", ""),
+                "matches": matches,
+            }
+        except Exception as exc:
+            logger.warning("Voice design parse failed: %s", exc)
+
+    # Fallback: simple keyword scoring without LLM
+    desc_lower = body.description.lower()
+
+    def _keyword_score(voice: dict) -> float:
+        d = voice["dimensions"]
+        score = 0.0
+        # Warmth keywords
+        if any(w in desc_lower for w in ("warm", "intimate", "personal", "friendly")):
+            score += d["warmth"]
+        # Authority keywords
+        if any(w in desc_lower for w in ("authority", "command", "authoritative", "strong", "powerful")):
+            score += d["authority"]
+        # Gravitas keywords
+        if any(w in desc_lower for w in ("gravitas", "solemn", "serious", "weight", "deep", "ancient", "prophet", "biblical")):
+            score += d["gravitas"]
+        # Age/wisdom keywords
+        if any(w in desc_lower for w in ("old", "elder", "wise", "ancient", "mature", "seasoned")):
+            score += d["age"]
+        # Gender keywords
+        if any(w in desc_lower for w in ("male", "man", "masculine")) and voice["gender"] == "masculine":
+            score += 5
+        if any(w in desc_lower for w in ("female", "woman", "feminine")) and voice["gender"] == "feminine":
+            score += 5
+        # Accent keywords
+        if any(w in desc_lower for w in ("british", "english", "uk")) and voice["accent"] == "british":
+            score += 4
+        if any(w in desc_lower for w in ("american", "us")) and voice["accent"] == "american":
+            score += 4
+        return score
+
+    ranked = sorted(_VOICE_CATALOG, key=_keyword_score, reverse=True)[:3]
+    matches = [
+        {
+            "voice_id": v["id"],
+            "match_score": 75,
+            "why": v["description"],
+            "voice": v,
+        }
+        for v in ranked
+    ]
+    return {
+        "description": body.description,
+        "target_dimensions": {},
+        "interpretation": "Matched using keyword analysis (AI service unavailable)",
+        "matches": matches,
+    }
+
+
+# ── Work-level audiobook generation ──────────────────────────────────────────
+
+class WorkAudiobookRequest(BaseModel):
+    work_id: str
+    voice: str = "bm_george"
+    speed: float = 1.0
+    include_credits: bool = True   # opening + closing ACX-style credits
+    acx_mastering: bool = True     # apply loudnorm ACX mastering
+    return_url: bool = False       # for mobile: return JSON path instead of FileResponse
+
+
+@router.post("/studio/tts/work")
+def synthesize_work_audiobook(body: WorkAudiobookRequest):
+    """Generate a full audiobook MP3 from all documents in a Work.
+
+    Produces a single concatenated MP3 with optional opening/closing credits
+    and ACX-compliant loudness mastering.
+    """
+    db  = get_db()
+    cfg = get_config()
+
+    # ── Validate work ──────────────────────────────────────────────────────────
+    with db._lock:
+        work_row = db._conn.execute(
+            "SELECT id, title FROM works WHERE id=?", (body.work_id,)
+        ).fetchone()
+    if not work_row:
+        raise HTTPException(404, f"Work {body.work_id!r} not found")
+
+    work_title = work_row["title"] or "Untitled Work"
+    voice_meta = _VOICE_BY_ID.get(body.voice, {})
+    voice_name = voice_meta.get("name", body.voice)
+
+    # ── Fetch all ready documents in work order ────────────────────────────────
+    with db._lock:
+        doc_rows = db._conn.execute(
+            """SELECT d.id, d.title, d.source
+               FROM documents d JOIN objects o ON o.id = d.id
+               WHERE d.work_id=? AND d.readiness='ready'
+               ORDER BY o.created_at""",
+            (body.work_id,),
+        ).fetchall()
+
+    if not doc_rows:
+        raise HTTPException(422, "No ready documents found in this Work. "
+                                 "Process documents in the Library first.")
+
+    # ── Fetch text chunks per document ─────────────────────────────────────────
+    doc_texts: list[tuple[str, str]] = []  # (title, full_text)
+    with db._lock:
+        for doc in doc_rows:
+            chunks = db._conn.execute(
+                "SELECT text FROM chunks WHERE doc_id=? ORDER BY page, rowid",
+                (doc["id"],),
+            ).fetchall()
+            if chunks:
+                text = "\n\n".join(r["text"] for r in chunks)
+                doc_title = doc["title"] or doc["source"].split("/")[-1] if doc["source"] else "Chapter"
+                doc_texts.append((doc_title, text))
+
+    if not doc_texts:
+        raise HTTPException(422, "No extracted text found in any document of this Work.")
+
+    out_dir = Path(cfg.data_dir) / "outputs"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    tmp_dir = Path(tempfile.mkdtemp())
+
+    voice_id    = _resolve_kokoro_voice(body.voice)
+    espeak_v    = _ESPEAK_VOICE_MAP.get(body.voice, "en+m3")
+    wpm         = max(80, min(400, int(175 * body.speed)))
+    kokoro_eng  = _get_kokoro()
+
+    try:
+        import soundfile as _sf
+    except ImportError:
+        _sf = None  # type: ignore[assignment]
+
+    wav_parts: list[Path] = []
+
+    def _synth_segment(text: str, idx: int) -> Path | None:
+        """Synthesise one text segment to WAV, returning the path or None."""
+        wav = tmp_dir / f"seg_{idx:06d}.wav"
+        # Strategy 1: Kokoro
+        if kokoro_eng is not None and _sf is not None:
+            try:
+                samples, sr = kokoro_eng.create(text, voice=voice_id, speed=body.speed, lang="en-us")
+                _sf.write(str(wav), samples, sr)
+                return wav
+            except Exception as ke:
+                logger.debug("Kokoro seg %d: %s", idx, ke)
+        # Strategy 2: espeak-ng
+        try:
+            r = subprocess.run(
+                ["espeak-ng", "-v", espeak_v, "-s", str(wpm), "-w", str(wav), text],
+                capture_output=True, timeout=120,
+            )
+            if r.returncode == 0:
+                return wav
+        except Exception as ee:
+            logger.debug("espeak seg %d: %s", idx, ee)
+        return None
+
+    try:
+        seg_idx = 0
+
+        # ── Opening credits ────────────────────────────────────────────────────
+        if body.include_credits:
+            credits_text = (
+                f"{work_title}. Narrated by {voice_name}. "
+                "This is an AI-generated audiobook produced with Orivellum."
+            )
+            p = _synth_segment(credits_text, seg_idx)
+            if p:
+                wav_parts.append(p)
+                seg_idx += 1
+            # 1-second silence between credits and content
+            sil = tmp_dir / f"seg_{seg_idx:06d}.wav"
+            subprocess.run(
+                ["ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=22050:cl=mono",
+                 "-t", "1", str(sil)],
+                capture_output=True, timeout=10,
+            )
+            if sil.exists():
+                wav_parts.append(sil)
+                seg_idx += 1
+
+        # ── Document chapters ──────────────────────────────────────────────────
+        for doc_title, doc_text in doc_texts:
+            # Chapter header announcement
+            chapter_intro = _synth_segment(doc_title + ".", seg_idx)
+            if chapter_intro:
+                wav_parts.append(chapter_intro)
+                seg_idx += 1
+
+            # Segment the document text
+            segments = _split_text_into_segments(doc_text)[:60]
+            for seg_text in segments:
+                p = _synth_segment(seg_text, seg_idx)
+                if p:
+                    wav_parts.append(p)
+                    seg_idx += 1
+
+            # Short silence between chapters
+            sil = tmp_dir / f"seg_{seg_idx:06d}.wav"
+            subprocess.run(
+                ["ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=22050:cl=mono",
+                 "-t", "1.5", str(sil)],
+                capture_output=True, timeout=10,
+            )
+            if sil.exists():
+                wav_parts.append(sil)
+                seg_idx += 1
+
+        # ── Closing credits ────────────────────────────────────────────────────
+        if body.include_credits:
+            closing = (
+                f"You have been listening to {work_title}. "
+                f"Narrated by {voice_name}. The end."
+            )
+            p = _synth_segment(closing, seg_idx)
+            if p:
+                wav_parts.append(p)
+
+        if not wav_parts:
+            raise RuntimeError("No audio segments were generated")
+
+        # ── Concatenate all WAVs ───────────────────────────────────────────────
+        safe_title = re.sub(r"[^\w\-]", "_", work_title)[:50]
+        raw_mp3    = out_dir / f"{safe_title}_{uuid.uuid4().hex[:6]}_raw.mp3"
+        final_mp3  = out_dir / f"{safe_title}_{uuid.uuid4().hex[:6]}.mp3"
+
+        concat_list = tmp_dir / "concat.txt"
+        concat_list.write_text(
+            "\n".join(f"file '{p}'" for p in wav_parts), encoding="utf-8"
+        )
+
+        ff = subprocess.run(
+            ["ffmpeg", "-y", "-f", "concat", "-safe", "0",
+             "-i", str(concat_list),
+             "-codec:a", "libmp3lame", "-q:a", "2",
+             str(raw_mp3)],
+            capture_output=True, timeout=600,
+        )
+        if ff.returncode != 0:
+            raise RuntimeError(f"ffmpeg concat failed: {ff.stderr.decode()[:400]}")
+
+        # ── ACX mastering ──────────────────────────────────────────────────────
+        if body.acx_mastering and _apply_acx_mastering(str(raw_mp3), str(final_mp3)):
+            raw_mp3.unlink(missing_ok=True)
+            mp3_path = final_mp3
+        else:
+            raw_mp3.rename(final_mp3)
+            final_mp3.unlink(missing_ok=True) if not final_mp3.exists() else None
+            mp3_path = raw_mp3 if raw_mp3.exists() else final_mp3
+
+        # Hard-link into library before rotation
+        _ab_rel = _link_output_sync(mp3_path)
+        _rotate_outputs(out_dir)
+
+        all_text = "\n\n".join(t for _, t in doc_texts)
+        from orivellum.api.executor import get_executor as _gex
+        _gex().submit(
+            _register_output_bg, mp3_path, all_text[:8000], "mp3",
+            f"Audiobook: {work_title}", prelinked_rel=_ab_rel,
+        )
+
+        if body.return_url:
+            rel = str(mp3_path.relative_to(out_dir))
+            return {"ok": True, "path": rel, "filename": mp3_path.name, "work_title": work_title}
+
+        return FileResponse(str(mp3_path), media_type="audio/mpeg", filename=mp3_path.name)
+
+    except Exception as exc:
+        logger.error("Work audiobook failed: %s", exc)
+        raise HTTPException(500, f"Audiobook generation failed: {exc}")
+    finally:
+        for p in wav_parts:
+            p.unlink(missing_ok=True)
+        for f in tmp_dir.iterdir():
+            f.unlink(missing_ok=True)
+        try:
+            tmp_dir.rmdir()
+        except Exception:
+            pass
 
 
 # ── TTS synthesis ─────────────────────────────────────────────────────────────
@@ -181,11 +1236,29 @@ async def synthesize_speech(body: TTSRequest):
     # --- Strategy 1: AI server /audio/speech ---
     try:
         import httpx
-        # Map our voice IDs to OpenAI-compatible voice names
-        openai_voice = {
-            "af_heart": "alloy", "af_bella": "nova", "am_adam": "onyx",
-            "bf_emma": "shimmer", "bm_george": "echo",
-        }.get(body.voice, "alloy")
+        # Map all 28 catalog IDs to the closest OpenAI-compatible voice name.
+        # OpenAI voices: alloy (neutral-F), echo (warm-M), fable (brit-M),
+        # onyx (deep-M), nova (warm-F), shimmer (bright-F).
+        # For servers that accept Kokoro IDs directly we try the raw voice ID
+        # first; if the server rejects it (non-200) we fall through to Kokoro.
+        _OPENAI_VOICE_MAP: dict[str, str] = {
+            # American Female
+            "af_heart": "nova",    "af_bella": "nova",    "af_nova": "nova",
+            "af_alloy": "alloy",   "af_sarah": "nova",    "af_sky": "shimmer",
+            "af_jessica": "alloy", "af_kore": "shimmer",  "af_nicole": "nova",
+            "af_aoede": "shimmer", "af_river": "alloy",
+            # American Male
+            "am_adam": "onyx",   "am_echo": "echo",   "am_eric": "echo",
+            "am_fenrir": "onyx", "am_liam": "fable",  "am_michael": "echo",
+            "am_onyx": "onyx",   "am_puck": "fable",  "am_santa": "echo",
+            # British Female
+            "bf_emma": "shimmer", "bf_alice": "shimmer",
+            "bf_isabella": "nova", "bf_lily": "shimmer",
+            # British Male
+            "bm_george": "fable", "bm_daniel": "fable",
+            "bm_fable": "fable",  "bm_lewis": "fable",
+        }
+        openai_voice = _OPENAI_VOICE_MAP.get(body.voice, "alloy")
 
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.post(
@@ -226,10 +1299,9 @@ async def synthesize_speech(body: TTSRequest):
             import numpy as np
             import soundfile as sf
 
-            # Kokoro voice IDs match our builtin voice IDs directly
-            kokoro_voice = body.voice if body.voice in {
-                "af_heart", "af_bella", "am_adam", "bf_emma", "bm_george",
-            } else "af_heart"
+            # All 28 catalog IDs are valid Kokoro voice IDs; resolve via the
+            # catalog index so unknown/custom IDs fall back to af_heart.
+            kokoro_voice = _resolve_kokoro_voice(body.voice)
 
             samples, sample_rate = await asyncio.to_thread(
                 kokoro.create,
@@ -456,9 +1528,8 @@ def synthesize_document(body: DocumentTTSRequest):
 
     espeak_voice = _ESPEAK_VOICE_MAP.get(body.voice, "en+f4")
     wpm          = max(80, min(400, int(175 * body.speed)))
-    kokoro_voice = body.voice if body.voice in {
-        "af_heart", "af_bella", "am_adam", "bf_emma", "bm_george",
-    } else "af_heart"
+    # All 28 catalog IDs are valid Kokoro voice IDs.
+    kokoro_voice = _resolve_kokoro_voice(body.voice)
 
     wav_paths: list[Path] = []
     tmp_dir   = Path(tempfile.mkdtemp())
