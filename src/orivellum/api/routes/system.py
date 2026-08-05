@@ -1193,6 +1193,31 @@ def system_jobs(limit: int = 50):
     return {"jobs": jobs, "running": running, "failed": failed, "total": len(jobs)}
 
 
+@router.post("/system/jobs/{job_id}/retry")
+def retry_job(job_id: str):
+    """Re-queue a failed background job.
+
+    Looks up the job in the in-memory dashboard registry and re-submits it
+    using the original callable and arguments stored at submission time.
+
+    Returns:
+        200 — job re-queued; new_job_id is the id of the replacement entry.
+        404 — no job with that id found in the dashboard registry.
+        409 — job is not in state 'failed' (already running or done).
+        501 — job pre-dates retry support (no stored callable).
+    """
+    from orivellum.api.executor import retry_job as _retry
+    try:
+        _retry(job_id)
+    except KeyError as exc:
+        raise HTTPException(404, str(exc))
+    except ValueError as exc:
+        raise HTTPException(409, str(exc))
+    except RuntimeError as exc:
+        raise HTTPException(501, str(exc))
+    return {"ok": True, "retried_job_id": job_id}
+
+
 @router.get("/system/llm-health")
 def system_llm_health():
     """Probe the configured LLM server and configured models.

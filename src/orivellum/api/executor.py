@@ -47,6 +47,12 @@ def _job_entry(kind: str, label: str) -> dict:
         "started_at": time.time(),
         "finished_at": None,
         "error": None,
+        # Internal retry support — stripped before the entry is returned to the
+        # API client.  Storing the callable + args lets the retry endpoint
+        # re-submit the same work without callers needing to register handlers.
+        "_retry_fn": None,
+        "_retry_args": (),
+        "_retry_kwargs": {},
     }
 
 
@@ -58,8 +64,17 @@ def _tracked_submit(fn, *args, kind: str = "background", label: str = "", **kwar
     ``running`` entry in the dashboard.  If submit() raises, the entry is
     pre-marked ``failed`` and then appended so callers can inspect it, but it
     will not linger as ``running``.
+
+    The callable + arguments are stored internally on the entry so that
+    ``retry_job()`` can re-dispatch the same work when the user clicks Retry
+    on a failed job in the dashboard.  These private fields are stripped from
+    the API response by ``get_recent_jobs``.
     """
     entry = _job_entry(kind, label or getattr(fn, "__name__", "job"))
+    # Stash callable + args so retry can re-submit identically.
+    entry["_retry_fn"] = fn
+    entry["_retry_args"] = args
+    entry["_retry_kwargs"] = kwargs
 
     def _wrapped():
         try:
@@ -93,12 +108,60 @@ def _tracked_submit(fn, *args, kind: str = "background", label: str = "", **kwar
         raise
 
 
+def _public_entry(entry: dict) -> dict:
+    """Return a copy of a job entry with private (_-prefixed) fields removed."""
+    return {k: v for k, v in entry.items() if not k.startswith("_")}
+
+
 def get_recent_jobs(limit: int = 50) -> list[dict]:
-    """Return most recent jobs (newest first) for the dashboard endpoint."""
+    """Return most recent jobs (newest first) for the dashboard endpoint.
+
+    Private fields (``_retry_fn`` etc.) are stripped so callables are never
+    serialised to JSON.
+    """
     with _jobs_lock:
         items = list(_jobs)
     items.sort(key=lambda j: j["started_at"], reverse=True)
-    return items[:limit]
+    return [_public_entry(j) for j in items[:limit]]
+
+
+def retry_job(job_id: str) -> Future:
+    """Re-submit a failed job by its id.
+
+    Finds the job entry in the in-memory registry, resets its state to
+    ``running``, and submits it again via ``_tracked_submit``.
+
+    Raises:
+        KeyError:  if no job with that id is found.
+        ValueError: if the job is not in state ``failed`` (cannot retry a
+                    running or done job).
+        RuntimeError: if the job has no stored callable (e.g. it was registered
+                      before retry support was added or the entry was evicted).
+    """
+    with _jobs_lock:
+        entry = next((j for j in _jobs if j["id"] == job_id), None)
+
+    if entry is None:
+        raise KeyError(f"Job {job_id!r} not found in dashboard registry")
+    if entry["state"] != "failed":
+        raise ValueError(
+            f"Job {job_id!r} is in state {entry['state']!r}; only 'failed' jobs can be retried"
+        )
+    fn = entry.get("_retry_fn")
+    if fn is None:
+        raise RuntimeError(
+            f"Job {job_id!r} has no stored callable — it may pre-date retry support"
+        )
+
+    retry_args = entry.get("_retry_args", ())
+    retry_kwargs = entry.get("_retry_kwargs", {})
+    retry_label = entry["label"] if not entry["label"].endswith(" (retry)") else entry["label"]
+    return _tracked_submit(
+        fn, *retry_args,
+        kind=entry["kind"],
+        label=f"{retry_label} (retry)",
+        **retry_kwargs,
+    )
 
 
 def init(max_workers: int = _DEFAULT_WORKERS) -> ThreadPoolExecutor:

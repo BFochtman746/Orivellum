@@ -3,7 +3,7 @@ import { apiFetch } from "@/lib/auth";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
-import { Activity, Database, Cpu, CheckCircle2, XCircle, AlertCircle, AlertTriangle, Terminal, Sparkles, Moon, Brain, Trash2, ScrollText, User, Settings, Image as ImageIcon, Eye, Loader2, FileSearch, ClipboardCopy, ChevronDown, ChevronRight, Zap, Download } from "lucide-react";
+import { Activity, Database, Cpu, CheckCircle2, XCircle, AlertCircle, AlertTriangle, Terminal, Sparkles, Moon, Brain, Trash2, ScrollText, User, Settings, Image as ImageIcon, Eye, Loader2, FileSearch, ClipboardCopy, ChevronDown, ChevronRight, Zap, Download, RotateCcw } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -1312,7 +1312,17 @@ interface BgJob {
   started_at: number; finished_at: number | null; error: string | null;
 }
 
+const KIND_LABELS: Record<string, string> = {
+  document:   "doc",
+  embeddings: "embed",
+  tts:        "tts",
+  nightshift: "night",
+  background: "bg",
+};
+
 function JobsCard() {
+  const qc = useQueryClient();
+
   const { data, isLoading, refetch, isFetching } = useQuery<{
     jobs: BgJob[]; running: number; failed: number; total: number;
   }>({
@@ -1322,8 +1332,25 @@ function JobsCard() {
       if (!r.ok) return { jobs: [], running: 0, failed: 0, total: 0 };
       return r.json();
     },
-    refetchInterval: 5_000,
+    // Poll every 5 s while jobs are running; every 10 s when idle so new jobs
+    // submitted from other pages appear promptly without hammering the server.
+    refetchInterval: (query) => (query.state.data?.running ?? 0) > 0 ? 5_000 : 10_000,
     staleTime: 4_000,
+  });
+
+  const retryMutation = useMutation({
+    mutationFn: async (jobId: string) => {
+      const r = await apiFetch(`${API_BASE}/api/system/jobs/${jobId}/retry`, { method: "POST" });
+      if (r.status === 404) throw new Error("Job not found — it may have been evicted from the registry.");
+      if (r.status === 409) throw new Error("Only failed jobs can be retried.");
+      if (r.status === 501) throw new Error("This job pre-dates retry support; re-upload the file to retry.");
+      if (!r.ok) throw new Error("Retry failed");
+    },
+    onSuccess: () => {
+      toast.success("Job re-queued");
+      qc.invalidateQueries({ queryKey: ["system", "jobs"] });
+    },
+    onError: (e: Error) => toast.error(e.message),
   });
 
   const jobs = data?.jobs ?? [];
@@ -1335,10 +1362,14 @@ function JobsCard() {
           <Zap className="w-5 h-5 text-muted-foreground" />
           Background Jobs
           {(data?.running ?? 0) > 0 && (
-            <Badge variant="secondary" className="font-mono text-[10px]">{data!.running} running</Badge>
+            <Badge variant="secondary" className="font-mono text-[10px] animate-pulse">
+              {data!.running} running
+            </Badge>
           )}
           {(data?.failed ?? 0) > 0 && (
-            <Badge variant="destructive" className="font-mono text-[10px]">{data!.failed} failed</Badge>
+            <Badge variant="destructive" className="font-mono text-[10px]">
+              {data!.failed} failed
+            </Badge>
           )}
         </h2>
         <button onClick={() => refetch()} disabled={isFetching}
@@ -1346,29 +1377,78 @@ function JobsCard() {
           {isFetching ? "refreshing…" : `${data?.total ?? 0} total · refresh`}
         </button>
       </div>
-      {isLoading ? [1,2,3].map(i => <Skeleton key={i} className="h-10 w-full" />) : jobs.length === 0 ? (
+
+      {isLoading ? (
+        [1, 2, 3].map(i => <Skeleton key={i} className="h-10 w-full" />)
+      ) : jobs.length === 0 ? (
         <div className="text-center py-8 text-muted-foreground text-sm border border-dashed rounded-lg">
           No background jobs recorded yet — jobs appear when you import files or run AI tasks.
         </div>
       ) : (
-        <div className="rounded-lg border border-border/50 overflow-hidden divide-y divide-border/30 max-h-64 overflow-y-auto">
-          {jobs.map(j => (
-            <div key={j.id} className="flex items-center gap-3 px-4 py-2.5 hover:bg-muted/20 transition-colors">
-              <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${j.state === "done" ? "bg-emerald-500" : j.state === "failed" ? "bg-destructive" : "bg-amber-400 animate-pulse"}`} />
-              <div className="flex-1 min-w-0">
-                <span className="text-xs font-mono font-medium">{j.label}</span>
-                {j.error && <span className="text-[11px] text-destructive ml-2">{j.error.slice(0, 60)}</span>}
+        <div className="rounded-lg border border-border/50 overflow-hidden divide-y divide-border/30 max-h-72 overflow-y-auto">
+          {jobs.map(j => {
+            const elapsed = j.finished_at != null
+              ? (j.finished_at - j.started_at).toFixed(1) + "s"
+              : j.state === "running"
+                ? `${(Date.now() / 1000 - j.started_at).toFixed(0)}s…`
+                : null;
+            const isRetrying = retryMutation.isPending && retryMutation.variables === j.id;
+
+            return (
+              <div key={j.id} className="flex items-center gap-3 px-4 py-2.5 hover:bg-muted/20 transition-colors">
+                {/* State dot */}
+                <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                  j.state === "done"    ? "bg-emerald-500" :
+                  j.state === "failed"  ? "bg-destructive" :
+                  "bg-amber-400 animate-pulse"
+                }`} />
+
+                {/* Kind badge */}
+                <span className="shrink-0 font-mono text-[9px] uppercase px-1.5 py-0.5 rounded bg-muted/60 text-muted-foreground">
+                  {KIND_LABELS[j.kind] ?? j.kind}
+                </span>
+
+                {/* Label + error */}
+                <div className="flex-1 min-w-0">
+                  <span className="text-xs font-mono font-medium truncate block">{j.label}</span>
+                  {j.error && (
+                    <span className="text-[11px] text-destructive block truncate" title={j.error}>
+                      {j.error.slice(0, 120)}
+                    </span>
+                  )}
+                </div>
+
+                {/* Right side: state + elapsed + retry */}
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className={`text-[10px] font-mono ${
+                    j.state === "done"   ? "text-emerald-600" :
+                    j.state === "failed" ? "text-red-600" :
+                    "text-amber-600"
+                  }`}>{j.state}</span>
+
+                  {elapsed && (
+                    <span className="text-[10px] font-mono text-muted-foreground/50">{elapsed}</span>
+                  )}
+
+                  {j.state === "failed" && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-6 px-2 text-[10px] gap-1 text-muted-foreground hover:text-foreground"
+                      onClick={() => retryMutation.mutate(j.id)}
+                      disabled={isRetrying}
+                      title="Re-queue this job"
+                    >
+                      {isRetrying
+                        ? <Loader2 className="w-3 h-3 animate-spin" />
+                        : <RotateCcw className="w-3 h-3" />}
+                      Retry
+                    </Button>
+                  )}
+                </div>
               </div>
-              <div className="flex items-center gap-2 shrink-0">
-                <span className={`text-[10px] font-mono ${j.state === "done" ? "text-emerald-600" : j.state === "failed" ? "text-red-600" : "text-amber-600"}`}>{j.state}</span>
-                {j.finished_at && (
-                  <span className="text-[10px] font-mono text-muted-foreground/50">
-                    {((j.finished_at - j.started_at)).toFixed(1)}s
-                  </span>
-                )}
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
