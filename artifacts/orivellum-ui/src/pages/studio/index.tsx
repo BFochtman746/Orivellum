@@ -11,7 +11,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Mic, Play, Pause, Settings2, Video, Image as ImageIcon,
   FileAudio, Loader2, Volume2, Download, BookHeadphones, FileText,
-  X, Trash2,
+  X, Trash2, RefreshCw, Activity,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Link } from "wouter";
@@ -23,6 +23,139 @@ import { toast } from "sonner";
 import { apiFetch } from "@/lib/auth";
 
 const BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
+
+// ── Shared studio status query key ───────────────────────────────────────────
+const STUDIO_STATUS_KEY = ["studio", "status"] as const;
+
+type TtsStrategy = { name: string; key: string; available: boolean; latency_ms: number | null };
+type ImgBackend = { name: string; url: string; online: boolean };
+type StudioStatus = {
+  tts: { available: boolean; best_strategy: string | null; strategies: TtsStrategy[] };
+  image_gen: { available: boolean; backends: ImgBackend[] };
+  ocr: { available: boolean; engine: string | null; missing: string[] };
+  last_checked: string;
+};
+
+function useStudioStatus() {
+  return useQuery<StudioStatus>({
+    queryKey: STUDIO_STATUS_KEY,
+    queryFn: () => apiFetch(`${BASE}/studio/status`).then(r => r.json()),
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+    retry: 1,
+  });
+}
+
+// ── Service status bar ─────────────────────────────────────────────────────────
+
+function StatusPill({ label, available, detail, note }: {
+  label: string;
+  available: boolean;
+  detail?: string;
+  note?: string;
+}) {
+  const color = available
+    ? "border-emerald-200 text-emerald-700 bg-emerald-50/60"
+    : "border-amber-200 text-amber-700 bg-amber-50/60";
+  const dot = available ? "bg-emerald-500" : "bg-amber-400 animate-pulse";
+  return (
+    <span className={`inline-flex items-center gap-1.5 text-[11px] font-mono px-2.5 py-1 rounded-full border ${color}`}
+      title={note}>
+      <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${dot}`} />
+      <span className="font-semibold">{label}</span>
+      {detail && <span className="opacity-70">— {detail}</span>}
+    </span>
+  );
+}
+
+function ServiceStatusBar() {
+  const { data, isLoading, isError, refetch, isFetching } = useStudioStatus();
+
+  return (
+    <Card className="border-border/50 bg-muted/20">
+      <CardContent className="py-3 px-4">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-1.5 text-xs font-mono text-muted-foreground shrink-0">
+            <Activity className="w-3.5 h-3.5" />
+            Services
+          </div>
+
+          {isLoading && (
+            <div className="flex gap-2">
+              {["TTS", "Image", "OCR"].map(s => (
+                <Skeleton key={s} className="h-6 w-24 rounded-full" />
+              ))}
+            </div>
+          )}
+
+          {isError && (
+            <span className="text-[11px] font-mono text-destructive">
+              Could not reach API server
+            </span>
+          )}
+
+          {data && (
+            <div className="flex flex-wrap items-center gap-2">
+              {/* TTS */}
+              <StatusPill
+                label="TTS"
+                available={data.tts.available}
+                detail={data.tts.available ? data.tts.best_strategy ?? undefined : "no backend"}
+                note={
+                  data.tts.available
+                    ? `Strategies available: ${data.tts.strategies.filter(s => s.available).map(s => s.name).join(", ")}`
+                    : "All TTS strategies offline — check AI server, Kokoro ONNX, and espeak-ng"
+                }
+              />
+
+              {/* Image gen */}
+              <StatusPill
+                label="Image"
+                available={data.image_gen.available}
+                detail={
+                  data.image_gen.available
+                    ? (data.image_gen.backends.find(b => b.online)?.name ?? undefined)
+                    : "no backend"
+                }
+                note={
+                  data.image_gen.available
+                    ? `Online: ${data.image_gen.backends.filter(b => b.online).map(b => b.name).join(", ")}`
+                    : "No image backend reachable — install Automatic1111 or ComfyUI, or set a custom URL in System Settings"
+                }
+              />
+
+              {/* OCR */}
+              <StatusPill
+                label="OCR"
+                available={data.ocr.available}
+                detail={data.ocr.available ? (data.ocr.engine ?? undefined) : "unavailable"}
+                note={
+                  data.ocr.available
+                    ? "Tesseract OCR ready"
+                    : `Missing: ${data.ocr.missing.join(", ")}`
+                }
+              />
+            </div>
+          )}
+
+          <button
+            onClick={() => refetch()}
+            disabled={isFetching}
+            className="ml-auto inline-flex items-center gap-1 text-[10px] font-mono text-muted-foreground hover:text-foreground transition-colors disabled:opacity-40"
+            title="Refresh service status"
+          >
+            <RefreshCw className={`w-3 h-3 ${isFetching ? "animate-spin" : ""}`} />
+            {data && (
+              <span className="hidden sm:inline">
+                {new Date(data.last_checked).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+              </span>
+            )}
+          </button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
 
 // ── TTS panel ─────────────────────────────────────────────────────────────────
 
@@ -52,7 +185,12 @@ function TTSPanel() {
       });
       if (!resp.ok) {
         const err = await resp.json().catch(() => ({}));
-        throw new Error((err as any).detail ?? `HTTP ${resp.status}`);
+        // detail may be a structured 503 object { detail, service, reason } or a plain string
+        const raw = (err as any).detail;
+        const msg = typeof raw === "object" && raw !== null
+          ? (raw.reason ?? raw.detail ?? JSON.stringify(raw))
+          : (raw ?? `HTTP ${resp.status}`);
+        throw new Error(msg);
       }
       const blob = await resp.blob();
       const url = URL.createObjectURL(blob);
@@ -89,6 +227,10 @@ function TTSPanel() {
   const charCount = text.length;
   const overLimit = charCount > 10_000;
 
+  const { data: studioStatus } = useStudioStatus();
+  const ttsStrategies = studioStatus?.tts.strategies ?? [];
+  const ttsAvailable = studioStatus?.tts.available ?? true; // optimistic until loaded
+
   return (
     <Card className="border-border/50">
       <CardHeader className="pb-3">
@@ -96,6 +238,30 @@ function TTSPanel() {
           <Volume2 className="w-5 h-5 text-muted-foreground" />
           Text to Speech
         </CardTitle>
+        {/* TTS strategy status pills */}
+        {ttsStrategies.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 pt-1">
+            {ttsStrategies.map((s) => (
+              <span key={s.key}
+                className={`inline-flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-full border ${
+                  s.available
+                    ? "border-emerald-200 text-emerald-700 bg-emerald-50/60"
+                    : "border-border/40 text-muted-foreground/50"
+                }`}>
+                <span className={`w-1.5 h-1.5 rounded-full ${s.available ? "bg-emerald-500" : "bg-muted-foreground/30"}`} />
+                {s.name}
+                {s.available && s.latency_ms != null && (
+                  <span className="opacity-60">{s.latency_ms}ms</span>
+                )}
+              </span>
+            ))}
+            {!ttsAvailable && ttsStrategies.length > 0 && (
+              <span className="text-[10px] font-mono text-amber-600">
+                No TTS backend available — check System Settings
+              </span>
+            )}
+          </div>
+        )}
       </CardHeader>
       <CardContent className="space-y-4">
 
@@ -797,6 +963,8 @@ export default function Studio() {
           <Link href="/system"><Settings2 className="w-4 h-4" /> Engine Settings</Link>
         </Button>
       </div>
+
+      <ErrorBoundary label="service status bar"><ServiceStatusBar /></ErrorBoundary>
 
       <div className="grid lg:grid-cols-2 gap-6">
         <ErrorBoundary label="TTS panel"><TTSPanel /></ErrorBoundary>

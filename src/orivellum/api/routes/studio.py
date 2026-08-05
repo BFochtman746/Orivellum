@@ -355,17 +355,29 @@ async def synthesize_speech(body: TTSRequest):
     except FileNotFoundError:
         import sys as _sys
         if _sys.platform == "win32":
-            hint = (
+            install_hint = (
                 "espeak-ng is not installed. "
                 "Run scripts\\setup-windows.ps1 to install it automatically, "
                 "or download manually from https://github.com/espeak-ng/espeak-ng/releases"
             )
         else:
-            hint = "espeak-ng is not installed. Run: nix-env -iA nixpkgs.espeak-ng"
-        raise HTTPException(503, hint)
+            install_hint = "espeak-ng is not installed. Run: nix-env -iA nixpkgs.espeak-ng"
+        raise HTTPException(503, {
+            "detail": "All TTS backends unavailable",
+            "service": "tts",
+            "strategies_tried": ["ai_server", "kokoro_onnx", "espeak-ng"],
+            "failed_strategy": "espeak-ng",
+            "reason": install_hint,
+        })
     except Exception as exc:
         logger.error("TTS espeak-ng failed: %s", exc)
-        raise HTTPException(500, f"TTS synthesis failed: {exc}")
+        raise HTTPException(503, {
+            "detail": "All TTS backends failed",
+            "service": "tts",
+            "strategies_tried": ["ai_server", "kokoro_onnx", "espeak-ng"],
+            "failed_strategy": "espeak-ng",
+            "reason": str(exc),
+        })
 
 
 # ── Text segmentation helper ──────────────────────────────────────────────────
@@ -913,6 +925,140 @@ async def generate_image(body: ImageGenRequest):
     )
 
 
+_STATUS_PROBE_TIMEOUT = 2.0   # per-URL connect timeout (seconds)
+_STATUS_GLOBAL_TIMEOUT = 5.0  # hard wall-clock deadline for the entire status check
+
+
+def _url_probe(url: str) -> tuple[bool, int | None]:
+    """Probe a single URL; return (reachable, latency_ms). Never raises."""
+    import time
+    import urllib.request as _ur
+    t0 = time.monotonic()
+    try:
+        _ur.urlopen(url, timeout=_STATUS_PROBE_TIMEOUT).close()
+        return True, round((time.monotonic() - t0) * 1000)
+    except Exception:
+        return False, None
+
+
+@router.get("/studio/status")
+def studio_status():
+    """Unified probe of all Studio services (TTS, image gen, OCR).
+
+    All network probes run concurrently in a thread pool so the total wall-clock
+    time is bounded by _STATUS_GLOBAL_TIMEOUT (5 s) rather than the sum of
+    individual timeouts.  Each probe uses _STATUS_PROBE_TIMEOUT (2 s) for its
+    own connect timeout.  The global deadline is enforced via Future.result()
+    timeouts that shrink as the clock ticks.
+    """
+    import concurrent.futures as _cf
+    import importlib.util
+    import shutil
+    import time
+    from datetime import datetime, timezone
+
+    cfg = get_config()
+    db = get_db()
+
+    # Resolve probe URLs up-front (no I/O)
+    ai_tts_url = cfg.serving.base_url.rstrip("/") + "/models"
+    ai_img_url = cfg.serving.base_url.replace("/api/v1", "").rstrip("/")
+    custom_url = db.get_setting("image_gen_url", "").strip()
+    custom_stats_url = (custom_url.rstrip("/") + "/system_stats") if custom_url else ""
+
+    # Futures dict — all probes fired in parallel
+    deadline = time.monotonic() + _STATUS_GLOBAL_TIMEOUT
+    results: dict[str, object] = {}
+
+    pool = _cf.ThreadPoolExecutor(max_workers=8, thread_name_prefix="studio-probe")
+    try:
+        futs: dict[str, _cf.Future] = {
+            "ai_tts":    pool.submit(_url_probe, ai_tts_url),
+            "ai_img":    pool.submit(_url_probe, ai_img_url),
+            "a1111":     pool.submit(_url_probe, "http://localhost:7860"),
+            "comfy":     pool.submit(_url_probe, "http://localhost:8188"),
+            "tesseract": pool.submit(_probe_tesseract_ok),
+        }
+        if custom_url:
+            futs["custom"] = pool.submit(_url_probe, custom_url)
+            if _is_comfyui_url(custom_url):
+                futs["custom_stats"] = pool.submit(_url_probe, custom_stats_url)
+
+        for key, fut in futs.items():
+            remaining = max(0.0, deadline - time.monotonic())
+            try:
+                results[key] = fut.result(timeout=remaining)
+            except Exception:
+                results[key] = (False, None) if key != "tesseract" else False
+    finally:
+        # Do NOT wait for threads still blocked on their TCP connect timeout.
+        # Threads will finish within _STATUS_PROBE_TIMEOUT (2 s) on their own.
+        pool.shutdown(wait=False)
+
+    def _get(key: str, default=None):
+        return results.get(key, default)
+
+    # ── TTS strategies ────────────────────────────────────────────────────────
+    ai_tts_ok, ai_ms = _get("ai_tts", (False, None))
+    kokoro_ok = importlib.util.find_spec("kokoro_onnx") is not None
+    espeak_ok = bool(shutil.which("espeak-ng"))
+
+    tts_strategies = [
+        {"name": "AI Server",   "key": "ai_server",   "available": ai_tts_ok, "latency_ms": ai_ms},
+        {"name": "Kokoro ONNX", "key": "kokoro_onnx",  "available": kokoro_ok, "latency_ms": None},
+        {"name": "espeak-ng",   "key": "espeak_ng",    "available": espeak_ok, "latency_ms": None},
+    ]
+    best_tts = next((s["name"] for s in tts_strategies if s["available"]), None)
+
+    # ── Image gen backends ────────────────────────────────────────────────────
+    img_backends: list[dict] = []
+    if custom_url:
+        if _is_comfyui_url(custom_url):
+            custom_ok = bool(_get("custom_stats", (False, None))[0] or  # type: ignore[index]
+                              _get("custom", (False, None))[0])            # type: ignore[index]
+            img_backends.append({"name": "ComfyUI (custom)", "url": custom_url, "online": custom_ok})
+        else:
+            img_backends.append({"name": "Custom", "url": custom_url,
+                                  "online": bool(_get("custom", (False, None))[0])})  # type: ignore[index]
+
+    a1111_ok, _ = _get("a1111", (False, None))
+    comfy_ok, _ = _get("comfy", (False, None))
+    ai_img_ok, _ = _get("ai_img", (False, None))
+
+    if a1111_ok:
+        img_backends.append({"name": "Automatic1111", "url": "http://localhost:7860", "online": True})
+    if comfy_ok:
+        img_backends.append({"name": "ComfyUI", "url": "http://localhost:8188", "online": True})
+    img_backends.append({"name": "AI Server", "url": cfg.serving.base_url, "online": bool(ai_img_ok)})
+    img_any = any(b["online"] for b in img_backends)
+
+    # ── OCR ───────────────────────────────────────────────────────────────────
+    tess_ok = bool(_get("tesseract", False))
+    pillow_ok = importlib.util.find_spec("PIL") is not None
+    pytesseract_ok = importlib.util.find_spec("pytesseract") is not None
+    ocr_missing = ([] if tess_ok else ["tesseract binary"]) + \
+                  ([] if pillow_ok else ["Pillow"]) + \
+                  ([] if pytesseract_ok else ["pytesseract"])
+
+    return {
+        "tts": {
+            "available": best_tts is not None,
+            "best_strategy": best_tts,
+            "strategies": tts_strategies,
+        },
+        "image_gen": {
+            "available": img_any,
+            "backends": img_backends,
+        },
+        "ocr": {
+            "available": tess_ok and pillow_ok and pytesseract_ok,
+            "engine": "tesseract" if tess_ok else None,
+            "missing": ocr_missing,
+        },
+        "last_checked": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 @router.get("/studio/image-status")
 def image_gen_status():
     """Quick probe to tell the UI which image backend (if any) is reachable."""
@@ -948,7 +1094,50 @@ def image_gen_status():
     return {"backends": backends, "any_online": any(b["online"] for b in backends)}
 
 
-# ── OCR ───────────────────────────────────────────────────────────────────────
+# ── OCR helpers ───────────────────────────────────────────────────────────────
+
+_NIX_STORE_SCAN_MAX = 200  # max directories to walk in /nix/store
+
+
+def _probe_tesseract_ok() -> bool:
+    """Return True if the tesseract binary is reachable in this environment.
+
+    Extracted as a module-level function so tests can mock it cleanly without
+    having to stub the entire nix/store filesystem walk.
+
+    Scan order: PATH → bash login shell → /nix/store (bounded to
+    _NIX_STORE_SCAN_MAX entries to avoid unbounded iteration on large stores).
+    """
+    import shutil as _sh
+    import sys as _sys
+
+    if _sh.which("tesseract"):
+        return True
+    if _sys.platform == "win32":
+        import pathlib as _pl
+        win_default = _pl.Path(r"C:\Program Files\Tesseract-OCR\tesseract.exe")
+        return win_default.is_file()
+    # Unix/NixOS: ask the login shell first (cheap)
+    try:
+        r = __import__("subprocess").run(
+            ["bash", "-lc", "which tesseract"],
+            capture_output=True, text=True, timeout=3,
+        )
+        if r.stdout.strip():
+            return True
+    except Exception:
+        pass
+    # Bounded /nix/store scan — stop after _NIX_STORE_SCAN_MAX entries
+    import pathlib as _pl
+    nix = _pl.Path("/nix/store")
+    if nix.exists():
+        for _i, d in enumerate(nix.iterdir()):
+            if _i >= _NIX_STORE_SCAN_MAX:
+                break
+            if "tesseract" in d.name and (d / "bin" / "tesseract").is_file():
+                return True
+    return False
+
 
 class OCRRequest(BaseModel):
     content_b64: str
