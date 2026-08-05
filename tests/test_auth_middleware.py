@@ -287,8 +287,9 @@ class TestSessionSecretInit(unittest.TestCase):
             if saved_data_dir is not None:
                 os.environ["ORIVELLUM_DATA_DIR"] = saved_data_dir
 
-    def test_secret_persisted_and_stable_across_calls(self):
-        """The same data dir returns the same secret on repeated calls."""
+    def test_ephemeral_secret_is_not_persisted_to_disk(self):
+        """When SESSION_SECRET is absent, each call returns a fresh random secret
+        that is NOT written to disk — sessions are intentionally ephemeral."""
         import os
         import tempfile
         from orivellum.api.app import _init_session_secret
@@ -300,8 +301,21 @@ class TestSessionSecretInit(unittest.TestCase):
                 os.environ["ORIVELLUM_DATA_DIR"] = tmp
                 first = _init_session_secret()
                 second = _init_session_secret()
-                self.assertEqual(first, second,
-                                 "The persisted secret must be stable across calls")
+
+                # Both are at least 32 chars and random hex strings
+                self.assertGreaterEqual(len(first), 32)
+                self.assertGreaterEqual(len(second), 32)
+
+                # Each call generates a DIFFERENT secret (not persisted)
+                self.assertNotEqual(first, second,
+                                    "Ephemeral secrets must not be reused across calls")
+
+                # The secret file must NOT have been written to disk
+                secret_file = os.path.join(tmp, ".session_secret")
+                self.assertFalse(
+                    os.path.exists(secret_file),
+                    "Session secret must NOT be persisted to disk — it is ephemeral by design",
+                )
         finally:
             if saved is not None:
                 os.environ["SESSION_SECRET"] = saved
@@ -309,16 +323,96 @@ class TestSessionSecretInit(unittest.TestCase):
                 os.environ["ORIVELLUM_DATA_DIR"] = saved_data_dir
 
     def test_env_var_takes_priority(self):
-        """When SESSION_SECRET is set it is returned directly."""
+        """When SESSION_SECRET is set to a sufficiently strong value it is returned directly."""
         import os
         from orivellum.api.app import _init_session_secret
 
-        os.environ["SESSION_SECRET"] = "env-test-value-xyz"
+        # Must be >= 32 chars to pass the new entropy check
+        strong_secret = "a" * 32  # exactly 32 chars — the minimum
+        os.environ["SESSION_SECRET"] = strong_secret
         try:
             result = _init_session_secret()
-            self.assertEqual(result, "env-test-value-xyz")
+            self.assertEqual(result, strong_secret)
         finally:
             os.environ["SESSION_SECRET"] = TEST_API_KEY  # restore test key
+
+    def test_short_session_secret_raises_runtime_error(self):
+        """SESSION_SECRET shorter than 32 chars must cause RuntimeError at startup."""
+        import os
+        from orivellum.api.app import _init_session_secret
+
+        saved = os.environ.get("SESSION_SECRET")
+        os.environ["SESSION_SECRET"] = "tooshort"  # 8 chars — clearly inadequate
+        try:
+            with self.assertRaises(RuntimeError) as ctx:
+                _init_session_secret()
+            msg = str(ctx.exception)
+            self.assertIn("SESSION_SECRET", msg)
+            self.assertIn("32", msg)   # mentions the minimum length
+        finally:
+            if saved is not None:
+                os.environ["SESSION_SECRET"] = saved
+            else:
+                os.environ["SESSION_SECRET"] = TEST_API_KEY
+
+    def test_31_char_secret_raises_runtime_error(self):
+        """A SESSION_SECRET that is exactly one char below the minimum must be rejected."""
+        import os
+        from orivellum.api.app import _init_session_secret
+
+        saved = os.environ.get("SESSION_SECRET")
+        os.environ["SESSION_SECRET"] = "x" * 31  # one below the 32-char minimum
+        try:
+            with self.assertRaises(RuntimeError):
+                _init_session_secret()
+        finally:
+            if saved is not None:
+                os.environ["SESSION_SECRET"] = saved
+            else:
+                os.environ["SESSION_SECRET"] = TEST_API_KEY
+
+    def test_exactly_32_char_secret_is_accepted(self):
+        """SESSION_SECRET of exactly 32 chars must be accepted without error."""
+        import os
+        from orivellum.api.app import _init_session_secret
+
+        saved = os.environ.get("SESSION_SECRET")
+        os.environ["SESSION_SECRET"] = "y" * 32  # exactly at the minimum
+        try:
+            result = _init_session_secret()
+            self.assertEqual(result, "y" * 32)
+        finally:
+            if saved is not None:
+                os.environ["SESSION_SECRET"] = saved
+            else:
+                os.environ["SESSION_SECRET"] = TEST_API_KEY
+
+    def test_absent_secret_logged_as_warning(self):
+        """When SESSION_SECRET is absent, a WARNING is emitted with the generated value."""
+        import os
+        import logging
+        import tempfile
+        from unittest.mock import patch
+        from orivellum.api.app import _init_session_secret
+
+        saved = os.environ.pop("SESSION_SECRET", None)
+        saved_data_dir = os.environ.pop("ORIVELLUM_DATA_DIR", None)
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                os.environ["ORIVELLUM_DATA_DIR"] = tmp
+                with self.assertLogs("orivellum", level="WARNING") as cm:
+                    secret = _init_session_secret()
+
+                # The WARNING must mention the generated secret so the user can copy it
+                warning_text = "\n".join(cm.output)
+                self.assertIn(secret, warning_text,
+                               "WARNING must include the generated secret so the user can copy it")
+                self.assertIn("SESSION_SECRET", warning_text)
+        finally:
+            if saved is not None:
+                os.environ["SESSION_SECRET"] = saved
+            if saved_data_dir is not None:
+                os.environ["ORIVELLUM_DATA_DIR"] = saved_data_dir
 
 
 class TestSecretFilesIgnored(unittest.TestCase):

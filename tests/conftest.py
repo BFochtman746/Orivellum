@@ -14,7 +14,7 @@ import os
 # Configure the test API key BEFORE any test module imports the FastAPI app.
 # The auth middleware reads SESSION_SECRET at request time, so setting it here
 # (conftest.py runs before any test collection) is sufficient.
-TEST_API_KEY = "test-orivellum-api-key-12345"
+TEST_API_KEY = "test-orivellum-api-key-1234567890abcdef"  # ≥32 chars required
 os.environ["SESSION_SECRET"] = TEST_API_KEY
 
 # Convenience header dict — pass to TestClient(..., headers=AUTH_HEADERS)

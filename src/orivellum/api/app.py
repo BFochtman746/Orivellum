@@ -479,64 +479,55 @@ def create_app() -> FastAPI:
     return app
 
 
-def _init_session_secret() -> str:
-    """Return a stable, non-public session-signing secret.
+_MIN_SECRET_LEN = 32  # Hard minimum for a cryptographically acceptable key
 
-    Priority:
-      1. SESSION_SECRET env var (Replit Secrets / operator-provided)
-      2. ``data/.session_secret`` file (written on first run, stable across restarts)
-      3. Fresh ``secrets.token_hex(32)`` if the file cannot be written
+
+def _init_session_secret() -> str:
+    """Return the session-signing secret for ``SessionMiddleware``.
+
+    Priority and validation rules
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    1. ``SESSION_SECRET`` env var (Replit Secrets / operator-provided):
+       - Must be **at least 32 characters** — shorter values are rejected with
+         a clear ``RuntimeError`` so the process refuses to start.
+    2. Absent ``SESSION_SECRET``:
+       - A cryptographically random 48-char hex secret is generated with
+         ``secrets.token_hex(24)``.
+       - The generated value is printed as a **WARNING** (with the secret itself
+         so the operator can copy it into their environment) and is **NOT**
+         persisted to disk — it changes on every restart by design.
+       - This is acceptable for a local-first workspace.  For stable sessions
+         across restarts, set ``SESSION_SECRET`` to the value shown in the log.
 
     This function runs at ``create_app()`` time — before the lifespan starts
-    the DB — so it reads/writes a plain text sidecar file rather than the DB.
-    The value is cryptographically random in every case; there is no known
-    fallback literal that an attacker could use to forge session cookies.
-
-    The session-signing secret is deliberately separate from the API bearer-token
-    credential (SESSION_SECRET / DB ``api_key``).  When SESSION_SECRET is set,
-    the same value happens to serve both roles; for local deployments without
-    SESSION_SECRET the two secrets are independently random.
+    the DB — so it MUST NOT touch any database connection.
     """
-    if env_secret := os.environ.get("SESSION_SECRET"):
-        if len(env_secret) < 16:
+    env_secret = os.environ.get("SESSION_SECRET")
+    if env_secret is not None:
+        if len(env_secret) < _MIN_SECRET_LEN:
             raise RuntimeError(
-                f"SESSION_SECRET is dangerously short ({len(env_secret)} chars). "
-                "Minimum is 16 characters. "
-                "Generate a strong one with: python -c \"import secrets; print(secrets.token_hex(32))\""
-            )
-        if len(env_secret) < 32:
-            logger.warning(
-                "SESSION_SECRET is only %d chars. Recommended minimum is 32. "
-                "Generate a stronger one with: python -c \"import secrets; print(secrets.token_hex(32))\"",
-                len(env_secret),
+                f"SESSION_SECRET is too short ({len(env_secret)} chars; "
+                f"minimum is {_MIN_SECRET_LEN}). "
+                "A weak secret compromises all user session cookies. "
+                "Generate a strong one with:\n"
+                "  python -c \"import secrets; print(secrets.token_hex(32))\"\n"
+                "then set it as SESSION_SECRET in your environment / Replit Secrets."
             )
         return env_secret
 
-    # Locate the data directory using the same env var the config uses so we
-    # don't need to call load_config() here.
-    data_dir = os.environ.get("ORIVELLUM_DATA_DIR", "data")
-    secret_file = Path(data_dir) / ".session_secret"
-
-    # Try to load a previously-generated secret from disk.
-    try:
-        if secret_file.exists():
-            stored = secret_file.read_text(encoding="utf-8").strip()
-            if len(stored) >= 32:  # Sanity check — must be a real key
-                return stored
-    except OSError:
-        pass
-
-    # Generate a fresh, cryptographically random secret.
-    fresh = secrets.token_hex(32)
-    try:
-        secret_file.parent.mkdir(parents=True, exist_ok=True)
-        secret_file.write_text(fresh, encoding="utf-8")
-    except OSError:
-        # Cannot persist; the secret is still random for this process lifetime.
-        # Cookies will be invalidated on next restart — acceptable for a
-        # local-first single-user app.
-        pass
-    return fresh
+    # SESSION_SECRET is not set — generate a random secret for this process run.
+    # It is NOT written to disk; sessions become invalid on every restart, which
+    # is acceptable for a single-user local workspace.  To make sessions persist
+    # across restarts, copy the value below into SESSION_SECRET.
+    generated = secrets.token_hex(24)  # 48 hex chars — well above the 32-char minimum
+    logger.warning(
+        "SESSION_SECRET is not set. A random secret has been generated for this "
+        "session: %s — sessions will be invalidated on restart. To persist "
+        "sessions, set SESSION_SECRET to this value in your environment or "
+        "Replit Secrets.",
+        generated,
+    )
+    return generated
 
 
 app = create_app()

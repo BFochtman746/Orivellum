@@ -256,12 +256,30 @@ def _check_configuration(db: "OrivellumDB", cfg: "OrivellumConfig") -> list[dict
     checks.append(_check("LLM workhorse model", OK if model else ERROR, model or "(not set)",
                           "Model used for all AI operations"))
 
-    # Session secret
-    secret_set = bool(db.get_setting("_session_secret_fingerprint") or
-                      __import__("os").environ.get("SESSION_SECRET"))
-    checks.append(_check("Session secret", OK if secret_set else ERROR,
-                          "set" if secret_set else "MISSING",
-                          "Required for session authentication"))
+    # Session secret — must be at least 32 chars to be cryptographically adequate.
+    import os as _os
+    _env_secret = _os.environ.get("SESSION_SECRET")
+    if _env_secret:
+        if len(_env_secret) >= 32:
+            checks.append(_check(
+                "Session secret", OK,
+                f"set ({len(_env_secret)} chars)",
+                "SESSION_SECRET meets the 32-char minimum — sessions are cryptographically strong",
+            ))
+        else:
+            checks.append(_check(
+                "Session secret", ERROR,
+                f"TOO SHORT ({len(_env_secret)} chars, minimum 32)",
+                "Set SESSION_SECRET to a value with at least 32 characters — "
+                "run: python -c \"import secrets; print(secrets.token_hex(32))\"",
+            ))
+    else:
+        checks.append(_check(
+            "Session secret", WARN,
+            "not set — ephemeral per-restart secret in use",
+            "Sessions are invalidated on every restart. "
+            "Set SESSION_SECRET to a stable 32+ char value for persistent sessions.",
+        ))
 
     # AI extraction enabled
     ai_enabled = db.get_setting("ai_extraction_enabled", "false").lower() == "true"
