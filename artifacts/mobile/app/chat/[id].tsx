@@ -202,8 +202,8 @@ function MessageBubble({ message, colors, isDark, onResend }: { message: LocalMe
             </>
           )}
         </View>
-        {/* Truncation indicator + re-send (#91) */}
-        {!isUser && !isErr && (message as any).meta?.cut_short && (
+        {/* Truncation indicator + re-send (#91) — also shown for stream-timeout messages */}
+        {!isUser && !isErr && ((message as any).meta?.cut_short || (message as any).meta?.incomplete) && (
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 6 }}>
             <Text style={{ fontSize: 10, fontFamily: 'Inter_400Regular', color: colors.mutedForeground, fontStyle: 'italic' }}>
               Response was cut short.
@@ -798,7 +798,7 @@ export default function ChatScreen() {
           data={displayMessages}
           keyExtractor={(m) => m.id ?? ''}
           renderItem={({ item }) => {
-            const isCutShort = !!(item as any).meta?.cut_short;
+            const isCutShort = !!(item as any).meta?.cut_short || !!(item as any).meta?.incomplete;
             return (
               <MessageBubble
                 message={item}

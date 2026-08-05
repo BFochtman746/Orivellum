@@ -105,6 +105,7 @@ const TRUNCATION_SUFFIX = "\n\n*(Response was cut short — re-send to continue.
 
 /** Sentinel prefix carried through the token stream when the gate returns "clarify". */
 const CLARIFY_PREFIX = "\x02CLARIFY\x02";
+const TIMEOUT_SENTINEL = "\x02TIMEOUT\x02";
 /** Sentinel prefix carrying the tool intent through the token stream. Format: \x02INTENT\x02web_search\x02 */
 const INTENT_PREFIX = "\x02INTENT\x02";
 /** Sentinel prefix carrying reasoning/thinking tokens from <think> blocks or reasoning_content. */
@@ -783,6 +784,9 @@ async function* streamChat(
         }
         // Thinking/reasoning tokens from <think> blocks or reasoning_content
         if (parsed.thinking) yield `${THINKING_PREFIX}${parsed.thinking as string}`;
+        // Stream stalled — backend already persisted meta.incomplete + meta.cut_short;
+        // yield a sentinel so the caller can mark the bubble incomplete immediately.
+        if (parsed.timeout) { yield TIMEOUT_SENTINEL; }
         if (parsed.token) yield parsed.token as string;
       } catch { /* ignore */ }
     }
@@ -1417,6 +1421,14 @@ export default function Chat() {
             } catch {}
             continue;
           }
+          if (token === TIMEOUT_SENTINEL) {
+            // Stream timed out — mark the assistant bubble as resumable immediately
+            // so the user sees the re-send affordance without waiting for [DONE].
+            setLocalMessages((prev) => prev.map((m) =>
+              m.id === assistantId ? { ...m, incomplete: true } : m
+            ));
+            continue;
+          }
           if (token.startsWith(CLARIFY_PREFIX)) {
             // Cognition gate requests clarification — backend persisted with { model, isClarification: true }
             const question = token.slice(CLARIFY_PREFIX.length);
@@ -1559,7 +1571,7 @@ export default function Chat() {
         : (m.text ?? ""),
       created_at: m.created_at ?? "",
       meta: (m as any).meta as Record<string, unknown> | undefined,
-      incomplete: !!(m as any).meta?.cut_short,
+      incomplete: !!(m as any).meta?.cut_short || !!(m as any).meta?.incomplete,
       isClarification: !!(m as any).meta?.isClarification,
       intent: (m as any).meta?.intent as string | undefined,
       thinking: (m as any).meta?.thinking as string | undefined,
@@ -1601,7 +1613,7 @@ export default function Chat() {
           try {
             const parsed = JSON.parse(data);
             if (parsed.continue_message_id) continueTargetId = parsed.continue_message_id;
-            if (parsed.cut_short) stillCutShort = true;
+            if (parsed.cut_short || parsed.timeout) stillCutShort = true;
             if (parsed.error === "continuation_failed") {
               // Server produced nothing (transport/model error) — keep the
               // Continue affordance so the user can retry.
@@ -1657,7 +1669,7 @@ export default function Chat() {
     ? localMessages
     : (activeConv?.messages ?? []).map((m) => {
         const rawText = m.text ?? "";
-        const hasCutShortMeta = !!(m as any).meta?.cut_short;
+        const hasCutShortMeta = !!(m as any).meta?.cut_short || !!(m as any).meta?.incomplete;
         const isServerTruncated =
           m.role === "assistant" && (hasCutShortMeta || rawText.endsWith(TRUNCATION_SUFFIX));
         return {

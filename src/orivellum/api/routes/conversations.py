@@ -1366,10 +1366,13 @@ async def _stream_response(
         if _cut_short:
             meta["cut_short"] = True
             meta["partial_text"] = full_reply  # clean text; no suffix appended
-        # Mark stalled/timed-out messages so the frontend knows to offer re-send
-        # (the re-send button watches for meta.incomplete == true).
+        # Treat timed-out messages the same as token-limit truncations so the
+        # continuation selector and the re-send button both pick them up.
+        # incomplete=True is the new flag; cut_short=True preserves backward
+        # compatibility with UI code that only watches for cut_short.
         if _timed_out:
             meta["incomplete"] = True
+            meta["cut_short"] = True
             meta["partial_text"] = full_reply  # preserve whatever arrived before stall
         if full_reply:
             # Update text + metadata on the stub, then set terminal state
@@ -1598,7 +1601,10 @@ async def _stream_continuation(db: Any, conv: dict, cut_short_msg: dict):
 
     # Update the original message: full text = partial + continuation
     new_text = partial_text + continuation
-    new_meta = {k: v for k, v in meta.items() if k not in ("cut_short", "partial_text")}
+    # Strip ALL truncation flags — successful continuation clears cut_short, partial_text,
+    # and incomplete so the message doesn't stay permanently marked resumable.
+    new_meta = {k: v for k, v in meta.items()
+                if k not in ("cut_short", "partial_text", "incomplete")}
 
     # Mark still cut-short if the provider hit the token limit OR if the stream
     # broke mid-way (tokens arrived but no clean finish_reason).  In both cases
@@ -1607,6 +1613,12 @@ async def _stream_continuation(db: Any, conv: dict, cut_short_msg: dict):
     still_cut = stream_broke_mid or (_finish_reason in ("length", "max_tokens"))
     if still_cut:
         new_meta["cut_short"] = True
+        new_meta["partial_text"] = new_text
+    # If this continuation itself timed out, mark the updated message incomplete so
+    # the re-send affordance remains visible after the client reloads from the server.
+    if _cont_timed_out:
+        new_meta["incomplete"] = True
+        new_meta["cut_short"] = True  # redundant with still_cut but ensures compat
         new_meta["partial_text"] = new_text
     try:
         with db._lock:

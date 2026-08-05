@@ -463,10 +463,19 @@ def run_intake(
                 # call (Tavily fetch + LLM synthesis).  If it stalls, we abandon
                 # and return a graceful profile without research results rather
                 # than hanging indefinitely.
+                #
+                # IMPORTANT: use shutdown(wait=False) — NOT the context-manager
+                # form — so we never block waiting for a timed-out worker thread
+                # to finish.  The underlying httpx / llm_call calls have their
+                # own finite timeouts, so the worker will eventually clean up;
+                # we just don't wait for it here.
                 import concurrent.futures as _cf
                 _SYNTH_TIMEOUT_SEC = 60
-                with _cf.ThreadPoolExecutor(max_workers=1) as _synth_ex:
-                    _synth_fut = _synth_ex.submit(web_search_synthesize, query, None, model_name, db)
+                _synth_ex = _cf.ThreadPoolExecutor(max_workers=1)
+                try:
+                    _synth_fut = _synth_ex.submit(
+                        web_search_synthesize, query, None, model_name, db
+                    )
                     try:
                         research_summary, research_sources = _synth_fut.result(
                             timeout=_SYNTH_TIMEOUT_SEC
@@ -476,12 +485,19 @@ def run_intake(
                             "Intake research synthesis timed out after %ss for doc %s",
                             _SYNTH_TIMEOUT_SEC, doc_id,
                         )
+                        _synth_fut.cancel()  # best-effort; no-op if already running
                         research_summary = None
                         research_sources = []
                     except Exception as _synth_exc:
-                        logger.warning("Intake research synthesis failed for %s: %s", doc_id, _synth_exc)
+                        logger.warning(
+                            "Intake research synthesis failed for %s: %s", doc_id, _synth_exc
+                        )
                         research_summary = None
                         research_sources = []
+                finally:
+                    # Never wait for a stalled worker — the inner timeouts on
+                    # httpx / llm_call will eventually terminate it.
+                    _synth_ex.shutdown(wait=False)
                 # Persist as a recallable note linked to this document.
                 # Two stores:
                 #   1. Knowledge item (work-scoped, for the Works knowledge tab)
