@@ -662,6 +662,263 @@ _CHAT_BASE_PROMPT = (
 _abstention_policy = AbstentionPolicy()
 
 
+def _strip_filter_phrases(text: str) -> str:
+    """Remove recognised temporal and document-kind filter phrases from *text*.
+
+    Returns the residual content query suitable for passing to FTS5.
+    Returns an empty string when the entire query is consumed by filter phrases
+    (i.e. the query is *purely* temporal/source-filter such as "what did I add
+    last week?" or "summarize my PDFs").
+
+    Callers should pass the result to DB filtered-search methods; when the
+    return value is empty those methods issue a date-only / kind-only scan
+    (plain SELECT, no FTS MATCH) so they return all qualifying items regardless
+    of whether the items' text contains the filter wording.
+    """
+    import re as _re
+
+    t = text
+
+    # ── Remove temporal phrases (longest first to avoid partial removal) ──────
+    _temporal_pats = [
+        r'\bin\s+the\s+(?:past|last)\s+\d+\s+(?:days?|weeks?|months?)\b',
+        r'\b(?:past|last)\s+\d+\s+(?:days?|weeks?|months?)\b',
+        r'\b(?:last|past)\s+(?:week|month|year)\b',
+        r'\bthis\s+(?:week|month|year)\b',
+        r'\byesterday\b',
+        r'\btoday\b',
+    ]
+    for pat in _temporal_pats:
+        t = _re.sub(pat, ' ', t, flags=_re.IGNORECASE)
+
+    # ── Remove document-kind filter phrases ───────────────────────────────────
+    _kind_group = (
+        r'pdf[s]?'
+        r'|word\s+docs?'
+        r'|docx?'
+        r'|excel'
+        r'|spreadsheets?'
+        r'|xlsx?'
+        r'|csv'
+        r'|markdown'
+        r'|md\s+files?'
+        # Code — Python, JS/TS family, Java, Go, Rust, Ruby, PHP, C/C++
+        r'|python'
+        r'|javascript'
+        r'|typescript'
+        r'|\.js\b'
+        r'|\.ts\b'
+        r'|\.jsx\b'
+        r'|\.tsx\b'
+        r'|java\b'
+        r'|golang'
+        r'|rust\b'
+        r'|ruby\b'
+        r'|php\b'
+        r'|c\+\+'
+        r'|cpp\b'
+        r'|code\s+files?'
+        r'|scripts?'
+        r'|source\s+files?'
+        r'|audio'
+        r'|recordings?'
+        r'|podcasts?'
+        r'|mp3'
+        r'|wav'
+        r'|images?'
+        r'|photos?'
+        r'|pictures?'
+        r'|screenshots?'
+        r'|powerpoints?'
+        r'|slides?'
+        r'|pptx?'
+        r'|txt'
+        r'|text\s+files?'
+        r'|plain\s+text'
+    )
+    # Match with optional preceding "from (my|the)" or "my"
+    # and optional trailing "file(s)" so "PDF files" and "audio files" are
+    # fully consumed by this pass rather than leaving a dangling "files" token.
+    t = _re.sub(
+        rf'\b(?:from\s+(?:my|the)\s+|my\s+)?(?:{_kind_group})(?:\s+files?)?\b',
+        ' ', t, flags=_re.IGNORECASE,
+    )
+
+    # ── Strip hollow stop-words left behind after phrase removal ─────────────
+    _stop = (
+        r'\b(?:what|when|where|who|how|did|do|does|i|we|have|has|been|was|were'
+        r'|add|added|import|imported|show|me|tell|give|find|get|list'
+        r'|summarize|summarise|summarized|summarising|everything|anything|something'
+        r'|all|the|a|an|of|and|or'
+        r'|from|in|at|to|on|for|with|about|by|my|during|over|since|between'
+        r'|any|is|are|there|been|had)\b'
+    )
+    residual = _re.sub(_stop, ' ', t, flags=_re.IGNORECASE)
+    residual = _re.sub(r'\s+', ' ', residual).strip(' .,?!:;')
+
+    return residual
+
+
+def _detect_query_filters(
+    text: str,
+    now: "datetime | None" = None,
+) -> "dict | None":
+    """Detect temporal and document-kind filters from a user query.
+
+    Returns a dict with keys:
+        after_date  — ISO-format lower bound (inclusive), or None
+        before_date — ISO-format upper bound (exclusive), or None
+        description — human-readable label, e.g. "last week" or "last week from pdf files"
+        doc_kinds   — list of document-kind strings to filter, e.g. ["pdf", "audio"]
+
+    Returns None when no temporal or source-kind filter is found, so the
+    caller falls through to the default hybrid search.
+
+    Supported temporal expressions:
+        today / yesterday / this week / last week / past week /
+        this month / last month / past month /
+        this year / last year / past year /
+        past N days / last N days / in the last N days /
+        past N weeks / last N weeks /
+        past N months / last N months
+
+    Supported source-kind expressions (matched against the query):
+        PDFs · Word docs / DOCX · Excel / XLSX / spreadsheets · CSV ·
+        Markdown / MD files · Python / code files / scripts ·
+        audio / recordings / podcasts / MP3 / WAV ·
+        images / photos / screenshots · PowerPoint / slides / PPTX ·
+        plain text / TXT files
+    """
+    from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+    import re as _re
+
+    if now is None:
+        now = _dt.now(_tz.utc)
+
+    t = text.lower()
+
+    # ── Temporal detection ───────────────────────────────────────────────────
+    after: "_dt | None" = None
+    before: "_dt | None" = None
+    time_desc: "str | None" = None
+
+    def _day_start(d: "_dt") -> "_dt":
+        return d.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    if _re.search(r'\btoday\b', t):
+        after = _day_start(now)
+        time_desc = "today"
+
+    elif _re.search(r'\byesterday\b', t):
+        after = _day_start(now - _td(days=1))
+        before = _day_start(now)
+        time_desc = "yesterday"
+
+    elif _re.search(r'\b(last|past)\s+week\b', t):
+        # Sunday→Monday depends on locale; use ISO Monday-based week
+        monday = _day_start(now - _td(days=now.weekday()))
+        after = monday - _td(weeks=1)
+        before = monday
+        time_desc = "last week"
+
+    elif _re.search(r'\bthis\s+week\b', t):
+        after = _day_start(now - _td(days=now.weekday()))
+        time_desc = "this week"
+
+    elif _re.search(r'\b(last|past)\s+month\b', t):
+        first_this = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        if first_this.month == 1:
+            first_last = first_this.replace(year=first_this.year - 1, month=12)
+        else:
+            first_last = first_this.replace(month=first_this.month - 1)
+        after = first_last
+        before = first_this
+        time_desc = "last month"
+
+    elif _re.search(r'\bthis\s+month\b', t):
+        after = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        time_desc = "this month"
+
+    elif _re.search(r'\b(last|past)\s+year\b', t):
+        jan1 = now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+        after = jan1.replace(year=jan1.year - 1)
+        before = jan1
+        time_desc = "last year"
+
+    elif _re.search(r'\bthis\s+year\b', t):
+        after = now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+        time_desc = "this year"
+
+    else:
+        # "past/last N days/weeks/months"
+        m = _re.search(
+            r'\b(?:(?:in\s+the\s+)?(?:past|last))\s+(\d+)\s+(days?|weeks?|months?)\b', t
+        )
+        if m:
+            n = int(m.group(1))
+            unit = m.group(2).rstrip("s")
+            if unit == "day":
+                after = now - _td(days=n)
+            elif unit == "week":
+                after = now - _td(weeks=n)
+            else:   # month (approximate)
+                after = now - _td(days=n * 30)
+            time_desc = f"past {n} {m.group(2)}"
+
+    # ── Source-kind detection ────────────────────────────────────────────────
+    _KIND_PATTERNS: list[tuple[str, str]] = [
+        (r'\bpdf[s]?\b',                                   'pdf'),
+        (r'\bword\s+docs?\b|\bdocx?\b',                    'docx'),
+        (r'\bexcel\b|\bspreadsheets?\b|\bxlsx?\b',         'excel'),
+        (r'\bcsv\b',                                        'csv'),
+        (r'\bmarkdown\b|\bmd\s+files?\b',                  'markdown'),
+        # Code — Python, JS/TS/JSX/TSX, Java, Go/Golang, Rust, Ruby, PHP, C/C++
+        (
+            r'\bpython\b'
+            r'|\bjavascript\b'
+            r'|\btypescript\b'
+            r'|\.js\b'
+            r'|\.ts\b'
+            r'|\.jsx\b'
+            r'|\.tsx\b'
+            r'|\bjava\b'
+            r'|\bgolang\b'
+            r'|\brust\b'
+            r'|\bruby\b'
+            r'|\bphp\b'
+            r'|\bc\+\+'
+            r'|\bcpp\b'
+            r'|\bcode\s+files?\b'
+            r'|\bscripts?\b'
+            r'|\bsource\s+files?\b',
+            'code',
+        ),
+        (r'\baudio\b|\brecordings?\b|\bpodcasts?\b|\bmp3\b|\bwav\b', 'audio'),
+        (r'\bimages?\b|\bphotos?\b|\bpictures?\b|\bscreenshots?\b',  'image'),
+        (r'\bpowerpoints?\b|\bslides?\b|\bpptx?\b',        'pptx'),
+        (r'\btxt\b|\btext\s+files?\b|\bplain\s+text\b',    'text'),
+    ]
+    doc_kinds: list[str] = [
+        kind for pattern, kind in _KIND_PATTERNS if _re.search(pattern, t)
+    ]
+
+    if not time_desc and not doc_kinds:
+        return None
+
+    parts: list[str] = []
+    if time_desc:
+        parts.append(time_desc)
+    if doc_kinds:
+        parts.append(f"from {'/'.join(doc_kinds)} files")
+
+    return {
+        "after_date":  after.isoformat() if after else None,
+        "before_date": before.isoformat() if before else None,
+        "description": " ".join(parts),
+        "doc_kinds":   doc_kinds,
+    }
+
+
 def _build_system_prompt(db: Any, conv: dict, scope: str = "work",
                          user_query: str | None = None,
                          out_sources: list | None = None) -> str:
@@ -767,6 +1024,175 @@ def _build_system_prompt(db: Any, conv: dict, scope: str = "work",
 
     # ── 1. Query-matched global search (primary path) ──────────────────────────
     if user_query and user_query.strip():
+
+        # ── 1a. Temporal / source-filter path ─────────────────────────────────
+        # Detects "last week", "past 30 days", "from my PDFs", etc. and routes
+        # to targeted filtered DB queries instead of the default hybrid search.
+        # This runs BEFORE the hybrid search; if filters are found we always
+        # return from here (either with results or with a "nothing found" guard),
+        # so the hybrid search only runs for unfiltered queries.
+        _qfilter = _detect_query_filters(user_query)
+        # scope="work" with no linked Work: the existing recency fallback (step 2)
+        # returns base-only to prevent cross-Work exposure.  Mirror that guarantee
+        # here — skip the filtered path and fall through to hybrid search or step 2.
+        if _qfilter and (scope != "work" or work_id):
+            try:
+                # Strip temporal/source phrases so FTS only sees content terms.
+                # Empty residual → pure date-/kind-only scan (no FTS MATCH).
+                _content_q = _strip_filter_phrases(user_query)
+
+                # Scope: when the conversation is linked to a Work, restrict
+                # filtered search to that Work so other Works cannot leak in.
+                _f_work_ids: list[str] | None = (
+                    [work_id] if work_id and scope == "work" else None
+                )
+
+                _fk = db.search_knowledge_filtered(
+                    _content_q,
+                    after_date=_qfilter.get("after_date"),
+                    before_date=_qfilter.get("before_date"),
+                    doc_kinds=_qfilter.get("doc_kinds") or None,
+                    work_ids=_f_work_ids,
+                    limit=_CONTEXT_KNOWLEDGE * 3,
+                )
+                _fc = db.search_chunks_filtered(
+                    _content_q,
+                    after_date=_qfilter.get("after_date"),
+                    before_date=_qfilter.get("before_date"),
+                    doc_kinds=_qfilter.get("doc_kinds") or None,
+                    work_ids=_f_work_ids,
+                    limit=_CONTEXT_CHUNKS * 3,
+                )
+
+                # Token budget: 30% of context_window for injected knowledge
+                # (same as the hybrid path) so filtered queries cannot crowd
+                # out instructions or exceed small model contexts.
+                _f_budget = int(_get_effective_context_window(db) * 0.30)
+                _f_k_used = 0
+                _trusted_fk: list[dict] = []
+                for _fki_raw in _fk:
+                    if _fki_raw.get("review_status") not in _TRUSTED:
+                        continue
+                    _ft_cost = estimate_tokens(_fki_raw.get("text", ""))
+                    if len(_trusted_fk) >= _CONTEXT_KNOWLEDGE or _f_k_used + _ft_cost > _f_budget:
+                        break
+                    _trusted_fk.append(_fki_raw)
+                    _f_k_used += _ft_cost
+
+                _f_c_budget = max(0, _f_budget - _f_k_used)
+                _f_c_used = 0
+                _trusted_fc: list[dict] = []
+                for _fci_raw in _fc:
+                    _ft_cost = estimate_tokens(_fci_raw.get("text", ""))
+                    if len(_trusted_fc) >= _CONTEXT_CHUNKS or _f_c_used + _ft_cost > _f_c_budget:
+                        break
+                    _trusted_fc.append(_fci_raw)
+                    _f_c_used += _ft_cost
+
+                _fdesc = _qfilter["description"]
+
+                if _trusted_fk or _trusted_fc:
+                    _synthesis = (
+                        f"FILTER ACTIVE — content retrieved specifically {_fdesc}.\n"
+                        "Synthesize and summarize across the items below. "
+                        "State how many items were found, what time range or source type "
+                        "they cover, and cite source titles where available."
+                    )
+                    _fparts = [
+                        f"FILTERED KNOWLEDGE ({_fdesc.upper()}):\n{_synthesis}"
+                    ]
+
+                    # Doc-title cache (same pattern as the hybrid path)
+                    _fdoc_cache: dict[str, str] = {}
+                    for _fki in _trusted_fk:
+                        _dsid = _fki.get("source_doc_id")
+                        if _dsid and _dsid not in _fdoc_cache:
+                            try:
+                                _fd = db.get_document(_dsid)
+                                if _fd:
+                                    _raw = _fd.get("title") or _fd.get("source", "")
+                                    _fdoc_cache[_dsid] = (
+                                        _raw.split("/")[-1] if "/" in _raw else _raw
+                                    ) or "Document"
+                            except Exception:
+                                pass
+
+                    for _fki in _trusted_fk:
+                        _ft = _fki.get("text", "").strip()
+                        _fkind = _fki.get("kind", "note")
+                        _dsid = _fki.get("source_doc_id")
+                        _fdoc_title = _fdoc_cache.get(_dsid, "") if _dsid else ""
+                        _fdate = (_fki.get("created_at") or "")[:10]
+                        _fcite = f" | source: \"{_fdoc_title}\"" if _fdoc_title else ""
+                        _fdate_tag = f" | {_fdate}" if _fdate else ""
+                        if _ft:
+                            _fparts.append(
+                                f"  [{_fkind}{_fcite}{_fdate_tag}] {_ft[:400]}"
+                            )
+                        if out_sources is not None:
+                            out_sources.append({
+                                "id": _fki.get("id"),
+                                "title": _fdoc_title or _ft[:100],
+                                "kind": _fkind,
+                                "work_id": _fki.get("work_id"),
+                                "source_doc_id": _dsid,
+                                "doc_id": _dsid,
+                                "doc_title": _fdoc_title,
+                                "passage": _ft[:200],
+                                "filter": _fdesc,
+                            })
+
+                    for _fci in _trusted_fc:
+                        _ft = _fci.get("text", "").strip()
+                        _fdoc = _fci.get("doc_title") or "document"
+                        _fdate = (_fci.get("created_at") or "")[:10]
+                        _fdate_tag = f" | {_fdate}" if _fdate else ""
+                        if _ft:
+                            _fparts.append(
+                                f"  [from \"{_fdoc}\"{_fdate_tag}] {_ft[:400]}"
+                            )
+                        if out_sources is not None:
+                            out_sources.append({
+                                "id": _fci.get("id"),
+                                "title": _fdoc,
+                                "kind": "document",
+                                "work_id": _fci.get("work_id"),
+                                "source_doc_id": _fci.get("doc_id"),
+                                "doc_id": _fci.get("doc_id"),
+                                "doc_title": _fdoc,
+                                "passage": _ft[:200],
+                                "filter": _fdesc,
+                            })
+
+                    _fknowledge_section = "\n".join(_fparts)
+                    _fout = [base]
+                    if claim_block:
+                        _fout.append(claim_block)
+                    if verification_instruction:
+                        _fout.append(verification_instruction)
+                    _fout.append(_fknowledge_section)
+                    return "\n\n".join(p for p in _fout if p.strip())
+
+                else:
+                    # Filters matched but no items exist for that range/kind
+                    _no_results = (
+                        f"FILTER ACTIVE: The library was searched {_fdesc} "
+                        f"but no matching items were found. "
+                        "Tell the user exactly that — no items found for that time "
+                        "range or file type — and suggest broadening the search or "
+                        "checking which documents have been imported."
+                    )
+                    _fout = [base]
+                    if claim_block:
+                        _fout.append(claim_block)
+                    if verification_instruction:
+                        _fout.append(verification_instruction)
+                    _fout.append(_no_results)
+                    return "\n\n".join(p for p in _fout if p.strip())
+
+            except Exception:
+                pass  # fall through to hybrid search on any error
+
         try:
             # Search knowledge items and raw document chunks across ALL works.
             # Hybrid = keyword FTS + semantic vectors (falls back to FTS-only

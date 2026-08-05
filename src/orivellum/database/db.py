@@ -2006,6 +2006,168 @@ class OrivellumDB:
                 rows = []
         return [self._k_dict(r) for r in rows]
 
+    def search_knowledge_filtered(
+        self,
+        query: str,
+        after_date: str | None = None,
+        before_date: str | None = None,
+        doc_kinds: list[str] | None = None,
+        work_ids: list[str] | None = None,
+        limit: int = 20,
+    ) -> list[dict]:
+        """FTS5 knowledge search with optional date-range and document-kind filters.
+
+        **Timestamp policy** (applies to both date parameters):
+            For document-backed items (``k.source_doc_id IS NOT NULL``) the
+            filter is applied to ``d.created_at`` — the source document's import
+            date — which is the user-visible event.  For source-less notes
+            (``source_doc_id IS NULL``) there is no document timestamp, so
+            ``k.created_at`` is used instead.  This is expressed as
+            ``COALESCE(d.created_at, k.created_at)`` after a LEFT JOIN to
+            documents.
+
+        Parameters
+        ----------
+        query:       FTS5 search term(s) — may be empty for a date-only scan.
+        after_date:  ISO-format lower bound on the effective timestamp (incl.).
+        before_date: ISO-format upper bound on the effective timestamp (excl.).
+        doc_kinds:   Whitelist of ``documents.kind`` values.  Source-less items
+                     are excluded when doc_kinds is non-empty.
+        work_ids:    Whitelist of work IDs.
+        limit:       Maximum rows returned (capped at 100).
+        """
+        cap = min(limit, 100)
+        args: list = []
+
+        # Always LEFT JOIN documents so we can use d.created_at for date
+        # filtering on document-backed items.
+        _join_doc = " LEFT JOIN documents d ON d.id = k.source_doc_id"
+
+        if query.strip():
+            # FTS path — BM25-ranked.
+            # No alias on knowledge_fts so bm25(knowledge_fts) is valid.
+            q = (
+                f"SELECT k.* FROM knowledge_fts"
+                f" JOIN knowledge k ON k.id = knowledge_fts.knowledge_id"
+                f"{_join_doc}"
+                f" WHERE knowledge_fts MATCH ?"
+            )
+            args.append(query)
+        else:
+            # Plain scan (no FTS) — date-/kind-only queries
+            q = f"SELECT k.* FROM knowledge k{_join_doc} WHERE 1=1"
+
+        if after_date:
+            # COALESCE: document timestamp for doc-backed items, knowledge
+            # creation timestamp for source-less notes.
+            q += " AND COALESCE(d.created_at, k.created_at) >= ?"
+            args.append(after_date)
+        if before_date:
+            q += " AND COALESCE(d.created_at, k.created_at) < ?"
+            args.append(before_date)
+        if work_ids:
+            placeholders = ",".join("?" * len(work_ids))
+            q += f" AND k.work_id IN ({placeholders})"
+            args.extend(work_ids)
+        if doc_kinds:
+            placeholders = ",".join("?" * len(doc_kinds))
+            # Strict: source-less notes excluded — the user asked specifically
+            # for a document type.
+            q += f" AND d.kind IN ({placeholders})"
+            args.extend(doc_kinds)
+
+        # BM25 for FTS branches; recency (document date preferred) for plain-scan
+        q += (
+            f" ORDER BY bm25(knowledge_fts) LIMIT {cap}"
+            if query.strip()
+            else f" ORDER BY COALESCE(d.created_at, k.created_at) DESC LIMIT {cap}"
+        )
+
+        with self._lock:
+            try:
+                rows = self._conn.execute(q, args).fetchall()
+            except Exception:
+                # Never broaden filters on error — return empty so the caller
+                # can surface an honest "nothing found" message.
+                rows = []
+        return [self._k_dict(r) for r in rows]
+
+    def search_chunks_filtered(
+        self,
+        query: str,
+        after_date: str | None = None,
+        before_date: str | None = None,
+        doc_kinds: list[str] | None = None,
+        work_ids: list[str] | None = None,
+        limit: int = 10,
+    ) -> list[dict]:
+        """FTS5 chunk search with optional date-range and document-kind filters.
+
+        Date filtering uses ``d.created_at`` (the source document's import date)
+        not the chunk's own timestamp, so "PDFs from last week" means PDFs whose
+        import date falls in that range.
+
+        Each returned dict carries ``doc_title``, ``doc_kind``, and ``work_id``
+        from the joined ``documents`` row.
+        """
+        cap = min(limit, 50)
+        args: list = []
+
+        _select = (
+            "SELECT c.id, c.doc_id, c.page, c.text, c.created_at,"
+            " d.title AS doc_title, d.kind AS doc_kind, d.work_id,"
+            " d.created_at AS doc_created_at"
+        )
+
+        if query.strip():
+            q = (
+                f"{_select}"
+                f" FROM chunks_fts"
+                f" JOIN chunks c ON c.id = chunks_fts.chunk_id"
+                f" JOIN documents d ON d.id = c.doc_id"
+                f" WHERE chunks_fts MATCH ?"
+            )
+            args.append(query)
+        else:
+            q = (
+                f"{_select}"
+                f" FROM chunks c"
+                f" JOIN documents d ON d.id = c.doc_id"
+                f" WHERE 1=1"
+            )
+
+        if after_date:
+            # Filter on document import date, not chunk creation date.
+            q += " AND d.created_at >= ?"
+            args.append(after_date)
+        if before_date:
+            q += " AND d.created_at < ?"
+            args.append(before_date)
+        if work_ids:
+            placeholders = ",".join("?" * len(work_ids))
+            q += f" AND d.work_id IN ({placeholders})"
+            args.extend(work_ids)
+        if doc_kinds:
+            placeholders = ",".join("?" * len(doc_kinds))
+            q += f" AND d.kind IN ({placeholders})"
+            args.extend(doc_kinds)
+
+        # BM25 for FTS branches; document recency for plain-scan branches
+        q += (
+            f" ORDER BY bm25(chunks_fts) LIMIT {cap}"
+            if query.strip()
+            else f" ORDER BY d.created_at DESC LIMIT {cap}"
+        )
+
+        with self._lock:
+            try:
+                rows = self._conn.execute(q, args).fetchall()
+            except Exception:
+                # Never broaden filters on error — return empty so the caller
+                # surfaces an honest "nothing found" message.
+                rows = []
+        return [dict(r) for r in rows]
+
     @staticmethod
     def _k_dict(row: Any) -> dict:
         d = dict(row)
