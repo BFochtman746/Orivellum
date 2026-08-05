@@ -51,10 +51,15 @@ def _job_entry(kind: str, label: str) -> dict:
 
 
 def _tracked_submit(fn, *args, kind: str = "background", label: str = "", **kwargs) -> Future:
-    """Submit work and record a job entry for the dashboard."""
+    """Submit work and record a job entry for the dashboard.
+
+    The registry entry is created AFTER a successful submit() call so that a
+    submission failure (e.g. executor shutdown race) never leaves a permanently
+    ``running`` entry in the dashboard.  If submit() raises, the entry is
+    pre-marked ``failed`` and then appended so callers can inspect it, but it
+    will not linger as ``running``.
+    """
     entry = _job_entry(kind, label or getattr(fn, "__name__", "job"))
-    with _jobs_lock:
-        _jobs.append(entry)
 
     def _wrapped():
         try:
@@ -70,7 +75,22 @@ def _tracked_submit(fn, *args, kind: str = "background", label: str = "", **kwar
                 entry["error"] = str(exc)[:300]
             raise
 
-    return get_executor().submit(_wrapped)
+    try:
+        future = get_executor().submit(_wrapped)
+        # Only register the entry after successful submission so the dashboard
+        # never shows a permanently-running ghost job.
+        with _jobs_lock:
+            _jobs.append(entry)
+        return future
+    except Exception as exc:
+        # Submission failed (executor shut down, etc.) — mark entry failed and
+        # register it so the caller's except block can see it in the dashboard.
+        entry["state"] = "failed"
+        entry["finished_at"] = time.time()
+        entry["error"] = f"submit_failed: {exc!s}"[:300]
+        with _jobs_lock:
+            _jobs.append(entry)
+        raise
 
 
 def get_recent_jobs(limit: int = 50) -> list[dict]:

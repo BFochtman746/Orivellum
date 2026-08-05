@@ -147,14 +147,18 @@ def _explode_zip_into_documents(
                     logger.debug("ZIP child %s is tier=%s — skipping harvest", basename, _child_tier)
                     continue
 
-                # Queue processing via shared executor so work is bounded
+                # Queue processing via tracked executor so work is bounded,
+                # visible in the job dashboard, and never spawns unlimited threads.
                 try:
-                    from orivellum.api.executor import get_executor as _gex_zip
-                    _gex_zip().submit(
-                        process_document, doc["id"], str(file_path), kind, work_id, title, db
+                    from orivellum.api.executor import _tracked_submit as _ts_zip
+                    _ts_zip(
+                        process_document, doc["id"], str(file_path), kind, work_id, title, db,
+                        kind="pipeline", label=f"process:{doc['id'][:8]}",
                     )
-                except Exception:
+                except Exception as _exc_zip:
                     # Executor not yet initialised (e.g. tests) — fall back to thread
+                    logger.warning("Executor unavailable for ZIP child %s, falling back to thread: %s",
+                                   doc["id"][:8], _exc_zip)
                     threading.Thread(
                         target=process_document,
                         args=(doc["id"], str(file_path), kind, work_id, title, db),

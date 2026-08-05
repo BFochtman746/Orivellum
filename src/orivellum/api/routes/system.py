@@ -394,9 +394,13 @@ def nightshift_run_now():
         except Exception:
             logger.exception("Nightshift run-now worker crashed")
 
-    threading.Thread(
-        target=_worker, name="nightshift-run-now", daemon=True,
-    ).start()
+    try:
+        from orivellum.api.executor import _tracked_submit as _ts_ns
+        _ts_ns(_worker, kind="nightshift", label="nightshift_run_now")
+    except Exception as _exc_ns:
+        logger.warning("Executor unavailable for nightshift run-now, falling back to thread: %s",
+                       _exc_ns)
+        threading.Thread(target=_worker, name="nightshift-run-now", daemon=True).start()
     return {"started": True}
 
 

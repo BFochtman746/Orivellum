@@ -282,7 +282,16 @@ def register_and_index(
         except Exception as exc:
             logger.debug("register_and_index background embed failed: %s", exc)
 
-    threading.Thread(target=_embed, daemon=True).start()
+    # Route through the tracked executor so embedding work is bounded and
+    # appears in the job dashboard.  Falls back to a daemon thread only when
+    # the executor has not been initialised yet (test harnesses, CLI scripts).
+    try:
+        from orivellum.api.executor import _tracked_submit as _ts_embed
+        _ts_embed(_embed, kind="embed", label=f"embed:{doc_id[:8]}")
+    except Exception as _exc_embed:
+        logger.warning("Executor unavailable for embed:%s, falling back to thread: %s",
+                       doc_id[:8], _exc_embed)
+        threading.Thread(target=_embed, daemon=True).start()
 
     # ── Provenance record ─────────────────────────────────────────────────────
     record_provenance(doc_id, provenance_source, db,
