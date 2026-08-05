@@ -1334,6 +1334,508 @@ function WorkshopPanel() {
   );
 }
 
+// ── Audiobook Builder ─────────────────────────────────────────────────────────
+
+type AudiobookPhase = 'idle' | 'generating' | 'done' | 'error';
+
+function _safeTitle(title: string) {
+  return title.replace(/[^\w\-]/g, '_').substring(0, 50);
+}
+
+function AudiobookPanel({
+  voices,
+  onGenerated,
+  audio,
+  outputs,
+}: {
+  voices: VoiceEntry[];
+  onGenerated: () => void;
+  audio: ReturnType<typeof useSharedAudio>;
+  outputs: any[];
+}) {
+  const colors = useColors();
+  const [works, setWorks] = useState<{ id: string; title: string }[]>([]);
+  const [workId, setWorkId] = useState<string | null>(null);
+  const [voice, setVoice] = useState('bm_george');
+  const [speed, setSpeed] = useState(1.0);
+  const [phase, setPhase] = useState<AudiobookPhase>('idle');
+  const [result, setResult] = useState<{ path: string; filename: string; work_title: string } | null>(null);
+  const [errorMsg, setErrorMsg] = useState('');
+  const [elapsed, setElapsed] = useState(0);
+  const [sharing, setSharing] = useState(false);
+  const abortRef = useRef<AbortController | null>(null);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Load works list
+  useEffect(() => {
+    mobileFetch(`${API}/works`)
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        if (d?.works) {
+          const list: { id: string; title: string }[] = d.works.map((w: any) => ({
+            id: w.id,
+            title: w.title ?? 'Untitled',
+          }));
+          setWorks(list);
+          if (list.length && !workId) setWorkId(list[0].id);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  // Cleanup on unmount
+  useEffect(() => () => {
+    if (timerRef.current) clearInterval(timerRef.current);
+    abortRef.current?.abort();
+  }, []);
+
+  const selectedWork = works.find(w => w.id === workId) ?? null;
+
+  // Previous audiobooks for the selected work — audio outputs whose filename
+  // begins with the server-generated safe title prefix.
+  const previousOutputs = selectedWork
+    ? outputs.filter(o => o.kind === 'audio' && o.name.startsWith(_safeTitle(selectedWork.title)))
+    : [];
+
+  const startTimer = () => {
+    setElapsed(0);
+    timerRef.current = setInterval(() => setElapsed(s => s + 1), 1000);
+  };
+
+  const stopTimer = () => {
+    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+  };
+
+  const formatElapsed = (s: number) => {
+    const m = Math.floor(s / 60);
+    const sec = s % 60;
+    return m > 0 ? `${m}m ${sec}s` : `${s}s`;
+  };
+
+  const handleGenerate = async () => {
+    if (!workId) return;
+    audio.stop();
+    setPhase('generating');
+    setResult(null);
+    setErrorMsg('');
+    startTimer();
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+    try {
+      const resp = await mobileFetch(`${API}/studio/tts/work`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          work_id: workId,
+          voice,
+          speed,
+          include_credits: true,
+          acx_mastering: true,
+          return_url: true,
+        }),
+        signal: ctrl.signal,
+      });
+      stopTimer();
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        throw new Error((err as any).detail ?? `HTTP ${resp.status}`);
+      }
+      const data = await resp.json();
+      setResult({ path: data.path, filename: data.filename, work_title: data.work_title });
+      setPhase('done');
+      onGenerated();
+    } catch (e: any) {
+      stopTimer();
+      if (e?.name === 'AbortError') {
+        setPhase('idle');
+        return;
+      }
+      setErrorMsg(e?.message ?? 'Audiobook generation failed');
+      setPhase('error');
+    }
+  };
+
+  const handleCancel = () => {
+    abortRef.current?.abort();
+    stopTimer();
+    setPhase('idle');
+  };
+
+  const handleShare = async () => {
+    if (!result || sharing) return;
+    setSharing(true);
+    try {
+      const FileSystem = await import('expo-file-system/legacy');
+      const Sharing = await import('expo-sharing');
+      const token = getApiToken();
+      const uri = serveUrl(result.path);
+      const dest = `${FileSystem.cacheDirectory}${result.filename}`;
+      const dl = await FileSystem.downloadAsync(uri, dest, {
+        headers: token ? { authorization: `Bearer ${token}` } : undefined,
+      });
+      if (dl.status !== 200) throw new Error(`Download failed (HTTP ${dl.status})`);
+      const canShare = await Sharing.isAvailableAsync();
+      if (canShare) {
+        await Sharing.shareAsync(dl.uri, {
+          mimeType: 'audio/mpeg',
+          dialogTitle: result.filename,
+          UTI: 'public.mp3',
+        });
+      } else {
+        Alert.alert('Share unavailable', 'Sharing is not supported on this platform.');
+      }
+    } catch (e: any) {
+      Alert.alert('Share failed', e?.message ?? 'Could not share file');
+    } finally {
+      setSharing(false);
+    }
+  };
+
+  const handleReset = () => {
+    setPhase('idle');
+    setResult(null);
+    setErrorMsg('');
+    setElapsed(0);
+    audio.stop();
+  };
+
+  // ── Generating ───────────────────────────────────────────────────────────────
+  if (phase === 'generating') {
+    const STEPS = [
+      'Fetching document text from all chapters',
+      'Synthesizing narration segments',
+      'Concatenating + ACX loudness mastering',
+    ];
+    // Each step takes roughly 20 s of elapsed time as a heuristic marker
+    return (
+      <SectionCard title="Generating Audiobook" icon="headphones">
+        <View style={{ gap: 16, paddingVertical: 6 }}>
+          {/* Waveform visual */}
+          <View style={{ flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'center', gap: 4, height: 44 }}>
+            {[14, 30, 38, 26, 18, 36, 22, 32, 16, 28].map((h, i) => (
+              <View
+                key={i}
+                style={{
+                  width: 5,
+                  height: h,
+                  borderRadius: 3,
+                  backgroundColor: i % 2 === 0 ? colors.primary : colors.primary + 'aa',
+                }}
+              />
+            ))}
+          </View>
+
+          <View style={{ gap: 4, alignItems: 'center' }}>
+            <Text style={{ color: colors.foreground, fontSize: 15, fontFamily: 'Inter_600SemiBold' }}>
+              Synthesizing narration…
+            </Text>
+            <Text style={{ color: colors.mutedForeground, fontSize: 12, fontFamily: 'Inter_400Regular' }}>
+              Elapsed: {formatElapsed(elapsed)} · Large works take several minutes
+            </Text>
+          </View>
+
+          {STEPS.map((step, i) => {
+            const done   = elapsed >= (i + 1) * 20;
+            const active = !done && elapsed >= i * 20;
+            return (
+              <View key={i} style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                <View style={[wsStyles.phaseIcon, {
+                  backgroundColor: done   ? '#22c55e22' : active ? colors.primary + '22' : colors.muted,
+                  borderColor:     done   ? '#22c55e55' : active ? colors.primary + '55' : colors.border,
+                }]}>
+                  {done
+                    ? <Feather name="check" size={11} color="#22c55e" />
+                    : active
+                    ? <ActivityIndicator size="small" color={colors.primary} style={{ transform: [{ scale: 0.6 }] }} />
+                    : <Feather name="clock" size={11} color={colors.mutedForeground} />
+                  }
+                </View>
+                <Text style={{
+                  fontSize: 13, lineHeight: 18,
+                  fontFamily: active ? 'Inter_500Medium' : 'Inter_400Regular',
+                  color: done ? '#22c55e' : active ? colors.foreground : colors.mutedForeground,
+                }}>
+                  {step}
+                </Text>
+              </View>
+            );
+          })}
+
+          <Pressable
+            onPress={handleCancel}
+            style={({ pressed }) => [styles.primaryButton, {
+              backgroundColor: colors.muted, opacity: pressed ? 0.7 : 1, marginTop: 4,
+            }]}
+          >
+            <Feather name="x" size={15} color={colors.foreground} />
+            <Text style={[styles.primaryButtonText, { color: colors.foreground }]}>Cancel</Text>
+          </Pressable>
+        </View>
+      </SectionCard>
+    );
+  }
+
+  // ── Done ─────────────────────────────────────────────────────────────────────
+  if (phase === 'done' && result) {
+    const playKey  = `audiobook-${result.path}`;
+    const isPlaying = audio.playingKey === playKey;
+    const playUri  = serveUrl(result.path);
+    return (
+      <SectionCard title="Audiobook Ready" icon="headphones">
+        <View style={{ gap: 12 }}>
+          {/* Success banner */}
+          <View style={[wsStyles.banner, { borderColor: '#22c55e44', backgroundColor: '#22c55e0a' }]}>
+            <Feather name="check-circle" size={15} color="#22c55e" />
+            <View style={{ flex: 1, gap: 3 }}>
+              <Text style={{ color: '#22c55e', fontSize: 14, fontFamily: 'Inter_600SemiBold' }}>
+                {result.work_title}
+              </Text>
+              <Text style={{ color: '#22c55e99', fontSize: 11, fontFamily: 'Inter_400Regular' }}>
+                {result.filename} · ACX-mastered MP3
+              </Text>
+            </View>
+          </View>
+
+          {/* Playback row */}
+          <Pressable
+            onPress={() => audio.toggle(playKey, playUri)}
+            style={[styles.playRow, {
+              borderColor: isPlaying ? colors.primary : colors.border,
+              backgroundColor: isPlaying ? colors.primary + '10' : colors.muted,
+            }]}
+          >
+            <View style={{
+              width: 36, height: 36, borderRadius: 18,
+              backgroundColor: isPlaying ? colors.primary : colors.muted,
+              alignItems: 'center', justifyContent: 'center',
+            }}>
+              <Feather name={isPlaying ? 'pause' : 'play'} size={16}
+                color={isPlaying ? colors.primaryForeground : colors.mutedForeground} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: 13, fontFamily: 'Inter_500Medium', color: colors.foreground }}>
+                {isPlaying ? 'Playing…' : 'Play audiobook'}
+              </Text>
+              <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: colors.mutedForeground }}>
+                Full narrated MP3
+              </Text>
+            </View>
+            {isPlaying && (
+              <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 2 }}>
+                {[12, 18, 14, 20, 10].map((h, i) => (
+                  <View key={i} style={{
+                    width: 3, height: h, borderRadius: 2, backgroundColor: colors.primary,
+                  }} />
+                ))}
+              </View>
+            )}
+          </Pressable>
+
+          {/* Actions */}
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            <Pressable
+              onPress={handleShare}
+              disabled={sharing}
+              style={({ pressed }) => [wsStyles.actionBtn, {
+                borderColor: colors.border, flex: 1, opacity: sharing || pressed ? 0.7 : 1,
+              }]}
+            >
+              {sharing
+                ? <ActivityIndicator size="small" color={colors.primary} />
+                : <Feather name="share-2" size={14} color={colors.primary} />
+              }
+              <Text style={{ color: colors.primary, fontSize: 13, fontFamily: 'Inter_500Medium' }}>
+                {sharing ? 'Preparing…' : 'Save / Share'}
+              </Text>
+            </Pressable>
+            <Pressable
+              onPress={handleReset}
+              style={({ pressed }) => [wsStyles.actionBtn, {
+                borderColor: colors.border, flex: 1, opacity: pressed ? 0.7 : 1,
+              }]}
+            >
+              <Feather name="refresh-cw" size={14} color={colors.mutedForeground} />
+              <Text style={{ color: colors.mutedForeground, fontSize: 13, fontFamily: 'Inter_500Medium' }}>
+                New build
+              </Text>
+            </Pressable>
+          </View>
+        </View>
+      </SectionCard>
+    );
+  }
+
+  // ── Error ─────────────────────────────────────────────────────────────────────
+  if (phase === 'error') {
+    return (
+      <SectionCard title="Audiobook Builder" icon="headphones">
+        <View style={{ gap: 12 }}>
+          <View style={[wsStyles.intentBadge, { borderColor: '#ef444444', backgroundColor: '#ef444410' }]}>
+            <Feather name="alert-circle" size={12} color="#ef4444" />
+            <Text style={{ color: '#ef4444', fontSize: 12, fontFamily: 'Inter_400Regular', flex: 1, lineHeight: 17 }}>
+              {errorMsg}
+            </Text>
+          </View>
+          <Pressable
+            onPress={handleReset}
+            style={({ pressed }) => [styles.primaryButton, {
+              backgroundColor: colors.muted, opacity: pressed ? 0.7 : 1,
+            }]}
+          >
+            <Text style={[styles.primaryButtonText, { color: colors.foreground }]}>Try again</Text>
+          </Pressable>
+        </View>
+      </SectionCard>
+    );
+  }
+
+  // ── Idle ─────────────────────────────────────────────────────────────────────
+  return (
+    <SectionCard title="Audiobook Builder" icon="headphones">
+      <Text style={{ color: colors.mutedForeground, fontSize: 12, fontFamily: 'Inter_400Regular', lineHeight: 17 }}>
+        Generate a full ACX-mastered audiobook MP3 from all ready documents in a Work.
+      </Text>
+
+      {/* Work selector */}
+      <View style={styles.field}>
+        <FieldLabel>Work</FieldLabel>
+        {works.length === 0 ? (
+          <Text style={{ color: colors.mutedForeground, fontSize: 12, fontFamily: 'Inter_400Regular' }}>
+            No Works found — create one and add documents first.
+          </Text>
+        ) : (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={{ flexDirection: 'row', gap: 6 }}
+          >
+            {works.map(w => {
+              const active = w.id === workId;
+              return (
+                <Pressable
+                  key={w.id}
+                  onPress={() => setWorkId(w.id)}
+                  style={{
+                    paddingHorizontal: 12, paddingVertical: 7,
+                    borderRadius: 8, borderWidth: 1,
+                    borderColor: active ? colors.primary : colors.border,
+                    backgroundColor: active ? colors.primary + '22' : 'transparent',
+                    maxWidth: 160,
+                  }}
+                >
+                  <Text
+                    numberOfLines={1}
+                    style={{
+                      fontSize: 12,
+                      fontFamily: 'Inter_500Medium',
+                      color: active ? colors.primary : colors.mutedForeground,
+                    }}
+                  >
+                    {w.title}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+        )}
+      </View>
+
+      {/* Voice selector */}
+      <View style={styles.field}>
+        <FieldLabel>Narrator voice</FieldLabel>
+        <VoiceBrowserCard
+          voices={voices}
+          selectedId={voice}
+          onSelect={setVoice}
+          audio={audio}
+        />
+      </View>
+
+      {/* Speed */}
+      <View style={styles.field}>
+        <FieldLabel>Narration speed — {speed.toFixed(2).replace(/0$/, '').replace(/\.$/, '')}×</FieldLabel>
+        <PillPicker
+          options={[0.75, 1.0, 1.1, 1.25]}
+          value={speed}
+          onChange={setSpeed}
+          render={(s) => `${s.toFixed(2).replace(/0$/, '').replace(/\.$/, '')}×`}
+        />
+      </View>
+
+      {/* Previous builds for this work */}
+      {previousOutputs.length > 0 && (
+        <View style={[abStyles.prevBox, { borderColor: colors.border, backgroundColor: colors.muted + '40' }]}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+            <Feather name="clock" size={12} color={colors.mutedForeground} />
+            <Text style={{ fontSize: 11, fontFamily: 'Inter_600SemiBold', color: colors.mutedForeground, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+              Previous builds
+            </Text>
+          </View>
+          {previousOutputs.slice(0, 3).map(out => {
+            const prevKey  = `ab-prev-${out.path}`;
+            const isPlaying = audio.playingKey === prevKey;
+            return (
+              <View key={out.path} style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                <Pressable
+                  onPress={() => audio.toggle(prevKey, serveUrl(out.path))}
+                  hitSlop={6}
+                  style={[abStyles.prevPlayBtn, {
+                    backgroundColor: isPlaying ? colors.primary : colors.muted,
+                  }]}
+                >
+                  <Feather
+                    name={isPlaying ? 'pause' : 'play'}
+                    size={11}
+                    color={isPlaying ? colors.primaryForeground : colors.mutedForeground}
+                  />
+                </Pressable>
+                <Text
+                  numberOfLines={1}
+                  style={{ flex: 1, fontSize: 12, fontFamily: 'Inter_400Regular', color: colors.mutedForeground }}
+                >
+                  {out.name}
+                </Text>
+                <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: colors.mutedForeground }}>
+                  {out.size_bytes >= 1_048_576
+                    ? `${(out.size_bytes / 1_048_576).toFixed(1)} MB`
+                    : `${Math.round(out.size_bytes / 1024)} KB`}
+                </Text>
+              </View>
+            );
+          })}
+        </View>
+      )}
+
+      {/* Generate button */}
+      <Pressable
+        onPress={handleGenerate}
+        disabled={!workId || works.length === 0}
+        style={({ pressed }) => [styles.primaryButton, {
+          backgroundColor: colors.primary,
+          opacity: !workId || works.length === 0 ? 0.45 : pressed ? 0.85 : 1,
+        }]}
+      >
+        <Feather name="headphones" size={15} color={colors.primaryForeground} />
+        <Text style={[styles.primaryButtonText, { color: colors.primaryForeground }]}>
+          Generate Audiobook
+        </Text>
+      </Pressable>
+
+      <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: colors.mutedForeground, textAlign: 'center', lineHeight: 16 }}>
+        Includes opening &amp; closing credits · ACX-mastered · Keep app open during generation
+      </Text>
+    </SectionCard>
+  );
+}
+
+const abStyles = StyleSheet.create({
+  prevBox: { borderRadius: 8, borderWidth: 1, padding: 10, gap: 8 },
+  prevPlayBtn: {
+    width: 24, height: 24, borderRadius: 12,
+    alignItems: 'center', justifyContent: 'center',
+  },
+});
+
 const wsStyles = StyleSheet.create({
   banner: {
     flexDirection: 'row', alignItems: 'flex-start', gap: 10,
@@ -1368,12 +1870,13 @@ const wsStyles = StyleSheet.create({
 
 // ── Screen ──────────────────────────────────────────────────────────────────────
 
-type StudioTab = 'voice' | 'image' | 'workshop';
+type StudioTab = 'voice' | 'image' | 'workshop' | 'audiobook';
 
 const STUDIO_TABS: { id: StudioTab; label: string; icon: string }[] = [
-  { id: 'voice',    label: 'Voice',    icon: 'volume-2' },
-  { id: 'image',    label: 'Image',    icon: 'image' },
-  { id: 'workshop', label: 'Workshop', icon: 'edit-3' },
+  { id: 'voice',     label: 'Voice',     icon: 'volume-2'   },
+  { id: 'audiobook', label: 'Audiobook', icon: 'headphones' },
+  { id: 'image',     label: 'Image',     icon: 'image'      },
+  { id: 'workshop',  label: 'Workshop',  icon: 'edit-3'     },
 ];
 
 export default function StudioScreen() {
@@ -1450,7 +1953,7 @@ export default function StudioScreen() {
         <View>
           <Text style={[styles.title, { color: colors.foreground }]}>Studio</Text>
           <Text style={[styles.subtitle, { color: colors.mutedForeground }]}>
-            Voice · Image · Workshop
+            Voice · Audiobook · Image · Workshop
           </Text>
           <View style={wsStyles.tabBar}>
             {STUDIO_TABS.map(t => {
@@ -1491,6 +1994,22 @@ export default function StudioScreen() {
             <ImagePanel onGenerated={loadOutputs} />
             <OutputsPanel outputs={outputs.filter(o => o.kind === 'image')}
               loading={loadingOutputs} onRefresh={loadOutputs} audio={audio} />
+          </>
+        )}
+        {tab === 'audiobook' && (
+          <>
+            <AudiobookPanel
+              voices={voices}
+              onGenerated={loadOutputs}
+              audio={audio}
+              outputs={outputs}
+            />
+            <OutputsPanel
+              outputs={outputs.filter(o => o.kind === 'audio')}
+              loading={loadingOutputs}
+              onRefresh={loadOutputs}
+              audio={audio}
+            />
           </>
         )}
         {tab === 'workshop' && (
