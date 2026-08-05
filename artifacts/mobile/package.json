@@ -62,6 +62,7 @@
     "expo-file-system": "~19.0.23",
     "expo-media-library": "~18.2.1",
     "expo-secure-store": "^57.0.1",
+    "expo-sharing": "^57.0.8",
     "react-native-markdown-display": "^7.0.2"
   }
 }

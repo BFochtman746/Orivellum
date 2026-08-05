@@ -82,6 +82,7 @@ function useSectionLabel(): string {
   if (path.includes('/learn')) return 'Learn';
   if (path.includes('/intake')) return 'Load Anything';
   if (path.includes('/review')) return 'Review';
+  if (path.includes('/backups')) return 'Backups';
   if (path.includes('/works')) return 'Works';
   if (path.includes('/library')) return 'Library';
   return 'Orivellum';
@@ -196,6 +197,7 @@ const NAV_ITEMS: NavItem[] = [
   { key: 'learn',         label: 'Learn',     icon: 'award',          route: '/learn'         },
   { key: 'library',       label: 'Library',   icon: 'folder',         route: '/library'       },
   { key: 'review',        label: 'Review',    icon: 'shield',         route: '/review'        },
+  { key: 'backups',       label: 'Backups',   icon: 'hard-drive',     route: '/backups'       },
 ];
 
 function currentRoute(path: string): string {
