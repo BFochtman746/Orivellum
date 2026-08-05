@@ -1,10 +1,13 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Animated,
   FlatList,
+  Modal,
   Platform,
   Pressable,
   RefreshControl,
+  ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -244,6 +247,489 @@ function StudioCard() {
   );
 }
 
+// ── System health — constants & types ─────────────────────────────────────────
+
+const _SYS_DOMAIN = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
+const _SYS_API = `https://${_SYS_DOMAIN}/api`;
+
+interface SystemHealthData {
+  status: string;
+  services: {
+    database: { status: string };
+    ai: { status: string; endpoint: string };
+  };
+}
+interface EmbeddingsStatusData { circuit_open: boolean; available_at: number | null }
+interface NightshiftStatusData {
+  running: boolean;
+  started_at: string | null;
+  last_run: { ran_at: string; docs_processed: number; items_added: number } | null;
+}
+type DiagStatus = 'ok' | 'warn' | 'error' | 'info';
+interface DiagCheck { name: string; status: DiagStatus; value: string | number; detail: string }
+interface DiagResult {
+  generated_at: string;
+  elapsed_ms: number;
+  summary: { ok: number; warn: number; error: number; info: number; total: number };
+  all_checks: DiagCheck[];
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function relTime(iso: string | null | undefined): string {
+  if (!iso) return 'never';
+  const sec = Math.round((Date.now() - new Date(iso).getTime()) / 1000);
+  if (isNaN(sec) || sec < 0) return 'never';
+  if (sec < 60) return 'just now';
+  const min = Math.round(sec / 60);
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.round(min / 60);
+  if (hr < 24) return `${hr}h ago`;
+  return `${Math.round(hr / 24)}d ago`;
+}
+
+const DIAG_COLOR: Record<DiagStatus, string> = {
+  ok: '#22c55e', info: '#3b82f6', warn: '#f59e0b', error: '#ef4444',
+};
+
+// ── StatusRow ─────────────────────────────────────────────────────────────────
+
+function StatusDot({ color }: { color: string }) {
+  return <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: color, marginTop: 2, flexShrink: 0 }} />;
+}
+
+function StatusRow({ label, color, detail }: { label: string; color: string; detail: string }) {
+  const colors = useColors();
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8, paddingVertical: 4 }}>
+      <StatusDot color={color} />
+      <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: colors.foreground, width: 88 }}>
+        {label}
+      </Text>
+      <Text
+        style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: colors.mutedForeground, flex: 1 }}
+        numberOfLines={1}
+      >
+        {detail}
+      </Text>
+    </View>
+  );
+}
+
+// ── DiagnosticsSheet ──────────────────────────────────────────────────────────
+
+const _DIAG_SHEET_H = 560;
+
+function DiagnosticsSheet({ visible, onClose }: { visible: boolean; onClose: () => void }) {
+  const colors = useColors();
+  const insets = useSafeAreaInsets();
+  const [rendered, setRendered] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<DiagResult | null>(null);
+  const [fetchErr, setFetchErr] = useState('');
+
+  const slideAnim = useRef(new Animated.Value(_DIAG_SHEET_H + 60)).current;
+  const fadeAnim  = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    if (visible) {
+      setRendered(true);
+      Animated.parallel([
+        Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true, tension: 85, friction: 13 }),
+        Animated.timing(fadeAnim,  { toValue: 1, duration: 180, useNativeDriver: true }),
+      ]).start();
+    } else {
+      Animated.parallel([
+        Animated.timing(slideAnim, { toValue: _DIAG_SHEET_H + 60, duration: 220, useNativeDriver: true }),
+        Animated.timing(fadeAnim,  { toValue: 0, duration: 180, useNativeDriver: true }),
+      ]).start(() => setRendered(false));
+    }
+  }, [visible]);
+
+  const runDiag = useCallback(async () => {
+    setLoading(true);
+    setFetchErr('');
+    setResult(null);
+    try {
+      const r = await mobileFetch(`${_SYS_API}/system/diagnostics`);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      setResult(await r.json());
+    } catch (e: any) {
+      setFetchErr(e?.message ?? 'Diagnostics failed');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // Auto-run when sheet first opens
+  const didRun = useRef(false);
+  useEffect(() => {
+    if (visible && !didRun.current) {
+      didRun.current = true;
+      runDiag();
+    }
+    if (!visible) didRun.current = false;
+  }, [visible, runDiag]);
+
+  if (!rendered) return null;
+
+  const checks = result?.all_checks ?? [];
+  const summary = result?.summary;
+
+  return (
+    <Modal transparent visible={rendered} animationType="none" onRequestClose={onClose} statusBarTranslucent>
+      {/* Backdrop */}
+      <Animated.View
+        style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.42)', opacity: fadeAnim }]}
+        pointerEvents={visible ? 'auto' : 'none'}
+      >
+        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+      </Animated.View>
+
+      {/* Sheet */}
+      <Animated.View
+        style={[
+          sysStyles.sheet,
+          {
+            backgroundColor: colors.card,
+            borderColor: colors.border,
+            paddingBottom: insets.bottom + 16,
+            transform: [{ translateY: slideAnim }],
+          },
+        ]}
+      >
+        <View style={[sysStyles.handle, { backgroundColor: colors.border }]} />
+
+        {/* Header */}
+        <View style={sysStyles.sheetHeader}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1, minWidth: 0 }}>
+            <Feather name="activity" size={15} color={colors.primary} />
+            <Text style={{ fontSize: 15, fontFamily: 'Inter_600SemiBold', color: colors.foreground }}>
+              System Diagnostic
+            </Text>
+            {summary && (
+              <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: colors.mutedForeground }}>
+                {summary.total} checks · {result?.elapsed_ms}ms
+              </Text>
+            )}
+          </View>
+          <Pressable onPress={onClose} hitSlop={10}>
+            <Feather name="x" size={18} color={colors.mutedForeground} />
+          </Pressable>
+        </View>
+
+        {/* Summary counts */}
+        {summary && (
+          <View style={[sysStyles.summaryBar, { backgroundColor: colors.muted + '60', borderColor: colors.border }]}>
+            {(['ok', 'warn', 'error', 'info'] as const).map(s => (
+              <View key={s} style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: DIAG_COLOR[s] }} />
+                <Text style={{ fontSize: 11, fontFamily: 'Inter_600SemiBold', color: DIAG_COLOR[s] }}>
+                  {summary[s]}
+                </Text>
+                <Text style={{ fontSize: 10, fontFamily: 'Inter_400Regular', color: colors.mutedForeground }}>
+                  {s}
+                </Text>
+              </View>
+            ))}
+          </View>
+        )}
+
+        {/* Check list */}
+        <ScrollView
+          style={{ flex: 1 }}
+          contentContainerStyle={{ padding: 10, gap: 2 }}
+          showsVerticalScrollIndicator={false}
+        >
+          {loading && (
+            <View style={{ alignItems: 'center', paddingVertical: 44, gap: 10 }}>
+              <ActivityIndicator color={colors.primary} />
+              <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: colors.mutedForeground }}>
+                Running checks…
+              </Text>
+            </View>
+          )}
+          {!loading && !!fetchErr && (
+            <View style={{ alignItems: 'center', paddingVertical: 32, gap: 10 }}>
+              <Feather name="wifi-off" size={32} color={colors.mutedForeground} style={{ opacity: 0.5 }} />
+              <Text style={{ fontSize: 13, fontFamily: 'Inter_400Regular', color: colors.mutedForeground, textAlign: 'center' }}>
+                {fetchErr}
+              </Text>
+              <Pressable
+                onPress={runDiag}
+                style={({ pressed }) => [sysStyles.retryBtn, { borderColor: colors.border, backgroundColor: pressed ? colors.muted : 'transparent' }]}
+              >
+                <Feather name="refresh-cw" size={13} color={colors.foreground} />
+                <Text style={{ fontSize: 12, fontFamily: 'Inter_500Medium', color: colors.foreground }}>Retry</Text>
+              </Pressable>
+            </View>
+          )}
+          {!loading && !fetchErr && checks.map((c, i) => (
+            <View key={i} style={[sysStyles.checkRow, { borderColor: colors.border }]}>
+              <View
+                style={{
+                  width: 7, height: 7, borderRadius: 4,
+                  backgroundColor: DIAG_COLOR[c.status] ?? colors.muted,
+                  flexShrink: 0, marginTop: 3,
+                }}
+              />
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text
+                  style={{ fontSize: 12, fontFamily: 'Inter_500Medium', color: colors.foreground }}
+                  numberOfLines={1}
+                >
+                  {c.name}
+                </Text>
+                {!!c.detail && (
+                  <Text
+                    style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: colors.mutedForeground, lineHeight: 15 }}
+                    numberOfLines={2}
+                  >
+                    {c.detail}
+                  </Text>
+                )}
+              </View>
+              <Text
+                style={{
+                  fontSize: 10, fontFamily: 'Inter_400Regular',
+                  color: DIAG_COLOR[c.status] ?? colors.mutedForeground,
+                  flexShrink: 0, maxWidth: 80,
+                }}
+                numberOfLines={1}
+              >
+                {String(c.value).slice(0, 24)}
+              </Text>
+            </View>
+          ))}
+        </ScrollView>
+
+        {/* Re-run button */}
+        <View style={{ paddingHorizontal: 12, paddingTop: 8 }}>
+          <Pressable
+            onPress={runDiag}
+            disabled={loading}
+            style={({ pressed }) => [
+              sysStyles.runBtn,
+              { backgroundColor: pressed ? colors.primary + 'cc' : colors.primary, opacity: loading ? 0.5 : 1 },
+            ]}
+          >
+            {loading
+              ? <ActivityIndicator size="small" color="#fff" style={{ transform: [{ scale: 0.7 }] }} />
+              : <Feather name="refresh-cw" size={14} color="#fff" />}
+            <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: '#fff' }}>
+              Re-run diagnostics
+            </Text>
+          </Pressable>
+        </View>
+      </Animated.View>
+    </Modal>
+  );
+}
+
+// ── SystemHealthCard ──────────────────────────────────────────────────────────
+
+function SystemHealthCard() {
+  const colors = useColors();
+  const [collapsed, setCollapsed] = useState(false);
+  const [sheetOpen, setSheetOpen] = useState(false);
+
+  const { data: health } = useQuery<SystemHealthData | null>({
+    queryKey: ['system', 'svc-health'],
+    queryFn: async () => {
+      const r = await mobileFetch(`${_SYS_API}/system/health`);
+      return r.ok ? r.json() : null;
+    },
+    refetchInterval: 60_000,
+    staleTime: 50_000,
+  });
+
+  const { data: embeddings } = useQuery<EmbeddingsStatusData | null>({
+    queryKey: ['system', 'embeddings-status'],
+    queryFn: async () => {
+      const r = await mobileFetch(`${_SYS_API}/system/embeddings/status`);
+      return r.ok ? r.json() : null;
+    },
+    refetchInterval: 60_000,
+    staleTime: 50_000,
+  });
+
+  const { data: nightshift } = useQuery<NightshiftStatusData | null>({
+    queryKey: ['system', 'nightshift-status-dash'],
+    queryFn: async () => {
+      const r = await mobileFetch(`${_SYS_API}/system/nightshift/status`);
+      return r.ok ? r.json() : null;
+    },
+    refetchInterval: 60_000,
+    staleTime: 50_000,
+  });
+
+  // ── Derived display values ──────────────────────────────────────────────────
+
+  const aiStatus = health?.services.ai.status ?? 'unknown';
+  const serverColor =
+    aiStatus === 'ok' ? '#22c55e' : aiStatus === 'degraded' ? '#f59e0b' : aiStatus === 'unknown' ? '#9ca3af' : '#ef4444';
+  const serverDetail =
+    aiStatus === 'ok' ? 'AI endpoint reachable' :
+    aiStatus === 'degraded' ? 'AI endpoint degraded' :
+    aiStatus === 'unavailable' ? 'AI endpoint unreachable' : 'Checking…';
+
+  const embCircuit = embeddings?.circuit_open;
+  const embColor = embCircuit == null ? '#9ca3af' : embCircuit ? '#f59e0b' : '#22c55e';
+  const embDetail =
+    embCircuit == null ? 'Checking…' :
+    embCircuit ? 'Circuit open — keyword search only' : 'Online — semantic search active';
+
+  const ns = nightshift;
+  const lastRun = ns?.last_run;
+  const nsRunning = ns?.running;
+  const nsColor = lastRun ? '#22c55e' : nsRunning ? '#f59e0b' : '#9ca3af';
+  const nsDetail = nsRunning
+    ? 'Running now…'
+    : lastRun
+      ? `${relTime(lastRun.ran_at)} · ${lastRun.docs_processed} docs, ${lastRun.items_added} items`
+      : 'Never run';
+
+  const dbStatus = health?.services.database.status ?? 'unknown';
+  const dbColor =
+    dbStatus === 'ok' ? '#22c55e' : dbStatus === 'degraded' ? '#f59e0b' : dbStatus === 'unknown' ? '#9ca3af' : '#ef4444';
+  const dbDetail = dbStatus === 'ok' ? 'Healthy' : dbStatus === 'unknown' ? 'Checking…' : dbStatus;
+
+  const overallOk = aiStatus === 'ok' && !embCircuit && dbStatus === 'ok';
+  const overallColor = health == null ? '#9ca3af' : overallOk ? '#22c55e' : '#f59e0b';
+
+  return (
+    <>
+      <View style={[sysStyles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
+        {/* Header row — toggles collapse */}
+        <Pressable
+          onPress={() => setCollapsed(c => !c)}
+          style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}
+          hitSlop={6}
+        >
+          <StatusDot color={overallColor} />
+          <Text
+            style={{
+              flex: 1,
+              fontSize: 11,
+              fontFamily: 'Inter_600SemiBold',
+              color: colors.foreground,
+              textTransform: 'uppercase',
+              letterSpacing: 0.8,
+            }}
+          >
+            System Health
+          </Text>
+          <Feather
+            name={collapsed ? 'chevron-down' : 'chevron-up'}
+            size={14}
+            color={colors.mutedForeground}
+          />
+        </Pressable>
+
+        {!collapsed && (
+          <>
+            <View style={{ marginTop: 10, gap: 0 }}>
+              <StatusRow label="Server"     color={serverColor} detail={serverDetail} />
+              <StatusRow label="Embeddings" color={embColor}    detail={embDetail}    />
+              <StatusRow label="Nightshift" color={nsColor}     detail={nsDetail}     />
+              <StatusRow label="Database"   color={dbColor}     detail={dbDetail}     />
+            </View>
+
+            <Pressable
+              onPress={() => setSheetOpen(true)}
+              style={({ pressed }) => [
+                sysStyles.diagBtn,
+                { borderColor: colors.border, backgroundColor: pressed ? colors.muted : 'transparent' },
+              ]}
+            >
+              <Feather name="activity" size={13} color={colors.primary} />
+              <Text style={{ fontSize: 12, fontFamily: 'Inter_500Medium', color: colors.primary }}>
+                Run diagnostics
+              </Text>
+            </Pressable>
+          </>
+        )}
+      </View>
+
+      <DiagnosticsSheet visible={sheetOpen} onClose={() => setSheetOpen(false)} />
+    </>
+  );
+}
+
+// ── Styles for system health components ───────────────────────────────────────
+
+const sysStyles = StyleSheet.create({
+  card: {
+    borderRadius: 10,
+    borderWidth: 1,
+    padding: 14,
+    marginBottom: 24,
+  },
+  diagBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 7,
+    paddingVertical: 9,
+    borderRadius: 8,
+    borderWidth: 1,
+    marginTop: 12,
+  },
+  // Sheet
+  sheet: {
+    position: 'absolute',
+    bottom: 0, left: 0, right: 0,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    borderWidth: StyleSheet.hairlineWidth,
+    paddingTop: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -3 },
+    shadowOpacity: 0.12,
+    shadowRadius: 14,
+    elevation: 24,
+    maxHeight: '85%',
+  },
+  handle: {
+    width: 36, height: 4, borderRadius: 2,
+    alignSelf: 'center', marginBottom: 12,
+  },
+  sheetHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    marginBottom: 8,
+  },
+  summaryBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    marginBottom: 2,
+  },
+  checkRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    paddingVertical: 6,
+    paddingHorizontal: 4,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  retryBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    paddingHorizontal: 16, paddingVertical: 8,
+    borderRadius: 8, borderWidth: 1,
+  },
+  runBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    gap: 7, paddingVertical: 11, borderRadius: 10,
+  },
+});
+
 export default function DashboardScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
@@ -383,6 +869,12 @@ export default function DashboardScreen() {
               </Text>
             </View>
           )}
+
+          {/* System health — pinned at bottom so users can self-diagnose */}
+          <Text style={[styles.sectionLabel, { color: colors.mutedForeground, marginTop: 24 }]}>
+            SYSTEM
+          </Text>
+          <SystemHealthCard />
         </>
       }
     />
