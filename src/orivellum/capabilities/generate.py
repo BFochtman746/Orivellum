@@ -44,7 +44,7 @@ _CHUNK_SIZE = 1_000  # characters per FTS chunk
 
 def _register_output(
     doc_path: Path,
-    work_id: str,
+    work_id: "str | None",
     db: "OrivellumDB",
     cfg: "OrivellumConfig",
     format_label: str,
@@ -53,6 +53,8 @@ def _register_output(
 ) -> str:
     """Register a generated file as a library document; return its doc_id.
 
+    work_id may be None for unscoped outputs (e.g. tax packages that span all Works).
+
     Amendment-1 save/process/recall invariant: the full text is written to
     documents.extracted_text AND split into chunks that are inserted into
     chunks + chunks_fts so the document is findable via the application's
@@ -60,10 +62,11 @@ def _register_output(
     """
     rel = str(doc_path.relative_to(Path(cfg.data_dir)))
     sha = hashlib.sha256(doc_path.read_bytes()).hexdigest() if doc_path.exists() else None
+    scope_label = work_id or "library"
 
     doc = db.create_document(
         title=title,
-        source=f"generated/{format_label}/{work_id}",
+        source=f"generated/{format_label}/{scope_label}",
         sha256=sha,
         kind=doc_path.suffix.lstrip("."),
         work_id=work_id,

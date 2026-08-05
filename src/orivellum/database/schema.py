@@ -1148,6 +1148,26 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         CREATE INDEX IF NOT EXISTS wn_resolved ON work_nudges(resolved_at)
     """),
 
+    # v69 — Actions layer: typed, auditable action runs
+    (69, "Action runs ledger for the general action framework", """
+        CREATE TABLE IF NOT EXISTS action_runs (
+            id           TEXT PRIMARY KEY,
+            action_name  TEXT NOT NULL,
+            inputs       TEXT NOT NULL DEFAULT '{}',
+            status       TEXT NOT NULL DEFAULT 'running',
+            output_path  TEXT,
+            output_label TEXT,
+            output_doc_id TEXT,
+            work_id      TEXT,
+            error        TEXT,
+            created_at   TEXT NOT NULL,
+            completed_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS ar_action ON action_runs(action_name, created_at DESC);
+        CREATE INDEX IF NOT EXISTS ar_work   ON action_runs(work_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS ar_status ON action_runs(status)
+    """),
+
     # v68 — Proactive custodian: distinguish user-dismissed from auto-resolved nudges
     (68, "Custodian nudges: user_dismissed flag to honour explicit dismissal across nightly passes", """
         ALTER TABLE work_nudges ADD COLUMN user_dismissed INTEGER NOT NULL DEFAULT 0

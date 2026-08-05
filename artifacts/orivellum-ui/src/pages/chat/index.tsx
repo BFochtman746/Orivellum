@@ -451,6 +451,104 @@ function ActivitySheet({
   );
 }
 
+// ─── Action confirmation card ─────────────────────────────────────────────────
+
+/**
+ * Shown inside an assistant message when the AI detects an action intent.
+ * The user clicks "Run" to call the execute endpoint directly — no further
+ * confirmation step required since the message itself IS the confirmation.
+ */
+function ActionConfirmCard({
+  actionName,
+  actionInputs,
+  confirmMessage,
+}: {
+  actionName: string;
+  actionInputs?: Record<string, unknown>;
+  confirmMessage?: string;
+}) {
+  const [status, setStatus] = useState<"idle" | "running" | "done" | "error">("idle");
+  const [result, setResult] = useState<{ output_label?: string; download_url?: string; summary?: string } | null>(null);
+  const [errMsg, setErrMsg] = useState<string | null>(null);
+
+  const label = actionName.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+
+  const handleRun = async () => {
+    setStatus("running");
+    setErrMsg(null);
+    try {
+      const r = await apiFetch(`${API_BASE}/api/actions/${actionName}/execute`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(actionInputs ?? {}),
+      });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({ detail: "Action failed" }));
+        throw new Error(err.detail ?? "Action failed");
+      }
+      const data = await r.json();
+      setResult(data);
+      setStatus("done");
+    } catch (e: unknown) {
+      setErrMsg(e instanceof Error ? e.message : String(e));
+      setStatus("error");
+    }
+  };
+
+  if (status === "done" && result) {
+    return (
+      <div className="mt-2 flex items-center gap-2 px-3 py-2 rounded-lg border border-emerald-200/60 bg-emerald-50/40 dark:bg-emerald-950/20 dark:border-emerald-800/30 text-xs">
+        <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+        <span className="flex-1 text-emerald-700 dark:text-emerald-300">
+          {result.summary ?? result.output_label ?? "Action complete"}
+        </span>
+        {result.download_url && (
+          <a
+            href={result.download_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-1 px-2 py-1 rounded bg-emerald-600 text-white hover:bg-emerald-700 transition-colors font-medium shrink-0"
+          >
+            <Download className="w-3 h-3" />
+            Download
+          </a>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-2 rounded-lg border border-primary/20 bg-primary/5 p-3 space-y-2">
+      <div className="flex items-center gap-2">
+        <Zap className="w-3.5 h-3.5 text-primary shrink-0" />
+        <span className="text-xs font-medium">{label}</span>
+      </div>
+      {confirmMessage && (
+        <p className="text-xs text-muted-foreground leading-relaxed pl-5">
+          {confirmMessage}
+        </p>
+      )}
+      {status === "error" && errMsg && (
+        <p className="text-xs text-destructive pl-5">{errMsg}</p>
+      )}
+      <div className="pl-5">
+        <Button
+          size="sm"
+          className="h-7 text-xs gap-1.5"
+          disabled={status === "running"}
+          onClick={handleRun}
+        >
+          {status === "running" ? (
+            <><Loader2 className="w-3 h-3 animate-spin" />Running…</>
+          ) : (
+            <><Zap className="w-3 h-3" />Run Action</>
+          )}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 // ─── Read-more wrapper (progressive disclosure) ────────────────────────────────
 
 /** Collapses long AI responses behind a "Show full response" toggle.
@@ -1950,6 +2048,14 @@ export default function Chat() {
                               <Copy className="w-3 h-3" />
                             </button>
                           </div>
+                          {/* Action confirmation card — shown when the AI detected an action intent */}
+                          {!msg.streaming && msg.meta?.intent === "action" && msg.meta?.needs_confirm && msg.meta?.action_name && (
+                            <ActionConfirmCard
+                              actionName={msg.meta.action_name as string}
+                              actionInputs={msg.meta.action_inputs as Record<string, unknown> | undefined}
+                              confirmMessage={msg.meta.action_confirm as string | undefined}
+                            />
+                          )}
                           {/* Sources section — shown when knowledge context was injected */}
                           {!msg.streaming && msg.meta?.sources && (msg.meta.sources as any[]).length > 0 && (
                             <SourcesFooter sources={msg.meta.sources as any[]} />

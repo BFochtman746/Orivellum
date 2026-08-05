@@ -31,6 +31,7 @@ import BooksPage from '@/pages/books/index';
 import LearnPage from '@/pages/learn/index';
 import IntakePage from '@/pages/intake/index';
 import TopicsPage from '@/pages/topics/index';
+import ActionsPage from '@/pages/actions/index';
 import NotFound from '@/pages/not-found';
 
 const queryClient = new QueryClient({
@@ -78,6 +79,7 @@ function Router() {
         <Route path="/learn">{() => <RouteWithBoundary component={LearnPage} />}</Route>
         <Route path="/intake">{() => <RouteWithBoundary component={IntakePage} />}</Route>
         <Route path="/topics">{() => <RouteWithBoundary component={TopicsPage} />}</Route>
+        <Route path="/actions">{() => <RouteWithBoundary component={ActionsPage} />}</Route>
         <Route component={NotFound} />
       </Switch>
     </AppLayout>

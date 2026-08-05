@@ -22,7 +22,7 @@ import {
   ChevronRight, Plus, Search, Archive, RotateCcw,
   Pencil, Check, X, Menu, DownloadCloud, Feather,
   ALargeSmall, Loader2, CheckCircle2, ExternalLink, Gauge, Inbox, Wand2, SlidersHorizontal,
-  BookMarked, GraduationCap,
+  BookMarked, GraduationCap, Zap,
 } from "lucide-react";
 import { useConnectivity } from "@/lib/useConnectivity";
 import { useQuery } from "@tanstack/react-query";
@@ -71,6 +71,15 @@ const PHASES = [
       { name: "Topics", href: "/topics", icon: FolderOpen },
       { name: "Learn",  href: "/learn",  icon: GraduationCap },
       { name: "Chat",   href: "/chat",   icon: MessageSquare },
+    ],
+  },
+  {
+    id: "act",
+    label: "Act",
+    icon: Zap,
+    routes: ["/actions"],
+    items: [
+      { name: "Actions", href: "/actions", icon: Zap },
     ],
   },
   {
@@ -750,6 +759,7 @@ const NAV_ITEMS = [
   { label: "Files",      href: "/files",       icon: FolderOpen    },
   { label: "Studio",     href: "/studio",      icon: Mic           },
   { label: "Write",      href: "/write",       icon: Feather       },
+  { label: "Actions",    href: "/actions",     icon: Zap           },
   { label: "Projects",   href: "/projects",    icon: Target        },
   { label: "Review",     href: "/review",      icon: Inbox         },
   { label: "Governance", href: "/governance",  icon: CheckCircle2  },

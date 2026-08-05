@@ -36,6 +36,45 @@ _WEATHER_RE2 = re.compile(
     re.IGNORECASE,
 )
 
+_ACTION_PATTERNS: list[tuple[re.Pattern[str], str, str]] = [
+    # tax_package
+    (re.compile(
+        r"\b(build|create|make|generate|prepare|assemble|put together|compile)\b.{0,40}"
+        r"\b(tax package|expense package|expense report|receipt bundle|tax bundle)\b"
+        r"|\bfile my taxes\b|\bprepare my taxes\b"
+        r"|\btax (package|export|summary|report) for \d{4}\b",
+        re.IGNORECASE,
+    ), "action", "tax_package"),
+    # book_export
+    (re.compile(
+        r"\b(export|assemble|compile|build|create|download)\b.{0,30}"
+        r"\b(manuscript|book|chapters).{0,20}\b(docx|word|file|document)?\b"
+        r"|\bexport (the )?book\b|\bexport (the )?manuscript\b|\bcompile (my )?chapters\b",
+        re.IGNORECASE,
+    ), "action", "book_export"),
+    # report_assembler
+    (re.compile(
+        r"\b(build|create|generate|assemble|compile|export)\b.{0,30}"
+        r"\b(report|package|summary doc|research report|work report)\b"
+        r"|\bcompile this work\b|\bassemble (a |this )?report\b|\bgenerate (a )?report\b",
+        re.IGNORECASE,
+    ), "action", "report_assembler"),
+    # study_plan
+    (re.compile(
+        r"\b(create|generate|build|make|prepare)\b.{0,30}"
+        r"\b(study plan|learning plan|study schedule|learning schedule|learning path)\b"
+        r"|\bstudy plan for\b|\blearning plan\b",
+        re.IGNORECASE,
+    ), "action", "study_plan"),
+    # template_fill
+    (re.compile(
+        r"\b(fill|complete|populate|render)\b.{0,30}\btemplate\b"
+        r"|\bfill (in |out )?(the |this |a )?template\b"
+        r"|\btemplate fill\b",
+        re.IGNORECASE,
+    ), "action", "template_fill"),
+]
+
 _PATTERNS: list[tuple[re.Pattern[str], str]] = [
     # recall — "where are we on X", "what did we decide", "what's our progress"
     (re.compile(
@@ -101,12 +140,38 @@ Intents:
 - "image_gen"   — wants an image generated or drawn
 - "remember"    — explicitly wants to store a personal fact/preference for later recall
 - "recall"      — asking about past conversations, decisions, or progress: "where are we on X", "what did we decide about Y", "what's our status on Z"
+- "action"      — wants to execute a specific action: build/create a tax package or expense report, export a book/manuscript, compile/assemble a report, create a study/learning plan, fill a template
 - "chat"        — everything else: questions, analysis, writing, research assistance
 
+For "action" intent also include "action_name" (one of: tax_package, book_export, report_assembler, study_plan, template_fill) and "action_inputs" (object with year for tax_package, else {}).
+
 Respond ONLY with valid JSON (no code fences):
-{"intent": "<one of the six intents>", "query": "<extracted search query or key phrase>", "location": "<city/region for weather, else null>"}
+{"intent": "<intent>", "query": "<key phrase>", "location": "<city/region or null>", "action_name": "<action name or null>", "action_inputs": {}}
 
 Message: {message}"""
+
+
+def _match_action_patterns(text: str) -> dict | None:
+    """Fast-path action intent detection without LLM.
+
+    Returns a dict with intent/action_name/action_inputs or None.
+    """
+    import re as _re
+    for pattern, intent, action_name in _ACTION_PATTERNS:
+        if pattern.search(text):
+            # Try to extract year for tax_package
+            action_inputs: dict = {}
+            if action_name == "tax_package":
+                m = _re.search(r"\b(20\d{2})\b", text)
+                if m:
+                    action_inputs["year"] = int(m.group(1))
+                else:
+                    # Default to the current calendar year so the action
+                    # can always execute without requiring an explicit year.
+                    from datetime import datetime as _dt
+                    action_inputs["year"] = _dt.now().year
+            return {"intent": intent, "action_name": action_name, "action_inputs": action_inputs, "query": text[:80]}
+    return None
 
 
 def classify_intent(
@@ -118,14 +183,23 @@ def classify_intent(
     """Classify the intent of *user_text*.
 
     Returns a dict with keys:
-      - intent: str (one of web_search / weather / image_gen / remember / chat)
+      - intent: str (one of web_search / weather / image_gen / remember / action / chat)
       - query: str (extracted search query or key phrase)
       - location: str | None (for weather)
+      - action_name: str | None (for action intent)
+      - action_inputs: dict (for action intent)
 
     Never raises — falls back to {"intent": "chat", "query": user_text, "location": None}.
     """
     # Fast pattern path — no LLM needed
     lower = user_text.strip().lower()
+
+    # Action patterns checked first (they are more specific than generic chat)
+    action_match = _match_action_patterns(user_text)
+    if action_match:
+        logger.debug("Intent fast-path (action): %s for %r", action_match["action_name"], user_text[:60])
+        return action_match
+
     for pattern, intent in _PATTERNS:
         if pattern.search(lower):
             logger.debug("Intent fast-path: %s for %r", intent, user_text[:60])
@@ -150,13 +224,17 @@ def classify_intent(
             return {"intent": "chat", "query": user_text, "location": None}
         parsed = json.loads(raw.strip())
         intent = parsed.get("intent", "chat")
-        if intent not in ("web_search", "weather", "image_gen", "remember", "recall", "chat"):
+        if intent not in ("web_search", "weather", "image_gen", "remember", "recall", "chat", "action"):
             intent = "chat"
-        return {
+        result: dict = {
             "intent": intent,
             "query": parsed.get("query", user_text),
             "location": parsed.get("location"),
         }
+        if intent == "action":
+            result["action_name"] = parsed.get("action_name", "")
+            result["action_inputs"] = parsed.get("action_inputs") or {}
+        return result
     except Exception as exc:
         logger.debug("Intent LLM classify failed: %s — falling back to chat", exc)
         return {"intent": "chat", "query": user_text, "location": None}

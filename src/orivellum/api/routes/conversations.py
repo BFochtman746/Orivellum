@@ -280,7 +280,8 @@ async def send_message(conv_id: str, body: MessageSend):
     cfg      = get_config()
 
     # ── Intent routing (non-streaming) ───────────────────────────────────────
-    tool_result = await _maybe_dispatch_intent(db, body.text, cfg.serving.base_url, model)
+    _ns_work_id = conv.get("work_id") if conv else None
+    tool_result = await _maybe_dispatch_intent(db, body.text, cfg.serving.base_url, model, work_id=_ns_work_id)
     if tool_result is not None:
         tool_text, tool_meta = tool_result
         if ns_sources:
@@ -1003,7 +1004,8 @@ async def _stream_response(
     _assist_id: str = ""
     try:
         # ── Intent routing — runs before deep mode and normal AI ──────────────
-        tool_result = await _maybe_dispatch_intent(db, user_text, cfg.serving.base_url, model)
+        _stream_work_id = conv.get("work_id")
+        tool_result = await _maybe_dispatch_intent(db, user_text, cfg.serving.base_url, model, work_id=_stream_work_id)
         if tool_result is not None:
             tool_text, tool_meta = tool_result
             if sources:
@@ -1490,6 +1492,7 @@ async def _stream_continuation(db: Any, conv: dict, cut_short_msg: dict):
 
 async def _maybe_dispatch_intent(
     db: Any, user_text: str, base_url: str, model: str,
+    work_id: str | None = None,
 ) -> tuple[str, dict] | None:
     """Classify intent and dispatch to the appropriate tool.
 
@@ -1567,7 +1570,54 @@ async def _maybe_dispatch_intent(
             text = f"Image generation encountered an error: {exc}"
         return text, {"intent": "image_gen", "query": query}
 
+    if intent == "action":
+        action_name = classification.get("action_name") or ""
+        action_inputs = dict(classification.get("action_inputs") or {})
+        # Inject the conversation's work_id so work-scoped actions can execute
+        if work_id and "work_id" not in action_inputs:
+            action_inputs["work_id"] = work_id
+        return await asyncio.to_thread(
+            _handle_action_preview, action_name, action_inputs
+        )
+
     return None
+
+
+def _handle_action_preview(action_name: str, action_inputs: dict) -> tuple[str, dict] | None:
+    """Build an action confirmation card for display in chat.
+
+    Returns (reply_text, meta) where meta carries the action card payload.
+    The frontend renders a 'Run' button; the user's click calls the execute endpoint.
+    The model never executes directly — the user must confirm.
+    """
+    try:
+        from orivellum.capabilities.actions import get_registry
+        registry = get_registry()
+        action = registry.get(action_name)
+        if not action:
+            names = ", ".join(registry.keys())
+            return (
+                f"I recognise that as an **{action_name}** action, but I couldn't find "
+                f"that action in the registry. Available actions: {names}.",
+                {"intent": "action", "action_name": action_name, "action_error": "not_found"},
+            )
+        confirm_msg = action.confirm_message(action_inputs)
+        reply = (
+            f"I can do that for you. Here's what this action will do:\n\n"
+            f"{confirm_msg}\n\n"
+            f"Click **Run Action** below to proceed, or ignore this message to cancel."
+        )
+        return reply, {
+            "intent": "action",
+            "action_name": action_name,
+            "action_inputs": action_inputs,
+            "action_description": action.description,
+            "action_confirm": confirm_msg,
+            "needs_confirm": True,
+        }
+    except Exception as exc:
+        logger.warning("Action preview failed for %r: %s", action_name, exc)
+        return None
 
 
 def _handle_remember(db: Any, user_text: str, base_url: str, model: str) -> str:

@@ -3,7 +3,7 @@ import { apiFetch } from "@/lib/auth";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
-import { Activity, Database, Cpu, CheckCircle2, XCircle, AlertCircle, AlertTriangle, Terminal, Sparkles, Moon, Brain, Trash2, ScrollText, User, Settings, Image as ImageIcon, Eye, Loader2, FileSearch, ClipboardCopy, ChevronDown, ChevronRight } from "lucide-react";
+import { Activity, Database, Cpu, CheckCircle2, XCircle, AlertCircle, AlertTriangle, Terminal, Sparkles, Moon, Brain, Trash2, ScrollText, User, Settings, Image as ImageIcon, Eye, Loader2, FileSearch, ClipboardCopy, ChevronDown, ChevronRight, Zap, Download } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -1199,8 +1199,117 @@ $env:ORIVELLUM_AI_URL="http://127.0.0.1:11434/v1"`}
         </div>
       </div>
 
+      {/* Action history */}
+      <ActionHistoryCard />
+
       {/* Audit log */}
       <AuditLogCard />
+    </div>
+  );
+}
+
+// ─── Action history card ───────────────────────────────────────────────────────
+
+interface ActionRun {
+  id: string;
+  action_name: string;
+  status: "running" | "done" | "error";
+  output_label: string | null;
+  output_path: string | null;
+  error: string | null;
+  created_at: string;
+  completed_at: string | null;
+}
+
+function ActionHistoryCard() {
+  const { data, isLoading, refetch, isFetching } = useQuery<{ runs: ActionRun[]; count: number }>({
+    queryKey: ["actions", "runs"],
+    queryFn: async () => {
+      const r = await apiFetch(`${API_BASE}/api/actions/runs?limit=20`);
+      if (!r.ok) throw new Error("action runs fetch failed");
+      return r.json();
+    },
+    staleTime: 30_000,
+  });
+
+  const runs = data?.runs ?? [];
+
+  const handleDownload = (run: ActionRun) => {
+    if (!run.output_path) return;
+    window.open(`${API_BASE}/api/studio/outputs/serve?path=${encodeURIComponent(run.output_path)}`, "_blank");
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between border-b border-border/50 pb-2">
+        <h2 className="text-xl font-serif font-medium flex items-center gap-2">
+          <Zap className="w-5 h-5 text-muted-foreground" />
+          Action History
+        </h2>
+        <button
+          onClick={() => refetch()}
+          disabled={isFetching}
+          className="text-xs font-mono text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1"
+        >
+          {isFetching ? "refreshing…" : `${data?.count ?? 0} runs · refresh`}
+        </button>
+      </div>
+
+      {isLoading ? (
+        [1, 2, 3].map((i) => <Skeleton key={i} className="h-10 w-full" />)
+      ) : runs.length === 0 ? (
+        <div className="text-center py-10 text-muted-foreground text-sm border border-dashed rounded-lg">
+          No actions run yet — visit the{" "}
+          <a href={`${import.meta.env.BASE_URL}actions`} className="underline">Actions page</a>{" "}
+          or ask the AI to run one.
+        </div>
+      ) : (
+        <div className="rounded-lg border border-border/50 overflow-hidden divide-y divide-border/30 max-h-80 overflow-y-auto">
+          {runs.map((run) => {
+            const isOk = run.status === "done";
+            const isErr = run.status === "error";
+            return (
+              <div key={run.id} className="flex items-center gap-3 px-4 py-2.5 hover:bg-muted/20 transition-colors">
+                <span
+                  className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                    isOk ? "bg-emerald-500" : isErr ? "bg-destructive" : "bg-amber-400 animate-pulse"
+                  }`}
+                />
+                <div className="flex-1 min-w-0">
+                  <span className="text-xs font-mono font-medium">
+                    {run.action_name.replace(/_/g, " ")}
+                  </span>
+                  {run.output_label && !isErr && (
+                    <span className="text-[11px] font-mono text-muted-foreground ml-2">{run.output_label}</span>
+                  )}
+                  {run.error && (
+                    <span className="text-[11px] text-destructive ml-2">{run.error.slice(0, 60)}</span>
+                  )}
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  {isOk && run.output_path && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 text-[10px] gap-1 px-2"
+                      onClick={() => handleDownload(run)}
+                    >
+                      <Download className="w-3 h-3" />
+                      Download
+                    </Button>
+                  )}
+                  <span className={`text-[10px] font-mono ${isOk ? "text-emerald-600" : isErr ? "text-red-600" : "text-amber-600"}`}>
+                    {run.status}
+                  </span>
+                  <span className="text-[10px] font-mono text-muted-foreground/50">
+                    {run.created_at ? new Date(run.created_at).toLocaleTimeString() : ""}
+                  </span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
