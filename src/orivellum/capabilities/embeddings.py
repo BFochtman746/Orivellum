@@ -300,26 +300,41 @@ def embed_chunks_for_doc(doc_id: str, db: "OrivellumDB") -> int:
     semantically searchable without waiting for the nightly backfill.  Safe to
     run in a daemon thread; returns the number of vectors stored (0 when the
     embeddings endpoint is unavailable).
+
+    Shutdown-safe: catches sqlite3.ProgrammingError (closed DB) and any other
+    exception so daemon threads never emit an unhandled thread exception when
+    the DB is torn down between the call site and the actual DB access.
     """
-    with db._lock:
-        rows = db._conn.execute(
-            """SELECT c.id, c.text FROM chunks c
-               LEFT JOIN vectors v ON v.object_id = c.id AND v.object_type='chunk'
-               WHERE c.doc_id=? AND v.id IS NULL AND length(c.text) > 40""",
-            (doc_id,),
-        ).fetchall()
-    embedded = 0
-    for i in range(0, len(rows), _BACKFILL_BATCH):
-        batch = rows[i:i + _BACKFILL_BATCH]
-        vecs = embed_texts([r["text"] for r in batch])
-        if vecs is None:
-            return embedded  # endpoint down — nightly backfill will catch up
-        for r, v in zip(batch, vecs):
-            db.store_vector(r["id"], "chunk", pack_vector(v), len(v))
-            embedded += 1
-    if embedded:
-        logger.info("Embedded %d chunk(s) for doc %s", embedded, doc_id[:8])
-    return embedded
+    import sqlite3 as _sqlite3
+    try:
+        with db._lock:
+            rows = db._conn.execute(
+                """SELECT c.id, c.text FROM chunks c
+                   LEFT JOIN vectors v ON v.object_id = c.id AND v.object_type='chunk'
+                   WHERE c.doc_id=? AND v.id IS NULL AND length(c.text) > 40""",
+                (doc_id,),
+            ).fetchall()
+        embedded = 0
+        for i in range(0, len(rows), _BACKFILL_BATCH):
+            batch = rows[i:i + _BACKFILL_BATCH]
+            vecs = embed_texts([r["text"] for r in batch])
+            if vecs is None:
+                return embedded  # endpoint down — nightly backfill will catch up
+            for r, v in zip(batch, vecs):
+                db.store_vector(r["id"], "chunk", pack_vector(v), len(v))
+                embedded += 1
+        if embedded:
+            logger.info("Embedded %d chunk(s) for doc %s", embedded, doc_id[:8])
+        return embedded
+    except _sqlite3.ProgrammingError:
+        # DB was closed (e.g. during test teardown or app shutdown) before the
+        # daemon thread reached the DB call.  Non-fatal: nightly backfill handles
+        # any missing vectors.
+        logger.debug("embed_chunks_for_doc: DB closed before embed for %s (non-fatal)", doc_id[:8])
+        return 0
+    except Exception as exc:
+        logger.debug("embed_chunks_for_doc: non-fatal error for %s: %s", doc_id[:8], exc)
+        return 0
 
 
 def semantic_search(query: str, db: "OrivellumDB", object_type: str = "knowledge",

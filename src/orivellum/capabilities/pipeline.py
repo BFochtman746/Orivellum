@@ -154,9 +154,16 @@ def _explode_zip_into_documents(
     # named after the archive.  A human approves/rejects it on /review.
     # Only propose when the archive itself is CANON — never for ARTIFACT/SYSTEM
     # batches (migration dumps, run reports, etc.).
-    from orivellum.capabilities.classify import classify_object as _clf_arch, Tier as _Tier
+    # Propose a Work for SOURCE/CANON archives — never for ARTIFACT/SYSTEM batches
+    # (migration dumps, build outputs, run reports).  This uses EXCLUDED_FROM_WORKS
+    # rather than an exact CANON check, so user-uploaded archives ("archive.zip",
+    # "documents.zip") also get a suggestion, which matches the original intent.
+    from orivellum.capabilities.classify import (
+        classify_object as _clf_arch,
+        EXCLUDED_FROM_WORKS as _EFW,
+    )
     _archive_tier = _clf_arch(zip_title, source_path=zip_title).tier
-    if work_id is None and len(children) > 2 and _archive_tier == _Tier.CANON:
+    if work_id is None and len(children) > 2 and _archive_tier not in _EFW:
         try:
             import json as _json
             import uuid as _uuid_mod

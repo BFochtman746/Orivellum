@@ -65,3 +65,4 @@ attached_assets/
 data/api_key.txt
 data/.session_secret
 data/outputs/
+PROGRESS.json

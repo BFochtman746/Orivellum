@@ -21,6 +21,67 @@ router = APIRouter(prefix="/api")
 _MAX_OUTPUTS = 50  # keep the newest N files; delete the rest
 
 
+# ── Amendment-1 registration helpers ─────────────────────────────────────────
+
+def _link_output_sync(file_path: Path) -> str:
+    """Create a durable library hard-link SYNCHRONOUSLY before rotation.
+
+    Must be called BEFORE _rotate_outputs so the library inode is preserved
+    even if rotation deletes the original source path.  Returns the
+    lib-root-relative path to be passed as ``prelinked_rel`` to the background
+    registration thread so it does not re-link an already-durable file.
+
+    Non-fatal: returns an empty string on failure (background thread will fall
+    back to the standard _ensure_lib_symlink path, which may fail if the source
+    was already rotated away — but the link already exists from the sync call).
+    """
+    try:
+        from orivellum.capabilities.persist import _ensure_lib_symlink
+        cfg = get_config()
+        lib_root = Path(cfg.data_dir) / "library"
+        return _ensure_lib_symlink(file_path, lib_root)
+    except Exception as exc:
+        logger.debug("_link_output_sync failed (non-fatal): %s", exc)
+        return ""
+
+
+def _register_output_bg(
+    file_path: Path,
+    text_content: str,
+    kind: str,
+    title: str,
+    *,
+    prelinked_rel: str | None = None,
+    work_id: str | None = None,
+    origin_id: str | None = None,
+) -> None:
+    """Register a Studio output as a searchable library document (background).
+
+    Called in a daemon thread so the HTTP response returns immediately.
+    ``prelinked_rel`` should be the value returned by ``_link_output_sync``,
+    which was called synchronously before ``_rotate_outputs`` ran.  This
+    ensures the library hard-link is always durable regardless of rotation.
+    """
+    try:
+        from orivellum.capabilities.persist import register_and_index
+        cfg = get_config()
+        db  = get_db()
+        register_and_index(
+            doc_path=file_path,
+            text_content=text_content,
+            kind=kind,
+            db=db,
+            cfg=cfg,
+            title=title,
+            work_id=work_id,
+            provenance_source="studio",
+            origin_id=origin_id,
+            _prelinked_rel=prelinked_rel or None,
+        )
+    except Exception as exc:
+        logger.debug("Studio registration failed (non-fatal): %s", exc)
+
+
 def _rotate_outputs(out_dir: Path) -> None:
     """Delete oldest files in *out_dir* beyond _MAX_OUTPUTS."""
     try:
@@ -145,7 +206,15 @@ async def synthesize_speech(body: TTSRequest):
                 )
                 tmp.write(resp.content)
                 tmp.close()
+                _tts_rel = _link_output_sync(Path(tmp.name))
                 _rotate_outputs(out_dir)
+                threading.Thread(
+                    target=_register_output_bg,
+                    args=(Path(tmp.name), body.text, "mp3",
+                          f"TTS clip: {body.text[:60]}"),
+                    kwargs={"prelinked_rel": _tts_rel},
+                    daemon=True,
+                ).start()
                 return FileResponse(tmp.name, media_type="audio/mpeg",
                                     filename="speech.mp3")
     except Exception as exc:
@@ -193,7 +262,15 @@ async def synthesize_speech(body: TTSRequest):
             Path(wav_tmp.name).unlink(missing_ok=True)
 
             if ff.returncode == 0:
+                _kok_rel = _link_output_sync(Path(mp3_path))
                 _rotate_outputs(out_dir)
+                threading.Thread(
+                    target=_register_output_bg,
+                    args=(Path(mp3_path), body.text, "mp3",
+                          f"TTS clip: {body.text[:60]}"),
+                    kwargs={"prelinked_rel": _kok_rel},
+                    daemon=True,
+                ).start()
                 return FileResponse(mp3_path, media_type="audio/mpeg",
                                     filename="speech.mp3")
     except Exception as exc:
@@ -237,7 +314,15 @@ async def synthesize_speech(body: TTSRequest):
         Path(wav_path).unlink(missing_ok=True)
 
         if ff.returncode == 0:
+            _esp_mp3_rel = _link_output_sync(Path(mp3_path))
             _rotate_outputs(out_dir)
+            threading.Thread(
+                target=_register_output_bg,
+                args=(Path(mp3_path), body.text, "mp3",
+                      f"TTS clip: {body.text[:60]}"),
+                kwargs={"prelinked_rel": _esp_mp3_rel},
+                daemon=True,
+            ).start()
             return FileResponse(mp3_path, media_type="audio/mpeg",
                                 filename="speech.mp3")
         else:
@@ -254,6 +339,16 @@ async def synthesize_speech(body: TTSRequest):
                  body.text],
                 capture_output=True, timeout=30,
             )
+            # Hard-link the WAV before rotation so it survives the rolling window.
+            _esp_wav_rel = _link_output_sync(Path(wav_path2))
+            _rotate_outputs(out_dir)
+            threading.Thread(
+                target=_register_output_bg,
+                args=(Path(wav_path2), body.text, "wav",
+                      f"TTS clip: {body.text[:60]}"),
+                kwargs={"prelinked_rel": _esp_wav_rel},
+                daemon=True,
+            ).start()
             return FileResponse(wav_path2, media_type="audio/wav",
                                 filename="speech.wav")
 
@@ -442,7 +537,24 @@ def synthesize_document(body: DocumentTTSRequest):
         if ff.returncode != 0:
             raise RuntimeError(f"ffmpeg concat failed: {ff.stderr.decode()[:300]}")
 
+        # Hard-link the audiobook into the library BEFORE rotation so the file
+        # survives the rolling 50-output window regardless of when the background
+        # thread starts.  This is the core of the durable Save invariant.
+        _ab_rel = _link_output_sync(mp3_path)
         _rotate_outputs(out_dir)
+
+        # Amendment-1: register the audiobook as a searchable library document.
+        # Use the source document's text as content so "find the audiobook for X"
+        # resolves via the audio file's own library entry.
+        doc_title = doc.get("title") or "audiobook"
+        threading.Thread(
+            target=_register_output_bg,
+            args=(mp3_path, full_text[:8000], "mp3",
+                  f"Audiobook: {doc_title}"),
+            kwargs={"prelinked_rel": _ab_rel, "origin_id": body.doc_id},
+            daemon=True,
+        ).start()
+
         if body.return_url:
             # Mobile clients can't play a streaming FileResponse directly;
             # return the serve path so they can create an authenticated player.
@@ -721,9 +833,11 @@ async def _try_comfyui(client, body: ImageGenRequest,
     return None
 
 
-def _persist_generated_image(result: dict, cfg) -> dict:
+def _persist_generated_image(result: dict, cfg, prompt: str = "") -> dict:
     """Save a generated image (b64_json) into the outputs dir so it appears in
-    Recent Outputs. Best-effort — the response is returned unchanged on failure."""
+    Recent Outputs.  Also registers it as a searchable library document with
+    the generation prompt as the searchable text (Amendment-1 invariant).
+    Best-effort — the response is returned unchanged on failure."""
     try:
         item = (result.get("data") or [{}])[0]
         b64 = item.get("b64_json")
@@ -733,9 +847,22 @@ def _persist_generated_image(result: dict, cfg) -> dict:
         out_dir = Path(cfg.data_dir) / "outputs"
         out_dir.mkdir(parents=True, exist_ok=True)
         name = f"image_{uuid.uuid4().hex[:8]}.png"
-        (out_dir / name).write_bytes(_b64.b64decode(b64))
+        img_path = out_dir / name
+        img_path.write_bytes(_b64.b64decode(b64))
+        # Hard-link into library BEFORE rotation: durable Save invariant.
+        _img_rel = _link_output_sync(img_path)
         _rotate_outputs(out_dir)
         item["output_path"] = name
+
+        # Amendment-1: register image with prompt as searchable caption so
+        # "find the image I made of X" resolves via semantic / keyword search.
+        caption = prompt or item.get("revised_prompt") or "generated image"
+        threading.Thread(
+            target=_register_output_bg,
+            args=(img_path, caption, "png", f"Image: {caption[:60]}"),
+            kwargs={"prelinked_rel": _img_rel},
+            daemon=True,
+        ).start()
     except Exception as exc:
         logger.warning("Could not persist generated image to outputs: %s", exc)
     return result
@@ -761,22 +888,22 @@ async def generate_image(body: ImageGenRequest):
                     # Could be A1111 with its own API format
                     result = await _try_a1111(client, body)
             if result:
-                return _persist_generated_image(result, cfg)
+                return _persist_generated_image(result, cfg, prompt=body.prompt)
 
         # 2. Automatic1111 (SD WebUI) — localhost:7860
         result = await _try_a1111(client, body)
         if result:
-            return _persist_generated_image(result, cfg)
+            return _persist_generated_image(result, cfg, prompt=body.prompt)
 
         # 3. ComfyUI — localhost:8188
         result = await _try_comfyui(client, body, base_url="http://localhost:8188")
         if result:
-            return _persist_generated_image(result, cfg)
+            return _persist_generated_image(result, cfg, prompt=body.prompt)
 
         # 4. OpenAI-compatible endpoint on the chat AI server
         result = await _try_openai_compat(client, cfg.serving.base_url, body)
         if result:
-            return _persist_generated_image(result, cfg)
+            return _persist_generated_image(result, cfg, prompt=body.prompt)
 
     raise HTTPException(
         503,

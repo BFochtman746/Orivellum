@@ -1196,4 +1196,26 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             generated_at TEXT NOT NULL
         )
     """),
+
+    # v70 — Save/Process/Recall invariant: object provenance ledger.
+    # Every registered object (generated doc, TTS clip, image, research note) gets
+    # a row here so recall queries ("find the report I made about X") can filter by
+    # source, work, or origin conversation.
+    # Declaration placed AFTER all lower-numbered migrations to preserve monotonic
+    # ordering guarantees for both fresh and upgrade paths.
+    (70, "Save/process/recall invariant: object_provenance ledger", """
+        CREATE TABLE IF NOT EXISTS object_provenance (
+            id         TEXT PRIMARY KEY,
+            object_id  TEXT NOT NULL,
+            source     TEXT NOT NULL,
+            origin_id  TEXT,
+            work_id    TEXT,
+            topic_id   TEXT,
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS op_object  ON object_provenance(object_id);
+        CREATE INDEX IF NOT EXISTS op_source  ON object_provenance(source, created_at DESC);
+        CREATE INDEX IF NOT EXISTS op_work    ON object_provenance(work_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS op_origin  ON object_provenance(origin_id)
+    """),
 ]

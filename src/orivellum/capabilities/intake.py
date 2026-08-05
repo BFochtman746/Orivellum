@@ -462,13 +462,17 @@ def run_intake(
                 research_summary, research_sources = web_search_synthesize(
                     query, None, model_name, db=db
                 )
-                # Persist as a recallable note linked to this document
+                # Persist as a recallable note linked to this document.
+                # Two stores:
+                #   1. Knowledge item (work-scoped, for the Works knowledge tab)
+                #   2. Library document (for recall, semantic search, provenance ledger)
+                note_text = f'Web research for "{title}":\n\n{research_summary}'
                 if research_summary and doc.get("work_id"):
                     try:
                         db.create_knowledge_item(
                             work_id=doc["work_id"],
                             kind="note",
-                            text=f'Web research for "{title}":\n\n{research_summary}',
+                            text=note_text,
                             subject=title,
                             predicate="researched_via",
                             obj="web_search",
@@ -478,7 +482,24 @@ def run_intake(
                             meta={"intake_research": True, "sources": research_sources[:3]},
                         )
                     except Exception as exc:
-                        logger.debug("Could not persist research note: %s", exc)
+                        logger.debug("Could not persist research knowledge item: %s", exc)
+
+                # Register the research summary as a searchable library document
+                # regardless of whether a work is set — this is the invariant path.
+                if research_summary:
+                    try:
+                        from orivellum.capabilities.persist import register_text_note
+                        register_text_note(
+                            text=note_text,
+                            db=db,
+                            cfg=cfg,
+                            title=f"Research: {title}",
+                            work_id=doc.get("work_id"),
+                            provenance_source="intake",
+                            origin_id=doc_id,
+                        )
+                    except Exception as exc:
+                        logger.debug("Could not register research note in library: %s", exc)
             except Exception as exc:
                 logger.warning("Intake web research failed for %s: %s", doc_id, exc)
                 research_summary = None

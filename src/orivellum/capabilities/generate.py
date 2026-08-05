@@ -60,7 +60,14 @@ def _register_output(
     chunks + chunks_fts so the document is findable via the application's
     document full-text search path (which queries chunks_fts, not extracted_text).
     """
-    rel = str(doc_path.relative_to(Path(cfg.data_dir)))
+    # Amendment-1 path fix: content_path must be relative to lib_root (data_dir/library)
+    # because every Library endpoint resolves paths as lib_root / content_path.
+    # _ensure_lib_symlink creates a zero-cost symlink under lib_root/generated/ for
+    # files stored outside lib_root (outputs/generate/...) and returns the correct
+    # lib-root-relative path so Library downloads, reprocess, and resolution all work.
+    from orivellum.capabilities.persist import _ensure_lib_symlink
+    lib_root = Path(cfg.data_dir) / "library"
+    rel = _ensure_lib_symlink(doc_path, lib_root)
     sha = hashlib.sha256(doc_path.read_bytes()).hexdigest() if doc_path.exists() else None
     scope_label = work_id or "library"
 
@@ -114,6 +121,22 @@ def _register_output(
             db.add_chunk(doc_id, chunk, page=page)
         except Exception:
             logger.warning("_register_output: failed to add chunk %d for doc %s", page, doc_id)
+
+    # Amendment-1: embed all chunks in the background so generated documents
+    # are semantically searchable without waiting for the nightly backfill.
+    # Wrapped in a try/except so thread failures are logged, never raised.
+    import threading as _t
+    from orivellum.capabilities.persist import record_provenance as _prov
+
+    def _embed_bg(_doc_id=doc_id, _db=db) -> None:
+        try:
+            from orivellum.capabilities.embeddings import embed_chunks_for_doc
+            embed_chunks_for_doc(_doc_id, _db)
+        except Exception as _exc:
+            logger.debug("_register_output background embed failed (non-fatal): %s", _exc)
+
+    _t.Thread(target=_embed_bg, daemon=True).start()
+    _prov(doc_id, "generation", db, work_id=work_id)
 
     return doc_id
 
