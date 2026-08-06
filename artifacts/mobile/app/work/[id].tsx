@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { mobileFetch } from '@/lib/api';
 import { getApiToken } from '@/lib/token';
+import * as Clipboard from 'expo-clipboard';
 import {
   ActivityIndicator,
   Alert,
@@ -1178,7 +1179,36 @@ interface TrailerPkgMobile {
   concept: Record<string, unknown>;
   plan: Record<string, unknown>;
   docs: Record<string, string>;
+  shot_prompts?: Record<string, string>;
   validation: { findings: TrailerFindingMobile[] };
+}
+
+function CopyButtonMobile({ text, label, colors }: { text: string; label: string; colors: any }) {
+  const [copied, setCopied] = useState(false);
+  const handleCopy = async () => {
+    try {
+      await Clipboard.setStringAsync(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1800);
+    } catch { /* non-fatal */ }
+  };
+  return (
+    <Pressable
+      onPress={handleCopy}
+      style={({ pressed }) => ({
+        flexDirection: 'row', alignItems: 'center', gap: 4,
+        paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6,
+        borderWidth: 1,
+        borderColor: copied ? '#16a34a55' : colors.border,
+        backgroundColor: copied ? '#f0fdf4' : (pressed ? colors.muted + '88' : colors.muted + '33'),
+      })}
+    >
+      <Feather name={copied ? 'check' : 'copy'} size={11} color={copied ? '#16a34a' : colors.mutedForeground} />
+      <Text style={{ fontSize: 10, fontFamily: 'Inter_500Medium', color: copied ? '#16a34a' : colors.mutedForeground }}>
+        {copied ? 'Copied!' : label}
+      </Text>
+    </Pressable>
+  );
 }
 
 interface TrailerPackageMobile {
@@ -1241,6 +1271,14 @@ function TrailerPackageViewMobile({ pkg, colors }: { pkg: TrailerPkgMobile; colo
   const planRaw      = pkg.plan as Record<string, unknown>;
   const shotCount    = Array.isArray(planRaw?.shots) ? (planRaw.shots as unknown[]).length : 0;
   const duration     = typeof planRaw?.duration === 'number' ? String(planRaw.duration) : '?';
+
+  // Copy targets: first shot image prompt + music brief prompt
+  const shots        = Array.isArray(planRaw?.shots) ? (planRaw.shots as Record<string, unknown>[]) : [];
+  const firstShot    = shots[0] ?? {};
+  const firstImgPrompt = (pkg.shot_prompts?.['shot_00'] ??
+    (typeof firstShot.image_prompt === 'string' ? firstShot.image_prompt : ''));
+  const musicRaw     = planRaw?.music as Record<string, unknown> | undefined;
+  const musicPrompt  = typeof musicRaw?.prompt === 'string' ? musicRaw.prompt : '';
 
   return (
     <View style={{ gap: 12, paddingTop: 8 }}>
@@ -1331,6 +1369,57 @@ function TrailerPackageViewMobile({ pkg, colors }: { pkg: TrailerPkgMobile; colo
           {shotCount} shot{shotCount !== 1 ? 's' : ''} planned · {duration}s runtime
         </Text>
       </View>
+
+      {/* Copy prompts — first shot image + music brief */}
+      {(firstImgPrompt || musicPrompt) ? (
+        <View style={{
+          borderRadius: 8, borderWidth: 1, borderColor: colors.border,
+          backgroundColor: colors.card, padding: 10, gap: 8,
+        }}>
+          <Text style={{ fontSize: 9, fontFamily: 'Inter_700Bold', color: colors.mutedForeground, letterSpacing: 1, textTransform: 'uppercase' }}>
+            Prompt Copy
+          </Text>
+          {firstImgPrompt ? (
+            <View style={{ gap: 4 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                <Text style={{ fontSize: 10, fontFamily: 'Inter_500Medium', color: colors.mutedForeground }}>
+                  Shot 00 — Image Prompt
+                </Text>
+                <CopyButtonMobile text={firstImgPrompt.trim()} label="Copy" colors={colors} />
+              </View>
+              <View style={{ backgroundColor: colors.muted + '44', borderRadius: 6, padding: 8 }}>
+                <Text
+                  numberOfLines={3}
+                  style={{ fontSize: 10, fontFamily: 'Inter_400Regular', color: colors.foreground, lineHeight: 15 }}
+                >
+                  {firstImgPrompt.trim()}
+                </Text>
+              </View>
+            </View>
+          ) : null}
+          {musicPrompt ? (
+            <View style={{ gap: 4 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                  <Feather name="music" size={10} color={colors.mutedForeground} />
+                  <Text style={{ fontSize: 10, fontFamily: 'Inter_500Medium', color: colors.mutedForeground }}>
+                    Music Brief Prompt
+                  </Text>
+                </View>
+                <CopyButtonMobile text={musicPrompt.trim()} label="Copy" colors={colors} />
+              </View>
+              <View style={{ backgroundColor: colors.muted + '44', borderRadius: 6, padding: 8 }}>
+                <Text
+                  numberOfLines={2}
+                  style={{ fontSize: 10, fontFamily: 'Inter_400Regular', color: colors.foreground, lineHeight: 15 }}
+                >
+                  {musicPrompt.trim()}
+                </Text>
+              </View>
+            </View>
+          ) : null}
+        </View>
+      ) : null}
 
       {/* Production doc tabs */}
       {docKeys.length > 0 ? (
