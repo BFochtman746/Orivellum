@@ -1357,6 +1357,30 @@ async def synthesize_speech(body: TTSRequest):
     # ── Non-streaming path (original — returns full MP3 file) ─────────────────
     cfg = get_config()
 
+    # --- Strategy 0: Premium TTS engine (Fish Audio S2 / Hume TADA / etc.) ---
+    try:
+        premium_audio = await _call_premium_tts(body.text, body.voice, body.speed, cfg)
+        if premium_audio is not None:
+            out_dir = Path(cfg.data_dir) / "outputs"
+            out_dir.mkdir(parents=True, exist_ok=True)
+            tmp = tempfile.NamedTemporaryFile(delete=False, dir=out_dir, suffix=".mp3")
+            tmp.write(premium_audio)
+            tmp.close()
+            _prem_rel = _link_output_sync(Path(tmp.name))
+            await asyncio.to_thread(_rotate_outputs, out_dir)
+            from orivellum.api.executor import get_executor as _gex
+            _gex().submit(
+                _register_output_bg, Path(tmp.name), body.text, "mp3",
+                f"TTS clip: {body.text[:60]}", prelinked_rel=_prem_rel,
+            )
+            if body.return_url:
+                return {"ok": True, "path": str(_prem_rel), "filename": "speech.mp3"}
+            return FileResponse(tmp.name, media_type="audio/mpeg",
+                                filename="speech.mp3",
+                                headers={"X-TTS-Engine": "premium"})
+    except Exception as exc:
+        logger.info("Premium TTS failed (%s) — trying AI server", exc)
+
     # --- Strategy 1: AI server /audio/speech ---
     try:
         import httpx
@@ -1661,6 +1685,17 @@ async def _synthesize_text_to_mp3(
     espeak_v     = _ESPEAK_VOICE_MAP.get(voice, "en+f4")
     wpm          = max(80, min(400, int(175 * speed)))
 
+    # Strategy 0: Premium TTS engine ---------------------------------------
+    try:
+        premium_audio = await _call_premium_tts(text, voice, speed, cfg)
+        if premium_audio is not None:
+            tmp = tempfile.NamedTemporaryFile(delete=False, dir=out_dir, suffix=".mp3")
+            tmp.write(premium_audio)
+            tmp.close()
+            return Path(tmp.name)
+    except Exception:
+        pass
+
     # Strategy 1: AI-server /audio/speech ---------------------------------
     try:
         import httpx
@@ -1862,16 +1897,19 @@ def _run_doc_tts_job(
     wpm          = max(80, min(400, int(175 * body.speed)))
     kokoro_voice = _resolve_kokoro_voice(body.voice)
 
-    # Determine best available TTS engine once (AI > Kokoro > espeak-ng).
-    ai_ok = False
-    try:
-        import httpx
-        probe = httpx.get(f"{cfg.serving.base_url}/models", timeout=2.0)
-        ai_ok = probe.status_code == 200
-    except Exception:
-        ai_ok = False
+    # Determine best available TTS engine once (Premium > AI > Kokoro > espeak-ng).
+    premium_ok = _is_premium_tts_enabled(cfg)
 
-    kokoro_engine = None if ai_ok else _get_kokoro()
+    ai_ok = False
+    if not premium_ok:
+        try:
+            import httpx
+            probe = httpx.get(f"{cfg.serving.base_url}/models", timeout=2.0)
+            ai_ok = probe.status_code == 200
+        except Exception:
+            ai_ok = False
+
+    kokoro_engine = None if (premium_ok or ai_ok) else _get_kokoro()
 
     try:
         import soundfile as _sf
@@ -1892,8 +1930,21 @@ def _run_doc_tts_job(
             wav_path    = tmp_dir / f"seg_{idx:04d}.wav"
             synthesised = False
 
+            # Strategy 0: Premium TTS engine
+            if premium_ok:
+                try:
+                    audio_bytes = _call_premium_tts_sync(seg, body.voice, body.speed, cfg)
+                    if audio_bytes:
+                        # Premium engine returns MP3 — write directly, skip WAV step
+                        mp3_path = tmp_dir / f"seg_{idx:04d}.mp3"
+                        mp3_path.write_bytes(audio_bytes)
+                        wav_paths.append(mp3_path)
+                        synthesised = True
+                except Exception as pe:
+                    logger.warning("Premium TTS failed on segment %d: %s", idx, pe)
+
             # Strategy 1: AI server TTS
-            if ai_ok:
+            if ai_ok and not synthesised:
                 try:
                     import httpx as _hx
                     r = _hx.post(
@@ -2539,6 +2590,88 @@ def _url_probe(url: str) -> tuple[bool, int | None]:
         return False, None
 
 
+# ── Premium TTS helpers ───────────────────────────────────────────────────────
+
+def _is_premium_tts_enabled(cfg) -> bool:
+    """Return True when the premium TTS path is configured AND licensed."""
+    url = getattr(cfg.serving, "tts_premium_url", "").strip()
+    ack = getattr(cfg.serving, "tts_premium_ack_license", False)
+    return bool(url and ack)
+
+
+async def _call_premium_tts(text: str, voice: str, speed: float, cfg) -> bytes | None:
+    """POST to the premium TTS engine and return raw audio bytes on success.
+
+    Supported engines (all expose ``POST /v1/tts``):
+      - Fish Audio S2  (http://127.0.0.1:9880)
+      - Hume TADA      (http://127.0.0.1:9881)
+      - IndexTTS-2     (http://127.0.0.1:9882)
+      - Chatterbox     (http://127.0.0.1:9883)
+
+    Guards: ``tts_premium_url`` must be set AND ``tts_premium_ack_license`` must
+    be ``True``.  Returns ``None`` (silently) on any failure so the caller falls
+    through to the next strategy.
+    """
+    if not _is_premium_tts_enabled(cfg):
+        return None
+    premium_url = cfg.serving.tts_premium_url.rstrip("/")
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=60) as client:
+            resp = await client.post(
+                f"{premium_url}/v1/tts",
+                json={
+                    "text": text,
+                    "voice": voice,
+                    "speed": speed,
+                    "format": "mp3",
+                    "chunk_length": 200,
+                    "normalize": True,
+                    "latency": "normal",
+                },
+                headers={"Accept": "audio/mpeg, audio/mp3, audio/*, */*"},
+            )
+            if resp.status_code == 200 and resp.content:
+                ct = resp.headers.get("content-type", "")
+                # Accept if content-type is audio, or if the body looks like audio
+                # bytes (> 1 KB) — some engines return without a proper MIME type.
+                if "audio" in ct or len(resp.content) > 1024:
+                    return resp.content
+    except Exception as exc:
+        logger.debug("Premium TTS unavailable (%s) — falling through", exc)
+    return None
+
+
+def _call_premium_tts_sync(text: str, voice: str, speed: float, cfg) -> bytes | None:
+    """Synchronous version of ``_call_premium_tts`` for background worker threads."""
+    if not _is_premium_tts_enabled(cfg):
+        return None
+    premium_url = cfg.serving.tts_premium_url.rstrip("/")
+    try:
+        import httpx
+        resp = httpx.post(
+            f"{premium_url}/v1/tts",
+            json={
+                "text": text,
+                "voice": voice,
+                "speed": speed,
+                "format": "mp3",
+                "chunk_length": 200,
+                "normalize": True,
+                "latency": "normal",
+            },
+            headers={"Accept": "audio/mpeg, audio/mp3, audio/*, */*"},
+            timeout=60,
+        )
+        if resp.status_code == 200 and resp.content:
+            ct = resp.headers.get("content-type", "")
+            if "audio" in ct or len(resp.content) > 1024:
+                return resp.content
+    except Exception as exc:
+        logger.debug("Premium TTS (sync) unavailable (%s) — falling through", exc)
+    return None
+
+
 @router.get("/studio/status")
 def studio_status():
     """Unified probe of all Studio services (TTS, image gen, OCR).
@@ -2574,6 +2707,10 @@ def studio_status():
 
     pool = _cf.ThreadPoolExecutor(max_workers=16, thread_name_prefix="studio-probe")
     try:
+        # Resolve premium TTS URL for the probe (empty string = feature off)
+        _premium_tts_url = getattr(cfg.serving, "tts_premium_url", "").strip()
+        _premium_ack     = getattr(cfg.serving, "tts_premium_ack_license", False)
+
         futs: dict[str, _cf.Future] = {
             "ai_tts":    pool.submit(_url_probe, ai_tts_url),
             "ai_img":    pool.submit(_url_probe, ai_img_url),
@@ -2588,6 +2725,9 @@ def studio_status():
                 _vision_model_for_probe,
             ),
         }
+        # Premium TTS probe — only fire if URL is configured
+        if _premium_tts_url:
+            futs["premium_tts"] = pool.submit(_url_probe, _premium_tts_url)
         if custom_url:
             futs["custom"] = pool.submit(_url_probe, custom_url)
             if _is_comfyui_url(custom_url):
@@ -2618,7 +2758,19 @@ def studio_status():
     kokoro_ok     = _is_kokoro_loaded()   # True only when neural synthesis is live
     espeak_ok     = bool(shutil.which("espeak-ng"))
 
+    # Premium TTS probe result
+    _prem_probe   = _get("premium_tts", (False, None)) if _premium_tts_url else (False, None)
+    premium_tts_reachable, prem_ms = (_prem_probe if isinstance(_prem_probe, tuple)
+                                      else (bool(_prem_probe), None))
+    premium_tts_active = bool(_premium_tts_url and _premium_ack and premium_tts_reachable)
+
     tts_strategies = [
+        {
+            "name": "Premium TTS", "key": "premium_tts",
+            "available": premium_tts_active, "latency_ms": prem_ms,
+            "url": _premium_tts_url or None,
+            "license_ack": _premium_ack,
+        },
         {"name": "AI Server",   "key": "ai_server",   "available": ai_tts_ok, "latency_ms": ai_ms},
         {"name": "Kokoro ONNX", "key": "kokoro_onnx",  "available": kokoro_ok, "latency_ms": None},
         {"name": "espeak-ng",   "key": "espeak_ng",    "available": espeak_ok, "latency_ms": None},
@@ -2716,6 +2868,13 @@ def studio_status():
             # model failed to load — synthesis is currently routed through espeak.
             "kokoro_loaded": kokoro_ok,
             "kokoro_pkg_installed": kokoro_pkg_ok,
+            # Premium TTS fields — all False/None when feature is off (zero regression).
+            # premium_tts_active: True means the engine is configured, licensed, AND reachable.
+            "premium_tts_configured": bool(_premium_tts_url),
+            "premium_tts_license_ack": _premium_ack,
+            "premium_tts_reachable": premium_tts_reachable,
+            "premium_tts_active": premium_tts_active,
+            "premium_tts_url": _premium_tts_url or None,
             "strategies": tts_strategies,
             # Voice-sample quality — distinct from general TTS availability.
             # Samples use ONLY local engines; AI Server is NOT a sample fallback.

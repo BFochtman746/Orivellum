@@ -1711,6 +1711,52 @@ function useStreamingTTS() {
 
 // ── TTS Panel ─────────────────────────────────────────────────────────────────
 
+// ── Premium engine badge ────────────────────────────────────────────────────
+
+function PremiumEngineBadge() {
+  const colors = useColors();
+  const [label, setLabel] = React.useState<string | null>(null);
+  const [premium, setPremium] = React.useState(false);
+
+  React.useEffect(() => {
+    mobileFetch(`${API}/studio/status`)
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        if (!d?.tts) return;
+        setPremium(d.tts.premium_tts_active === true);
+        setLabel(d.tts.best_strategy ?? null);
+      })
+      .catch(() => {});
+  }, []);
+
+  if (!label) return null;
+
+  const text = premium
+    ? '✦ Premium TTS active'
+    : label === 'Kokoro ONNX' ? 'Kokoro neural TTS'
+    : label === 'AI Server'   ? 'AI server TTS'
+    : label === 'espeak-ng'   ? 'espeak-ng (basic)'
+    : label;
+
+  const badgeColor = premium ? '#7c3aed' : colors.mutedForeground;
+  const badgeBg    = premium ? '#7c3aed15' : colors.muted + '60';
+
+  return (
+    <View style={{
+      flexDirection: 'row', alignItems: 'center', gap: 5,
+      paddingHorizontal: 10, paddingVertical: 6,
+      borderRadius: 8, borderWidth: 1,
+      borderColor: premium ? '#7c3aed40' : colors.border,
+      backgroundColor: badgeBg,
+    }}>
+      <Feather name={premium ? 'star' : 'volume-2'} size={11} color={badgeColor} />
+      <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: badgeColor }}>
+        {text}
+      </Text>
+    </View>
+  );
+}
+
 function TTSPanel({
   voices,
   onGenerated,
@@ -1848,6 +1894,9 @@ function TTSPanel({
           render={(s) => `${s.toFixed(2).replace(/0$/, '').replace(/\.$/, '')}×`}
         />
       </View>
+
+      {/* TTS engine badge */}
+      <PremiumEngineBadge />
 
       {/* Synthesize / Stop button */}
       <Pressable

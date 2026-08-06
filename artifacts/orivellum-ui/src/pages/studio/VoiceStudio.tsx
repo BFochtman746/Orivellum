@@ -449,6 +449,60 @@ function VoiceDetailPanel({
   );
 }
 
+// ── TTS Engine Badge (Audiobook tab) ─────────────────────────────────────────
+// Small indicator showing which synthesis engine will be used for generation.
+// Fetches /api/studio/status once and caches for the session.
+
+function _AudiobookEngineBadge() {
+  const [engine, setEngine] = useState<string | null>(null);
+  const [isPremium, setIsPremium] = useState(false);
+
+  useEffect(() => {
+    apiFetch(`${BASE}/studio/status`)
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (!data?.tts) return;
+        const best: string | null = data.tts.best_strategy ?? null;
+        setIsPremium(data.tts.premium_tts_active === true);
+        setEngine(best);
+      })
+      .catch(() => {});
+  }, []);
+
+  if (!engine) return null;
+
+  if (isPremium) {
+    return (
+      <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-violet-50/60 dark:bg-violet-950/30 border border-violet-200/70 dark:border-violet-800/50">
+        <Sparkles className="w-3 h-3 text-violet-500 shrink-0" />
+        <span className="text-[10px] font-mono text-violet-600 dark:text-violet-400">
+          Premium TTS active — hero narration quality
+        </span>
+      </div>
+    );
+  }
+
+  const label =
+    engine === "Kokoro ONNX" ? "Kokoro neural TTS" :
+    engine === "AI Server"   ? "AI server TTS" :
+    engine === "espeak-ng"   ? "espeak-ng (basic)" :
+    engine;
+
+  return (
+    <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-muted/40 border border-border/50">
+      <AudioLines className="w-3 h-3 text-muted-foreground shrink-0" />
+      <span className="text-[10px] font-mono text-muted-foreground">
+        Engine: {label}
+      </span>
+      {engine === "espeak-ng" && (
+        <span className="text-[9px] font-mono px-1 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400 ml-auto">
+          basic
+        </span>
+      )}
+    </div>
+  );
+}
+
 // ── Browse Tab ────────────────────────────────────────────────────────────────
 
 function BrowseTab({
@@ -1349,6 +1403,9 @@ function AudiobookTab({
             </div>
           </div>
         )}
+
+        {/* TTS engine badge */}
+        <_AudiobookEngineBadge />
 
         {/* Generate button / progress bar */}
         {mode === "document" && vsAbJobId ? (

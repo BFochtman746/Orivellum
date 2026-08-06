@@ -78,6 +78,28 @@ serving:
   # Install the package first: uv add faster-whisper
   asr_local_model: "base"
 
+  # ── Premium TTS ───────────────────────────────────────────────────────────────
+  # Best-in-class narration quality for long-form audiobooks.  Blind evaluations
+  # (A-01 Aug 2026) show Fish Audio S2 and Hume TADA outperform ElevenLabs and
+  # Seed-TTS on prosody consistency and naturalness for > 30-minute narration.
+  # Other strong options: Chatterbox (MIT), IndexTTS-2, Qwen3 TTS.
+  #
+  # Synthesis priority chain when premium is enabled:
+  #   (1) Premium engine  →  (2) AI server  →  (3) Kokoro ONNX  →  (4) espeak-ng
+  #
+  # Setup:
+  #   1. Install / run your premium engine locally (e.g. Fish Audio S2 on port 9880)
+  #   2. Set tts_premium_url to its base URL
+  #   3. Confirm the engine's license covers your use case
+  #   4. Set tts_premium_ack_license to true
+  #
+  # Leave both at defaults (empty / false) for zero regression.
+  tts_premium_url: ""
+  # ⚠️  IMPORTANT — review the license for your chosen engine before enabling.
+  # Fish Audio S2: https://fish.audio/terms  |  Hume TADA: https://hume.ai/terms
+  # Set to true only after confirming license terms for your use case.
+  tts_premium_ack_license: false
+
   # ── Reranker ──────────────────────────────────────────────────────────────────
   # Leave empty → RRF (reciprocal-rank fusion) only.
   # A reranker typically gives +5–10% RAG precision at low extra latency.

@@ -62,6 +62,18 @@ class ServingConfig:
     # Models are downloaded automatically on first transcription to the HF cache.
     asr_local_model: str = "base"
 
+    # ── Premium TTS ───────────────────────────────────────────────────────────
+    # Base URL for a premium TTS engine (Fish Audio S2 / Hume TADA / IndexTTS-2 / etc.).
+    # When set AND tts_premium_ack_license is True, this engine is tried FIRST
+    # in the synthesis chain before the AI server, Kokoro, and espeak-ng.
+    # Leave empty (default) for zero regression — the standard chain is unchanged.
+    # Example: "http://127.0.0.1:9880"  (Fish Audio S2 default port)
+    tts_premium_url: str = ""
+    # License acknowledgment — must be True before the premium path activates.
+    # Fish Audio S2 / TADA may require commercial licensing for production use.
+    # Set True only after confirming the license terms for your use case.
+    tts_premium_ack_license: bool = False
+
     # ── Reranker ──────────────────────────────────────────────────────────────
     # Leave empty to use RRF (reciprocal-rank fusion) only.
     # Set to "BAAI/bge-reranker-v2-m3" or "Qwen3-Reranker-8B" when a reranker
@@ -220,6 +232,9 @@ def load_config(path: str | None = None) -> OrivellumConfig:
             asr_model=serving_raw.get("asr_model", serving_raw.get(
                 "models", {}).get("asr", ServingConfig.asr_model)),
             asr_local_model=serving_raw.get("asr_local_model", ServingConfig.asr_local_model),
+            tts_premium_url=str(serving_raw.get("tts_premium_url", ServingConfig.tts_premium_url)),
+            tts_premium_ack_license=bool(serving_raw.get(
+                "tts_premium_ack_license", ServingConfig.tts_premium_ack_license)),
             reranker_model=serving_raw.get("reranker_model", serving_raw.get(
                 "models", {}).get("reranker", ServingConfig.reranker_model)),
             timeout_sec=int(serving_raw.get("timeout_sec", ServingConfig.timeout_sec)),
