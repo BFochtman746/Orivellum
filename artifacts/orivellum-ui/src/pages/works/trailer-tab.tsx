@@ -20,7 +20,7 @@ import {
   Film, Sparkles, Loader2, CheckCircle, AlertCircle, XCircle,
   Copy, Check, ChevronDown, ChevronRight, Download, Music,
   Mic, Clapperboard, LayoutList, BookOpen, Star, Clock,
-  BarChart3, Layers, Settings2,
+  BarChart3, Layers, Settings2, Smartphone, Monitor, Blend,
 } from "lucide-react";
 
 const BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
@@ -60,12 +60,14 @@ interface TrailerConcept {
 
 interface TrailerShot {
   beat: string;
+  beat_type?: "hook" | "peak" | "close";
   duration: number;
   description: string;
   image_prompt: string;
   motion_prompt: string;
   negative_prompt: string;
   on_screen_text?: string;
+  vertical_framing_note?: string;
   image_model?: string;
   video_model?: string;
   resolution?: string;
@@ -74,6 +76,21 @@ interface TrailerShot {
   seed_policy?: string;
   upscale?: string;
 }
+
+// Combined package shape when format="both"
+interface CombinedTrailerPackage {
+  format: "both";
+  full: TrailerPackage["package"];
+  short: TrailerPackage["package"];
+  brief: Record<string, unknown>;
+  concept: TrailerConcept;
+  method: Record<string, unknown>;
+  generated: string;
+  status: string;
+  status_badge: string;
+}
+
+type TrailerFormat = "full" | "short";
 
 interface TrailerNarrationLine {
   t_start: number;
@@ -422,6 +439,20 @@ function ShotlistPanel({
               <span className="font-mono text-xs text-muted-foreground shrink-0 w-12">
                 {String(i).padStart(2, "0")}
               </span>
+              {shot.beat_type && (
+                <Badge
+                  className={`text-[9px] font-mono shrink-0 ${
+                    shot.beat_type === "hook"
+                      ? "bg-orange-500/15 text-orange-600 border-orange-500/30"
+                      : shot.beat_type === "peak"
+                        ? "bg-primary/15 text-primary border-primary/30"
+                        : "bg-muted text-muted-foreground border-border"
+                  }`}
+                  variant="outline"
+                >
+                  {shot.beat_type.toUpperCase()}
+                </Badge>
+              )}
               <span className="flex-1 text-xs font-semibold font-mono truncate">
                 {shot.beat}
               </span>
@@ -499,6 +530,16 @@ function ShotlistPanel({
                     {shot.steps && <span>🔢 {shot.steps} steps</span>}
                     {shot.seed_policy && <span>🌱 {shot.seed_policy}</span>}
                     {shot.upscale && <span>🔍 {shot.upscale}</span>}
+                  </div>
+                )}
+
+                {/* Vertical framing note (short-form only) */}
+                {shot.vertical_framing_note && (
+                  <div className="flex items-start gap-2 pt-1 px-2.5 py-2 rounded-md bg-sky-500/5 border border-sky-500/20">
+                    <Smartphone className="w-3 h-3 mt-0.5 text-sky-500 shrink-0" />
+                    <span className="text-[11px] text-sky-700 dark:text-sky-400 font-mono">
+                      {shot.vertical_framing_note}
+                    </span>
                   </div>
                 )}
 
@@ -729,9 +770,10 @@ function AssemblyPanel({ assembly, duration }: {
 
 function TrailerPackageDetail({ trailer }: { trailer: TrailerPackage }) {
   const [panel, setPanel] = useState("brief");
-  const pkg = trailer.package;
+  const [activeFmt, setActiveFmt] = useState<TrailerFormat>("full");
+  const rawPkg = trailer.package;
 
-  if (!pkg) {
+  if (!rawPkg) {
     return (
       <div className="text-sm text-muted-foreground italic text-center py-8">
         Package not yet available.
@@ -739,23 +781,35 @@ function TrailerPackageDetail({ trailer }: { trailer: TrailerPackage }) {
     );
   }
 
-  // Shots and narration
-  const plan = pkg.plan ?? ({} as any);
+  // Support combined {format:"both", full:{...}, short:{...}} packages
+  const isCombined = (rawPkg as any).format === "both";
+  const pkg: any = isCombined
+    ? activeFmt === "short"
+      ? (rawPkg as any).short
+      : (rawPkg as any).full
+    : rawPkg;
+
+  // Shots and narration — resolved from the active sub-package
+  const plan = pkg?.plan ?? ({} as any);
   const shots: TrailerShot[] = Array.isArray(plan.shots) ? plan.shots : [];
   const narration: TrailerNarrationLine[] = Array.isArray(plan.narration) ? plan.narration : [];
   const music: TrailerMusic = plan.music ?? {};
   const assembly = (plan.assembly ?? {}) as Record<string, unknown>;
   const duration: number = typeof plan.duration === "number" ? plan.duration : 0;
-  const allConcepts: TrailerConcept[] = Array.isArray(plan._all_concepts)
-    ? plan._all_concepts
-    : [pkg.concept];
-  const shotPrompts = pkg.shot_prompts ?? {};
+  // Concepts live in the full sub-package (shared across formats)
+  const basePkg: any = isCombined ? (rawPkg as any).full : rawPkg;
+  const allConcepts: TrailerConcept[] = Array.isArray(basePkg?.plan?._all_concepts)
+    ? basePkg.plan._all_concepts
+    : Array.isArray(plan._all_concepts)
+      ? plan._all_concepts
+      : [rawPkg.concept];
+  const shotPrompts = pkg?.shot_prompts ?? {};
 
   // Validation badge
   const valOk = pkg.validation?.status === "READY";
   const criticalCount: number = pkg.validation?.critical ?? 0;
   const findings = (pkg.validation?.findings ?? []).filter(
-    (f) => f.severity === "critical"
+    (f: { severity: string; code: string; msg: string }) => f.severity === "critical"
   );
 
   // Download handler
@@ -772,6 +826,32 @@ function TrailerPackageDetail({ trailer }: { trailer: TrailerPackage }) {
 
   return (
     <div className="space-y-4">
+      {/* Format toggle — only shown for combined "both" packages */}
+      {isCombined && (
+        <div className="flex items-center gap-1 p-0.5 rounded-lg bg-muted/50 border border-border/50 w-fit">
+          {(
+            [
+              { value: "full",  Icon: Monitor,    label: "Full trailer",  sub: "75 s · 16:9" },
+              { value: "short", Icon: Smartphone, label: "Social clip",   sub: "30 s · 9:16" },
+            ] as const
+          ).map(({ value, Icon, label, sub }) => (
+            <button
+              key={value}
+              onClick={() => setActiveFmt(value)}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-mono transition-all ${
+                activeFmt === value
+                  ? "bg-background border border-border shadow-sm text-foreground"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <Icon className="w-3.5 h-3.5" />
+              <span>{label}</span>
+              <span className="text-[9px] text-muted-foreground">{sub}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* Package header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
@@ -789,6 +869,7 @@ function TrailerPackageDetail({ trailer }: { trailer: TrailerPackage }) {
           </span>
           <span className="text-xs font-mono text-muted-foreground">
             {shots.length} shots · ~{duration}s
+            {activeFmt === "short" && <span className="ml-1 text-sky-600">· 9:16</span>}
           </span>
         </div>
         <Button
@@ -803,7 +884,7 @@ function TrailerPackageDetail({ trailer }: { trailer: TrailerPackage }) {
       </div>
 
       {/* Blocking findings */}
-      {findings.map((f, i) => (
+      {findings.map((f: { severity: string; code: string; msg: string }, i: number) => (
         <div key={i} className="flex items-start gap-2 px-3 py-2 rounded border border-destructive/30 bg-destructive/5 text-xs text-destructive">
           <XCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
           <span><strong>{f.code}</strong> — {f.msg}</span>
@@ -956,8 +1037,16 @@ function TrailerHistoryRow({ trailer, workId }: { trailer: TrailerListItem; work
 
 // ─── Main tab ─────────────────────────────────────────────────────────────────
 
+// Format picker labels / icons
+const FORMAT_OPTIONS: { value: TrailerFormat | "both"; Icon: React.FC<{ className?: string }>; label: string; desc: string }[] = [
+  { value: "both",  Icon: Blend,      label: "Full + Social",  desc: "75 s 16:9 & 30 s 9:16" },
+  { value: "full",  Icon: Monitor,    label: "Full trailer",   desc: "75 s · 16:9" },
+  { value: "short", Icon: Smartphone, label: "Social clip",    desc: "30 s · 9:16 Reels/TikTok/Shorts" },
+];
+
 export function TrailerTab({ workId }: { workId: string }) {
   const queryClient = useQueryClient();
+  const [genFormat, setGenFormat] = useState<"full" | "short" | "both">("both");
 
   const { data, isLoading } = useQuery<{ trailers: TrailerListItem[]; count: number }>({
     queryKey: ["trailers", workId],
@@ -976,13 +1065,17 @@ export function TrailerTab({ workId }: { workId: string }) {
 
   const generateMutation = useMutation({
     mutationFn: async () => {
-      const r = await apiFetch(`${BASE}/works/${workId}/trailer`, { method: "POST" });
+      const r = await apiFetch(
+        `${BASE}/works/${workId}/trailer?format=${genFormat}`,
+        { method: "POST" },
+      );
       const body = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error((body as any)?.detail ?? "Failed to start");
       return body;
     },
     onSuccess: () => {
-      toast.success("Trailer Architect pipeline started");
+      const label = FORMAT_OPTIONS.find((o) => o.value === genFormat)?.label ?? genFormat;
+      toast.success(`Trailer Architect started — ${label}`);
       queryClient.invalidateQueries({ queryKey: ["trailers", workId] });
     },
     onError: (err: Error) => toast.error(err.message),
@@ -993,27 +1086,47 @@ export function TrailerTab({ workId }: { workId: string }) {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-start justify-between gap-4">
         <div>
           <h2 className="text-lg font-serif font-semibold flex items-center gap-2">
             <Film className="w-5 h-5 text-muted-foreground" />
             Trailer Architect
           </h2>
           <p className="text-sm text-muted-foreground mt-0.5">
-            Generate a full production package — concept · shotlist · narration · music · assembly sheet
+            Concept · shotlist · narration · music · assembly — full landscape and/or 30 s vertical social clip.
           </p>
         </div>
-        <Button
-          onClick={() => generateMutation.mutate()}
-          disabled={generateMutation.isPending || hasRunning}
-          className="gap-2"
-        >
-          {generateMutation.isPending || hasRunning ? (
-            <><Loader2 className="w-4 h-4 animate-spin" /> {hasRunning ? "Generating…" : "Starting…"}</>
-          ) : (
-            <><Sparkles className="w-4 h-4" /> Generate Trailer</>
-          )}
-        </Button>
+        <div className="flex flex-col items-end gap-2 shrink-0">
+          {/* Format picker */}
+          <div className="flex items-center gap-0.5 p-0.5 rounded-lg bg-muted/50 border border-border/50">
+            {FORMAT_OPTIONS.map(({ value, Icon, label }) => (
+              <button
+                key={value}
+                onClick={() => setGenFormat(value as any)}
+                title={FORMAT_OPTIONS.find((o) => o.value === value)?.desc}
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-mono transition-all ${
+                  genFormat === value
+                    ? "bg-background border border-border shadow-sm text-foreground"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                <Icon className="w-3 h-3" />
+                {label}
+              </button>
+            ))}
+          </div>
+          <Button
+            onClick={() => generateMutation.mutate()}
+            disabled={generateMutation.isPending || hasRunning}
+            className="gap-2"
+          >
+            {generateMutation.isPending || hasRunning ? (
+              <><Loader2 className="w-4 h-4 animate-spin" /> {hasRunning ? "Generating…" : "Starting…"}</>
+            ) : (
+              <><Sparkles className="w-4 h-4" /> Generate</>
+            )}
+          </Button>
+        </div>
       </div>
 
       {/* How it works — shown when empty */}

@@ -1345,11 +1345,22 @@ async def evidence_rescore(work_id: str):
 # ─── Trailer Architect ────────────────────────────────────────────────────────
 
 @router.post("/works/{work_id}/trailer")
-async def create_trailer(work_id: str):
+async def create_trailer(
+    work_id: str,
+    format: str = Query(
+        default="both",
+        description="Package format: 'full' (75 s 16:9), 'short' (30 s 9:16 social), or 'both'.",
+        pattern="^(full|short|both)$",
+    ),
+):
     """Enqueue a Trailer Architect job for a Work.
 
     Returns immediately with the new trailer record (status='running').
     The pipeline runs in the background via the thread-pool executor.
+
+    format='full'  → standard 75 s 16:9 landscape package only
+    format='short' → 30 s 9:16 social clip only (Reels/TikTok/Shorts)
+    format='both'  → both packages in one job (default)
 
     The Work must have at least one document with readiness='ready' and
     non-empty extracted_text so the pipeline has content to analyse.
@@ -1385,12 +1396,13 @@ async def create_trailer(work_id: str):
     # Create the trailer record at 'running' immediately
     trailer = db.create_trailer(work_id)
     trailer_id = trailer["id"]
+    fmt = format  # avoid shadowing builtin after this point
 
     # Launch the pipeline in the background (fire-and-forget)
     async def _run_bg() -> None:
         try:
             from orivellum.capabilities.trailer import run_trailer_pipeline
-            await run_in_threadpool(run_trailer_pipeline, db, work_id, trailer_id)
+            await run_in_threadpool(run_trailer_pipeline, db, work_id, trailer_id, fmt)
         except Exception:
             import traceback
             logger.error("Trailer background task crashed:\n%s", traceback.format_exc())
@@ -1403,7 +1415,11 @@ async def create_trailer(work_id: str):
         "work_id": work_id,
         "status": "running",
         "phase": "loading",
-        "message": "Trailer Architect pipeline started. Poll GET /works/{id}/trailers/{pkg_id} for progress.",
+        "format": fmt,
+        "message": (
+            f"Trailer Architect pipeline started (format={fmt!r}). "
+            "Poll GET /works/{id}/trailers/{pkg_id} for progress."
+        ),
     }
 
 

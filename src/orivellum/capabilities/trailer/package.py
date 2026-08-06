@@ -12,8 +12,115 @@ import json
 import datetime
 
 
+def build_short(*, brief: dict, concept: dict, method: dict, plan: dict, validation: dict) -> dict:
+    """Return the short-form (30 s 9:16) production package dict."""
+    stamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+    status = validation["status"]
+    badge = "READY" if status == "READY" else f"BLOCKED ({validation['critical']} critical)"
+
+    shot_prompts = {}
+    for i, s in enumerate(plan.get("shots", [])):
+        shot_prompts[f"shot_{i:02d}"] = (
+            f"# SHOT {i:02d} — {s.get('beat', '')}  [{s.get('beat_type','').upper()}]\n\n"
+            f"[IMAGE MODEL] {s.get('image_model')}\n"
+            f"[POSITIVE]\n{s.get('image_prompt', '')}\n\n"
+            f"[NEGATIVE]\n{s.get('negative_prompt', '')}\n\n"
+            f"[VIDEO MODEL] {s.get('video_model')} (image-to-video)\n"
+            f"[MOTION]\n{s.get('motion_prompt', '')}\n\n"
+            f"[SETTINGS] {s.get('resolution')} · {s.get('frames')} frames "
+            f"· {s.get('steps')} steps · {s.get('duration')}s\n"
+            f"[VERTICAL FRAMING] {s.get('vertical_framing_note', '')}\n"
+            f"[SEED] {s.get('seed_policy')}\n"
+            f"[UPSCALE] {s.get('upscale')}\n"
+        )
+
+    return {
+        "brief": brief,
+        "concept": concept,
+        "method": method,
+        "plan": plan,
+        "validation": validation,
+        "generated": stamp,
+        "status": status,
+        "status_badge": badge,
+        "format": "short",
+        "aspect_ratio": "9:16",
+        "duration_s": 30,
+        "platform_targets": plan.get("platform_targets",
+                                     ["Instagram Reels", "TikTok", "YouTube Shorts"]),
+        "docs": {
+            "production_package": _short_master_md(brief, concept, plan, validation, stamp),
+            "book_brief": _brief_md(brief),
+            "concepts": _concepts_md(concept, plan),
+            "method": _method_md(method),
+            "shotlist": _short_shotlist_md(plan),
+            "narration_script": _narration_md(plan),
+            "music_brief": _music_md(plan),
+            "titles": _titles_md(plan),
+            "assembly_sheet": _assembly_md(plan),
+        },
+        "shot_prompts": shot_prompts,
+    }
+
+
+def _short_master_md(brief, concept, plan, val, stamp) -> str:
+    status = val["status"]
+    badge = "✅ READY" if status == "READY" else f"⛔ BLOCKED ({val['critical']} critical)"
+    platforms = ", ".join(plan.get("platform_targets",
+                                   ["Instagram Reels", "TikTok", "YouTube Shorts"]))
+    lines = [
+        f"# Social Clip Package — {brief.get('title', '(untitled)')}",
+        "",
+        f"*Generated {stamp} by Trailer Architect. Status: **{badge}***",
+        "",
+        f"**Format.** 30 s · 9:16 vertical · {platforms}",
+        f"**Logline.** {brief.get('logline', '')}",
+        "",
+        f"**Concept.** {concept.get('name')} — {concept.get('angle')}",
+        "",
+        "## Shots",
+        "",
+    ]
+    for i, s in enumerate(plan.get("shots", [])):
+        lines.append(
+            f"- Shot {i:02d} [{s.get('beat_type','').upper()}] "
+            f"**{s.get('beat','')}** · {s.get('duration')}s · {s.get('resolution')}"
+        )
+    lines += [
+        "",
+        "## Next Step",
+        "",
+        "1. Generate each shot still at 720×1280 (9:16 native).",
+        "2. Add auto-captions via CapCut/DaVinci Resolve — bottom 20% safe zone.",
+        "3. Export at 30 fps H.264; master LUFS per ASSEMBLY_SHEET.",
+        "",
+    ]
+    if status != "READY":
+        lines += ["## ⛔ Blocking findings", ""]
+        lines += [f"- **{f['code']}** — {f['msg']}" for f in val["findings"]]
+    return "\n".join(lines)
+
+
+def _short_shotlist_md(plan: dict) -> str:
+    lines = ["# Short-Form Shot List (9:16 · 30 s)", ""]
+    for i, s in enumerate(plan.get("shots", [])):
+        lines += [
+            f"## Shot {i:02d} [{s.get('beat_type','').upper()}] — {s.get('beat', '')}  "
+            f"({s.get('duration', '?')}s)",
+            f"**Description:** {s.get('description', '')}",
+            f"**Vertical framing:** {s.get('vertical_framing_note', '')}",
+            f"**Image model:** {s.get('image_model', '?')}  ·  {s.get('resolution')}",
+            f"**Image prompt:** {s.get('image_prompt', '')}",
+            f"**Motion prompt:** {s.get('motion_prompt', '')}",
+            f"**Negative:** {s.get('negative_prompt', '')}",
+            f"**On-screen text:** {s.get('on_screen_text', '')}",
+            "",
+        ]
+    return "\n".join(lines)
+
+
 def build(*, brief: dict, concept: dict, method: dict, plan: dict, validation: dict) -> dict:
-    """Return the full production package as a dict."""
+    """Return the full (landscape) production package as a dict."""
     stamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
 
     status = validation["status"]

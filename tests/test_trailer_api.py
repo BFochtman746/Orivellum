@@ -223,48 +223,144 @@ class TrailerListDetailTests(unittest.TestCase):
 # Offline pipeline smoke test
 # ---------------------------------------------------------------------------
 
+def _run_offline(db, work_id: str, trailer_id: str, fmt: str = "both"):
+    """Helper: run the pipeline in offline mode and return the stored result dict."""
+    import os, json
+    os.environ["MEDIA_STUDIO_OFFLINE"] = "1"
+    try:
+        from orivellum.capabilities.trailer import run_trailer_pipeline
+        run_trailer_pipeline(db, work_id, trailer_id, fmt)
+        result = db.get_trailer(trailer_id)
+        if result.get("package_json"):
+            result["_pkg"] = json.loads(result["package_json"])
+        return result
+    finally:
+        os.environ.pop("MEDIA_STUDIO_OFFLINE", None)
+
+
 class TrailerPipelineSmokeTests(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         _, self.db = _make_app(self._tmp.name)
         self.work = self.db.create_work(title="Smoke Book", work_type="writing")
         self.work_id = self.work["id"]
+        _make_ready_doc(self.db, self.work_id, text="In the beginning God created. " * 200)
 
     def tearDown(self):
         self.db.close()
         self._tmp.cleanup()
 
-    def test_offline_pipeline_completes_and_sets_ready(self):
-        """run_trailer_pipeline in offline mode must reach status='ready'."""
-        import os
-        os.environ["MEDIA_STUDIO_OFFLINE"] = "1"
-        try:
-            doc = _make_ready_doc(self.db, self.work_id,
-                                  text="In the beginning God created. " * 200)
-            t = self.db.create_trailer(self.work_id)
-            from orivellum.capabilities.trailer import run_trailer_pipeline
-            run_trailer_pipeline(self.db, self.work_id, t["id"])
-            result = self.db.get_trailer(t["id"])
-            self.assertEqual(result["status"], "ready",
-                             f"Expected status='ready', got {result['status']!r}. "
-                             f"Error: {result.get('error')}")
-            self.assertIsNotNone(result["package_json"])
-            import json
-            pkg = json.loads(result["package_json"])
-            # Package must have all 9 doc keys
-            required = {"book_brief", "concepts", "method", "shotlist",
-                        "narration_script", "music_brief", "titles",
-                        "assembly_sheet", "production_package"}
-            self.assertTrue(required.issubset(set(pkg.get("docs", {}).keys())),
-                            f"Missing doc keys: {required - set(pkg.get('docs', {}).keys())}")
-        finally:
-            os.environ.pop("MEDIA_STUDIO_OFFLINE", None)
+    # ── format=both (default) ──────────────────────────────────────────────
+
+    def test_offline_both_pipeline_completes_and_sets_ready(self):
+        """Default 'both' pipeline must reach status='ready' in offline mode."""
+        t = self.db.create_trailer(self.work_id)
+        result = _run_offline(self.db, self.work_id, t["id"], fmt="both")
+        self.assertEqual(
+            result["status"], "ready",
+            f"Expected 'ready', got {result['status']!r}. Error: {result.get('error')}",
+        )
+        self.assertIsNotNone(result["package_json"])
+        pkg = result["_pkg"]
+
+        # Combined package shape
+        self.assertEqual(pkg.get("format"), "both",
+                         "Top-level 'format' key must be 'both'")
+        self.assertIn("full",  pkg, "Combined package must have a 'full' sub-package")
+        self.assertIn("short", pkg, "Combined package must have a 'short' sub-package")
+
+        # Legacy convenience keys promoted to top level
+        for key in ("brief", "concept", "docs", "plan", "validation", "shot_prompts"):
+            self.assertIn(key, pkg, f"Top-level key '{key}' must be promoted from full package")
+
+        # Both sub-packages must have all 9 doc keys
+        required = {"book_brief", "concepts", "method", "shotlist",
+                    "narration_script", "music_brief", "titles",
+                    "assembly_sheet", "production_package"}
+        for fmt_key in ("full", "short"):
+            docs = pkg[fmt_key].get("docs", {})
+            self.assertTrue(
+                required.issubset(set(docs.keys())),
+                f"'{fmt_key}' sub-package missing doc keys: "
+                f"{required - set(docs.keys())}",
+            )
+
+    # ── format=full ────────────────────────────────────────────────────────
+
+    def test_offline_full_pipeline_completes_and_sets_ready(self):
+        """format='full' must reach status='ready' in offline mode."""
+        t = self.db.create_trailer(self.work_id)
+        result = _run_offline(self.db, self.work_id, t["id"], fmt="full")
+        self.assertEqual(result["status"], "ready",
+                         f"Error: {result.get('error')}")
+        pkg = result["_pkg"]
+        # Flat (non-combined) package — no sub-packages
+        self.assertNotEqual(pkg.get("format"), "both")
+        required = {"book_brief", "concepts", "method", "shotlist",
+                    "narration_script", "music_brief", "titles",
+                    "assembly_sheet", "production_package"}
+        self.assertTrue(required.issubset(set(pkg.get("docs", {}).keys())),
+                        f"Missing doc keys: {required - set(pkg.get('docs', {}).keys())}")
+
+    # ── format=short ───────────────────────────────────────────────────────
+
+    def test_offline_short_pipeline_completes_and_sets_ready(self):
+        """format='short' must reach status='ready' in offline mode."""
+        t = self.db.create_trailer(self.work_id)
+        result = _run_offline(self.db, self.work_id, t["id"], fmt="short")
+        self.assertEqual(result["status"], "ready",
+                         f"Error: {result.get('error')}")
+        pkg = result["_pkg"]
+        self.assertEqual(pkg.get("format"), "short")
+        self.assertEqual(pkg.get("aspect_ratio"), "9:16")
+        self.assertEqual(pkg.get("duration_s"), 30)
+
+    def test_short_plan_exactly_3_shots_with_beat_types(self):
+        """Short offline plan: exactly 3 shots, correct beat_types, durations sum to 30s."""
+        t = self.db.create_trailer(self.work_id)
+        result = _run_offline(self.db, self.work_id, t["id"], fmt="short")
+        pkg = result["_pkg"]
+        shots = pkg.get("plan", {}).get("shots", [])
+
+        self.assertEqual(len(shots), 3,
+                         f"Expected exactly 3 shots, got {len(shots)}")
+        for i, (s, expected_type) in enumerate(zip(shots, ("hook", "peak", "close"))):
+            self.assertEqual(
+                s.get("beat_type"), expected_type,
+                f"Shot {i} beat_type should be '{expected_type}', got {s.get('beat_type')!r}",
+            )
+            self.assertIn("vertical_framing_note", s,
+                          f"Shot {i} missing vertical_framing_note")
+            self.assertTrue(s["vertical_framing_note"],
+                            f"Shot {i} vertical_framing_note is empty")
+        total_dur = sum(s.get("duration", 0) for s in shots)
+        self.assertEqual(total_dur, 30,
+                         f"Shot durations must sum to 30s, got {total_dur}s")
+
+    def test_short_plan_narration_within_30s(self):
+        """Short offline plan: all narration t_start values must be within [0, 30)."""
+        t = self.db.create_trailer(self.work_id)
+        result = _run_offline(self.db, self.work_id, t["id"], fmt="short")
+        pkg = result["_pkg"]
+        narration = pkg.get("plan", {}).get("narration", [])
+        for ln in narration:
+            t_start = ln.get("t_start", 0)
+            self.assertGreaterEqual(t_start, 0,
+                                    f"Narration t_start {t_start} < 0")
+            self.assertLess(t_start, 30,
+                            f"Narration t_start {t_start} >= 30s clip duration (would fail validation)")
+        if narration:
+            self.assertEqual(narration[0]["t_start"], 0,
+                             "First (hook) narration line must be at t=0")
+
+    # ── failure path ───────────────────────────────────────────────────────
 
     def test_offline_pipeline_fails_gracefully_when_no_documents(self):
         """Pipeline on a work with no extracted text must set status='failed', not crash."""
-        t = self.db.create_trailer(self.work_id)
+        empty_work = self.db.create_work(title="Empty Work", work_type="writing")
+        t = self.db.create_trailer(empty_work["id"])
         from orivellum.capabilities.trailer import run_trailer_pipeline
-        run_trailer_pipeline(self.db, self.work_id, t["id"])
+        run_trailer_pipeline(self.db, empty_work["id"], t["id"])
         result = self.db.get_trailer(t["id"])
         self.assertEqual(result["status"], "failed")
         self.assertIsNotNone(result.get("error"))

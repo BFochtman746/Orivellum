@@ -1,33 +1,49 @@
 """
-runner.py — orchestrate the full Trailer Architect pipeline inside Orivellum.
+runner.py — orchestrate the Trailer Architect pipeline inside Orivellum.
 
 Called from the API route in a thread-pool executor so it doesn't block the
 async event loop.  Progress is written back to the DB via status updates.
+
+Supports format = 'full' | 'short' | 'both' (default: 'both').
+  full  → standard 75 s 16:9 landscape package
+  short → 30 s 9:16 vertical social clip (Reels / TikTok / Shorts)
+  both  → package_json = {format:'both', full:{...}, short:{...}}
 """
 from __future__ import annotations
 import json
 import logging
 import traceback
 
-from . import analyze, concept as concept_mod, method as method_mod, plan as plan_mod, validate, package
+from . import (
+    analyze, concept as concept_mod, method as method_mod,
+    plan as plan_mod, plan_short as plan_short_mod,
+    validate, package,
+)
 from .config import build_trailer_config
 from .llm_adapter import OrivellumLLM
 from .io_orivellum import book_text_from_work
 
 logger = logging.getLogger(__name__)
 
+VALID_FORMATS = ("full", "short", "both")
+
 
 def run_trailer_pipeline(
     db,
     work_id: str,
     trailer_id: str,
+    fmt: str = "both",
 ) -> None:
-    """Run the full pipeline synchronously (call from a thread pool).
+    """Run the pipeline synchronously (call from a thread pool).
 
-    Writes status updates to db as it progresses:
-      running → ready (or failed)
+    fmt: 'full' | 'short' | 'both'
+    Writes status/phase updates to the DB as each stage completes.
     """
-    def _update(status: str, phase: str, pkg: dict | None = None, err: str | None = None) -> None:
+    if fmt not in VALID_FORMATS:
+        fmt = "both"
+
+    def _update(status: str, phase: str, pkg: dict | None = None,
+                err: str | None = None) -> None:
         try:
             db.update_trailer(
                 trailer_id,
@@ -40,11 +56,11 @@ def run_trailer_pipeline(
             logger.warning("trailer status update failed: %s", exc)
 
     try:
-        # -- config -------------------------------------------------------
+        # ── config ─────────────────────────────────────────────────────────
         cfg = build_trailer_config()
         llm = OrivellumLLM(cfg, offline=cfg.get("offline", False))
 
-        # -- pull book content from DB ------------------------------------
+        # ── book content ───────────────────────────────────────────────────
         _update("running", "loading")
         work = db.get_work(work_id)
         if not work:
@@ -56,11 +72,11 @@ def run_trailer_pipeline(
             _update("failed", "loading", err="No extracted text found for this Work")
             return
 
-        # -- stage 1: analyze  --------------------------------------------
+        # ── stage 1: analyze (shared) ──────────────────────────────────────
         _update("running", "analyze")
         brief = analyze.run(llm, cfg, full_text, title_hint=title_hint)
 
-        # -- stage 2: concepts  -------------------------------------------
+        # ── stage 2: concepts (shared) ─────────────────────────────────────
         _update("running", "concept")
         cres = concept_mod.run(llm, cfg, brief)
         recommended = cres.get("recommended")
@@ -72,32 +88,78 @@ def run_trailer_pipeline(
             cres["concepts"][0],
         )
 
-        # -- stage 3: method  ---------------------------------------------
+        # ── stage 3: method (shared) ───────────────────────────────────────
         _update("running", "method")
         method = method_mod.build_method(cfg.get("registry"), chosen, cfg)
 
-        # -- stage 4: plan  -----------------------------------------------
+        # ── stage 4: plan ─────────────────────────────────────────────────
         _update("running", "plan")
-        built = plan_mod.run(llm, cfg, brief, chosen, method)
-        built["_all_concepts"] = cres["concepts"]
 
-        # -- stage 5: validate  -------------------------------------------
-        _update("running", "validate")
-        val = validate.check(brief, chosen, method, built)
+        full_pkg: dict | None = None
+        short_pkg: dict | None = None
 
-        # -- stage 6: package  --------------------------------------------
+        if fmt in ("full", "both"):
+            built_full = plan_mod.run(llm, cfg, brief, chosen, method)
+            built_full["_all_concepts"] = cres["concepts"]
+            val_full = validate.check(brief, chosen, method, built_full)
+            full_pkg = package.build(
+                brief=brief,
+                concept=chosen,
+                method=method,
+                plan=built_full,
+                validation=val_full,
+            )
+
+        if fmt in ("short", "both"):
+            _update("running", "plan_short")
+            built_short = plan_short_mod.run(llm, cfg, brief, chosen, method)
+            built_short["_all_concepts"] = cres["concepts"]
+            val_short = validate.check(brief, chosen, method, built_short)
+            short_pkg = package.build_short(
+                brief=brief,
+                concept=chosen,
+                method=method,
+                plan=built_short,
+                validation=val_short,
+            )
+
+        # ── stage 5/6: package ─────────────────────────────────────────────
         _update("running", "package")
-        pkg = package.build(
-            brief=brief,
-            concept=chosen,
-            method=method,
-            plan=built,
-            validation=val,
-        )
 
-        final_status = "ready" if val["status"] == "READY" else "blocked"
-        _update(final_status, "done", pkg=pkg)
-        logger.info("Trailer %s completed: %s", trailer_id, final_status)
+        if fmt == "full":
+            final_pkg = full_pkg
+            val_status = full_pkg["validation"]["status"]  # type: ignore[index]
+        elif fmt == "short":
+            final_pkg = short_pkg
+            val_status = short_pkg["validation"]["status"]  # type: ignore[index]
+        else:
+            # Both — wrap in a combined envelope
+            full_ready  = full_pkg["validation"]["status"] == "READY"   # type: ignore[index]
+            short_ready = short_pkg["validation"]["status"] == "READY"  # type: ignore[index]
+            val_status  = "READY" if (full_ready and short_ready) else "BLOCKED"
+            final_pkg = {
+                "format":       "both",
+                "full":         full_pkg,
+                "short":        short_pkg,
+                # Convenience: shared fields promoted to top level so legacy
+                # code that reads pkg.brief / pkg.concept / pkg.docs still works
+                "brief":        full_pkg["brief"],        # type: ignore[index]
+                "concept":      full_pkg["concept"],      # type: ignore[index]
+                "method":       full_pkg["method"],       # type: ignore[index]
+                "generated":    full_pkg["generated"],    # type: ignore[index]
+                "docs":         full_pkg["docs"],         # type: ignore[index]
+                "plan":         full_pkg["plan"],         # type: ignore[index]
+                "validation":   full_pkg["validation"],  # type: ignore[index]
+                "shot_prompts": full_pkg["shot_prompts"], # type: ignore[index]
+                "status":       val_status,
+                "status_badge": "READY" if val_status == "READY"
+                                else f"BLOCKED (full={'✅' if full_ready else '⛔'} "
+                                     f"short={'✅' if short_ready else '⛔'})",
+            }
+
+        final_status = "ready" if val_status == "READY" else "blocked"
+        _update(final_status, "done", pkg=final_pkg)
+        logger.info("Trailer %s (%s) completed: %s", trailer_id, fmt, final_status)
 
     except Exception:
         err_msg = traceback.format_exc()
