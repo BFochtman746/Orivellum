@@ -20,7 +20,7 @@ import {
   FileQuestion, RefreshCw, Trash2, Hash, Calendar, Database,
   BookOpen, Cpu, Sparkles, ThumbsUp, ThumbsDown, Link2, Info,
   List, History, Star, GitBranch, ChevronDown,
-  BookHeadphones, Loader2, Play, Pause, X, Download, Network,
+  BookHeadphones, Loader2, Play, Pause, X, Download, Network, Search,
 } from "lucide-react";
 import {
   Tooltip, TooltipContent, TooltipProvider, TooltipTrigger,
@@ -411,9 +411,12 @@ function AiKindSection({
 
 type KnFilter = "all" | "pending" | "approved" | "rejected";
 
+const KN_SEARCH_THRESHOLD = 50; // switch to API search above this count
+
 function KnowledgeTabContent({
   knLoading,
   items,
+  docId,
   docWorkId,
   docReadiness,
   aiEnabled,
@@ -425,6 +428,7 @@ function KnowledgeTabContent({
 }: {
   knLoading: boolean;
   items: KnowledgeItem[];
+  docId: string;
   docWorkId?: string | null;
   docReadiness?: string;
   aiEnabled: boolean;
@@ -435,6 +439,48 @@ function KnowledgeTabContent({
   onDelete: (id: string) => void;
 }) {
   const [aiConfFilter, setAiConfFilter] = useState<ConfTier>("all");
+  const [knSearch, setKnSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [apiSearching, setApiSearching] = useState(false);
+  const [apiResults, setApiResults] = useState<KnowledgeItem[] | null>(null);
+
+  // Debounce search input by 300 ms
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(knSearch.trim()), 300);
+    return () => clearTimeout(t);
+  }, [knSearch]);
+
+  // API search when items > threshold and there is a query
+  const useApiSearch = items.length > KN_SEARCH_THRESHOLD && debouncedSearch.length > 0;
+  useEffect(() => {
+    if (!useApiSearch) {
+      setApiResults(null);
+      return;
+    }
+    let cancelled = false;
+    setApiSearching(true);
+    const params = new URLSearchParams({ q: debouncedSearch, doc_id: docId, limit: "50" });
+    apiFetch(`${BASE}/knowledge/ask?${params}`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (!cancelled) setApiResults((data.knowledge ?? []) as KnowledgeItem[]);
+      })
+      .catch(() => { if (!cancelled) setApiResults([]); })
+      .finally(() => { if (!cancelled) setApiSearching(false); });
+    return () => { cancelled = true; };
+  }, [useApiSearch, debouncedSearch, docId]);
+
+  // Derive visible items: API results when in API mode, else client-side filter
+  const query = knSearch.trim().toLowerCase();
+  const clientFiltered = (useApiSearch || !query)
+    ? items
+    : items.filter((k) =>
+        (k.text ?? "").toLowerCase().includes(query) ||
+        (k.subject ?? "").toLowerCase().includes(query) ||
+        (k.object ?? "").toLowerCase().includes(query)
+      );
+  const displayItems = useApiSearch ? (apiResults ?? []) : clientFiltered;
+
   if (knLoading) {
     return (
       <div className="space-y-3">
@@ -447,12 +493,13 @@ function KnowledgeTabContent({
   // Primary provenance: meta.source === "llm" (durable, survives review status changes).
   // Fallback for items created before meta provenance: review_status === "ai_auto".
   // Always split regardless of aiEnabled — stored AI items must always be visible.
+  // Use displayItems (API results or client-filtered) for the visible split.
   const isAiProvenance = (k: KnowledgeItem) =>
     k.meta?.source === "llm" || k.review_status === "ai_auto";
-  const aiItems = items.filter((k) => (AI_KINDS as readonly string[]).includes(k.kind) && isAiProvenance(k));
-  const ruleItems = items.filter((k) => !aiItems.includes(k));
+  const aiItems = displayItems.filter((k) => (AI_KINDS as readonly string[]).includes(k.kind) && isAiProvenance(k));
+  const ruleItems = displayItems.filter((k) => !aiItems.includes(k));
 
-  // Only use the generic empty state when both sections would be empty AND AI is
+  // Only use the generic empty state when the ORIGINAL items are empty AND AI is
   // disabled (so there's no AI section to show at all).
   if (items.length === 0 && !aiEnabled) {
     return (
@@ -489,6 +536,46 @@ function KnowledgeTabContent({
 
   return (
     <div className="space-y-8">
+      {/* ── Knowledge search ───────────────────────────────────────────── */}
+      {items.length > 0 && (
+        <div className="relative">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
+          <input
+            type="search"
+            placeholder={`Search knowledge${items.length > KN_SEARCH_THRESHOLD ? " (smart search)" : ""}…`}
+            value={knSearch}
+            onChange={(e) => setKnSearch(e.target.value)}
+            className="h-8 w-full rounded-md border border-input bg-background pl-8 pr-8 text-sm outline-none focus:ring-1 focus:ring-ring font-mono"
+          />
+          {apiSearching && (
+            <Loader2 className="absolute right-7 top-1/2 -translate-y-1/2 w-3.5 h-3.5 animate-spin text-muted-foreground" />
+          )}
+          {knSearch && (
+            <button
+              onClick={() => setKnSearch("")}
+              className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 rounded text-muted-foreground hover:text-foreground"
+              aria-label="Clear search"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
+          {useApiSearch && !apiSearching && knSearch && (
+            <span className="absolute right-7 top-1/2 -translate-y-1/2 text-[10px] font-mono px-1 rounded bg-primary/10 text-primary">
+              API
+            </span>
+          )}
+        </div>
+      )}
+      {/* Search no-results */}
+      {knSearch && !apiSearching && displayItems.length === 0 && items.length > 0 && (
+        <div className="text-center py-8 bg-muted/10 border border-dashed rounded-lg">
+          <p className="text-sm text-muted-foreground">No knowledge items match "{knSearch}"</p>
+          <button onClick={() => setKnSearch("")} className="mt-2 text-xs text-primary hover:underline">
+            Clear search
+          </button>
+        </div>
+      )}
+
       {/* ── AI-Extracted Knowledge ─────────────────────────────────────── */}
       {/* Show whenever items exist (always display stored AI knowledge) OR
           when AI is enabled (show status/empty-state prompt to the user). */}
@@ -1933,6 +2020,7 @@ export default function DocumentDetail() {
           <KnowledgeTabContent
             knLoading={knLoading}
             items={knData?.knowledge ?? []}
+            docId={docId!}
             docWorkId={doc?.work_id}
             docReadiness={readiness}
             aiEnabled={aiExtData?.enabled ?? false}

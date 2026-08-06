@@ -284,14 +284,15 @@ async def generate_quiz(work_id: str, count: int = 5):
 def knowledge_ask(
     q: str = Query(..., description="Search query"),
     work_id: str | None = Query(None, description="Limit to a specific work"),
+    doc_id: str | None = Query(None, description="Limit to a specific document"),
     limit: int = Query(12, le=50),
 ):
-    """Cross-work knowledge and chunk search. Pass work_id to scope to one Work."""
+    """Cross-work knowledge and chunk search. Pass work_id or doc_id to scope."""
     db = get_db()
     if not q.strip():
         return {"knowledge": [], "chunks": [], "query": q}
     try:
-        knowledge = db.search_knowledge(q, work_id=work_id, limit=limit)
+        knowledge = db.search_knowledge(q, work_id=work_id, doc_id=doc_id, limit=limit)
         chunks    = db.search_chunks(q,    work_id=work_id, limit=limit)
     except Exception as exc:
         raise HTTPException(500, f"Search failed: {exc}")
@@ -301,6 +302,7 @@ def knowledge_ask(
         "query":     q,
         "total":     len(knowledge) + len(chunks),
         "work_id":   work_id,
+        "doc_id":    doc_id,
     }
 
 

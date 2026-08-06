@@ -2480,6 +2480,7 @@ class OrivellumDB:
         return [self._k_dict(r) for r in rows]
 
     def search_knowledge(self, query: str, work_id: str | None = None,
+                         doc_id: str | None = None,
                          limit: int = 20) -> list[dict]:
         q = """SELECT k.* FROM knowledge_fts f
                JOIN knowledge k ON k.id = f.knowledge_id
@@ -2488,6 +2489,9 @@ class OrivellumDB:
         if work_id:
             q += " AND k.work_id=?"
             args.append(work_id)
+        if doc_id:
+            q += " AND k.source_doc_id=?"
+            args.append(doc_id)
         q += f" LIMIT {min(limit, 50)}"
         with self._lock:
             try:
