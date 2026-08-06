@@ -54,7 +54,7 @@ function MessageBubble({ message, colors, isDark, onResend, highlighted }: { mes
   };
 
   const markdownStyles = {
-    body: { color: textColor, fontSize: 15, fontFamily: 'Inter_400Regular', lineHeight: 21 },
+    body: { color: textColor, fontSize: 17, fontFamily: 'Inter_400Regular', lineHeight: 24 },
     paragraph: { marginTop: 0, marginBottom: 4 },
     strong: { fontFamily: 'Inter_700Bold' },
     em: { fontStyle: 'italic' as const },
@@ -230,7 +230,7 @@ function MessageBubble({ message, colors, isDark, onResend, highlighted }: { mes
         {/* Model attribution — always shown on assistant messages; fallback to "—" when model unknown (#82) */}
         {!isUser && !isErr && (
           <Text style={{
-            fontSize: 9,
+            fontSize: 13,
             fontFamily: 'Inter_400Regular',
             color: colors.mutedForeground,
             marginTop: 3,
@@ -1177,7 +1177,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   bubble: { borderRadius: 16, paddingHorizontal: 14, paddingVertical: 10 },
-  bubbleText: { fontSize: 15, fontFamily: 'Inter_400Regular', lineHeight: 21 },
+  bubbleText: { fontSize: 17, fontFamily: 'Inter_400Regular', lineHeight: 24 },
   emptyWrap: {
     flex: 1,
     alignItems: 'center',
@@ -1206,7 +1206,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingTop: 10,
     paddingBottom: 10,
-    fontSize: 15,
+    fontSize: 16,
   },
   sendBtn: {
     width: 42,
