@@ -413,6 +413,7 @@ function VoiceBrowserCard({
         {voices.map((v) => {
           const isSelected = v.id === selectedId;
           const isPlaying  = audio.playingKey === `sample-${v.id}`;
+          const isLoading  = audio.loadingKey === `sample-${v.id}`;
           const sampleUri  = `${API}/studio/voices/${encodeURIComponent(v.id)}/sample`;
 
           return (
@@ -457,7 +458,8 @@ function VoiceBrowserCard({
                 </View>
               )}
 
-              {/* Sample preview button */}
+              {/* Sample preview button — shows spinner while the first-time
+                  MP3 is being generated server-side (can take 5–15 s). */}
               <Pressable
                 onPress={(e) => {
                   e.stopPropagation?.();
@@ -471,11 +473,15 @@ function VoiceBrowserCard({
                   },
                 ]}
               >
-                <Feather
-                  name={isPlaying ? 'pause' : 'play'}
-                  size={11}
-                  color={isPlaying ? colors.primaryForeground : colors.mutedForeground}
-                />
+                {isLoading ? (
+                  <ActivityIndicator size="small" color={colors.mutedForeground} style={{ transform: [{ scale: 0.6 }] }} />
+                ) : (
+                  <Feather
+                    name={isPlaying ? 'pause' : 'play'}
+                    size={11}
+                    color={isPlaying ? colors.primaryForeground : colors.mutedForeground}
+                  />
+                )}
               </Pressable>
             </Pressable>
           );
@@ -570,6 +576,14 @@ const voiceCardStyles = StyleSheet.create({
 function useSharedAudio() {
   const playerRef = useRef<AudioPlayer | null>(null);
   const [playingKey, setPlayingKey] = useState<string | null>(null);
+  // loadingKey: set as soon as the user taps play on a voice that hasn't
+  // buffered yet (e.g. /voices/{id}/sample which generates the MP3 on first
+  // request — can take 5-15 s).  Cleared once the player reports isLoaded/playing.
+  const [loadingKey, setLoadingKey] = useState<string | null>(null);
+  // Ref mirrors loadingKey so the setInterval closure always reads the current
+  // value — React state is async, so the captured value in the closure would
+  // otherwise be stale (always null when the interval is first created).
+  const loadingKeyRef = useRef<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
@@ -593,6 +607,8 @@ function useSharedAudio() {
     } catch {}
     playerRef.current = null;
     setPlayingKey(null);
+    setLoadingKey(null);
+    loadingKeyRef.current = null;
   };
 
   const toggle = (key: string, uri: string) => {
@@ -600,34 +616,59 @@ function useSharedAudio() {
       stop();
       return;
     }
-    // Switch source
+    // Guard: ignore a second tap while the same voice is still loading.
+    // Read from the ref so this check is never stale across re-renders.
+    if (loadingKeyRef.current === key) return;
+
+    // Switch source — tear down any previous player first.
     if (pollRef.current) clearInterval(pollRef.current);
     try {
       playerRef.current?.remove();
     } catch {}
+    playerRef.current = null;
+    setPlayingKey(null);
+
+    // Mark as loading *before* creating the player so the UI updates
+    // immediately on the first render after the tap.
+    setLoadingKey(key);
+    loadingKeyRef.current = key; // sync update — read by the interval closure
+
     try {
       const player = createAudioPlayer(authSource(uri));
       playerRef.current = player;
       player.play();
-      setPlayingKey(key);
-      // Poll for end-of-track since there is no simple onEnded callback here.
+      // Poll for load completion, end-of-track, and errors.
+      // Uses loadingKeyRef (not the captured state) to avoid stale-closure bugs.
       pollRef.current = setInterval(() => {
         const st = player.currentStatus;
+        // Transition loading → playing once the player has buffered and started.
+        if (st?.isLoaded || st?.playing) {
+          if (loadingKeyRef.current === key) {
+            setPlayingKey(key);
+            setLoadingKey(null);
+            loadingKeyRef.current = null;
+          }
+        }
         if (st?.didJustFinish || (st?.isLoaded && !st.playing && st.currentTime > 0 && st.duration > 0 && st.currentTime >= st.duration - 0.25)) {
           stop();
         }
         if (st?.error) {
-          Alert.alert('Playback error', st.error);
+          Alert.alert(
+            'Voice not ready',
+            'Could not load the voice sample. It may still be generating — please try again in a moment.',
+          );
           stop();
         }
       }, 600);
     } catch (e: any) {
+      // Player creation failed — clear loading state before alerting.
+      setLoadingKey(null);
+      loadingKeyRef.current = null;
       Alert.alert('Playback failed', e?.message ?? 'Could not play audio');
-      stop();
     }
   };
 
-  return { playingKey, toggle, stop };
+  return { playingKey, loadingKey, toggle, stop };
 }
 
 // ── Voice Designer ───────────────────────────────────────────────────────────────
@@ -827,6 +868,7 @@ function VoiceDesignerCard({
               voices.find(vv => vv.id === m.voice_id) ??
               { id: m.voice_id, name: m.voice_id };
             const isPlaying = audio.playingKey === `sample-${v.id}`;
+            const isLoading = audio.loadingKey === `sample-${v.id}`;
             const sampleUri = `${API}/studio/voices/${encodeURIComponent(v.id)}/sample`;
             const accentCol = v.accent === 'british' ? '#3b82f6' : '#f59e0b';
             const genderSym = v.gender === 'feminine' ? '♀' : v.gender === 'masculine' ? '♂' : '◆';
@@ -898,21 +940,25 @@ function VoiceDesignerCard({
                   <Pressable
                     onPress={() => audio.toggle(`sample-${v.id}`, sampleUri)}
                     style={[vdStyles.actionBtn, {
-                      borderColor: isPlaying ? colors.primary : colors.border,
+                      borderColor: (isPlaying || isLoading) ? colors.primary : colors.border,
                       backgroundColor: isPlaying ? colors.primary + '18' : 'transparent',
                       flex: 1,
                     }]}
                   >
-                    <Feather
-                      name={isPlaying ? 'pause' : 'play'}
-                      size={13}
-                      color={isPlaying ? colors.primary : colors.mutedForeground}
-                    />
+                    {isLoading ? (
+                      <ActivityIndicator size="small" color={colors.primary} style={{ transform: [{ scale: 0.75 }] }} />
+                    ) : (
+                      <Feather
+                        name={isPlaying ? 'pause' : 'play'}
+                        size={13}
+                        color={isPlaying ? colors.primary : colors.mutedForeground}
+                      />
+                    )}
                     <Text style={{
                       fontSize: 12, fontFamily: 'Inter_500Medium',
-                      color: isPlaying ? colors.primary : colors.mutedForeground,
+                      color: (isPlaying || isLoading) ? colors.primary : colors.mutedForeground,
                     }}>
-                      {isPlaying ? 'Playing…' : 'Preview'}
+                      {isLoading ? 'Loading…' : isPlaying ? 'Playing…' : 'Preview'}
                     </Text>
                   </Pressable>
                   <Pressable
@@ -1253,6 +1299,7 @@ function VoiceRecommenderCard({
               voices.find(vv => vv.id === rec.voice_id) ??
               { id: rec.voice_id, name: rec.voice_id };
             const isPlaying  = audio.playingKey === `sample-${v.id}`;
+            const isLoading  = audio.loadingKey === `sample-${v.id}`;
             const sampleUri  = `${API}/studio/voices/${encodeURIComponent(v.id)}/sample`;
             const accentCol  = v.accent === 'british' ? '#3b82f6' : '#f59e0b';
             const genderSym  = v.gender === 'feminine' ? '♀' : v.gender === 'masculine' ? '♂' : '◆';
@@ -1331,21 +1378,25 @@ function VoiceRecommenderCard({
                   <Pressable
                     onPress={() => audio.toggle(`sample-${v.id}`, sampleUri)}
                     style={[vdStyles.actionBtn, {
-                      borderColor: isPlaying ? colors.primary : colors.border,
+                      borderColor: (isPlaying || isLoading) ? colors.primary : colors.border,
                       backgroundColor: isPlaying ? colors.primary + '18' : 'transparent',
                       flex: 1,
                     }]}
                   >
-                    <Feather
-                      name={isPlaying ? 'pause' : 'play'}
-                      size={13}
-                      color={isPlaying ? colors.primary : colors.mutedForeground}
-                    />
+                    {isLoading ? (
+                      <ActivityIndicator size="small" color={colors.primary} style={{ transform: [{ scale: 0.75 }] }} />
+                    ) : (
+                      <Feather
+                        name={isPlaying ? 'pause' : 'play'}
+                        size={13}
+                        color={isPlaying ? colors.primary : colors.mutedForeground}
+                      />
+                    )}
                     <Text style={{
                       fontSize: 12, fontFamily: 'Inter_500Medium',
-                      color: isPlaying ? colors.primary : colors.mutedForeground,
+                      color: (isPlaying || isLoading) ? colors.primary : colors.mutedForeground,
                     }}>
-                      {isPlaying ? 'Playing…' : 'Preview'}
+                      {isLoading ? 'Loading…' : isPlaying ? 'Playing…' : 'Preview'}
                     </Text>
                   </Pressable>
                   <Pressable
