@@ -507,11 +507,11 @@ function IdeaCard({
   );
 }
 
-function BrainstormTab({ workId, colors, initialSeed }: { workId: string; colors: any; initialSeed?: string }) {
+function BrainstormTab({ workId, colors, initialSeed, initialContext }: { workId: string; colors: any; initialSeed?: string; initialContext?: string }) {
   const domain = process.env.EXPO_PUBLIC_DOMAIN ?? '';
 
   const [seed,         setSeed]         = React.useState(initialSeed ?? '');
-  const [contextType,  setContextType]  = React.useState<string>('general');
+  const [contextType,  setContextType]  = React.useState<string>(initialContext ?? 'general');
   const [nDomains,     setNDomains]     = React.useState<number>(5);
   const [running,      setRunning]      = React.useState(false);
   const [activeSession, setActiveSession] = React.useState<BrainstormSession | null>(null);
@@ -837,11 +837,13 @@ function GapsTab({
   colors,
   onResearch,
   onCreateTask,
+  onBrainstorm,
 }: {
   workId: string;
   colors: any;
   onResearch: (gapTitle: string) => void;
   onCreateTask: (taskText: string) => void;
+  onBrainstorm: (seed: string) => void;
 }) {
   const domain = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
   const [data, setData] = useState<any>(null);
@@ -981,6 +983,21 @@ function GapsTab({
                     <Feather name="search" size={12} color={colors.primaryForeground} />
                     <Text style={{ fontSize: 12, color: colors.primaryForeground, fontFamily: 'Inter_600SemiBold' }}>
                       Research →
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => onBrainstorm(gapTitle)}
+                    style={({ pressed }) => ({
+                      flexDirection: 'row', alignItems: 'center', gap: 4,
+                      paddingHorizontal: 10, paddingVertical: 5, borderRadius: 6,
+                      borderWidth: 1, borderColor: '#7c3aed55',
+                      backgroundColor: pressed ? '#7c3aed14' : 'transparent',
+                      opacity: pressed ? 0.7 : 1,
+                    })}
+                  >
+                    <Feather name="zap" size={12} color="#7c3aed" />
+                    <Text style={{ fontSize: 12, color: '#7c3aed', fontFamily: 'Inter_600SemiBold' }}>
+                      Brainstorm
                     </Text>
                   </Pressable>
                 </View>
@@ -2233,6 +2250,9 @@ export default function WorkDetailScreen() {
   const [newTaskText, setNewTaskText] = useState('');
   const [newTaskPriority, setNewTaskPriority] = useState(0);
   const [addingTask, setAddingTask] = useState(false);
+  // Brainstorm seed — set when user taps "Brainstorm" on a gap card
+  const [brainstormSeed, setBrainstormSeed] = useState<string>(qParam ?? '');
+  const [brainstormContext, setBrainstormContext] = useState<string>('general');
 
   // ── Book / Pipeline tab state ──────────────────────────────────────────────
   const domain = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
@@ -2501,6 +2521,14 @@ export default function WorkDetailScreen() {
     } catch {
       Alert.alert('Error', 'Could not create task');
     }
+  };
+
+  // Brainstorm → : switch to Ideas tab with the gap pre-filled as seed.
+  const handleBrainstormGap = (gapTitle: string) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setBrainstormSeed(gapTitle);
+    setBrainstormContext('research_planning');
+    setActiveTab('brainstorm');
   };
 
   // Research → : open a work-linked conversation pre-seeded with the gap title.
@@ -2811,7 +2839,7 @@ export default function WorkDetailScreen() {
           </>
         );
       case 'gaps':
-        return <GapsTab workId={id} colors={colors} onResearch={handleResearchGap} onCreateTask={handleCreateTaskFromGap} />;
+        return <GapsTab workId={id} colors={colors} onResearch={handleResearchGap} onCreateTask={handleCreateTaskFromGap} onBrainstorm={handleBrainstormGap} />;
       case 'learn':
         return <MobileLearnTab workId={id} colors={colors} />;
       case 'book':
@@ -2985,7 +3013,7 @@ export default function WorkDetailScreen() {
         );
       }
       case 'brainstorm':
-        return <BrainstormTab workId={id} colors={colors} initialSeed={qParam} />;
+        return <BrainstormTab key={brainstormSeed} workId={id} colors={colors} initialSeed={brainstormSeed || qParam} initialContext={brainstormContext} />;
     }
   };
 

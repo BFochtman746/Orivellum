@@ -337,10 +337,10 @@ function PastSessions({
 
 // ── Main tab component ────────────────────────────────────────────────────────
 
-export function BrainstormTab({ workId, initialSeed = "" }: { workId: string; initialSeed?: string }) {
+export function BrainstormTab({ workId, initialSeed = "", initialContext = "general" }: { workId: string; initialSeed?: string; initialContext?: string }) {
   const qc = useQueryClient();
   const [seed,        setSeed]        = useState(initialSeed);
-  const [contextType, setContextType] = useState<string>("general");
+  const [contextType, setContextType] = useState<string>(initialContext);
   const [nDomains,    setNDomains]    = useState<number>(5);
   const [activeSession, setActiveSession] = useState<BrainstormSession | null>(null);
 

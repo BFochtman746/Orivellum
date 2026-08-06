@@ -149,6 +149,14 @@ export default function WorkDetail() {
   const _urlParams   = new URLSearchParams(_searchStr);
   const [activeTab, setActiveTab] = useState(() => _urlParams.get("tab") ?? "book");
   const _initialSearchQuery = _urlParams.get("q") ?? "";
+  // Brainstorm seed — set when user clicks "Brainstorm this" on a gap card
+  const [brainstormSeed, setBrainstormSeed] = useState(_initialSearchQuery);
+  const [brainstormContext, setBrainstormContext] = useState("general");
+  const handleBrainstormGap = (seed: string) => {
+    setBrainstormSeed(seed);
+    setBrainstormContext("research_planning");
+    setActiveTab("brainstorm");
+  };
 
   // Inline editing state
   const [editing, setEditing] = useState(false);
@@ -450,13 +458,13 @@ export default function WorkDetail() {
             <TabsContent value="knowledge"><ErrorBoundary label="knowledge tab"><KnowledgeTab workId={workId!} /></ErrorBoundary></TabsContent>
             <TabsContent value="graph"><ErrorBoundary label="graph tab"><GraphTab workId={workId!} /></ErrorBoundary></TabsContent>
             <TabsContent value="completeness"><ErrorBoundary label="completeness tab"><CompletenessTab workId={workId!} /></ErrorBoundary></TabsContent>
-            <TabsContent value="gaps"><ErrorBoundary label="gaps tab"><GapsTab workId={workId!} /></ErrorBoundary></TabsContent>
+            <TabsContent value="gaps"><ErrorBoundary label="gaps tab"><GapsTab workId={workId!} onBrainstorm={handleBrainstormGap} /></ErrorBoundary></TabsContent>
             <TabsContent value="tasks"><ErrorBoundary label="tasks tab"><TasksTab workId={workId!} /></ErrorBoundary></TabsContent>
             <TabsContent value="conversations"><ErrorBoundary label="conversations tab"><ConversationsTab workId={workId!} /></ErrorBoundary></TabsContent>
             <TabsContent value="search"><ErrorBoundary label="search tab"><SearchTab workId={workId!} initialQuery={_initialSearchQuery} /></ErrorBoundary></TabsContent>
             <TabsContent value="quiz"><ErrorBoundary label="quiz tab"><QuizTab workId={workId!} workTitle={(work as any)?.title ?? "this Work"} /></ErrorBoundary></TabsContent>
             <TabsContent value="learn"><ErrorBoundary label="learn tab"><LearnTab workId={workId!} /></ErrorBoundary></TabsContent>
-            <TabsContent value="brainstorm"><ErrorBoundary label="brainstorm tab"><BrainstormTab workId={workId!} initialSeed={_initialSearchQuery} /></ErrorBoundary></TabsContent>
+            <TabsContent value="brainstorm"><ErrorBoundary label="brainstorm tab"><BrainstormTab key={brainstormSeed} workId={workId!} initialSeed={brainstormSeed} initialContext={brainstormContext} /></ErrorBoundary></TabsContent>
           </div>
         </Tabs>
       </div>
@@ -2178,7 +2186,7 @@ const GAP_DOT: Record<string, string> = {
   high: "bg-red-500", medium: "bg-amber-400", low: "bg-blue-400",
 };
 
-function GapsTab({ workId }: { workId: string }) {
+function GapsTab({ workId, onBrainstorm }: { workId: string; onBrainstorm?: (seed: string) => void }) {
   const [, navigate] = useLocation();
   const [actionPending, setActionPending] = useState<string | null>(null);
   const queryClient = useQueryClient();
@@ -2346,6 +2354,15 @@ function GapsTab({ workId }: { workId: string }) {
                           <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12h14"/></svg>
                           Add task
                         </button>
+                        {onBrainstorm && (
+                          <button
+                            onClick={() => onBrainstorm(g.title)}
+                            className="flex items-center gap-1.5 text-[11px] font-mono text-violet-500 opacity-80 hover:opacity-100 transition-opacity"
+                          >
+                            <Lightbulb className="w-3 h-3" />
+                            Brainstorm this →
+                          </button>
+                        )}
                         {(g.kind === "uncovered_chapter" || g.kind === "weak_coverage") && (
                           <button
                             disabled={!!actionPending}
