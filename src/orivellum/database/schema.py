@@ -1471,4 +1471,13 @@ MIGRATIONS: list[tuple[int, str, str]] = [
     (89, "Add summary_cursor_id coverage cursor to conversations", """
         ALTER TABLE conversations ADD COLUMN summary_cursor_id TEXT
     """),
+
+    # v90 — Conversation personas (Phase 2 personalization).
+    # persona_id stores the built-in persona slug applied at conversation creation.
+    # Empty string / NULL both mean the default (unmodified) assistant behavior.
+    # Known values: 'default', 'story_partner', 'technical_editor',
+    #               'research_assistant', 'devils_advocate'.
+    (90, "Add persona_id to conversations for AI persona selection", """
+        ALTER TABLE conversations ADD COLUMN persona_id TEXT NOT NULL DEFAULT 'default'
+    """),
 ]

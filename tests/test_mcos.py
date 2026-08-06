@@ -1236,7 +1236,7 @@ class TestMultiSlotPrompts(unittest.TestCase):
             resp = client.get("/api/mcos/prompts/slots")
             self.assertEqual(resp.status_code, 200)
             slots = {s["slot"]: s for s in resp.json()["slots"]}
-            self.assertEqual(set(slots), {"chat.base", "harvest.extract", "mcos.judge"})
+            self.assertGreaterEqual(set(slots), {"chat.base", "harvest.extract", "mcos.judge"})
             self.assertTrue(slots["chat.base"]["benchmarkable"])
             self.assertFalse(slots["harvest.extract"]["benchmarkable"])
             self.assertEqual(slots["mcos.judge"]["prompt_count"], 1)

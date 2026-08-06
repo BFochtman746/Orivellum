@@ -1153,6 +1153,7 @@ export default function Chat() {
   const [newConvModel, setNewConvModel] = useState<string>(() => {
     try { return localStorage.getItem("orivellum:lastModel") ?? ""; } catch { return ""; }
   });
+  const [newConvPersona, setNewConvPersona] = useState<string>("default");
   const createConv = useCreateConversation();
   const deleteConv = useDeleteConversation();
   const updateConvMeta = useUpdateConversation();
@@ -1330,10 +1331,11 @@ export default function Chat() {
     }
   }, [convWorkId]);
 
-  const handleCreate = (modelOverride?: string) => {
+  const handleCreate = (modelOverride?: string, personaOverride?: string) => {
     const chosenModel = modelOverride ?? newConvModel;
+    const chosenPersona = personaOverride ?? newConvPersona;
     createConv.mutate(
-      { data: { title: "New Conversation", ...(chosenModel ? { model: chosenModel } : {}) } },
+      { data: { title: "New Conversation", ...(chosenModel ? { model: chosenModel } : {}), ...(chosenPersona && chosenPersona !== "default" ? { persona_id: chosenPersona } : {}) } },
       {
         onSuccess: (res) => {
           queryClient.invalidateQueries({ queryKey: getListConversationsQueryKey() });
@@ -2467,8 +2469,44 @@ export default function Chat() {
             <h3 className="font-serif text-xl font-medium text-foreground">No Conversation Selected</h3>
             <p className="mt-2 max-w-sm text-sm">Select a conversation from the sidebar or start a new one.</p>
 
+            {/* Persona picker */}
+            <div className="mt-6 w-full max-w-sm space-y-2 text-left">
+              <label className="text-xs font-mono uppercase text-muted-foreground">AI persona</label>
+              <div className="flex flex-wrap gap-2">
+                {([
+                  { id: "default",           label: "Default",            emoji: "🤖" },
+                  { id: "story_partner",      label: "Story Partner",      emoji: "✨" },
+                  { id: "technical_editor",   label: "Technical Editor",   emoji: "🔬" },
+                  { id: "research_assistant", label: "Research Assistant", emoji: "📚" },
+                  { id: "devils_advocate",    label: "Devil's Advocate",   emoji: "⚡" },
+                ] as const).map(p => (
+                  <button
+                    key={p.id}
+                    onClick={() => setNewConvPersona(p.id)}
+                    className={`text-xs px-3 py-1.5 rounded-full border transition-colors ${
+                      newConvPersona === p.id
+                        ? "bg-primary text-primary-foreground border-primary"
+                        : "bg-background border-border hover:border-primary/50 text-foreground"
+                    }`}
+                  >
+                    {p.emoji} {p.label}
+                  </button>
+                ))}
+              </div>
+              {newConvPersona !== "default" && (
+                <p className="text-[10px] text-muted-foreground mt-1">
+                  {{
+                    story_partner:      "Sparks imagination, asks 'what if' questions, celebrates ideas first.",
+                    technical_editor:   "Flags inconsistencies, suggests clarity improvements, stays concise.",
+                    research_assistant: "Cites sources, provides context, asks one clarifying question first.",
+                    devils_advocate:    "Challenges assumptions, surfaces counterarguments, strengthens reasoning.",
+                  }[newConvPersona as string]}
+                </p>
+              )}
+            </div>
+
             {models.length > 0 && (
-              <div className="mt-6 w-full max-w-xs space-y-2 text-left">
+              <div className="mt-4 w-full max-w-sm space-y-2 text-left">
                 <label className="text-xs font-mono uppercase text-muted-foreground">Model</label>
                 <Select value={newConvModel || defaultModel} onValueChange={setNewConvModel}>
                   <SelectTrigger className="text-sm">

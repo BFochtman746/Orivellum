@@ -1707,19 +1707,103 @@ def get_briefing():
         time_of_day = "afternoon"
     else:
         time_of_day = "evening"
+
+    # ── Personalised greeting ──────────────────────────────────────────────────
+    user_name = ""
+    last_active_iso = ""
+    days_since: int | None = None
+    try:
+        user_name = db.get_setting("user_name", "").strip()
+        last_active_iso = db.get_setting("last_active", "").strip()
+        if last_active_iso:
+            _la = datetime.datetime.fromisoformat(last_active_iso)
+            _delta = now - _la.replace(tzinfo=datetime.timezone.utc)
+            days_since = max(0, _delta.days)
+        # Update last_active on every briefing call
+        db.set_setting("last_active", now.isoformat(), actor="system")
+    except Exception:
+        pass
+
+    name_part = f", {user_name}" if user_name else ""
     work_count = summary.get("work_count", 0)
     pending = summary.get("pending_task_count", 0)
+
+    # Return-visit note injected when the user was away > 0 days
+    return_note = ""
+    if days_since is not None and days_since > 0:
+        if days_since == 1:
+            return_note = "Welcome back — you were away yesterday."
+        else:
+            return_note = f"Welcome back — you've been away for {days_since} days."
+
+    # Last-touched Work for context
+    last_work_title = ""
+    try:
+        _recent_works = db.list_works(limit=1)
+        if _recent_works:
+            last_work_title = (_recent_works[0].get("title") or "").strip()
+    except Exception:
+        pass
+
     if work_count == 0:
-        greeting = f"Good {time_of_day}. Your workspace is ready."
+        greeting = f"Good {time_of_day}{name_part}. Your workspace is ready."
     elif pending > 0:
-        greeting = f"Good {time_of_day}. You have {pending} task{'s' if pending != 1 else ''} pending across {work_count} work{'s' if work_count != 1 else ''}."
+        greeting = (
+            f"Good {time_of_day}{name_part}. "
+            f"You have {pending} task{'s' if pending != 1 else ''} pending "
+            f"across {work_count} work{'s' if work_count != 1 else ''}."
+        )
     else:
-        greeting = f"Good {time_of_day}. Here's what's happening across your works."
+        greeting = f"Good {time_of_day}{name_part}. Here's what's happening across your works."
+
     return {
         "date": now.date().isoformat(),
         "summary": summary,
         "greeting": greeting,
+        # Personalisation extras — clients may display or ignore these
+        "user_name": user_name or None,
+        "return_note": return_note or None,
+        "last_work_title": last_work_title or None,
+        "days_since_last_visit": days_since,
     }
+
+
+# ── User Profile API ─────────────────────────────────────────────────────────
+
+class _ProfileUpdate(BaseModel):
+    user_name: str | None = None
+    user_bio: str | None = None
+    communication_style: str | None = None  # casual|direct|socratic|formal|technical
+
+
+_VALID_COMM_STYLES = {"casual", "direct", "socratic", "formal", "technical", ""}
+
+
+@router.get("/profile")
+def get_profile():
+    db = get_db()
+    return {
+        "user_name":          db.get_setting("user_name", ""),
+        "user_bio":           db.get_setting("user_bio", ""),
+        "communication_style": db.get_setting("communication_style", ""),
+    }
+
+
+@router.patch("/profile")
+def update_profile(body: _ProfileUpdate):
+    db = get_db()
+    if body.user_name is not None:
+        db.set_setting("user_name", body.user_name.strip()[:120], actor="user")
+    if body.user_bio is not None:
+        db.set_setting("user_bio", body.user_bio.strip()[:240], actor="user")
+    if body.communication_style is not None:
+        style = body.communication_style.strip().lower()
+        if style not in _VALID_COMM_STYLES:
+            from fastapi import HTTPException
+            raise HTTPException(400, f"Invalid communication_style {style!r}. "
+                                f"Must be one of: {sorted(_VALID_COMM_STYLES - {''})}")
+        db.set_setting("communication_style", style, actor="user")
+    return get_profile()
 
 
 # ─── Watch directories CRUD ───────────────────────────────────────────────────

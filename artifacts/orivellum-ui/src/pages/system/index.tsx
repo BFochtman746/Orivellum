@@ -3,7 +3,10 @@ import { apiFetch } from "@/lib/auth";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
-import { Activity, Database, Cpu, CheckCircle2, XCircle, AlertCircle, AlertTriangle, Terminal, Sparkles, Moon, Brain, Trash2, ScrollText, User, Settings, Image as ImageIcon, Eye, Loader2, FileSearch, ClipboardCopy, ChevronDown, ChevronRight, Zap, Download, RotateCcw, FolderOpen, FolderPlus, Plus, X, GitMerge, Archive } from "lucide-react";
+import { Activity, Database, Cpu, CheckCircle2, XCircle, AlertCircle, AlertTriangle, Terminal, Sparkles, Moon, Brain, Trash2, ScrollText, User, Settings, Image as ImageIcon, Eye, Loader2, FileSearch, ClipboardCopy, ChevronDown, ChevronRight, Zap, Download, RotateCcw, FolderOpen, FolderPlus, Plus, X, GitMerge, Archive, Save } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -28,6 +31,111 @@ function relativeTime(iso: string | null | undefined): string {
   const day = Math.round(hr / 24);
   if (day < 30) return `${day} day${day === 1 ? "" : "s"} ago`;
   return new Date(iso).toLocaleDateString();
+}
+
+// ─── Profile card ────────────────────────────────────────────────────────────
+
+const COMM_STYLES = [
+  { value: "",           label: "Default (no directive)" },
+  { value: "casual",     label: "Casual — relaxed, conversational" },
+  { value: "direct",     label: "Direct — concise, lead with answer" },
+  { value: "socratic",   label: "Socratic — guide with questions" },
+  { value: "formal",     label: "Formal — professional register" },
+  { value: "technical",  label: "Technical — precise, assume domain familiarity" },
+];
+
+function ProfileCard() {
+  const [name,    setName]    = useState("");
+  const [bio,     setBio]     = useState("");
+  const [style,   setStyle]   = useState("");
+  const [saving,  setSaving]  = useState(false);
+  const [loaded,  setLoaded]  = useState(false);
+
+  useEffect(() => {
+    apiFetch(`${API_BASE}/system/profile`).then(r => r.json()).then(d => {
+      setName(d.user_name  ?? "");
+      setBio (d.user_bio   ?? "");
+      setStyle(d.communication_style ?? "");
+      setLoaded(true);
+    }).catch(() => setLoaded(true));
+  }, []);
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      await apiFetch(`${API_BASE}/system/profile`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user_name: name, user_bio: bio, communication_style: style }),
+      });
+      toast.success("Profile saved");
+    } catch {
+      toast.error("Could not save profile");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Card className="border-primary/20 bg-primary/5">
+      <CardContent className="p-6 space-y-4">
+        <div className="flex items-center gap-2 mb-2">
+          <User className="w-4 h-4 text-primary" />
+          <h3 className="font-mono text-sm uppercase tracking-wider text-foreground">Your Profile</h3>
+          <span className="ml-auto text-[10px] font-mono text-muted-foreground">Personalises AI responses &amp; briefing</span>
+        </div>
+
+        {!loaded ? (
+          <div className="space-y-2"><Skeleton className="h-9 w-full" /><Skeleton className="h-16 w-full" /></div>
+        ) : (
+          <>
+            <div className="grid sm:grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <label className="text-xs font-mono text-muted-foreground uppercase">Name</label>
+                <Input
+                  value={name}
+                  onChange={e => setName(e.target.value)}
+                  placeholder="e.g. Brian"
+                  maxLength={120}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs font-mono text-muted-foreground uppercase">Communication style</label>
+                <Select value={style} onValueChange={setStyle}>
+                  <SelectTrigger><SelectValue placeholder="Default" /></SelectTrigger>
+                  <SelectContent>
+                    {COMM_STYLES.map(s => (
+                      <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-mono text-muted-foreground uppercase">
+                About you <span className="normal-case">(one line — injected into every AI prompt)</span>
+              </label>
+              <Textarea
+                value={bio}
+                onChange={e => setBio(e.target.value)}
+                placeholder="e.g. Author working on a sci-fi trilogy, interested in hard science and world-building"
+                maxLength={240}
+                rows={2}
+                className="resize-none"
+              />
+              <p className="text-[10px] text-muted-foreground">{bio.length}/240</p>
+            </div>
+
+            <Button size="sm" onClick={save} disabled={saving} className="gap-1.5">
+              {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+              Save profile
+            </Button>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
 }
 
 // ─── Diagnostics card ─────────────────────────────────────────────────────────
@@ -1855,6 +1963,8 @@ export default function System() {
         <h1 className="text-3xl font-serif font-semibold tracking-tight">System Status</h1>
         <p className="text-muted-foreground mt-1 font-serif">Infrastructure health and local AI capabilities.</p>
       </div>
+
+      <ProfileCard />
 
       <div className="grid md:grid-cols-3 gap-4">
         {/* Overall */}

@@ -156,6 +156,7 @@ class ConversationCreate(BaseModel):
     title: str | None = None
     work_id: str | None = None
     model: str | None = None
+    persona_id: str | None = None   # built-in persona slug; None → "default"
 
 
 class ConversationUpdate(BaseModel):
@@ -269,7 +270,12 @@ def list_conversations(archived: bool = False, limit: int = 100):
 @router.post("/conversations")
 def create_conversation(body: ConversationCreate):
     db = get_db()
-    conv = db.create_conversation(title=body.title, work_id=body.work_id, model=body.model)
+    conv = db.create_conversation(
+        title=body.title,
+        work_id=body.work_id,
+        model=body.model,
+        persona_id=body.persona_id,
+    )
     return {"conversation": conv}
 
 
@@ -1219,6 +1225,39 @@ def _build_system_prompt(db: Any, conv: dict, scope: str = "work",
       - If no claims: enforces abstention — the model MUST NOT guess.
       - For USER_DECLARED_FACT: logs that the capture path should run.
     """
+    # Built-in conversation personas.  Each slug maps to a short directive that
+    # is appended to the base prompt so the model adopts a distinct tone/focus.
+    _PERSONAS: dict[str, str] = {
+        "default": "",
+        "story_partner": (
+            "ROLE: You are a creative story partner. Spark imagination with 'what if' questions, "
+            "explore narrative possibilities with enthusiasm, celebrate ideas before critiquing them, "
+            "and keep the creative energy high. Prioritise generative thinking over correctness."
+        ),
+        "technical_editor": (
+            "ROLE: You are a precise technical editor. Flag inconsistencies, ambiguities, and structural "
+            "weaknesses. Suggest clarity improvements with concrete alternatives. Stay factual, concise, "
+            "and direct — praise sparingly; focus on what can be made sharper."
+        ),
+        "research_assistant": (
+            "ROLE: You are a thorough research assistant. Cite sources when you have them, provide context "
+            "and background, and ask one clarifying question before diving into a long answer. Organise "
+            "findings clearly and flag uncertainty explicitly."
+        ),
+        "devils_advocate": (
+            "ROLE: You are a devil's advocate. Challenge assumptions, surface counterarguments, and push "
+            "the user to stress-test their reasoning. You are not trying to win — you are trying to make "
+            "their thinking stronger. Be rigorous but constructive."
+        ),
+    }
+    _COMM_STYLE_DIRECTIVES: dict[str, str] = {
+        "casual":    "Communicate in a relaxed, conversational tone — contractions welcome, no stiff formality.",
+        "direct":    "Be direct and concise. Lead with the answer, skip preamble.",
+        "socratic":  "Use the Socratic method — ask questions to guide thinking rather than giving answers outright.",
+        "formal":    "Maintain a formal, professional register throughout.",
+        "technical": "Use precise technical language; assume domain familiarity; skip basic explanations.",
+    }
+
     # Base persona comes from the MCOS prompt registry (slot 'chat.base') so it
     # can be A/B-benchmarked and swapped without a code change.  Never let this
     # break chat — fall back to the hardcoded constant on any failure.
@@ -1229,6 +1268,36 @@ def _build_system_prompt(db: Any, conv: dict, scope: str = "work",
             base = active
     except Exception:
         base = _CHAT_BASE_PROMPT
+
+    # ── User profile + communication style injection ───────────────────────────
+    # Reads user_name / user_bio / communication_style from the settings table
+    # and prepends a compact "About the user" block at the top of the prompt.
+    # Falls through silently on old schemas / missing keys (zero regression).
+    try:
+        _uname  = db.get_setting("user_name", "").strip()
+        _ubio   = db.get_setting("user_bio", "").strip()
+        _ustyle = db.get_setting("communication_style", "").strip().lower()
+        _profile_lines: list[str] = []
+        if _uname:
+            _profile_lines.append(f"  Name: {_uname}")
+        if _ubio:
+            _profile_lines.append(f"  About: {_ubio}")
+        if _profile_lines:
+            base = "ABOUT THE USER:\n" + "\n".join(_profile_lines) + "\n\n" + base
+        # Communication style directive
+        if _ustyle and _ustyle in _COMM_STYLE_DIRECTIVES:
+            base = base + "\n\nCOMMUNICATION STYLE: " + _COMM_STYLE_DIRECTIVES[_ustyle]
+    except Exception:
+        pass  # settings table unavailable on old schemas
+
+    # ── Conversation persona directive ─────────────────────────────────────────
+    try:
+        _pid = (conv.get("persona_id") or "default").lower()
+        _pdirective = _PERSONAS.get(_pid, "")
+        if _pdirective:
+            base = base + "\n\n" + _pdirective
+    except Exception:
+        pass
 
     # ── PKLOS §5.3: host-side policy enforcement ──────────────────────────────
     # PolicyEnforcer classifies the query and either:

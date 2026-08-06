@@ -1496,21 +1496,24 @@ class OrivellumDB:
             return []
 
     def create_conversation(self, title: str | None = None, work_id: str | None = None,
-                            model: str | None = None) -> dict:
+                            model: str | None = None,
+                            persona_id: str | None = None) -> dict:
         cid = _uuid()
         now = _now()
+        pid = persona_id or "default"
         with self.governed_write(
             operation="conversation.created",
             event_type="conversation.created",
             object_id=cid,
             object_type="conversation",
-            payload={"work_id": work_id, "model": model},
+            payload={"work_id": work_id, "model": model, "persona_id": pid},
             actor="user",
             detail=title[:120] if title else work_id,
         ):
             self._conn.execute(
-                "INSERT INTO conversations(id,work_id,title,archived,model,created_at,updated_at) VALUES(?,?,?,0,?,?,?)",
-                (cid, work_id, title, model, now, now),
+                "INSERT INTO conversations(id,work_id,title,archived,model,persona_id,created_at,updated_at)"
+                " VALUES(?,?,?,0,?,?,?,?)",
+                (cid, work_id, title, model, pid, now, now),
             )
         return self.get_conversation(cid)  # type: ignore[return-value]
 

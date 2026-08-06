@@ -8,7 +8,7 @@
  *  - Nightshift status + manual run
  *  - App version
  */
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { mobileFetch } from '@/lib/api';
 import {
   ActivityIndicator,
@@ -20,6 +20,7 @@ import {
   StyleSheet,
   Switch,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import { useColors } from '@/hooks/useColors';
@@ -75,6 +76,128 @@ function Section({ title, icon, children }: { title: string; icon: string; child
     </View>
   );
 }
+
+// ── Profile section ───────────────────────────────────────────────────────────
+
+const COMM_STYLE_OPTS = [
+  { value: '',          label: 'Default' },
+  { value: 'casual',    label: 'Casual' },
+  { value: 'direct',    label: 'Direct' },
+  { value: 'socratic',  label: 'Socratic' },
+  { value: 'formal',    label: 'Formal' },
+  { value: 'technical', label: 'Technical' },
+];
+
+function ProfileSection() {
+  const colors = useColors();
+  const [name,    setName]    = useState('');
+  const [bio,     setBio]     = useState('');
+  const [style,   setStyle]   = useState('');
+  const [saving,  setSaving]  = useState(false);
+  const [loaded,  setLoaded]  = useState(false);
+
+  useEffect(() => {
+    mobileFetch(`${API}/system/profile`)
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        if (!d) return;
+        setName(d.user_name ?? '');
+        setBio(d.user_bio ?? '');
+        setStyle(d.communication_style ?? '');
+        setLoaded(true);
+      })
+      .catch(() => setLoaded(true));
+  }, []);
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      await mobileFetch(`${API}/system/profile`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_name: name, user_bio: bio, communication_style: style }),
+      });
+      Alert.alert('Saved', 'Your profile has been updated.');
+    } catch {
+      Alert.alert('Error', 'Could not save profile.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!loaded) return null;
+
+  return (
+    <Section title="Your Profile" icon="user">
+      <Text style={[s.metaText, { color: colors.mutedForeground }]}>
+        Your name and bio are injected into every AI prompt so responses feel personal.
+      </Text>
+
+      <Text style={[profileS.label, { color: colors.mutedForeground }]}>Name</Text>
+      <TextInput
+        value={name}
+        onChangeText={setName}
+        placeholder="e.g. Brian"
+        placeholderTextColor={colors.mutedForeground}
+        maxLength={120}
+        style={[profileS.input, { borderColor: colors.border, color: colors.foreground, backgroundColor: colors.background }]}
+      />
+
+      <Text style={[profileS.label, { color: colors.mutedForeground }]}>About you</Text>
+      <TextInput
+        value={bio}
+        onChangeText={setBio}
+        placeholder="e.g. Author working on a sci-fi trilogy"
+        placeholderTextColor={colors.mutedForeground}
+        maxLength={240}
+        multiline
+        numberOfLines={2}
+        style={[profileS.input, profileS.textarea, { borderColor: colors.border, color: colors.foreground, backgroundColor: colors.background }]}
+      />
+      <Text style={[profileS.counter, { color: colors.mutedForeground }]}>{bio.length}/240</Text>
+
+      <Text style={[profileS.label, { color: colors.mutedForeground }]}>Communication style</Text>
+      <View style={profileS.pillRow}>
+        {COMM_STYLE_OPTS.map(opt => (
+          <Pressable
+            key={opt.value}
+            onPress={() => setStyle(opt.value)}
+            style={[
+              profileS.pill,
+              { borderColor: style === opt.value ? colors.primary : colors.border },
+              style === opt.value && { backgroundColor: colors.primary + '18' },
+            ]}
+          >
+            <Text style={[profileS.pillText, { color: style === opt.value ? colors.primary : colors.mutedForeground }]}>
+              {opt.label}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
+
+      <Pressable
+        onPress={save}
+        disabled={saving}
+        style={({ pressed }) => [s.actionBtn, { borderColor: colors.primary, backgroundColor: colors.primary, opacity: saving || pressed ? 0.7 : 1 }]}
+      >
+        {saving
+          ? <ActivityIndicator size="small" color="#fff" />
+          : <Feather name="save" size={14} color="#fff" />}
+        <Text style={[s.actionBtnText, { color: '#fff' }]}>Save profile</Text>
+      </Pressable>
+    </Section>
+  );
+}
+
+const profileS = StyleSheet.create({
+  label:    { fontSize: 11, fontFamily: 'Inter_600SemiBold', letterSpacing: 0.5, marginBottom: 4, marginTop: 10, textTransform: 'uppercase' },
+  input:    { borderWidth: 1, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8, fontSize: 13, fontFamily: 'Inter_400Regular' },
+  textarea: { minHeight: 52, textAlignVertical: 'top' },
+  counter:  { fontSize: 10, fontFamily: 'Inter_400Regular', marginTop: 2, textAlign: 'right' },
+  pillRow:  { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 4 },
+  pill:     { borderWidth: 1, borderRadius: 20, paddingHorizontal: 10, paddingVertical: 5 },
+  pillText: { fontSize: 12, fontFamily: 'Inter_400Regular' },
+});
 
 // ── Toggle row ────────────────────────────────────────────────────────────────
 
@@ -394,6 +517,8 @@ export default function SystemScreen() {
             </Pressable>
           </Section>
         )}
+
+        <ProfileSection />
       </ScrollView>
     </View>
   );
