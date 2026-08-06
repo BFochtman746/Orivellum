@@ -10,6 +10,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
@@ -550,6 +551,18 @@ interface LogLine {
   msg: string;
 }
 
+interface ActionDef {
+  name: string;
+  description: string;
+  category: string;
+  input_schema: {
+    required?: string[];
+    properties?: Record<string, { description?: string; type?: string }>;
+  };
+}
+
+interface WorkEntry { id: string; title: string | null }
+
 // Duration between two ISO strings in a human-readable form
 function _duration(start: string | null, end: string | null): string {
   if (!start || !end) return '';
@@ -776,6 +789,371 @@ function RunLogSheet({
   );
 }
 
+// ── ActionLauncherSheet ───────────────────────────────────────────────────────
+
+const _LAUNCHER_SHEET_H = 640;
+
+function ActionLauncherSheet({
+  visible,
+  onClose,
+  onLaunched,
+}: {
+  visible: boolean;
+  onClose: () => void;
+  onLaunched: (run: ActionRun) => void;
+}) {
+  const colors = useColors();
+  const insets = useSafeAreaInsets();
+  const [rendered, setRendered] = useState(false);
+
+  // Per-action field values: { [actionName]: { [fieldName]: string } }
+  const [inputs, setInputs] = useState<Record<string, Record<string, string>>>({});
+  const [submitting, setSubmitting] = useState<string | null>(null);
+  const [errorMap, setErrorMap] = useState<Record<string, string>>({});
+
+  const slideAnim = useRef(new Animated.Value(_LAUNCHER_SHEET_H + 60)).current;
+  const fadeAnim  = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    if (visible) {
+      setRendered(true);
+      Animated.parallel([
+        Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true, tension: 85, friction: 13 }),
+        Animated.timing(fadeAnim,  { toValue: 1, duration: 180, useNativeDriver: true }),
+      ]).start();
+    } else {
+      Animated.parallel([
+        Animated.timing(slideAnim, { toValue: _LAUNCHER_SHEET_H + 60, duration: 220, useNativeDriver: true }),
+        Animated.timing(fadeAnim,  { toValue: 0, duration: 180, useNativeDriver: true }),
+      ]).start(() => setRendered(false));
+    }
+  }, [visible]);
+
+  // Fetch available actions (cached 60s)
+  const { data: actionsData, isLoading: actionsLoading } = useQuery<{ actions: ActionDef[] }>({
+    queryKey: ['actions', 'list'],
+    queryFn: async () => {
+      const r = await mobileFetch(`${_SYS_API}/actions`);
+      if (!r.ok) return { actions: [] };
+      return r.json();
+    },
+    enabled: visible,
+    staleTime: 60_000,
+  });
+
+  // Fetch works for the work_id pill picker (cached 60s)
+  const { data: worksData } = useQuery<{ works: WorkEntry[] }>({
+    queryKey: ['works', 'list-short'],
+    queryFn: async () => {
+      const r = await mobileFetch(`${_SYS_API}/works`);
+      if (!r.ok) return { works: [] };
+      return r.json();
+    },
+    enabled: visible,
+    staleTime: 60_000,
+  });
+
+  const actions = actionsData?.actions ?? [];
+  const works   = worksData?.works ?? [];
+
+  const setField = (actionName: string, field: string, value: string) => {
+    setInputs(prev => ({
+      ...prev,
+      [actionName]: { ...(prev[actionName] ?? {}), [field]: value },
+    }));
+  };
+
+  const handleRun = async (action: ActionDef) => {
+    const actionInputs = inputs[action.name] ?? {};
+    const required = action.input_schema?.required ?? [];
+    const missing  = required.filter(f => !actionInputs[f]);
+    if (missing.length > 0) {
+      setErrorMap(prev => ({ ...prev, [action.name]: `Fill in: ${missing.join(', ')}` }));
+      return;
+    }
+    setErrorMap(prev => ({ ...prev, [action.name]: '' }));
+    setSubmitting(action.name);
+    try {
+      const resp = await mobileFetch(`${_SYS_API}/actions/${action.name}/execute`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(actionInputs),
+      });
+      const result = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error((result as any).detail ?? `HTTP ${resp.status}`);
+
+      // Build an optimistic run row (actions are synchronous; result is available now)
+      const newRun: ActionRun = {
+        id: (result as any).run_id ?? `opt-${Date.now()}`,
+        action_name: action.name,
+        inputs: JSON.stringify(actionInputs),
+        status: 'done',
+        output_path: (result as any).output_path ?? null,
+        output_label: (result as any).output_label ?? null,
+        output_doc_id: (result as any).output_doc_id ?? null,
+        work_id: actionInputs['work_id'] ?? null,
+        error: null,
+        created_at: new Date().toISOString(),
+        completed_at: new Date().toISOString(),
+      };
+      onLaunched(newRun);
+      onClose();
+    } catch (e: any) {
+      setErrorMap(prev => ({ ...prev, [action.name]: e?.message ?? 'Action failed' }));
+    } finally {
+      setSubmitting(null);
+    }
+  };
+
+  if (!rendered) return null;
+
+  return (
+    <Modal transparent visible={rendered} animationType="none" onRequestClose={onClose} statusBarTranslucent>
+      {/* Backdrop */}
+      <Animated.View
+        style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.42)', opacity: fadeAnim }]}
+        pointerEvents={visible ? 'auto' : 'none'}
+      >
+        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+      </Animated.View>
+
+      {/* Sheet */}
+      <Animated.View
+        style={[
+          sysStyles.sheet,
+          {
+            backgroundColor: colors.card,
+            borderColor: colors.border,
+            height: _LAUNCHER_SHEET_H,
+            paddingBottom: insets.bottom + 16,
+            transform: [{ translateY: slideAnim }],
+          },
+        ]}
+      >
+        <View style={[sysStyles.handle, { backgroundColor: colors.border }]} />
+
+        {/* Header */}
+        <View style={sysStyles.sheetHeader}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 }}>
+            <Feather name="zap" size={15} color={colors.primary} />
+            <Text style={{ fontSize: 15, fontFamily: 'Inter_600SemiBold', color: colors.foreground }}>
+              Run an Action
+            </Text>
+          </View>
+          <Pressable onPress={onClose} hitSlop={10}>
+            <Feather name="x" size={18} color={colors.mutedForeground} />
+          </Pressable>
+        </View>
+
+        {/* Content */}
+        {actionsLoading ? (
+          <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+            <ActivityIndicator color={colors.primary} />
+          </View>
+        ) : actions.length === 0 ? (
+          <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24 }}>
+            <Feather name="zap" size={28} color={colors.mutedForeground} style={{ opacity: 0.35, marginBottom: 10 }} />
+            <Text style={{ fontSize: 13, fontFamily: 'Inter_400Regular', color: colors.mutedForeground, textAlign: 'center' }}>
+              No actions are registered on the server yet.
+            </Text>
+          </View>
+        ) : (
+          <ScrollView
+            style={{ flex: 1 }}
+            contentContainerStyle={{ paddingHorizontal: 14, paddingVertical: 8, gap: 12 }}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+          >
+            {actions.map(action => {
+              const required     = action.input_schema?.required ?? [];
+              const schemaProps  = action.input_schema?.properties ?? {};
+              const needsWork    = required.includes('work_id');
+              const textFields   = required.filter(f => f !== 'work_id');
+              const actionInputs = inputs[action.name] ?? {};
+              const canRun       = required.every(f => !!actionInputs[f]);
+              const errMsg       = errorMap[action.name] ?? '';
+              const isRunning    = submitting === action.name;
+
+              return (
+                <View
+                  key={action.name}
+                  style={[launchStyles.actionCard, { borderColor: colors.border, backgroundColor: colors.background }]}
+                >
+                  {/* Title row */}
+                  <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8 }}>
+                    <View style={[launchStyles.iconBox, { backgroundColor: colors.primary + '18' }]}>
+                      <Feather name="zap" size={14} color={colors.primary} />
+                    </View>
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                        <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: colors.foreground }}>
+                          {action.name.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}
+                        </Text>
+                        <View style={[launchStyles.catBadge, { borderColor: colors.border, backgroundColor: colors.muted }]}>
+                          <Text style={{ fontSize: 9, fontFamily: 'Inter_500Medium', color: colors.mutedForeground }}>
+                            {action.category}
+                          </Text>
+                        </View>
+                      </View>
+                      <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: colors.mutedForeground, lineHeight: 15, marginTop: 2 }}>
+                        {action.description}
+                      </Text>
+                    </View>
+                  </View>
+
+                  {/* Work picker — horizontal pill scroller */}
+                  {needsWork && (
+                    <View style={{ marginTop: 10 }}>
+                      <Text style={launchStyles.fieldLabel}>Work</Text>
+                      {works.length === 0 ? (
+                        <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: colors.mutedForeground }}>
+                          No Works found
+                        </Text>
+                      ) : (
+                        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginHorizontal: -2 }}>
+                          <View style={{ flexDirection: 'row', gap: 6, paddingHorizontal: 2, paddingVertical: 2 }}>
+                            {works.map(w => {
+                              const sel = actionInputs['work_id'] === w.id;
+                              return (
+                                <Pressable
+                                  key={w.id}
+                                  onPress={() => setField(action.name, 'work_id', w.id)}
+                                  style={[
+                                    launchStyles.workPill,
+                                    {
+                                      borderColor: sel ? colors.primary : colors.border,
+                                      backgroundColor: sel ? colors.primary + '18' : colors.muted,
+                                    },
+                                  ]}
+                                >
+                                  <Text style={{
+                                    fontSize: 11,
+                                    fontFamily: sel ? 'Inter_600SemiBold' : 'Inter_400Regular',
+                                    color: sel ? colors.primary : colors.foreground,
+                                  }} numberOfLines={1}>
+                                    {w.title ?? w.id}
+                                  </Text>
+                                </Pressable>
+                              );
+                            })}
+                          </View>
+                        </ScrollView>
+                      )}
+                    </View>
+                  )}
+
+                  {/* Text inputs for other required fields */}
+                  {textFields.map(field => {
+                    const fieldSchema = schemaProps[field] ?? {};
+                    return (
+                      <View key={field} style={{ marginTop: 10 }}>
+                        <Text style={launchStyles.fieldLabel}>{field}</Text>
+                        <TextInput
+                          style={[
+                            launchStyles.textInput,
+                            { borderColor: colors.border, backgroundColor: colors.background, color: colors.foreground },
+                          ]}
+                          placeholder={fieldSchema.description ?? field}
+                          placeholderTextColor={colors.mutedForeground}
+                          value={actionInputs[field] ?? ''}
+                          onChangeText={v => setField(action.name, field, v)}
+                          returnKeyType="done"
+                          blurOnSubmit
+                        />
+                      </View>
+                    );
+                  })}
+
+                  {/* Validation hint */}
+                  {!!errMsg && (
+                    <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: '#ef4444', marginTop: 6 }}>
+                      {errMsg}
+                    </Text>
+                  )}
+
+                  {/* Run button */}
+                  <Pressable
+                    onPress={() => handleRun(action)}
+                    disabled={isRunning || (required.length > 0 && !canRun)}
+                    style={({ pressed }) => [
+                      launchStyles.runBtn,
+                      {
+                        backgroundColor: colors.primary,
+                        marginTop: 10,
+                        opacity: isRunning || (required.length > 0 && !canRun) ? 0.38 : pressed ? 0.8 : 1,
+                      },
+                    ]}
+                  >
+                    {isRunning
+                      ? <ActivityIndicator size="small" color="#fff" style={{ transform: [{ scale: 0.75 }] }} />
+                      : <Feather name="zap" size={13} color="#fff" />}
+                    <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: '#fff' }}>
+                      {isRunning ? 'Running…' : 'Run'}
+                    </Text>
+                  </Pressable>
+                </View>
+              );
+            })}
+          </ScrollView>
+        )}
+      </Animated.View>
+    </Modal>
+  );
+}
+
+const launchStyles = StyleSheet.create({
+  actionCard: {
+    borderRadius: 10,
+    borderWidth: 1,
+    padding: 12,
+  },
+  iconBox: {
+    width: 30,
+    height: 30,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  catBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    borderWidth: 1,
+  },
+  fieldLabel: {
+    fontSize: 10,
+    fontFamily: 'Inter_500Medium',
+    color: '#888',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 4,
+  },
+  workPill: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 16,
+    borderWidth: 1,
+    maxWidth: 160,
+  },
+  textInput: {
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    fontSize: 13,
+    fontFamily: 'Inter_400Regular',
+  },
+  runBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+});
+
 // ── AutomationActivityCard ────────────────────────────────────────────────────
 
 const _STATUS_ICON: Record<string, string> = {
@@ -790,8 +1168,9 @@ function AutomationActivityCard() {
   const [collapsed, setCollapsed] = useState(false);
   const [selectedRun, setSelectedRun] = useState<ActionRun | null>(null);
   const [sheetVisible, setSheetVisible] = useState(false);
+  const [launcherVisible, setLauncherVisible] = useState(false);
 
-  // Optimistically-prepended new run rows created by retry (keyed by new run_id)
+  // Optimistically-prepended new run rows (from retry or new launch)
   const [pendingRuns, setPendingRuns] = useState<ActionRun[]>([]);
 
   const { data, isLoading, refetch } = useQuery<{ runs: ActionRun[]; count: number }>({
@@ -826,10 +1205,20 @@ function AutomationActivityCard() {
     setTimeout(() => refetch().then(() => setPendingRuns([])), 3000);
   }, [refetch]);
 
-  // Don't render the card at all when there are no runs and not loading
-  if (!isLoading && runs.length === 0) return null;
+  // Called when the launcher fires a new action: optimistically show as "running",
+  // then poll until the server row appears (actions are synchronous so the first
+  // refetch after 1s typically picks it up).
+  const handleLaunched = useCallback((newRun: ActionRun) => {
+    // Show optimistic row immediately
+    const optimistic: ActionRun = { ...newRun, status: 'running', completed_at: null };
+    setPendingRuns(prev => [optimistic, ...prev.filter(r => r.id !== optimistic.id)]);
+    // First refetch after 1s (action is usually done by then)
+    setTimeout(() => refetch(), 1_000);
+    // Second refetch clears the pending list once server has the real row
+    setTimeout(() => refetch().then(() => setPendingRuns([])), 4_000);
+  }, [refetch]);
 
-  const failedCount = runs.filter(r => r.status === 'error').length;
+  const failedCount  = runs.filter(r => r.status === 'error').length;
   const runningCount = runs.filter(r => r.status === 'running').length;
   const summaryColor = failedCount > 0 ? '#ef4444' : runningCount > 0 ? '#f59e0b' : '#22c55e';
 
@@ -837,45 +1226,73 @@ function AutomationActivityCard() {
     <>
       <View style={[actStyles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
         {/* Header row */}
-        <Pressable
-          onPress={() => setCollapsed(c => !c)}
-          style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}
-          hitSlop={6}
-        >
-          <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: summaryColor, flexShrink: 0 }} />
-          <Text
-            style={{
-              flex: 1, fontSize: 11, fontFamily: 'Inter_600SemiBold',
-              color: colors.foreground, textTransform: 'uppercase', letterSpacing: 0.8,
-            }}
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          {/* Collapse toggle */}
+          <Pressable
+            onPress={() => setCollapsed(c => !c)}
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}
+            hitSlop={6}
           >
-            Recent Automation
-          </Text>
-          {failedCount > 0 && (
-            <View style={[actStyles.badge, { backgroundColor: '#ef444418', borderColor: '#ef444444' }]}>
-              <Text style={{ fontSize: 10, fontFamily: 'Inter_600SemiBold', color: '#ef4444' }}>
-                {failedCount} failed
-              </Text>
-            </View>
-          )}
-          {runningCount > 0 && (
-            <View style={[actStyles.badge, { backgroundColor: '#f59e0b18', borderColor: '#f59e0b44' }]}>
-              <Text style={{ fontSize: 10, fontFamily: 'Inter_600SemiBold', color: '#f59e0b' }}>
-                {runningCount} running
-              </Text>
-            </View>
-          )}
-          <Feather
-            name={collapsed ? 'chevron-down' : 'chevron-up'}
-            size={14}
-            color={colors.mutedForeground}
-          />
-        </Pressable>
+            <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: summaryColor, flexShrink: 0 }} />
+            <Text
+              style={{
+                flex: 1, fontSize: 11, fontFamily: 'Inter_600SemiBold',
+                color: colors.foreground, textTransform: 'uppercase', letterSpacing: 0.8,
+              }}
+            >
+              Automation
+            </Text>
+            {failedCount > 0 && (
+              <View style={[actStyles.badge, { backgroundColor: '#ef444418', borderColor: '#ef444444' }]}>
+                <Text style={{ fontSize: 10, fontFamily: 'Inter_600SemiBold', color: '#ef4444' }}>
+                  {failedCount} failed
+                </Text>
+              </View>
+            )}
+            {runningCount > 0 && (
+              <View style={[actStyles.badge, { backgroundColor: '#f59e0b18', borderColor: '#f59e0b44' }]}>
+                <Text style={{ fontSize: 10, fontFamily: 'Inter_600SemiBold', color: '#f59e0b' }}>
+                  {runningCount} running
+                </Text>
+              </View>
+            )}
+            <Feather
+              name={collapsed ? 'chevron-down' : 'chevron-up'}
+              size={14}
+              color={colors.mutedForeground}
+            />
+          </Pressable>
+
+          {/* "Run action" button — always visible in the header */}
+          <Pressable
+            onPress={() => setLauncherVisible(true)}
+            style={({ pressed }) => [
+              actStyles.runActionBtn,
+              {
+                borderColor: colors.primary + '55',
+                backgroundColor: pressed ? colors.primary + '18' : colors.primary + '10',
+              },
+            ]}
+            hitSlop={6}
+          >
+            <Feather name="zap" size={11} color={colors.primary} />
+            <Text style={{ fontSize: 11, fontFamily: 'Inter_600SemiBold', color: colors.primary }}>
+              Run
+            </Text>
+          </Pressable>
+        </View>
 
         {!collapsed && (
           <View style={{ marginTop: 10, gap: 0 }}>
             {isLoading && runs.length === 0 && (
               <ActivityIndicator size="small" color={colors.primary} style={{ alignSelf: 'flex-start', marginVertical: 8 }} />
+            )}
+            {!isLoading && runs.length === 0 && (
+              <View style={{ paddingVertical: 12, alignItems: 'center', gap: 4 }}>
+                <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: colors.mutedForeground }}>
+                  No runs yet. Tap Run to launch an action.
+                </Text>
+              </View>
             )}
             {runs.map((run, idx) => {
               const statusColor = _STATUS_COLOR[run.status] ?? colors.mutedForeground;
@@ -952,6 +1369,12 @@ function AutomationActivityCard() {
         onClose={() => setSheetVisible(false)}
         onRetrySuccess={handleRetrySuccess}
       />
+
+      <ActionLauncherSheet
+        visible={launcherVisible}
+        onClose={() => setLauncherVisible(false)}
+        onLaunched={handleLaunched}
+      />
     </>
   );
 }
@@ -983,6 +1406,16 @@ const actStyles = StyleSheet.create({
     gap: 7,
     paddingVertical: 11,
     borderRadius: 10,
+  },
+  runActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: 6,
+    borderWidth: 1,
+    flexShrink: 0,
   },
 });
 
