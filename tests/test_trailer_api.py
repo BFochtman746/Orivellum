@@ -285,6 +285,32 @@ class TrailerPipelineSmokeTests(unittest.TestCase):
                 f"{required - set(docs.keys())}",
             )
 
+        # shot_prompts: every entry must be a non-empty string with no
+        # consecutive blank lines (missing fields produce \n\n\n which breaks
+        # ComfyUI paste workflows).
+        for fmt_key in ("full", "short"):
+            shot_prompts = pkg[fmt_key].get("shot_prompts", {})
+            self.assertTrue(
+                shot_prompts,
+                f"'{fmt_key}' sub-package must have at least one shot_prompt entry",
+            )
+            for key, text in shot_prompts.items():
+                self.assertIsInstance(
+                    text, str,
+                    f"'{fmt_key}'.shot_prompts[{key!r}] must be a string",
+                )
+                self.assertTrue(
+                    text.strip(),
+                    f"'{fmt_key}'.shot_prompts[{key!r}] must be non-empty",
+                )
+                self.assertNotIn(
+                    "\n\n\n", text,
+                    f"'{fmt_key}'.shot_prompts[{key!r}] contains consecutive blank "
+                    f"lines — a missing field (image_model, video_model, resolution, "
+                    f"frames, steps, or seed_policy) produces extra whitespace that "
+                    f"breaks ComfyUI paste.",
+                )
+
     # ── format=full ────────────────────────────────────────────────────────
 
     def test_offline_full_pipeline_completes_and_sets_ready(self):
@@ -352,6 +378,102 @@ class TrailerPipelineSmokeTests(unittest.TestCase):
         if narration:
             self.assertEqual(narration[0]["t_start"], 0,
                              "First (hook) narration line must be at t=0")
+
+    # ── shot prompt format (ComfyUI paste safety) ─────────────────────────
+
+    def test_shot_prompts_are_clean_for_comfyui_paste(self):
+        """Full-format shot_prompts must be non-empty strings with no
+        consecutive blank lines.
+
+        A missing render-settings field (image_model, video_model, resolution,
+        frames, steps, or seed_policy) produces a 'None' literal or an extra
+        \\n\\n\\n in the prompt block.  Both break a ComfyUI paste workflow:
+        - 'None' as image_model is pasted verbatim into the sampler node.
+        - \\n\\n\\n creates a blank line that some parsers treat as a separator.
+
+        This test catches regressions where _apply_render_settings() stops
+        filling a required field.
+        """
+        import re
+        t = self.db.create_trailer(self.work_id)
+        result = _run_offline(self.db, self.work_id, t["id"], fmt="full")
+        self.assertEqual(
+            result["status"], "ready",
+            f"Error: {result.get('error')}",
+        )
+        pkg = result["_pkg"]
+
+        shot_prompts: dict = pkg.get("shot_prompts", {})
+        self.assertTrue(shot_prompts,
+                        "Package must contain at least one shot_prompt entry")
+
+        # Keys must follow the shot_NN naming convention
+        for key in shot_prompts:
+            self.assertRegex(
+                key, r"^shot_\d{2}$",
+                f"shot_prompts key {key!r} does not match shot_NN pattern",
+            )
+
+        for key, text in shot_prompts.items():
+            # Must be a non-empty string
+            self.assertIsInstance(text, str,
+                                  f"shot_prompts[{key!r}] must be a string")
+            self.assertTrue(text.strip(),
+                            f"shot_prompts[{key!r}] must not be empty")
+
+            # No 'None' literal — indicates a missing render-settings field
+            self.assertNotIn(
+                "] None", text,
+                f"shot_prompts[{key!r}] contains a bare 'None' — "
+                f"image_model, video_model, or another render-settings field "
+                f"was not filled by _apply_render_settings().",
+            )
+
+            # No consecutive blank lines (\\n\\n\\n = empty field between sections)
+            self.assertNotIn(
+                "\n\n\n", text,
+                f"shot_prompts[{key!r}] contains consecutive blank lines — "
+                f"a missing image_prompt, motion_prompt, or negative_prompt "
+                f"produces extra whitespace that breaks ComfyUI paste.",
+            )
+
+            # Required section headers must all be present
+            for header in ("[IMAGE MODEL]", "[POSITIVE]", "[NEGATIVE]",
+                           "[VIDEO MODEL]", "[MOTION]", "[SETTINGS]",
+                           "[SEED]", "[UPSCALE]"):
+                self.assertIn(
+                    header, text,
+                    f"shot_prompts[{key!r}] is missing the {header!r} section",
+                )
+
+    def test_short_shot_prompts_are_clean_for_comfyui_paste(self):
+        """Short-format (9:16) shot_prompts must also be non-empty and free
+        of consecutive blank lines — the build_short() path assembles prompts
+        independently of build() and must be verified separately."""
+        t = self.db.create_trailer(self.work_id)
+        result = _run_offline(self.db, self.work_id, t["id"], fmt="short")
+        self.assertEqual(result["status"], "ready",
+                         f"Error: {result.get('error')}")
+        pkg = result["_pkg"]
+
+        shot_prompts: dict = pkg.get("shot_prompts", {})
+        self.assertTrue(shot_prompts,
+                        "Short package must contain at least one shot_prompt entry")
+
+        for key, text in shot_prompts.items():
+            self.assertIsInstance(text, str,
+                                  f"short shot_prompts[{key!r}] must be a string")
+            self.assertTrue(text.strip(),
+                            f"short shot_prompts[{key!r}] must not be empty")
+            self.assertNotIn(
+                "] None", text,
+                f"short shot_prompts[{key!r}] contains a bare 'None' — "
+                f"a render-settings field was not filled.",
+            )
+            self.assertNotIn(
+                "\n\n\n", text,
+                f"short shot_prompts[{key!r}] contains consecutive blank lines.",
+            )
 
     # ── failure path ───────────────────────────────────────────────────────
 
