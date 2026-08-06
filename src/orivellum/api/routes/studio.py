@@ -1006,12 +1006,20 @@ Return this JSON structure exactly:
                 vid = m.get("voice_id", "")
                 if vid in _VOICE_BY_ID:
                     matches.append({**m, "voice": _VOICE_BY_ID[vid]})
-            return {
-                "description": body.description,
-                "target_dimensions": data.get("target_dimensions", {}),
-                "interpretation": data.get("interpretation", ""),
-                "matches": matches,
-            }
+            if matches:
+                return {
+                    "description": body.description,
+                    "target_dimensions": data.get("target_dimensions", {}),
+                    "interpretation": data.get("interpretation", ""),
+                    "matches": matches,
+                }
+            # LLM returned valid JSON but every voice_id was unknown — fall through
+            # to keyword scoring so the UI always gets 3 usable match cards.
+            logger.warning(
+                "Voice design: LLM returned %d match(es) but none had a valid "
+                "catalog voice_id — falling back to keyword scoring",
+                len((data.get("matches") or [])),
+            )
         except Exception as exc:
             logger.warning("Voice design parse failed: %s", exc)
 
