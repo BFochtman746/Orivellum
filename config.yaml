@@ -49,12 +49,13 @@ serving:
 
   # ── Embeddings ────────────────────────────────────────────────────────────────
   # Options ranked by quality (all OpenAI-compatible /v1/embeddings):
-  #   nomic-embed-text        — ~0.3 GB, 8K ctx, good all-rounder  (current)
-  #   Qwen3-Embedding-8B      — SOTA open-source, 70.6 MTEB, ~5 GB Q4  ★ recommended
-  #   BGE-M3                  — dense + sparse + multi-vector, 100+ langs, hybrid search
-  # NOTE: changing embedder re-indexes the entire library (different vector dims).
-  # Run: lemonade pull Qwen3-Embedding-8B  then update the value below.
-  embedder_model: "nomic-embed-text"
+  #   Qwen3-Embedding-8B      — SOTA open-source, 70.6 MTEB, ~5 GB Q4  ★ current
+  #   nomic-embed-text        — ~0.3 GB, 8K ctx, lightweight CPU fallback
+  #   BGE-M3                  — dense + sparse + multi-vector, 100+ langs
+  # NOTE: changing embedder requires a full re-index (different vector dims).
+  # Pull first:  lemonade pull Qwen3-Embedding-8B
+  # Then trigger re-index from System Settings → Semantic Search → Re-index All.
+  embedder_model: "Qwen3-Embedding-8B"
 
   # ── Vision / OCR ──────────────────────────────────────────────────────────────
   # Qwen3-VL-8B: DocVQA ~96 (vs Tesseract ~72), 32-language OCR, GUI grounding.

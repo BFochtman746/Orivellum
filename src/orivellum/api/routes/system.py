@@ -864,6 +864,125 @@ def probe_embeddings():
         return {"ok": False, "status": "error", "detail": str(exc)}
 
 
+@router.get("/system/reindex/status")
+def reindex_status():
+    """Return the current re-embedding index status.
+
+    Reports:
+    - how many items are vectorized vs. the total embeddable set
+    - whether a reindex is running right now
+    - the stored-vector dimensionality vs. the live-embedder dimensionality
+      so the UI can warn when the two are incompatible
+    """
+    from orivellum.capabilities.embeddings import (
+        count_embeddable_items,
+        get_stored_vector_dim,
+        get_live_embedder_dim,
+    )
+    from orivellum.api._deps import get_config
+    db = get_db()
+    cfg = get_config()
+
+    counts = count_embeddable_items(db)
+    stored_dim = get_stored_vector_dim(db)
+
+    # Live embedder dim only when endpoint is reachable (short probe)
+    live_dim: int | None = None
+    try:
+        live_dim = get_live_embedder_dim(timeout=5.0)
+    except Exception:
+        pass
+
+    running = db.get_setting("reindex_running", "false").lower() == "true"
+    done_str  = db.get_setting("reindex_done",  "0")
+    total_str = db.get_setting("reindex_total", "0")
+
+    try:
+        progress_done  = int(done_str)
+        progress_total = int(total_str)
+    except ValueError:
+        progress_done  = counts["done"]
+        progress_total = counts["total"]
+
+    mismatch = (
+        stored_dim is not None
+        and live_dim is not None
+        and stored_dim != live_dim
+    )
+
+    return {
+        "running":        running,
+        "done":           progress_done if running else counts["done"],
+        "total":          progress_total if running else counts["total"],
+        "counts":         counts,
+        "stored_dim":     stored_dim,
+        "live_dim":       live_dim,
+        "mismatch":       mismatch,
+        "embedder_model": getattr(cfg.serving, "embedder_model", ""),
+    }
+
+
+import threading as _threading
+# Process-level mutex: prevents two concurrent POST /system/reindex requests
+# from both passing the running-check and launching competing destructive jobs.
+_reindex_start_lock = _threading.Lock()
+
+
+@router.post("/system/reindex")
+def trigger_reindex():
+    """Clear all vectors and re-embed everything using the current embedder.
+
+    Required whenever the ``embedder_model`` is changed — old and new vectors
+    live in different dimension spaces and must not be mixed.
+
+    A process-level lock prevents two concurrent requests from both clearing
+    the vector table simultaneously.  Kicks off a daemon thread and returns
+    immediately; poll ``GET /system/reindex/status`` for progress.
+    FTS5/BM25 search continues to serve results at full speed while running.
+    """
+    import threading
+    from orivellum.capabilities.embeddings import run_full_reindex, get_live_embedder_dim
+    db = get_db()
+
+    # Atomic guard: acquire the process-level lock then re-check the DB setting
+    # so two simultaneous requests cannot both slip past.
+    if not _reindex_start_lock.acquire(blocking=False):
+        return {"ok": False, "detail": "A reindex is already starting — please wait."}
+
+    try:
+        if db.get_setting("reindex_running", "false").lower() == "true":
+            return {"ok": False, "detail": "A reindex is already running."}
+
+        # Quick sanity: embedder must be reachable before we nuke all vectors
+        live_dim = get_live_embedder_dim(timeout=8.0)
+        if live_dim is None:
+            return {
+                "ok": False,
+                "detail": (
+                    "Cannot reach the embeddings endpoint — start the AI server "
+                    "and try again. Existing vectors were NOT cleared."
+                ),
+            }
+
+        db.set_setting("reindex_running", "true")
+        db.set_setting("reindex_done",    "0")
+        db.set_setting("reindex_total",   "0")
+    finally:
+        # Always release before spawning the thread so other calls are not
+        # permanently blocked even if setup fails.
+        _reindex_start_lock.release()
+
+    def _worker():
+        try:
+            run_full_reindex(db)
+        except Exception as exc:
+            logger.error("Reindex background worker failed: %s", exc)
+            db.set_setting("reindex_running", "false")
+
+    threading.Thread(target=_worker, name="full-reindex", daemon=True).start()
+    return {"ok": True, "detail": "Re-indexing started. Poll /system/reindex/status for progress."}
+
+
 @router.get("/system/stats")
 def system_stats():
     """Return high-level database statistics for the System settings page."""

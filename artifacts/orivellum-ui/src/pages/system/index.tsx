@@ -1300,10 +1300,26 @@ function useSetAiRerankingSetting() {
 // ─── Semantic search / embeddings card ───────────────────────────────────────
 
 type EmbedProbeResult = { ok: boolean; dims?: number; status?: string; detail: string };
+type ReindexStatus = {
+  running: boolean;
+  done: number;
+  total: number;
+  stored_dim: number | null;
+  live_dim: number | null;
+  mismatch: boolean;
+  embedder_model: string;
+  counts: {
+    chunk_total: number; chunk_done: number;
+    knowledge_total: number; knowledge_done: number;
+    conv_chunk_total: number; conv_chunk_done: number;
+    total: number; done: number;
+  };
+};
 
 function SemanticSearchCard() {
   const [probeResult, setProbeResult] = useState<EmbedProbeResult | null>(null);
   const [probing, setProbing] = useState(false);
+  const [reindexing, setReindexing] = useState(false);
 
   const { data, refetch } = useQuery({
     queryKey: ["system", "embeddings-status"],
@@ -1316,6 +1332,25 @@ function SemanticSearchCard() {
     staleTime: 20_000,
   });
 
+  const { data: reindexStatus, refetch: refetchReindex } = useQuery({
+    queryKey: ["system", "reindex-status"],
+    queryFn: async () => {
+      const r = await apiFetch(`${API_BASE}/api/system/reindex/status`);
+      if (!r.ok) return null;
+      return r.json() as Promise<ReindexStatus>;
+    },
+    refetchInterval: (query) => {
+      const d = query.state.data as ReindexStatus | null;
+      return d?.running ? 2_000 : 30_000;
+    },
+    staleTime: 5_000,
+  });
+
+  // Sync local reindexing spinner with server state
+  useEffect(() => {
+    if (reindexStatus && !reindexStatus.running) setReindexing(false);
+  }, [reindexStatus]);
+
   async function probe() {
     setProbing(true);
     setProbeResult(null);
@@ -1323,7 +1358,7 @@ function SemanticSearchCard() {
       const r = await apiFetch(`${API_BASE}/api/system/embeddings/probe`, { method: "POST" });
       const json = await r.json() as EmbedProbeResult;
       setProbeResult(json);
-      if (json.ok) refetch();
+      if (json.ok) { refetch(); refetchReindex(); }
     } catch {
       setProbeResult({ ok: false, detail: "Probe request failed — check server logs." });
     } finally {
@@ -1331,34 +1366,136 @@ function SemanticSearchCard() {
     }
   }
 
+  async function startReindex() {
+    if (!confirm(
+      "This will delete all existing vectors and re-embed your entire library " +
+      "using the current embedder model.\n\n" +
+      "Keyword search (BM25) stays active throughout — only semantic ranking " +
+      "is unavailable while re-indexing runs.\n\n" +
+      "Continue?"
+    )) return;
+    setReindexing(true);
+    try {
+      const r = await apiFetch(`${API_BASE}/api/system/reindex`, { method: "POST" });
+      const json = await r.json() as { ok: boolean; detail: string };
+      if (json.ok) {
+        toast.success("Re-indexing started");
+        refetchReindex();
+      } else {
+        toast.error(json.detail || "Could not start re-index");
+        setReindexing(false);
+      }
+    } catch {
+      toast.error("Re-index request failed");
+      setReindexing(false);
+    }
+  }
+
   const circuitOpen = data?.circuit_open ?? false;
+  const rx = reindexStatus;
+  const pct = rx && rx.total > 0 ? Math.round((rx.done / rx.total) * 100) : null;
+  const coverage = rx && rx.counts.total > 0
+    ? Math.round((rx.counts.done / rx.counts.total) * 100)
+    : null;
 
   return (
     <Card>
       <CardContent className="p-6">
         <div className="flex items-start gap-3">
           <Brain className="w-5 h-5 text-primary mt-0.5 shrink-0" />
-          <div className="flex-1 space-y-2">
+          <div className="flex-1 space-y-3">
+            {/* Header row */}
             <div className="flex items-center justify-between gap-3 flex-wrap">
               <div>
                 <h3 className="font-medium text-sm">Semantic Search (Embeddings)</h3>
                 <p className="text-sm text-muted-foreground mt-0.5 max-w-xl">
-                  When the embedding endpoint is reachable, searches use vector similarity in
-                  addition to keyword matching. When unavailable, results are keyword-only (BM25).
+                  Searches use vector similarity + keyword matching when the embedding endpoint is
+                  reachable. Falls back to keyword-only (BM25) when unavailable.
                 </p>
+                {rx?.embedder_model && (
+                  <p className="text-xs text-muted-foreground font-mono mt-1">
+                    Model: <span className="text-foreground">{rx.embedder_model}</span>
+                    {rx.live_dim != null && (
+                      <span className="ml-2 opacity-60">{rx.live_dim}d</span>
+                    )}
+                  </p>
+                )}
               </div>
-              <Button
-                size="sm" variant="outline" className="text-xs gap-1.5 shrink-0"
-                onClick={probe} disabled={probing}
-              >
-                {probing
-                  ? <><Loader2 className="w-3 h-3 animate-spin" />Testing…</>
-                  : <><Brain className="w-3 h-3" />Test Embeddings</>}
-              </Button>
+              <div className="flex gap-2 flex-wrap">
+                <Button
+                  size="sm" variant="outline" className="text-xs gap-1.5 shrink-0"
+                  onClick={probe} disabled={probing || reindexing}
+                >
+                  {probing
+                    ? <><Loader2 className="w-3 h-3 animate-spin" />Testing…</>
+                    : <><Brain className="w-3 h-3" />Test Embeddings</>}
+                </Button>
+                <Button
+                  size="sm" variant="outline" className="text-xs gap-1.5 shrink-0"
+                  onClick={startReindex}
+                  disabled={reindexing || rx?.running}
+                  title="Delete all vectors and re-embed everything with the current model"
+                >
+                  {(reindexing || rx?.running)
+                    ? <><Loader2 className="w-3 h-3 animate-spin" />Re-indexing…</>
+                    : <><RotateCcw className="w-3 h-3" />Re-index All</>}
+                </Button>
+              </div>
             </div>
 
-            {/* Status indicator */}
-            {!probeResult && (
+            {/* Dimension mismatch warning */}
+            {rx?.mismatch && !rx.running && (
+              <div className="flex items-start gap-2 rounded-lg px-3 py-2 bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-400">
+                <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                <span className="text-xs">
+                  <span className="font-semibold">Vector dimension mismatch</span> — stored vectors
+                  are {rx.stored_dim}d but the live embedder returns {rx.live_dim}d. Searches will
+                  only use keyword matching until you click <span className="font-medium">Re-index All</span> to
+                  rebuild the vector index with the new model.
+                </span>
+              </div>
+            )}
+
+            {/* Re-index progress bar */}
+            {(rx?.running || (reindexing && pct === null)) && (
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between text-xs text-muted-foreground">
+                  <span>Re-indexing library…</span>
+                  <span>{rx?.done ?? 0} / {rx?.total ?? "?"} items</span>
+                </div>
+                <div className="w-full h-2 bg-muted rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-primary rounded-full transition-all duration-500"
+                    style={{ width: pct != null ? `${pct}%` : "15%",
+                             animation: pct == null ? "pulse 1.5s ease-in-out infinite" : undefined }}
+                  />
+                </div>
+                {pct != null && (
+                  <p className="text-xs text-muted-foreground">{pct}% — keyword search is active during re-indexing</p>
+                )}
+              </div>
+            )}
+
+            {/* Vector coverage summary (when not running) */}
+            {!rx?.running && !reindexing && rx && rx.counts.total > 0 && (
+              <div className="text-xs text-muted-foreground font-mono flex items-center gap-2">
+                <span>
+                  {rx.counts.done.toLocaleString()} / {rx.counts.total.toLocaleString()} items vectorized
+                </span>
+                {coverage != null && (
+                  <span className={coverage === 100
+                    ? "text-emerald-600 dark:text-emerald-400"
+                    : coverage > 80 ? "text-amber-600 dark:text-amber-400"
+                    : "text-destructive"
+                  }>
+                    ({coverage}%)
+                  </span>
+                )}
+              </div>
+            )}
+
+            {/* Circuit breaker / probe result */}
+            {!probeResult && !rx?.running && (
               circuitOpen ? (
                 <div className="flex items-start gap-2 rounded-lg px-3 py-2 bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-400">
                   <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
@@ -1376,7 +1513,6 @@ function SemanticSearchCard() {
               )
             )}
 
-            {/* Probe result */}
             {probeResult && (
               <div className={`flex items-start gap-2 text-xs rounded-lg px-3 py-2 ${
                 probeResult.ok

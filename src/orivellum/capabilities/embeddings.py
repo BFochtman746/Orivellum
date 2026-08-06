@@ -180,6 +180,130 @@ def _reset_circuit_breaker() -> None:
     _unavailable_until = 0.0
 
 
+# ── Dimensionality mismatch detection ─────────────────────────────────────────
+
+def get_stored_vector_dim(db: "OrivellumDB") -> int | None:
+    """Return the dimensionality of currently stored vectors, or None if empty.
+
+    Samples the most common ``dim`` value across all rows in the ``vectors``
+    table.  Using MODE rather than a single row avoids being misled by a stray
+    legacy entry with a different size.
+    """
+    try:
+        with db._lock:
+            row = db._conn.execute(
+                "SELECT dim, COUNT(*) AS cnt FROM vectors"
+                " WHERE dim IS NOT NULL GROUP BY dim ORDER BY cnt DESC LIMIT 1"
+            ).fetchone()
+        return int(row["dim"]) if row else None
+    except Exception:
+        return None
+
+
+def get_live_embedder_dim(timeout: float = 8.0) -> int | None:
+    """Return the output dimensionality of the configured embedder, or None.
+
+    Sends a minimal probe embedding and counts the returned vector length.
+    Does NOT touch the circuit breaker — this is a deliberate health check.
+    """
+    try:
+        base_url, model = _serving()
+        payload = json.dumps({
+            "model": model,
+            "input": ["dim probe"],
+        }).encode()
+        req = urllib.request.Request(
+            f"{base_url}/embeddings", data=payload,
+            headers={"Content-Type": "application/json"}, method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read())
+        items = data.get("data", [])
+        if items and items[0].get("embedding"):
+            return len(items[0]["embedding"])
+    except Exception:
+        pass
+    return None
+
+
+def count_embeddable_items(db: "OrivellumDB") -> dict[str, int]:
+    """Return the total and already-vectorized counts per object type.
+
+    Used by the reindex status endpoint so the UI can show progress.
+    """
+    try:
+        with db._lock:
+            c = db._conn
+            chunk_total = c.execute(
+                "SELECT COUNT(*) FROM chunks WHERE length(text) > 40"
+            ).fetchone()[0]
+            chunk_done = c.execute(
+                "SELECT COUNT(*) FROM vectors WHERE object_type='chunk'"
+            ).fetchone()[0]
+            know_total = c.execute(
+                "SELECT COUNT(*) FROM knowledge WHERE review_status != 'rejected'"
+                "  AND length(text) > 20"
+            ).fetchone()[0]
+            know_done = c.execute(
+                "SELECT COUNT(*) FROM vectors WHERE object_type='knowledge'"
+            ).fetchone()[0]
+            cc_total = c.execute(
+                "SELECT COUNT(*) FROM conversation_chunks WHERE length(text) > 30"
+            ).fetchone()[0]
+            cc_done = c.execute(
+                "SELECT COUNT(*) FROM vectors WHERE object_type='conv_chunk'"
+            ).fetchone()[0]
+        return {
+            "chunk_total": chunk_total, "chunk_done": chunk_done,
+            "knowledge_total": know_total, "knowledge_done": know_done,
+            "conv_chunk_total": cc_total, "conv_chunk_done": cc_done,
+            "total": chunk_total + know_total + cc_total,
+            "done":  chunk_done + know_done + cc_done,
+        }
+    except Exception:
+        return {"total": 0, "done": 0}
+
+
+def run_full_reindex(db: "OrivellumDB", *, batch_size: int = 64) -> int:
+    """Delete all vectors then re-embed everything in batches.
+
+    Designed to run in a background daemon thread.  Progress is written to the
+    ``reindex_done`` setting after each batch so the status endpoint can report
+    live progress.  Hybrid FTS5 search continues to serve queries during the
+    reindex — the vector cache simply returns empty until rows reappear.
+
+    Returns the total number of new vectors stored.
+    """
+    try:
+        # 1. Clear all existing vectors (avoids dim-space mixing)
+        with db._lock:
+            db._conn.execute("DELETE FROM vectors")
+            db._conn.commit()
+        invalidate_vector_cache()
+        logger.info("Reindex: cleared all vectors — starting re-embedding")
+
+        # 2. Count embeddable items and write initial progress
+        counts = count_embeddable_items(db)
+        total = counts["total"]
+        db.set_setting("reindex_total", str(total))
+        db.set_setting("reindex_done", "0")
+
+        # 3. Re-embed in batches — call backfill_embeddings repeatedly until done
+        embedded_total = 0
+        while True:
+            n = backfill_embeddings(db, max_items=batch_size)
+            if n == 0:
+                break   # endpoint down or nothing left
+            embedded_total += n
+            db.set_setting("reindex_done", str(embedded_total))
+            logger.debug("Reindex progress: %d / %d", embedded_total, total)
+
+        logger.info("Reindex complete: %d vectors written", embedded_total)
+        return embedded_total
+    finally:
+        db.set_setting("reindex_running", "false")
+
+
 def _serving():
     from orivellum.api._deps import get_config
     cfg = get_config()
@@ -495,9 +619,20 @@ def semantic_search(query: str, db: "OrivellumDB", object_type: str = "knowledge
 
     entries = _load_vecs(db, object_type, all_sql, ())
 
+    query_dim = len(qvec)
     _NOISE_FLOOR = 0.25
+    skipped_dim = 0
     scored = []
     for obj_id, fields, nvec in entries:
+        # ── Dimension guard ───────────────────────────────────────────────────
+        # When the embedder model has been changed, stored vectors may live in a
+        # different dimension space than the query embedding.  _dot() uses zip()
+        # which silently truncates the longer vector, producing invalid scores.
+        # We discard mismatched vectors entirely so BM25/FTS remains the sole
+        # source of results until a full re-index is completed.
+        if len(nvec) != query_dim:
+            skipped_dim += 1
+            continue
         # Skip entries that don't belong to the requested work scope
         if work_id and fields.get("work_id") != work_id:
             continue
@@ -507,6 +642,12 @@ def semantic_search(query: str, db: "OrivellumDB", object_type: str = "knowledge
             d["id"] = obj_id
             d["score"] = round(s, 4)
             scored.append(d)
+    if skipped_dim:
+        logger.debug(
+            "semantic_search: skipped %d vector(s) with mismatched dim "
+            "(stored ≠ %d) — re-index required",
+            skipped_dim, query_dim,
+        )
     scored.sort(key=lambda d: d["score"], reverse=True)
     return scored[:limit]
 
