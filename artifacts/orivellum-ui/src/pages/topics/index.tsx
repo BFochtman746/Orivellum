@@ -80,7 +80,7 @@ export default function TopicsPage() {
       const resp = await apiFetch(`${BASE}/topics/rebuild`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ run_profiles: false }),
+        body: JSON.stringify({ run_profiles: true }),
       });
       if (!resp.ok) throw new Error("Rebuild failed");
       toast.success("Clustering rebuild started", {

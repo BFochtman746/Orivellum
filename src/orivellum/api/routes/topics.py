@@ -161,6 +161,8 @@ def rebuild_topics(body: RebuildRequest, background_tasks: BackgroundTasks):
     """Trigger a full topic clustering rebuild in the background."""
     db = get_db()
 
+    run_profiles = body.run_profiles
+
     def _run():
         try:
             from orivellum.capabilities.cluster import run_clustering
@@ -168,9 +170,27 @@ def rebuild_topics(body: RebuildRequest, background_tasks: BackgroundTasks):
             logger.info("Topics rebuild finished: %s", result)
         except Exception as exc:
             logger.exception("Topics rebuild failed: %s", exc)
+            return  # skip profiles if clustering itself failed
+
+        if run_profiles:
+            try:
+                # Honour the global AI opt-in gate before sending any content to the LLM.
+                ai_enabled = db.get_setting("ai_extraction_enabled", "false").lower() == "true"
+                if ai_enabled:
+                    cfg = get_config()
+                    from orivellum.capabilities.topic_profile import generate_topic_profiles
+                    tp = generate_topic_profiles(db, cfg, force=True)
+                    logger.info("Topic profiles generated: %s", tp)
+                else:
+                    logger.info("Topic profiles skipped — ai_extraction_enabled is not true")
+            except Exception as exc:
+                logger.warning("Topic profile generation failed: %s", exc)
 
     background_tasks.add_task(_run)
-    return {"ok": True, "message": "Clustering rebuild started in background"}
+    msg = "Clustering rebuild started in background"
+    if run_profiles:
+        msg += " (topic profiles will be generated once clustering finishes)"
+    return {"ok": True, "message": msg}
 
 
 # ── GET /api/library/{doc_id}/related ────────────────────────────────────────

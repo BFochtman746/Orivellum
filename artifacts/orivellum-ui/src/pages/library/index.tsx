@@ -669,7 +669,7 @@ export default function Library() {
   ) as string[];
   // Topic clusters — fetched only when "By Topic" grouping is active
   const { data: topicsResp } = useQuery<{
-    topics: Array<{ id: string; name: string; doc_count: number; doc_ids?: string[] }>;
+    topics: Array<{ id: string; name: string; doc_count: number; what_it_is?: string | null; doc_ids?: string[] }>;
     doc_titles?: Record<string, string>;
   }>({
     queryKey: ["topics-with-docs"],
@@ -678,10 +678,12 @@ export default function Library() {
     enabled: groupByWork && !search,
     staleTime: 120_000,
   });
-  // Build a doc_id → [topicName] index for quick lookup in the grouped view
+  // Build a doc_id → topicName index and topicName → what_it_is index
   const docTopicIndex: Record<string, string> = {};
+  const topicDescriptions: Record<string, string> = {};
   if (topicsResp) {
     for (const t of topicsResp.topics) {
+      if (t.what_it_is) topicDescriptions[t.name] = t.what_it_is;
       for (const did of (t.doc_ids ?? [])) {
         docTopicIndex[did] = t.name;
       }
@@ -1089,12 +1091,19 @@ export default function Library() {
               );
               return groups.map((group) => (
                 <div key={group.title} className="space-y-2">
-                  <div className={`flex items-center gap-2 pt-2 pb-1 border-b border-border/40`}>
-                    <FolderOpen className={`w-4 h-4 ${group.color}`} />
-                    <span className={`text-sm font-semibold font-serif ${group.color}`}>{group.title}</span>
-                    <span className="text-xs font-mono text-muted-foreground">
-                      {group.docs.length} doc{group.docs.length !== 1 ? "s" : ""}
-                    </span>
+                  <div className={`pt-2 pb-1 border-b border-border/40`}>
+                    <div className="flex items-center gap-2">
+                      <FolderOpen className={`w-4 h-4 ${group.color} shrink-0`} />
+                      <span className={`text-sm font-semibold font-serif ${group.color}`}>{group.title}</span>
+                      <span className="text-xs font-mono text-muted-foreground">
+                        {group.docs.length} doc{group.docs.length !== 1 ? "s" : ""}
+                      </span>
+                    </div>
+                    {topicDescriptions[group.title] && (
+                      <p className="text-[11px] text-muted-foreground mt-0.5 ml-6 line-clamp-1">
+                        {topicDescriptions[group.title]}
+                      </p>
+                    )}
                   </div>
                   {group.docs.map((doc: any) => {
                     const readiness: string = doc.readiness ?? "imported";

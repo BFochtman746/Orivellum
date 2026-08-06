@@ -1136,8 +1136,26 @@ def _run_nightshift_passes(db: "OrivellumDB", cfg: "OrivellumConfig") -> None:
     logger.info("Nightshift pass 16/17: topic clustering")
     _pass_clustering(db, report)
 
-    # 16 — Proactive custodian: staleness nudges
-    logger.info("Nightshift pass 16/19: proactive custodian nudges")
+    # 17 — Topic profiles (LLM-generated plain-English summaries per cluster)
+    logger.info("Nightshift pass 17/19: topic profile generation")
+    try:
+        if db.get_setting("ai_extraction_enabled", "false").lower() == "true":
+            from orivellum.capabilities.topic_profile import generate_topic_profiles
+            tp_result = generate_topic_profiles(db, cfg)
+            if tp_result["generated"]:
+                report.append(
+                    f"Topic profiles: generated {tp_result['generated']} profile(s)"
+                    + (f", {tp_result['skipped']} skipped" if tp_result["skipped"] else "")
+                    + (f", {tp_result['errors']} error(s)" if tp_result["errors"] else "")
+                )
+        else:
+            logger.debug("Nightshift: topic profiles skipped (ai_extraction_enabled=false)")
+    except Exception as _tpex:
+        logger.warning("Topic profile pass failed (non-fatal): %s", _tpex)
+        report.append(f"Topic profiles: failed — {_tpex}")
+
+    # Proactive custodian: staleness nudges
+    logger.info("Nightshift pass 18/19: proactive custodian nudges")
     try:
         from orivellum.capabilities.custodian import run_custodian
         custodian_result = run_custodian(db)
