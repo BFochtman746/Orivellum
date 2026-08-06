@@ -1847,6 +1847,13 @@ class OrivellumDB:
                 bump_vector_cache_version(self._path, "knowledge")
             except Exception:  # pragma: no cover
                 pass
+            # Remove from the in-memory LSH index so it can never appear as a
+            # stale candidate in future near-duplicate comparisons.
+            try:
+                from orivellum.capabilities.dedup import evict_from_lsh_index
+                evict_from_lsh_index(doc_id)
+            except Exception:  # pragma: no cover
+                pass
         return _deleted
 
     @staticmethod
