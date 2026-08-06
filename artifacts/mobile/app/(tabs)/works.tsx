@@ -74,24 +74,7 @@ function WorkCard({ work, onStartChat, onDelete }: { work: Work; onStartChat: ()
     </View>
   );
 
-  // Right-swipe reveals the "Open" action (rendered on the left edge)
-  const renderLeftActions = () => (
-    <View style={{ flexDirection: 'row', alignItems: 'center', paddingLeft: 12, paddingRight: 8, marginVertical: 6 }}>
-      <Pressable
-        onPress={() => { swipeRef.current?.close(); triggerHaptic(); router.push(`/work/${work.id}`); }}
-        style={{
-          backgroundColor: colors.muted, borderRadius: 10,
-          paddingHorizontal: 18, paddingVertical: 10,
-          alignItems: 'center', justifyContent: 'center', gap: 4,
-          minHeight: 52,
-        }}
-        hitSlop={12}
-      >
-        <Feather name="arrow-right" size={18} color={colors.foreground} />
-        <Text style={{ color: colors.foreground, fontSize: 12, fontWeight: '600' }}>Open</Text>
-      </Pressable>
-    </View>
-  );
+  // No left-swipe action — tapping the card already opens the Work.
 
   const handleLongPress = () => {
     triggerHaptic();
@@ -203,14 +186,7 @@ function WorkCard({ work, onStartChat, onDelete }: { work: Work; onStartChat: ()
           }
           return null;
         })()}
-        <Pressable
-          onPress={(e) => { e.stopPropagation(); onStartChat(); }}
-          style={[styles.chatBtn, { backgroundColor: colors.primary + '18', borderColor: colors.primary + '44' }]}
-          hitSlop={6}
-        >
-          <Feather name="message-circle" size={11} color={colors.primary} />
-          <Text style={[styles.chatBtnText, { color: colors.primary }]}>Chat</Text>
-        </Pressable>
+        {/* Chat via left-swipe — removed from card chrome */}
       </View>
     </Pressable>
   );
@@ -222,9 +198,7 @@ function WorkCard({ work, onStartChat, onDelete }: { work: Work; onStartChat: ()
     <Swipeable
       ref={swipeRef}
       renderRightActions={renderRightActions}
-      renderLeftActions={renderLeftActions}
       overshootRight={false}
-      overshootLeft={false}
       friction={2}
     >
       {cardInner}

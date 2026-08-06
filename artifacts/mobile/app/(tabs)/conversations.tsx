@@ -280,19 +280,6 @@ export default function ConversationsScreen() {
           </View>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
             <Pressable
-              onPress={() => router.push('/memory' as any)}
-              hitSlop={8}
-              style={({ pressed }) => ({
-                width: 36, height: 36, borderRadius: 18,
-                alignItems: 'center', justifyContent: 'center',
-                backgroundColor: colors.muted,
-                borderWidth: 1, borderColor: colors.border,
-                opacity: pressed ? 0.7 : 1,
-              })}
-            >
-              <Text style={{ fontSize: 16 }}>✨</Text>
-            </Pressable>
-            <Pressable
               onPress={handleNew}
               style={({ pressed }) => [
                 styles.newBtn,

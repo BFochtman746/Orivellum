@@ -1215,6 +1215,8 @@ export default function DashboardScreen() {
   const activity = activityData?.activity ?? [];
   const hasData = recentWorks.length > 0 || activity.length > 0;
 
+  const [showWorkspaceHealth, setShowWorkspaceHealth] = useState(false);
+
   const topPad = isWeb ? 67 : 0;
   const botPad = isWeb ? 34 : 0;
 
@@ -1328,17 +1330,26 @@ export default function DashboardScreen() {
             </View>
           )}
 
-          {/* Automation activity — recent action runs */}
-          <Text style={[styles.sectionLabel, { color: colors.mutedForeground, marginTop: 24 }]}>
-            AUTOMATION
-          </Text>
-          <AutomationActivityCard />
-
-          {/* System health — pinned at bottom so users can self-diagnose */}
-          <Text style={[styles.sectionLabel, { color: colors.mutedForeground, marginTop: 24 }]}>
-            SYSTEM
-          </Text>
-          <SystemHealthCard />
+          {/* Workspace health — collapsed by default to keep the dashboard clean */}
+          <Pressable
+            onPress={() => setShowWorkspaceHealth(v => !v)}
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 24, marginBottom: 4 }}
+          >
+            <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>
+              WORKSPACE HEALTH
+            </Text>
+            <Feather
+              name={showWorkspaceHealth ? 'chevron-up' : 'chevron-down'}
+              size={12}
+              color={colors.mutedForeground}
+            />
+          </Pressable>
+          {showWorkspaceHealth && (
+            <>
+              <AutomationActivityCard />
+              <SystemHealthCard />
+            </>
+          )}
         </>
       }
     />

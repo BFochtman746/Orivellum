@@ -530,6 +530,7 @@ class OrivellumDB:
         payload: dict | None = None,
         actor: str = "system",
         detail: str | None = None,
+        audit_level: str = "full",
     ) -> Generator[None, None, None]:
         """Context manager for atomic domain-change + audit + outbox writes.
 
@@ -541,6 +542,23 @@ class OrivellumDB:
 
         **The caller must NOT call** ``self._conn.commit()`` inside the
         ``with`` block — ``governed_write`` is the only committer.
+
+        ``audit_level`` controls how much governance overhead is emitted:
+
+        ``"full"`` (default)
+            One hash-chained audit row **and** one outbox event are written
+            alongside the domain SQL.  Use for every user-visible mutation
+            (create work, approve knowledge, update setting, …).
+
+        ``"trace"``
+            The domain SQL is committed atomically (lock + rollback-on-error
+            still apply) but **no** audit row and **no** outbox event are
+            written.  Use for high-frequency pipeline writes that would
+            otherwise flood the outbox and audit log with thousands of
+            ``document.chunk_added`` / ``vector.stored`` entries per document:
+            ``add_chunk``, ``store_vector``, ``create_entity_mention``,
+            ``create_entity_edge``.  These are internal plumbing writes whose
+            individual entries carry no governance value.
 
         Example::
             with db.governed_write(
@@ -741,10 +759,11 @@ class OrivellumDB:
                         "executescript() call from inside the "
                         "'with governed_write(...)' block."
                     )
-                self._audit_tx(operation, object_id, object_type,
-                               actor=actor, detail=detail)
-                self._emit_outbox_tx(event_type, object_id, object_type,
-                                     payload or {})
+                if audit_level == "full":
+                    self._audit_tx(operation, object_id, object_type,
+                                   actor=actor, detail=detail)
+                    self._emit_outbox_tx(event_type, object_id, object_type,
+                                         payload or {})
                 _real_conn.commit()
             except Exception:
                 self._conn = _real_conn  # always restore
@@ -1986,6 +2005,7 @@ class OrivellumDB:
                 object_type="entity",
                 actor="system",
                 detail=f"doc={doc_id[:12]}",
+                audit_level="trace",
             ):
                 self._conn.execute(
                     """INSERT OR IGNORE INTO relationships
@@ -2025,6 +2045,7 @@ class OrivellumDB:
                 object_type="entity",
                 actor="system",
                 detail=f"{relation}/{target_id[:12]}",
+                audit_level="trace",
             ):
                 self._conn.execute(
                     """INSERT INTO edges(id, source_id, target_id, relation, weight, meta, created_at)
@@ -2799,6 +2820,7 @@ class OrivellumDB:
             object_type="document",
             actor="system",
             detail=f"page={page}",
+            audit_level="trace",
         ):
             self._conn.execute(
                 """INSERT INTO objects(id,type,version,lifecycle,provenance,permissions,
@@ -3510,6 +3532,7 @@ class OrivellumDB:
             object_type=object_type,
             actor="system",
             detail=f"dim={dim}",
+            audit_level="trace",
         ):
             self._conn.execute(
                 "DELETE FROM vectors WHERE object_id=? AND object_type=?",

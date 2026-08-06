@@ -41,53 +41,95 @@ import { OfflineBanner, ErrorScreen } from '@/components/OfflineBanner';
 
 type Tab = 'overview' | 'docs' | 'knowledge' | 'tasks' | 'conversations' | 'learn' | 'gaps' | 'book' | 'brainstorm';
 
+// Primary tabs always visible in the bar; secondary tabs disclosed via "More"
+const PRIMARY_TABS: { key: Tab; label: string }[] = [
+  { key: 'overview',       label: 'Overview'  },
+  { key: 'docs',           label: 'Docs'      },
+  { key: 'knowledge',      label: 'Knowledge' },
+  { key: 'tasks',          label: 'Tasks'     },
+  { key: 'conversations',  label: 'Chats'     },
+];
+const SECONDARY_TABS: { key: Tab; label: string }[] = [
+  { key: 'gaps',      label: 'Gaps'  },
+  { key: 'learn',     label: 'Learn' },
+  { key: 'book',      label: 'Book'  },
+  { key: 'brainstorm', label: 'Ideas' },
+];
+
 function TabBar({ active, onSelect, colors, badges = {} }: { active: Tab; onSelect: (t: Tab) => void; colors: any; badges?: Partial<Record<Tab, number>> }) {
-  const tabs: { key: Tab; label: string }[] = [
-    { key: 'overview', label: 'Overview' },
-    { key: 'docs', label: 'Docs' },
-    { key: 'knowledge', label: 'Knowledge' },
-    { key: 'tasks', label: 'Tasks' },
-    { key: 'conversations', label: 'Chats' },
-    { key: 'gaps', label: 'Gaps' },
-    { key: 'learn', label: 'Learn' },
-    { key: 'book', label: 'Book' },
-    { key: 'brainstorm', label: 'Ideas' },
-  ];
+  const isSecondaryActive = SECONDARY_TABS.some(t => t.key === active);
+  const activeSecondaryLabel = SECONDARY_TABS.find(t => t.key === active)?.label;
+
+  const openMore = () => {
+    Alert.alert(
+      'More',
+      undefined,
+      [
+        ...SECONDARY_TABS.map(t => ({
+          text: t.label + (badges[t.key] && badges[t.key]! > 0 ? ` (${badges[t.key]})` : ''),
+          onPress: () => onSelect(t.key),
+        })),
+        { text: 'Cancel', style: 'cancel' as const },
+      ],
+    );
+  };
+
   return (
-    <View style={[styles.tabBar, { borderBottomColor: colors.border, backgroundColor: colors.background }]}>
-      {tabs.map((t) => {
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      style={{ borderBottomWidth: 1, borderBottomColor: colors.border, backgroundColor: colors.background }}
+      contentContainerStyle={{ flexDirection: 'row' }}
+    >
+      {PRIMARY_TABS.map((t) => {
         const badge = badges[t.key];
         return (
-        <Pressable
-          key={t.key}
-          onPress={() => onSelect(t.key)}
-          style={[
-            styles.tab,
-            active === t.key && { borderBottomColor: colors.primary, borderBottomWidth: 2 },
-          ]}
-        >
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
-            <Text
-              style={[
-                styles.tabLabel,
-                {
-                  color: active === t.key ? colors.primary : colors.mutedForeground,
-                  fontFamily: active === t.key ? 'Inter_600SemiBold' : 'Inter_400Regular',
-                },
-              ]}
-            >
-              {t.label}
-            </Text>
-            {badge != null && badge > 0 && (
-              <View style={{ backgroundColor: colors.primary, borderRadius: 8, minWidth: 16, paddingHorizontal: 3, alignItems: 'center' }}>
-                <Text style={{ color: colors.primaryForeground, fontSize: 9, fontFamily: 'Inter_700Bold', lineHeight: 14 }}>{badge}</Text>
-              </View>
-            )}
-          </View>
-        </Pressable>
+          <Pressable
+            key={t.key}
+            onPress={() => onSelect(t.key)}
+            style={[
+              styles.tab,
+              active === t.key && { borderBottomColor: colors.primary, borderBottomWidth: 2 },
+            ]}
+          >
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+              <Text
+                style={[
+                  styles.tabLabel,
+                  {
+                    color: active === t.key ? colors.primary : colors.mutedForeground,
+                    fontFamily: active === t.key ? 'Inter_600SemiBold' : 'Inter_400Regular',
+                  },
+                ]}
+              >
+                {t.label}
+              </Text>
+              {badge != null && badge > 0 && (
+                <View style={{ backgroundColor: colors.primary, borderRadius: 8, minWidth: 16, paddingHorizontal: 3, alignItems: 'center' }}>
+                  <Text style={{ color: colors.primaryForeground, fontSize: 9, fontFamily: 'Inter_700Bold', lineHeight: 14 }}>{badge}</Text>
+                </View>
+              )}
+            </View>
+          </Pressable>
         );
       })}
-    </View>
+      {/* "More" discloses secondary tabs */}
+      <Pressable
+        onPress={openMore}
+        style={[
+          styles.tab,
+          isSecondaryActive && { borderBottomColor: colors.primary, borderBottomWidth: 2 },
+        ]}
+      >
+        <Text style={[
+          styles.tabLabel,
+          { color: isSecondaryActive ? colors.primary : colors.mutedForeground,
+            fontFamily: isSecondaryActive ? 'Inter_600SemiBold' : 'Inter_400Regular' },
+        ]}>
+          {isSecondaryActive ? activeSecondaryLabel : '•••'}
+        </Text>
+      </Pressable>
+    </ScrollView>
   );
 }
 

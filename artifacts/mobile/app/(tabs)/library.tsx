@@ -135,6 +135,7 @@ export default function LibraryScreen() {
   const [uploadProgress, setUploadProgress] = useState(0); // 0–100
   const [workFilter, setWorkFilter] = useState<string | undefined>(undefined); // work_id or undefined = all
   const [sortBy, setSortBy] = useState<'newest' | 'oldest' | 'az' | 'za'>('newest');
+  const [showFilters, setShowFilters] = useState(false); // progressive disclosure for filter chips
   /** Default to hybrid so users get conceptual matches right away.
    *  Falls back to keyword results silently when embeddings are off. */
   const [searchMode, setSearchMode] = useState<'keyword' | 'semantic' | 'hybrid'>('hybrid');
@@ -374,7 +375,7 @@ export default function LibraryScreen() {
         )}
       </View>
 
-      {/* Search */}
+      {/* Search + filter toggle */}
       <View style={[styles.searchRow, { borderBottomColor: colors.border, backgroundColor: colors.background }]}>
         <Feather name="search" size={15} color={colors.mutedForeground} style={styles.searchIcon} />
         <TextInput
@@ -388,6 +389,26 @@ export default function LibraryScreen() {
         {search.length > 0 && (
           <Pressable onPress={() => setSearch('')} hitSlop={8}>
             <Feather name="x" size={15} color={colors.mutedForeground} />
+          </Pressable>
+        )}
+        {!isSearching && (
+          <Pressable
+            onPress={() => setShowFilters(v => !v)}
+            hitSlop={8}
+            style={{
+              marginLeft: 6,
+              paddingHorizontal: 8, paddingVertical: 4,
+              borderRadius: 8,
+              backgroundColor: (showFilters || workFilter) ? colors.primary + '18' : 'transparent',
+              borderWidth: 1,
+              borderColor: (showFilters || workFilter) ? colors.primary + '55' : colors.border,
+            }}
+          >
+            <Feather
+              name="sliders"
+              size={14}
+              color={(showFilters || workFilter) ? colors.primary : colors.mutedForeground}
+            />
           </Pressable>
         )}
       </View>
@@ -457,8 +478,8 @@ export default function LibraryScreen() {
         </View>
       )}
 
-      {/* Work filter chips — only shown when works exist */}
-      {works.length > 0 && (
+      {/* Work filter chips — revealed by the ⊟ filter toggle */}
+      {works.length > 0 && showFilters && (
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
@@ -553,8 +574,8 @@ export default function LibraryScreen() {
         </Pressable>
       )}
 
-      {/* Sort chips — only shown when not searching */}
-      {!isSearching && (
+      {/* Sort chips — revealed by the filter toggle when not searching */}
+      {!isSearching && showFilters && (
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}

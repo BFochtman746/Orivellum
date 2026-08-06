@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -126,6 +126,9 @@ export default function LearnScreen() {
   const totalG = works.reduce((a, w) => a + w.graduated_count, 0);
   const overallPct = totalC > 0 ? Math.round((totalG / totalC) * 100) : 0;
 
+  const [showReadyToSeed, setShowReadyToSeed] = useState(false);
+  const [showImportFirst, setShowImportFirst] = useState(false);
+
   return (
     <ScrollView
       style={[styles.root, { backgroundColor: colors.background }]}
@@ -188,14 +191,30 @@ export default function LearnScreen() {
           )}
           {withKnowledge.length > 0 && (
             <>
-              <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>READY TO SEED</Text>
-              {withKnowledge.map(w => <WorkCard key={w.id} work={w} />)}
+              <Pressable
+                onPress={() => setShowReadyToSeed((v: boolean) => !v)}
+                style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4, marginBottom: showReadyToSeed ? 8 : 4 }}
+              >
+                <Text style={[styles.sectionLabel, { color: colors.mutedForeground, marginBottom: 0, marginTop: 0 }]}>
+                  READY TO SEED ({withKnowledge.length})
+                </Text>
+                <Feather name={showReadyToSeed ? 'chevron-up' : 'chevron-down'} size={12} color={colors.mutedForeground} />
+              </Pressable>
+              {showReadyToSeed && withKnowledge.map(w => <WorkCard key={w.id} work={w} />)}
             </>
           )}
           {empty.length > 0 && (
             <>
-              <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>IMPORT DOCS FIRST</Text>
-              {empty.map(w => <WorkCard key={w.id} work={w} />)}
+              <Pressable
+                onPress={() => setShowImportFirst((v: boolean) => !v)}
+                style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4, marginBottom: showImportFirst ? 8 : 4 }}
+              >
+                <Text style={[styles.sectionLabel, { color: colors.mutedForeground, marginBottom: 0, marginTop: 0 }]}>
+                  IMPORT DOCS FIRST ({empty.length})
+                </Text>
+                <Feather name={showImportFirst ? 'chevron-up' : 'chevron-down'} size={12} color={colors.mutedForeground} />
+              </Pressable>
+              {showImportFirst && empty.map(w => <WorkCard key={w.id} work={w} />)}
             </>
           )}
         </>

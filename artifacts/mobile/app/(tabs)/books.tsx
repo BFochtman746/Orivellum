@@ -165,7 +165,7 @@ export default function BooksScreen() {
         <Text style={[styles.pageTitle, { color: colors.foreground }]}>Books</Text>
       </View>
       <Text style={[styles.pageSubtitle, { color: colors.mutedForeground }]}>
-        Long-form projects in the 17-stage pipeline
+        Long-form projects through the production pipeline
       </Text>
 
       {isLoading ? (
