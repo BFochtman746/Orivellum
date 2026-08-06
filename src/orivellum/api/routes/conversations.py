@@ -1371,13 +1371,17 @@ def _build_system_prompt(db: Any, conv: dict, scope: str = "work",
     work_id = conv.get("work_id")
 
     # ── Chapter-scoped context injection ───────────────────────────────────────
-    # Detects "chapter N / chapter five / chapter one" in the query and injects
-    # that chapter's text + its chapter-tagged knowledge items before the main
-    # knowledge search so the model has precise, chapter-level grounding.
+    # Detection priority (highest first):
+    #   1. "chapter N" / "chapter five" — numeric or word-number match on seq.
+    #   2. Chapter title match — any chapter whose title appears verbatim in the
+    #      query (case-insensitive, ≥ 4 chars, longest title wins on ties).
+    # Whichever path matches first injects that chapter's extracted text +
+    # its chapter-tagged knowledge items so the model has precise grounding.
     _chapter_block = ""
     if user_query and work_id:
         try:
             import re as _re
+
             _CH_RE = _re.compile(
                 r"\bchapter\s+(\d+|one|two|three|four|five|six|seven|eight|nine|ten"
                 r"|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen"
@@ -1391,8 +1395,11 @@ def _build_system_prompt(db: Any, conv: dict, scope: str = "work",
                 "fifteen": 15, "sixteen": 16, "seventeen": 17, "eighteen": 18,
                 "nineteen": 19, "twenty": 20,
             }
+
+            _ch_row = None
             _cm = _CH_RE.search(user_query)
             if _cm:
+                # Path 1 — "chapter N" / "chapter five"
                 _raw = _cm.group(1)
                 _ch_num = int(_raw) if _raw.isdigit() else _ORD.get(_raw.lower(), 0)
                 if _ch_num > 0:
@@ -1406,29 +1413,52 @@ def _build_system_prompt(db: Any, conv: dict, scope: str = "work",
                                ORDER BY bc.created_at LIMIT 1""",
                             (work_id, _ch_num - 1),
                         ).fetchone()
-                    if _ch_row:
-                        _ch_title  = _ch_row["title"] or f"Chapter {_ch_num}"
-                        _ch_text   = (_ch_row["text"] or "")[:3_000]
-                        _ch_id     = _ch_row["id"]
-                        # Chapter-tagged knowledge items
-                        with db._lock:
-                            _ch_k = db._conn.execute(
-                                """SELECT text FROM knowledge
-                                   WHERE chapter_id = ?
-                                     AND review_status IN ('auto','approved','ai_auto')
-                                   ORDER BY confidence DESC LIMIT 12""",
-                                (_ch_id,),
-                            ).fetchall()
-                        _k_lines = [f"  • {r['text']}" for r in _ch_k]
-                        _chapter_block = (
-                            f"CHAPTER CONTEXT — {_ch_title}:\n{_ch_text}"
-                        )
-                        if _k_lines:
-                            _chapter_block += (
-                                "\n\nKNOWLEDGE FROM THIS CHAPTER:\n"
-                                + "\n".join(_k_lines)
-                            )
-                        _chapter_block = _chapter_block.strip()
+
+            if _ch_row is None:
+                # Path 2 — chapter title mention.
+                # Fetch all titles for this work, find the longest one that
+                # appears verbatim in the query (longest-wins to be specific).
+                with db._lock:
+                    _all_titles = db._conn.execute(
+                        """SELECT bc.id, bc.title, bc.text
+                           FROM book_chapters bc
+                           JOIN documents d ON d.id = bc.source_doc_id
+                           WHERE d.work_id = ? AND bc.title IS NOT NULL
+                             AND length(bc.title) >= 4
+                           ORDER BY bc.seq""",
+                        (work_id,),
+                    ).fetchall()
+                _uq = user_query.lower()
+                _best: tuple[int, Any] = (0, None)   # (title_len, row)
+                for _tr in _all_titles:
+                    _t = (_tr["title"] or "").strip()
+                    if len(_t) >= 4 and _t.lower() in _uq:
+                        if len(_t) > _best[0]:
+                            _best = (len(_t), _tr)
+                if _best[1] is not None:
+                    _ch_row = _best[1]
+
+            if _ch_row:
+                _ch_title = _ch_row["title"] or "Chapter"
+                _ch_text  = (_ch_row["text"] or "")[:3_000]
+                _ch_id    = _ch_row["id"]
+                # Chapter-tagged knowledge items
+                with db._lock:
+                    _ch_k = db._conn.execute(
+                        """SELECT text FROM knowledge
+                           WHERE chapter_id = ?
+                             AND review_status IN ('auto','approved','ai_auto')
+                           ORDER BY confidence DESC LIMIT 12""",
+                        (_ch_id,),
+                    ).fetchall()
+                _k_lines = [f"  • {r['text']}" for r in _ch_k]
+                _chapter_block = f"CHAPTER CONTEXT — {_ch_title}:\n{_ch_text}"
+                if _k_lines:
+                    _chapter_block += (
+                        "\n\nKNOWLEDGE FROM THIS CHAPTER:\n"
+                        + "\n".join(_k_lines)
+                    )
+                _chapter_block = _chapter_block.strip()
         except Exception:
             _chapter_block = ""
 

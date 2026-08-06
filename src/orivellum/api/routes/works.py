@@ -541,6 +541,66 @@ def works_chapters(work_id: str):
     }
 
 
+@router.get("/works/{work_id}/chapters/{chapter_id}/knowledge")
+def works_chapter_knowledge(work_id: str, chapter_id: str, limit: int = 50):
+    """Return knowledge items tagged to a specific chapter.
+
+    Items are ordered by kind then confidence (descending).
+    Only items with review_status in ('auto', 'approved', 'ai_auto') are returned —
+    rejected items are excluded so the UI never shows noise the user dismissed.
+
+    Query params:
+      limit — max items to return (default 50, max 200)
+    """
+    db = get_db()
+    if not db.get_work(work_id):
+        raise HTTPException(404, f"Work {work_id!r} not found")
+
+    limit = min(limit, 200)
+    with db._lock:
+        # Verify the chapter belongs to this work
+        ch = db._conn.execute(
+            """SELECT bc.id, bc.title, bc.seq
+               FROM book_chapters bc
+               JOIN documents d ON d.id = bc.source_doc_id
+               WHERE bc.id = ? AND d.work_id = ?""",
+            (chapter_id, work_id),
+        ).fetchone()
+    if not ch:
+        raise HTTPException(404, f"Chapter {chapter_id!r} not found in work {work_id!r}")
+
+    import json as _json
+    with db._lock:
+        rows = db._conn.execute(
+            """SELECT id, kind, text, subject, predicate, object as obj,
+                      confidence, review_status, meta, created_at
+               FROM knowledge
+               WHERE chapter_id = ?
+                 AND review_status IN ('auto', 'approved', 'ai_auto')
+               ORDER BY kind, confidence DESC
+               LIMIT ?""",
+            (chapter_id, limit),
+        ).fetchall()
+
+    items = []
+    for r in rows:
+        d = dict(r)
+        try:
+            d["meta"] = _json.loads(d.get("meta") or "{}")
+        except Exception:
+            d["meta"] = {}
+        items.append(d)
+
+    return {
+        "chapter_id": chapter_id,
+        "chapter_title": ch["title"] or f"Chapter {ch['seq'] + 1}",
+        "chapter_seq": ch["seq"],
+        "work_id": work_id,
+        "knowledge": items,
+        "count": len(items),
+    }
+
+
 # ─── Project Compass ───────────────────────────────────────────────────────────
 
 class CompassUpdate(BaseModel):

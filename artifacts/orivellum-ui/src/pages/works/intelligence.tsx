@@ -54,6 +54,11 @@ interface GapReport {
 interface Chapter {
   id: string; seq: number; level: number; title: string;
   word_count: number; status: string; extraction_method: string; source_doc_id: string;
+  knowledge_count: number;
+}
+interface ChapterKnowledgeItem {
+  id: string; kind: string; text: string;
+  confidence?: number; review_status?: string;
 }
 interface ChapterDoc { doc_title: string; doc_id: string; chapters: Chapter[]; }
 interface ChaptersResponse { work_id: string; total_chapters: number; documents: ChapterDoc[]; }
@@ -524,50 +529,13 @@ export default function WorkIntelligence() {
         <Section id="chapters" label="Chapter Structure" icon={BookOpen}
           open={open.has("chapters")} onToggle={() => toggle("chapters")}
           badge={String(chaptersData.total_chapters)}>
-          <div className="space-y-4">
-            {chaptersData.documents.map((docGroup) => {
-              const missingChapters = docGroup.chapters.filter(ch => ch.status === "missing");
-              return (
-                <div key={docGroup.doc_id}>
-                  <div className="flex items-center gap-2 py-1.5 mb-1.5 border-b border-border/30">
-                    <FileText className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                    <span className="text-xs font-mono font-semibold text-muted-foreground truncate flex-1">{docGroup.doc_title}</span>
-                    <Badge variant="outline" className="text-[9px] font-mono shrink-0">
-                      {docGroup.chapters.length} ch
-                    </Badge>
-                    {/* Reprocess CTA when there are missing chapters */}
-                    {missingChapters.length > 0 && (
-                      <button
-                        className="flex items-center gap-1 text-[10px] font-mono text-amber-700 hover:text-amber-900 transition-colors shrink-0"
-                        onClick={() => navigate(`${LIB}/${docGroup.doc_id}`)}
-                        title={`${missingChapters.length} missing chapter${missingChapters.length !== 1 ? "s" : ""} — view document in Library`}
-                      >
-                        <RotateCw className="w-3 h-3" />
-                        Reprocess ({missingChapters.length} missing)
-                      </button>
-                    )}
-                  </div>
-                  <div className="pl-5 space-y-1">
-                    {docGroup.chapters.map((ch) => (
-                      <div key={ch.id}
-                        className={`flex items-center gap-2 text-xs py-0.5 ${ch.status === "missing" ? "text-red-600/80" : "text-muted-foreground"}`}>
-                        <span className="font-mono w-5 text-right shrink-0 opacity-50">{ch.seq}.</span>
-                        <span className={`truncate flex-1 ${ch.level > 1 ? "pl-" + ((ch.level - 1) * 2) : ""}`}>
-                          {ch.title || "(untitled)"}
-                        </span>
-                        {ch.status === "missing" && (
-                          <span className="text-[9px] font-mono uppercase bg-red-100 text-red-600 px-1 rounded shrink-0">missing</span>
-                        )}
-                        {ch.word_count > 0 && (
-                          <span className="font-mono opacity-40 shrink-0">{ch.word_count.toLocaleString()}w</span>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+          <ChapterList
+            workId={workId!}
+            chaptersData={chaptersData}
+            baseApiUrl={BASE}
+            onNavigate={navigate}
+            libBase={LIB}
+          />
         </Section>
       )}
 
@@ -656,6 +624,203 @@ export default function WorkIntelligence() {
           Full Work detail →
         </Button>
       </div>
+    </div>
+  );
+}
+
+// ── Chapter list with expandable knowledge panels ──────────────────────────────
+
+const KIND_COLOR: Record<string, string> = {
+  character:     "text-violet-700 border-violet-200 bg-violet-50",
+  event:         "text-blue-700   border-blue-200   bg-blue-50",
+  setting:       "text-emerald-700 border-emerald-200 bg-emerald-50",
+  relationship:  "text-amber-700  border-amber-200  bg-amber-50",
+  theme:         "text-rose-700   border-rose-200   bg-rose-50",
+  foreshadowing: "text-indigo-700 border-indigo-200 bg-indigo-50",
+};
+
+function ChapterKnowledgePanel({ workId, chapterId, baseApiUrl }: {
+  workId: string; chapterId: string; baseApiUrl: string;
+}) {
+  const { data, isLoading, isError } = useQuery<{
+    knowledge: ChapterKnowledgeItem[]; count: number; chapter_title: string;
+  }>({
+    queryKey: ["chapter-knowledge", workId, chapterId],
+    queryFn: () =>
+      apiFetch(`${baseApiUrl}/works/${workId}/chapters/${chapterId}/knowledge`)
+        .then((r) => r.json()),
+    staleTime: 60_000,
+  });
+
+  if (isLoading) {
+    return (
+      <div className="pl-7 pt-1.5 pb-2 space-y-1">
+        {[1, 2, 3].map(i => <Skeleton key={i} className="h-5 w-full" />)}
+      </div>
+    );
+  }
+  if (isError || !data) {
+    return (
+      <p className="pl-7 pt-1 text-[11px] font-mono text-red-500">
+        Could not load chapter knowledge.
+      </p>
+    );
+  }
+  if (data.count === 0) {
+    return (
+      <p className="pl-7 pt-1 pb-2 text-[11px] font-mono text-muted-foreground/60 italic">
+        No knowledge items extracted for this chapter yet.
+      </p>
+    );
+  }
+
+  // Group by kind
+  const grouped: Record<string, ChapterKnowledgeItem[]> = {};
+  for (const item of data.knowledge) {
+    (grouped[item.kind] ??= []).push(item);
+  }
+
+  return (
+    <div className="pl-7 pt-1 pb-2 space-y-2">
+      {Object.entries(grouped).map(([kind, items]) => (
+        <div key={kind}>
+          <p className="text-[9px] font-mono uppercase tracking-wider text-muted-foreground/50 mb-0.5">
+            {kind} ({items.length})
+          </p>
+          <div className="space-y-0.5">
+            {items.map((item) => (
+              <div key={item.id}
+                className="flex items-start gap-2 text-[11px] leading-snug text-muted-foreground">
+                <span className={`shrink-0 mt-0.5 text-[8px] font-mono font-semibold uppercase px-1 py-px rounded border ${KIND_COLOR[item.kind] ?? "text-muted-foreground border-border"}`}>
+                  {kind.slice(0, 4)}
+                </span>
+                <span className="flex-1 min-w-0">{item.text}</span>
+                {item.confidence != null && (
+                  <span className="shrink-0 text-[9px] font-mono opacity-40">
+                    {(item.confidence * 100).toFixed(0)}%
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ChapterList({
+  workId, chaptersData, baseApiUrl, onNavigate, libBase,
+}: {
+  workId: string;
+  chaptersData: ChaptersResponse;
+  baseApiUrl: string;
+  onNavigate: (path: string) => void;
+  libBase: string;
+}) {
+  const [expandedChapters, setExpandedChapters] = useState<Set<string>>(new Set());
+
+  const toggleChapter = (id: string) =>
+    setExpandedChapters(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+
+  return (
+    <div className="space-y-4">
+      {chaptersData.documents.map((docGroup) => {
+        const missingChapters = docGroup.chapters.filter(ch => ch.status === "missing");
+        return (
+          <div key={docGroup.doc_id}>
+            {/* Document header row */}
+            <div className="flex items-center gap-2 py-1.5 mb-1 border-b border-border/30">
+              <FileText className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+              <span className="text-xs font-mono font-semibold text-muted-foreground truncate flex-1">
+                {docGroup.doc_title}
+              </span>
+              <Badge variant="outline" className="text-[9px] font-mono shrink-0">
+                {docGroup.chapters.length} ch
+              </Badge>
+              {missingChapters.length > 0 && (
+                <button
+                  className="flex items-center gap-1 text-[10px] font-mono text-amber-700 hover:text-amber-900 transition-colors shrink-0"
+                  onClick={() => onNavigate(`${libBase}/${docGroup.doc_id}`)}
+                  title={`${missingChapters.length} missing chapter${missingChapters.length !== 1 ? "s" : ""} — view document in Library`}
+                >
+                  <RotateCw className="w-3 h-3" />
+                  Reprocess ({missingChapters.length} missing)
+                </button>
+              )}
+            </div>
+
+            {/* Chapter rows */}
+            <div className="space-y-0.5">
+              {docGroup.chapters.map((ch) => {
+                const isExpanded = expandedChapters.has(ch.id);
+                const hasKnowledge = (ch.knowledge_count ?? 0) > 0;
+                const isMissing = ch.status === "missing";
+                return (
+                  <div key={ch.id}>
+                    {/* Chapter row */}
+                    <div
+                      className={`flex items-center gap-2 text-xs py-0.5 rounded px-1 -mx-1 group
+                        ${isMissing ? "text-red-600/80" : "text-muted-foreground"}
+                        ${hasKnowledge ? "hover:bg-muted/30 cursor-pointer" : ""}`}
+                      onClick={hasKnowledge ? () => toggleChapter(ch.id) : undefined}
+                      title={hasKnowledge ? (isExpanded ? "Collapse knowledge" : `Show ${ch.knowledge_count} knowledge items`) : undefined}
+                    >
+                      {/* Expand chevron */}
+                      <span className={`w-3.5 h-3.5 shrink-0 flex items-center justify-center transition-transform
+                        ${hasKnowledge ? "opacity-40 group-hover:opacity-70" : "opacity-0"}`}>
+                        {isExpanded
+                          ? <ChevronDown className="w-3 h-3" />
+                          : <ChevronRight className="w-3 h-3" />}
+                      </span>
+
+                      <span className="font-mono w-5 text-right shrink-0 opacity-40">
+                        {ch.seq + 1}.
+                      </span>
+
+                      <span className={`truncate flex-1 ${ch.level > 1 ? `pl-${(ch.level - 1) * 3}` : ""}`}>
+                        {ch.title || "(untitled)"}
+                      </span>
+
+                      {isMissing && (
+                        <span className="text-[9px] font-mono uppercase bg-red-100 text-red-600 px-1 rounded shrink-0">
+                          missing
+                        </span>
+                      )}
+
+                      {hasKnowledge && (
+                        <Badge variant="outline"
+                          className="text-[8px] font-mono border-primary/20 text-primary/60 shrink-0 py-0 h-4">
+                          {ch.knowledge_count} items
+                        </Badge>
+                      )}
+
+                      {ch.word_count > 0 && (
+                        <span className="font-mono opacity-30 shrink-0 text-[10px]">
+                          {ch.word_count.toLocaleString()}w
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Expanded knowledge panel */}
+                    {isExpanded && hasKnowledge && (
+                      <ChapterKnowledgePanel
+                        workId={workId}
+                        chapterId={ch.id}
+                        baseApiUrl={baseApiUrl}
+                      />
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
