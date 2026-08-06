@@ -32,6 +32,7 @@ import {
   getListConversationsQueryKey,
   getGetWorkTasksQueryKey,
   getGetWorkStatsQueryKey,
+  getGetWorkQueryKey,
 } from '@workspace/api-client-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
@@ -1179,13 +1180,14 @@ function GenerateSection({ workId, colors }: { workId: string; colors: any }) {
   );
 }
 
-function OverviewTab({ workId, onStartDiscussion, starting, onNavigateToTab, bookIntel, onOpenBook }: {
+function OverviewTab({ workId, onStartDiscussion, starting, onNavigateToTab, bookIntel, onOpenBook, onTargetsSaved }: {
   workId: string;
   onStartDiscussion: () => void;
   starting: boolean;
   onNavigateToTab?: (tab: Tab) => void;
   bookIntel?: any;
   onOpenBook?: () => void;
+  onTargetsSaved?: () => void;
 }) {
   const colors = useColors();
   const { data: workData, isLoading, isError, refetch } = useGetWork(workId);
@@ -1194,6 +1196,57 @@ function OverviewTab({ workId, onStartDiscussion, starting, onNavigateToTab, boo
   const [editingDesc, setEditingDesc] = useState(false);
   const [descDraft, setDescDraft] = useState('');
   const { mutate: updateWork } = useUpdateWork();
+
+  // ── Targets editing ──────────────────────────────────────────────────────
+  const [editingTargets, setEditingTargets] = useState(false);
+  const [wordInput, setWordInput]           = useState('');
+  const [chapterInput, setChapterInput]     = useState('');
+  const [savingTargets, setSavingTargets]   = useState(false);
+
+  const currentMeta = (work as any)?.meta ?? {};
+  const savedTargets = (currentMeta?.completeness_targets ?? {}) as {
+    word_target?: number;
+    chapter_target?: number;
+  };
+
+  const openTargetEditor = () => {
+    setWordInput(String(savedTargets.word_target ?? 50000));
+    setChapterInput(String(savedTargets.chapter_target ?? 10));
+    setEditingTargets(true);
+  };
+
+  const saveTargets = () => {
+    const wt = parseInt(wordInput, 10);
+    const ct = parseInt(chapterInput, 10);
+    if (!wt || !ct || wt < 1 || ct < 1) {
+      Alert.alert('Invalid targets', 'Word count and chapter count must be positive numbers.');
+      return;
+    }
+    setSavingTargets(true);
+    const mergedMeta = { ...currentMeta, completeness_targets: { word_target: wt, chapter_target: ct } };
+    updateWork(
+      { workId, data: { meta: mergedMeta } },
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: getGetWorkQueryKey(workId) });
+          setEditingTargets(false);
+          setSavingTargets(false);
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          onTargetsSaved?.();
+        },
+        onError: () => {
+          setSavingTargets(false);
+          Alert.alert('Save failed', 'Could not save targets — check your connection.');
+        },
+      },
+    );
+  };
+
+  const cancelTargets = () => {
+    setEditingTargets(false);
+    setWordInput('');
+    setChapterInput('');
+  };
 
   const startDescEdit = () => {
     setDescDraft(work?.description ?? '');
@@ -1394,6 +1447,168 @@ function OverviewTab({ workId, onStartDiscussion, starting, onNavigateToTab, boo
           </View>
         );
       })()}
+
+      {/* ── Completeness targets card ─────────────────────────────────── */}
+      <View style={{
+        marginTop: 16, borderWidth: 1, borderRadius: 10,
+        borderColor: colors.border, overflow: 'hidden',
+      }}>
+        {/* Header */}
+        <View style={{
+          flexDirection: 'row', alignItems: 'center', gap: 8,
+          paddingHorizontal: 14, paddingVertical: 10,
+          borderBottomWidth: editingTargets ? StyleSheet.hairlineWidth : 0,
+          borderBottomColor: colors.border,
+          backgroundColor: colors.muted + '44',
+        }}>
+          <Feather name="target" size={14} color={colors.primary} />
+          <Text style={{ fontSize: 12, fontWeight: '600', color: colors.foreground, flex: 1 }}>
+            Completeness Targets
+          </Text>
+          {!editingTargets && (
+            <Pressable
+              onPress={openTargetEditor}
+              hitSlop={8}
+              style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1, padding: 4 })}
+            >
+              <Feather name="edit-2" size={13} color={colors.primary} />
+            </Pressable>
+          )}
+        </View>
+
+        {/* Summary row (view mode) */}
+        {!editingTargets && (
+          <Pressable
+            onPress={openTargetEditor}
+            style={({ pressed }) => ({
+              paddingHorizontal: 14, paddingVertical: 12,
+              flexDirection: 'row', alignItems: 'center', gap: 8,
+              opacity: pressed ? 0.7 : 1,
+            })}
+          >
+            <View style={{ flex: 1, gap: 4 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <Feather name="file-text" size={12} color={colors.mutedForeground} />
+                <Text style={{ fontSize: 13, color: colors.foreground }}>
+                  {savedTargets.word_target
+                    ? `${Number(savedTargets.word_target).toLocaleString()} words`
+                    : '50,000 words'}
+                  {!savedTargets.word_target && (
+                    <Text style={{ color: colors.mutedForeground, fontSize: 11 }}> (default)</Text>
+                  )}
+                </Text>
+              </View>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <Feather name="layers" size={12} color={colors.mutedForeground} />
+                <Text style={{ fontSize: 13, color: colors.foreground }}>
+                  {savedTargets.chapter_target
+                    ? `${savedTargets.chapter_target} chapters`
+                    : '10 chapters'}
+                  {!savedTargets.chapter_target && (
+                    <Text style={{ color: colors.mutedForeground, fontSize: 11 }}> (default)</Text>
+                  )}
+                </Text>
+              </View>
+            </View>
+            <Feather name="chevron-right" size={14} color={colors.mutedForeground} />
+          </Pressable>
+        )}
+
+        {/* Inline edit form */}
+        {editingTargets && (
+          <View style={{ paddingHorizontal: 14, paddingVertical: 12, gap: 12 }}>
+            {/* Word target row */}
+            <View style={{ gap: 4 }}>
+              <Text style={{ fontSize: 11, fontWeight: '600', color: colors.mutedForeground, textTransform: 'uppercase', letterSpacing: 0.6 }}>
+                Word target
+              </Text>
+              <View style={{
+                flexDirection: 'row', alignItems: 'center', gap: 8,
+                borderWidth: 1, borderColor: colors.primary + '88', borderRadius: 8,
+                paddingHorizontal: 10, paddingVertical: 8,
+                backgroundColor: colors.card,
+              }}>
+                <Feather name="file-text" size={14} color={colors.primary} />
+                <TextInput
+                  style={{ flex: 1, fontSize: 15, color: colors.foreground, fontFamily: 'Inter_400Regular' }}
+                  value={wordInput}
+                  onChangeText={setWordInput}
+                  keyboardType="number-pad"
+                  placeholder="e.g. 80000"
+                  placeholderTextColor={colors.mutedForeground}
+                  editable={!savingTargets}
+                  returnKeyType="next"
+                  selectTextOnFocus
+                />
+                <Text style={{ fontSize: 11, color: colors.mutedForeground }}>words</Text>
+              </View>
+            </View>
+
+            {/* Chapter target row */}
+            <View style={{ gap: 4 }}>
+              <Text style={{ fontSize: 11, fontWeight: '600', color: colors.mutedForeground, textTransform: 'uppercase', letterSpacing: 0.6 }}>
+                Chapter target
+              </Text>
+              <View style={{
+                flexDirection: 'row', alignItems: 'center', gap: 8,
+                borderWidth: 1, borderColor: colors.primary + '88', borderRadius: 8,
+                paddingHorizontal: 10, paddingVertical: 8,
+                backgroundColor: colors.card,
+              }}>
+                <Feather name="layers" size={14} color={colors.primary} />
+                <TextInput
+                  style={{ flex: 1, fontSize: 15, color: colors.foreground, fontFamily: 'Inter_400Regular' }}
+                  value={chapterInput}
+                  onChangeText={setChapterInput}
+                  keyboardType="number-pad"
+                  placeholder="e.g. 20"
+                  placeholderTextColor={colors.mutedForeground}
+                  editable={!savingTargets}
+                  returnKeyType="done"
+                  onSubmitEditing={saveTargets}
+                  selectTextOnFocus
+                />
+                <Text style={{ fontSize: 11, color: colors.mutedForeground }}>chapters</Text>
+              </View>
+            </View>
+
+            {/* Action buttons */}
+            <View style={{ flexDirection: 'row', gap: 8, marginTop: 4 }}>
+              <Pressable
+                onPress={cancelTargets}
+                disabled={savingTargets}
+                style={({ pressed }) => ({
+                  flex: 1, paddingVertical: 10, borderRadius: 8, alignItems: 'center',
+                  borderWidth: 1, borderColor: colors.border,
+                  backgroundColor: pressed ? colors.muted : 'transparent',
+                  opacity: savingTargets ? 0.5 : 1,
+                })}
+              >
+                <Text style={{ fontSize: 13, fontWeight: '600', color: colors.mutedForeground }}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                onPress={saveTargets}
+                disabled={savingTargets}
+                style={({ pressed }) => ({
+                  flex: 2, paddingVertical: 10, borderRadius: 8,
+                  alignItems: 'center', justifyContent: 'center',
+                  flexDirection: 'row', gap: 6,
+                  backgroundColor: savingTargets
+                    ? colors.muted
+                    : pressed ? colors.primary + 'cc' : colors.primary,
+                })}
+              >
+                {savingTargets
+                  ? <ActivityIndicator size="small" color="#fff" />
+                  : <Feather name="check" size={14} color="#fff" />}
+                <Text style={{ fontSize: 13, fontWeight: '600', color: savingTargets ? colors.mutedForeground : '#fff' }}>
+                  {savingTargets ? 'Saving…' : 'Save targets'}
+                </Text>
+              </Pressable>
+            </View>
+          </View>
+        )}
+      </View>
 
       {/* Generate & Export */}
       <GenerateSection workId={workId} colors={colors} />
@@ -2950,6 +3165,7 @@ export default function WorkDetailScreen() {
             onNavigateToTab={setActiveTab}
             bookIntel={bookIntel}
             onOpenBook={() => setActiveTab('book')}
+            onTargetsSaved={fetchBookIntel}
           />
         );
       case 'docs':
