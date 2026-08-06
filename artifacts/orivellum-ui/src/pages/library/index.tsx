@@ -20,7 +20,7 @@ import {
   Search, Upload, FileText, Database, Filter,
   Library as LibraryIcon, AlertCircle, RefreshCw, Trash2,
   CheckCircle2, Clock, FileQuestion, X, Package, Layers,
-  FolderOpen, Sparkles, GitMerge, Star, GitBranch, Download, Network,
+  FolderOpen, Sparkles, GitMerge, Star, GitBranch, Download, Network, StopCircle,
 } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
@@ -302,7 +302,7 @@ interface ImportDialogProps {
   defaultOpen?: boolean;
 }
 
-type FileState = "pending" | "uploading" | "done" | "duplicate" | "error";
+type FileState = "pending" | "uploading" | "done" | "duplicate" | "error" | "cancelled";
 
 interface FileStatus {
   file: File;
@@ -324,6 +324,10 @@ function ImportDialog({ onSuccess, defaultOpen = false }: ImportDialogProps) {
   const [dragging, setDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  // Abort support: cancelledRef is a stop-flag; xhrRef holds the in-flight XHR
+  // so it can be aborted synchronously from handleStop without a state update.
+  const cancelledRef = useRef(false);
+  const xhrRef = useRef<XMLHttpRequest | null>(null);
   const [, navigateTo] = useLocation();
   const { data: worksResp } = useListWorks();
 
@@ -353,12 +357,20 @@ function ImportDialog({ onSuccess, defaultOpen = false }: ImportDialogProps) {
 
   const uploadOne = (status: FileStatus, idx: number, wId: string): Promise<void> =>
     new Promise((resolve) => {
+      // If the stop flag is already set, mark this file cancelled immediately.
+      if (cancelledRef.current) {
+        updateStatus(idx, { state: "cancelled", pct: 0 });
+        resolve();
+        return;
+      }
+
       updateStatus(idx, { state: "uploading", pct: 0 });
       const form = new FormData();
       form.append("file", status.file, status.file.name);
       if (wId) form.append("work_id", wId);
 
       const xhr = new XMLHttpRequest();
+      xhrRef.current = xhr;
       xhr.open("POST", `${BASE}/library/upload`);
       xhr.withCredentials = true;
 
@@ -369,6 +381,7 @@ function ImportDialog({ onSuccess, defaultOpen = false }: ImportDialogProps) {
       };
 
       xhr.onload = () => {
+        xhrRef.current = null;
         if (xhr.status < 200 || xhr.status >= 300) {
           let detail = `HTTP ${xhr.status}`;
           try { detail = JSON.parse(xhr.responseText)?.detail ?? detail; } catch {}
@@ -386,19 +399,32 @@ function ImportDialog({ onSuccess, defaultOpen = false }: ImportDialogProps) {
       };
 
       xhr.onerror = () => {
+        xhrRef.current = null;
         updateStatus(idx, { state: "error", pct: 0, error: "Network error" });
         resolve(); // continue queue even on failure
+      };
+
+      xhr.onabort = () => {
+        xhrRef.current = null;
+        updateStatus(idx, { state: "cancelled", pct: 0 });
+        resolve();
       };
 
       xhr.send(form);
     });
 
   // Shared finish logic — inspects the final queue snapshot after a run completes.
+  // Does not auto-close when any file was cancelled (user stopped deliberately).
   const finishRun = (final: FileStatus[]) => {
-    const done  = final.filter((s) => s.state === "done").length;
-    const dupes = final.filter((s) => s.state === "duplicate");
-    const errors = final.filter((s) => s.state === "error").length;
-    const total  = final.length;
+    const done      = final.filter((s) => s.state === "done").length;
+    const dupes     = final.filter((s) => s.state === "duplicate");
+    const errors    = final.filter((s) => s.state === "error").length;
+    const cancelled = final.filter((s) => s.state === "cancelled").length;
+    const total     = final.length;
+
+    // Don't auto-close when files were cancelled — the user stopped the run on
+    // purpose and may want to inspect what happened before dismissing.
+    if (cancelled > 0) return;
 
     if (errors === 0) {
       if (total === 1) {
@@ -428,33 +454,63 @@ function ImportDialog({ onSuccess, defaultOpen = false }: ImportDialogProps) {
     }
   };
 
+  const handleStop = () => {
+    cancelledRef.current = true;
+    xhrRef.current?.abort();
+    // uploading + setUploading(false) happen after the current uploadOne promise
+    // resolves (via onabort), so the loop in handleImport exits naturally.
+  };
+
   const handleImport = async () => {
     const pending = queue.filter((s) => s.state === "pending");
     if (!pending.length || uploading) return;
+    cancelledRef.current = false;
     setUploading(true);
 
     // Upload sequentially using the closure snapshot — drops are blocked while
     // uploading so queue.length is stable for the duration of this loop.
     for (let i = 0; i < queue.length; i++) {
       if (queue[i].state !== "pending") continue;
+      // If stop was requested mid-loop, mark remaining files cancelled immediately.
+      if (cancelledRef.current) {
+        updateStatus(i, { state: "cancelled", pct: 0 });
+        continue;
+      }
       await uploadOne(queue[i], i, workId);
     }
 
     onSuccess();
     setUploading(false);
-    setQueue((final) => { finishRun(final); return final; });
+
+    if (cancelledRef.current) {
+      // Show a summary toast but leave the dialog open so the user can see results.
+      setQueue((final) => {
+        const done = final.filter((s) => s.state === "done" || s.state === "duplicate").length;
+        const total = final.length;
+        if (done > 0) {
+          toast.info(`Import stopped — ${done} of ${total} uploaded`, { duration: 5000 });
+        } else {
+          toast.info("Import cancelled — no files were uploaded");
+        }
+        return final;
+      });
+    } else {
+      setQueue((final) => { finishRun(final); return final; });
+    }
   };
 
   // Immediately retry a single failed file without re-running the whole queue.
   const retryFile = async (status: FileStatus, idx: number) => {
     if (uploading) return;
+    // Clear any lingering stop flag so a single-file retry always sends the XHR.
+    cancelledRef.current = false;
     setUploading(true);
     await uploadOne(status, idx, workId);
     onSuccess();
     setUploading(false);
     setQueue((final) => {
       const allTerminal = final.every(
-        (s) => s.state === "done" || s.state === "duplicate" || s.state === "error"
+        (s) => s.state === "done" || s.state === "duplicate" || s.state === "error" || s.state === "cancelled"
       );
       if (allTerminal) finishRun(final);
       return final;
@@ -467,10 +523,11 @@ function ImportDialog({ onSuccess, defaultOpen = false }: ImportDialogProps) {
   const total = queue.length;
 
   const stateIcon = (s: FileStatus) => {
-    if (s.state === "done") return <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />;
+    if (s.state === "done")      return <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />;
     if (s.state === "duplicate") return <CheckCircle2 className="w-3.5 h-3.5 text-blue-400 shrink-0" />;
-    if (s.state === "error") return <AlertCircle className="w-3.5 h-3.5 text-destructive shrink-0" />;
-    if (s.state === "uploading") return <Clock className="w-3.5 h-3.5 text-primary animate-pulse shrink-0" />;
+    if (s.state === "error")     return <AlertCircle  className="w-3.5 h-3.5 text-destructive shrink-0" />;
+    if (s.state === "uploading") return <Clock        className="w-3.5 h-3.5 text-primary animate-pulse shrink-0" />;
+    if (s.state === "cancelled") return <X            className="w-3.5 h-3.5 text-muted-foreground shrink-0" />;
     return <FileText className="w-3.5 h-3.5 text-muted-foreground shrink-0" />;
   };
 
@@ -546,6 +603,8 @@ function ImportDialog({ onSuccess, defaultOpen = false }: ImportDialogProps) {
                     <p className="text-[10px] text-destructive font-mono mt-0.5 truncate">{s.error}</p>
                   ) : s.state === "duplicate" ? (
                     <p className="text-[10px] text-blue-500 font-mono mt-0.5">already in library</p>
+                  ) : s.state === "cancelled" ? (
+                    <p className="text-[10px] text-muted-foreground font-mono mt-0.5">cancelled</p>
                   ) : (
                     <p className="text-[10px] text-muted-foreground font-mono">{fmt(s.file.size)}</p>
                   )}
@@ -600,11 +659,20 @@ function ImportDialog({ onSuccess, defaultOpen = false }: ImportDialogProps) {
           <Button variant="outline" onClick={() => { setOpen(false); setQueue([]); setWorkId(""); }} disabled={uploading}>
             Cancel
           </Button>
-          <Button onClick={handleImport} disabled={!anyPending || uploading}>
-            {uploading
-              ? `Uploading ${doneCount + uploadingCount} of ${total}…`
-              : `Import ${queue.filter(s => s.state === "pending").length || ""} ${queue.filter(s => s.state === "pending").length === 1 ? "file" : "files"}`.trim()}
-          </Button>
+          {uploading ? (
+            <Button
+              variant="destructive"
+              onClick={handleStop}
+              className="gap-1.5"
+            >
+              <StopCircle className="w-4 h-4" />
+              Stop
+            </Button>
+          ) : (
+            <Button onClick={handleImport} disabled={!anyPending}>
+              {`Import ${queue.filter(s => s.state === "pending").length || ""} ${queue.filter(s => s.state === "pending").length === 1 ? "file" : "files"}`.trim()}
+            </Button>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>
