@@ -409,6 +409,18 @@ def works_conversations(work_id: str):
     return {"conversations": convs}
 
 
+def _trailer_count(db, work_id: str) -> int:
+    """Return the number of trailer packages generated for a Work."""
+    try:
+        with db._lock:
+            row = db._conn.execute(
+                "SELECT COUNT(*) AS n FROM trailers WHERE work_id=?", (work_id,)
+            ).fetchone()
+        return row["n"] if row else 0
+    except Exception:
+        return 0
+
+
 @router.get("/works/{work_id}/stats")
 def works_stats(work_id: str):
     db = get_db()
@@ -455,6 +467,7 @@ def works_stats(work_id: str):
         "conversation_count": conv_count,
         "avg_mastery_pct": round(avg_mastery * 100),
         "concept_count": concept_count,
+        "trailer_count": _trailer_count(db, work_id),
     }
 
 
@@ -1326,4 +1339,123 @@ async def evidence_rescore(work_id: str):
         "rescored_count": rescored,
         "conflict_count": conflict_count,
         "elapsed_ms": elapsed_ms,
+    }
+
+
+# ─── Trailer Architect ────────────────────────────────────────────────────────
+
+@router.post("/works/{work_id}/trailer")
+async def create_trailer(work_id: str):
+    """Enqueue a Trailer Architect job for a CANON Work.
+
+    Returns immediately with the new trailer record (status='running').
+    The pipeline runs in the background via the thread-pool executor.
+
+    Only Works whose lifecycle is 'canon' may generate a trailer.  This
+    guards against producing a production package for an unfinished draft.
+    """
+    from starlette.concurrency import run_in_threadpool
+
+    db = get_db()
+    work = db.get_work(work_id)
+    if not work:
+        raise HTTPException(404, f"Work {work_id!r} not found")
+
+    # CANON-only guard
+    if work.get("lifecycle") != "canon":
+        raise HTTPException(
+            422,
+            f"Trailers can only be generated for CANON works. "
+            f"This work has lifecycle={work.get('lifecycle')!r}. "
+            "Promote it to canon first.",
+        )
+
+    # Create the trailer record at 'running' immediately
+    trailer = db.create_trailer(work_id)
+    trailer_id = trailer["id"]
+
+    # Launch the pipeline in the background (fire-and-forget)
+    async def _run_bg() -> None:
+        try:
+            from orivellum.capabilities.trailer import run_trailer_pipeline
+            await run_in_threadpool(run_trailer_pipeline, db, work_id, trailer_id)
+        except Exception:
+            import traceback
+            logger.error("Trailer background task crashed:\n%s", traceback.format_exc())
+
+    import asyncio
+    asyncio.create_task(_run_bg())
+
+    return {
+        "trailer_id": trailer_id,
+        "work_id": work_id,
+        "status": "running",
+        "phase": "loading",
+        "message": "Trailer Architect pipeline started. Poll GET /works/{id}/trailers/{pkg_id} for progress.",
+    }
+
+
+@router.get("/works/{work_id}/trailers")
+def list_trailers(work_id: str):
+    """Return all trailer packages for a Work, newest first.
+
+    Each item includes id, status, phase, created_at, updated_at.
+    The full package_json is NOT included in list responses — fetch
+    GET /works/{id}/trailers/{pkg_id} for the full production package.
+    """
+    db = get_db()
+    if not db.get_work(work_id):
+        raise HTTPException(404, f"Work {work_id!r} not found")
+
+    trailers = db.list_trailers(work_id)
+    # Strip heavy package_json from list response
+    slim = [
+        {
+            "id": t["id"],
+            "work_id": t["work_id"],
+            "status": t["status"],
+            "phase": t["phase"],
+            "has_package": bool(t.get("package_json")),
+            "error": t.get("error"),
+            "created_at": t["created_at"],
+            "updated_at": t["updated_at"],
+        }
+        for t in trailers
+    ]
+    return {"work_id": work_id, "trailers": slim, "count": len(slim)}
+
+
+@router.get("/works/{work_id}/trailers/{trailer_id}")
+def get_trailer(work_id: str, trailer_id: str):
+    """Return the full production package for a trailer.
+
+    When status='running' the package_json will be null and phase will
+    indicate which pipeline stage is in progress.
+    """
+    import json as _json
+
+    db = get_db()
+    if not db.get_work(work_id):
+        raise HTTPException(404, f"Work {work_id!r} not found")
+
+    trailer = db.get_trailer(trailer_id)
+    if not trailer or trailer["work_id"] != work_id:
+        raise HTTPException(404, f"Trailer {trailer_id!r} not found for this Work")
+
+    pkg = None
+    if trailer.get("package_json"):
+        try:
+            pkg = _json.loads(trailer["package_json"])
+        except Exception:
+            pkg = None
+
+    return {
+        "id": trailer["id"],
+        "work_id": trailer["work_id"],
+        "status": trailer["status"],
+        "phase": trailer["phase"],
+        "error": trailer.get("error"),
+        "created_at": trailer["created_at"],
+        "updated_at": trailer["updated_at"],
+        "package": pkg,
     }

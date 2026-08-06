@@ -1480,4 +1480,27 @@ MIGRATIONS: list[tuple[int, str, str]] = [
     (90, "Add persona_id to conversations for AI persona selection", """
         ALTER TABLE conversations ADD COLUMN persona_id TEXT NOT NULL DEFAULT 'default'
     """),
+
+    # v91 — Trailer Architect production packages.
+    # Each row represents one trailer generation job for a Work.
+    # status: 'running' | 'ready' | 'blocked' | 'failed'
+    # phase:  pipeline stage name for progress display
+    #         ('loading' | 'analyze' | 'concept' | 'method' | 'plan' |
+    #          'validate' | 'package' | 'done' | 'error')
+    # package_json: full production package JSON (brief, concept, method, plan,
+    #               validation, human-readable doc markdown, per-shot prompt strings)
+    # error: last error message when status='failed', NULL otherwise
+    (91, "Add trailers table for Trailer Architect production packages", """
+        CREATE TABLE IF NOT EXISTS trailers (
+            id           TEXT PRIMARY KEY,
+            work_id      TEXT NOT NULL,
+            status       TEXT NOT NULL DEFAULT 'running',
+            phase        TEXT NOT NULL DEFAULT 'loading',
+            package_json TEXT,
+            error        TEXT,
+            created_at   TEXT NOT NULL,
+            updated_at   TEXT NOT NULL,
+            FOREIGN KEY (work_id) REFERENCES works(id)
+        )
+    """),
 ]

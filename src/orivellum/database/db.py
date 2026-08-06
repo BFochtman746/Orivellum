@@ -3417,6 +3417,61 @@ class OrivellumDB:
         return dict(row)
 
     # -------------------------------------------------------------------------
+    # Trailer Architect production packages
+    # -------------------------------------------------------------------------
+
+    def create_trailer(self, work_id: str) -> dict:
+        """Create a new trailer record in 'running' state and return it."""
+        tid = _uuid()
+        now = _now()
+        with self._lock:
+            self._conn.execute(
+                """INSERT INTO trailers (id, work_id, status, phase, created_at, updated_at)
+                   VALUES (?, ?, 'running', 'loading', ?, ?)""",
+                (tid, work_id, now, now),
+            )
+            self._conn.commit()
+        return self.get_trailer(tid)  # type: ignore[return-value]
+
+    def get_trailer(self, trailer_id: str) -> dict | None:
+        """Return a single trailer row, or None if not found."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM trailers WHERE id=?", (trailer_id,)
+            ).fetchone()
+        if not row:
+            return None
+        return dict(row)
+
+    def list_trailers(self, work_id: str) -> list[dict]:
+        """Return all trailers for a Work, newest first."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM trailers WHERE work_id=? ORDER BY created_at DESC",
+                (work_id,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def update_trailer(
+        self,
+        trailer_id: str,
+        *,
+        status: str,
+        phase: str,
+        package_json: str | None = None,
+        error: str | None = None,
+    ) -> None:
+        """Update trailer status, phase, and optionally the package payload."""
+        now = _now()
+        with self._lock:
+            self._conn.execute(
+                """UPDATE trailers SET status=?, phase=?, package_json=COALESCE(?, package_json),
+                   error=?, updated_at=? WHERE id=?""",
+                (status, phase, package_json, error, now, trailer_id),
+            )
+            self._conn.commit()
+
+    # -------------------------------------------------------------------------
     # Brainstorm sessions (divergent thinking engine)
     # -------------------------------------------------------------------------
 

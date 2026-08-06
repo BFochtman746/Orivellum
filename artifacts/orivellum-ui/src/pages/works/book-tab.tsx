@@ -22,6 +22,12 @@ import {
   ShieldAlert,
   Sparkles,
   X,
+  Film,
+  RefreshCw,
+  Clock,
+  CheckCircle,
+  XCircle,
+  AlertCircle,
 } from "lucide-react";
 import { toast } from "sonner";
 import { BrainstormB3Panel } from "./brainstorm-tab";
@@ -649,11 +655,376 @@ function PipelinePanel({ workId }: { workId: string }) {
   );
 }
 
+// ─── Trailer Architect panel ──────────────────────────────────────────────────
+
+interface TrailerListItem {
+  id: string;
+  work_id: string;
+  status: "running" | "ready" | "blocked" | "failed";
+  phase: string;
+  has_package: boolean;
+  error?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface TrailerPackage {
+  id: string;
+  work_id: string;
+  status: string;
+  phase: string;
+  error?: string | null;
+  created_at: string;
+  updated_at: string;
+  package: {
+    brief: Record<string, unknown>;
+    concept: Record<string, unknown>;
+    method: Record<string, unknown>;
+    plan: Record<string, unknown>;
+    validation: { status: string; critical: number; findings: { code: string; severity: string; msg: string }[] };
+    status: string;
+    status_badge: string;
+    generated: string;
+    docs: Record<string, string>;
+    shot_prompts: Record<string, string>;
+  } | null;
+}
+
+const PHASE_LABELS: Record<string, string> = {
+  loading: "Loading book content…",
+  analyze:  "Analyzing book…",
+  concept:  "Generating concepts…",
+  method:   "Selecting production method…",
+  plan:     "Building shotlist + narration…",
+  validate: "Validating package…",
+  package:  "Assembling package…",
+  done:     "Complete",
+  error:    "Failed",
+};
+
+function TrailerStatusBadge({ status, phase }: { status: string; phase: string }) {
+  if (status === "running") {
+    return (
+      <span className="flex items-center gap-1 text-[10px] font-mono text-primary">
+        <Loader2 className="w-3 h-3 animate-spin" />
+        {PHASE_LABELS[phase] ?? phase}
+      </span>
+    );
+  }
+  if (status === "ready") {
+    return (
+      <span className="flex items-center gap-1 text-[10px] font-mono text-emerald-600">
+        <CheckCircle className="w-3 h-3" /> READY
+      </span>
+    );
+  }
+  if (status === "blocked") {
+    return (
+      <span className="flex items-center gap-1 text-[10px] font-mono text-amber-600">
+        <AlertCircle className="w-3 h-3" /> BLOCKED
+      </span>
+    );
+  }
+  return (
+    <span className="flex items-center gap-1 text-[10px] font-mono text-destructive">
+      <XCircle className="w-3 h-3" /> FAILED
+    </span>
+  );
+}
+
+function TrailerPackageView({ trailer }: { trailer: TrailerPackage }) {
+  const [activeDoc, setActiveDoc] = useState<string | null>(null);
+  const pkg = trailer.package;
+
+  if (!pkg) {
+    return (
+      <div className="text-sm text-muted-foreground italic py-4 text-center">
+        Package not yet available.
+      </div>
+    );
+  }
+
+  const brief = pkg.brief as Record<string, unknown>;
+  const concept = pkg.concept as Record<string, unknown>;
+  const shots: unknown[] = (pkg.plan as Record<string, unknown>)?.shots as unknown[] ?? [];
+  const docKeys = Object.keys(pkg.docs ?? {});
+
+  return (
+    <div className="space-y-4 pt-2">
+      {/* Status */}
+      <div className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-xs font-mono ${
+        pkg.status === "READY"
+          ? "border-emerald-200 bg-emerald-50/60 text-emerald-800"
+          : "border-amber-200 bg-amber-50/60 text-amber-800"
+      }`}>
+        {pkg.status === "READY"
+          ? <CheckCircle className="w-3.5 h-3.5 shrink-0" />
+          : <AlertCircle className="w-3.5 h-3.5 shrink-0" />}
+        <span className="font-semibold">{pkg.status_badge}</span>
+        <span className="opacity-70 ml-auto">Generated {pkg.generated}</span>
+      </div>
+
+      {/* Blocking findings */}
+      {pkg.validation?.findings?.filter(f => f.severity === "critical").map((f, i) => (
+        <div key={i} className="flex items-start gap-2 px-3 py-2 rounded border border-destructive/30 bg-destructive/5 text-xs text-destructive">
+          <XCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+          <span><strong>{f.code}</strong> — {f.msg}</span>
+        </div>
+      ))}
+
+      {/* Brief summary */}
+      <div className="rounded-lg border border-border/50 bg-muted/20 p-3 space-y-1.5 text-xs">
+        <div className="text-[10px] font-mono uppercase tracking-widest text-muted-foreground mb-2">Book Brief</div>
+        {brief.logline && (
+          <p className="font-serif text-sm leading-snug">"{String(brief.logline)}"</p>
+        )}
+        <div className="flex flex-wrap gap-2 pt-1">
+          {brief.genre && <Badge variant="secondary" className="font-mono text-[9px]">{String(brief.genre)}</Badge>}
+          {(brief.tone as string[] | undefined)?.slice(0, 3).map((t, i) => (
+            <Badge key={i} variant="outline" className="font-mono text-[9px]">{t}</Badge>
+          ))}
+        </div>
+      </div>
+
+      {/* Chosen concept */}
+      {concept.name && (
+        <div className="rounded-lg border border-primary/20 bg-primary/[0.03] p-3 text-xs space-y-1">
+          <div className="text-[10px] font-mono uppercase tracking-widest text-primary/70">Chosen Concept</div>
+          <div className="font-semibold font-serif">{String(concept.name)}</div>
+          <div className="text-muted-foreground">{String(concept.angle ?? "")}</div>
+          <div className="flex flex-wrap gap-1 pt-1">
+            {(concept.beats as string[] | undefined)?.map((b, i) => (
+              <span key={i} className="px-2 py-0.5 rounded-full bg-muted/50 border border-border/50 text-[10px] font-mono">
+                {b}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Shot count */}
+      <div className="flex items-center gap-2 text-xs text-muted-foreground font-mono">
+        <Film className="w-3.5 h-3.5" />
+        {shots.length} shot{shots.length !== 1 ? "s" : ""} planned
+        <span className="opacity-50">·</span>
+        {(pkg.plan as Record<string, unknown>)?.duration as number ?? "?"}s runtime
+      </div>
+
+      {/* Human-readable doc tabs */}
+      {docKeys.length > 0 && (
+        <div className="space-y-2">
+          <div className="text-[10px] font-mono uppercase tracking-widest text-muted-foreground">Production Documents</div>
+          <div className="flex flex-wrap gap-1.5">
+            {docKeys.map((key) => (
+              <button
+                key={key}
+                onClick={() => setActiveDoc(activeDoc === key ? null : key)}
+                className={`px-2 py-0.5 rounded border text-[10px] font-mono transition-colors ${
+                  activeDoc === key
+                    ? "bg-primary text-primary-foreground border-primary"
+                    : "bg-muted/30 border-border/50 hover:bg-muted/60 text-muted-foreground"
+                }`}
+              >
+                {key.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())}
+              </button>
+            ))}
+          </div>
+          {activeDoc && pkg.docs[activeDoc] && (
+            <div className="rounded-lg border border-border/50 bg-muted/10 p-3 max-h-80 overflow-y-auto">
+              <pre className="text-[11px] font-mono whitespace-pre-wrap leading-relaxed">
+                {pkg.docs[activeDoc]}
+              </pre>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TrailerItem({ trailer, workId }: { trailer: TrailerListItem; workId: string }) {
+  const [expanded, setExpanded] = useState(false);
+
+  // Poll while running
+  const { data: fullTrailer } = useQuery<TrailerPackage>({
+    queryKey: ["trailer", workId, trailer.id],
+    queryFn: async () => {
+      const r = await apiFetch(`${BASE}/works/${workId}/trailers/${trailer.id}`);
+      if (!r.ok) throw new Error("Failed to load trailer");
+      return r.json();
+    },
+    enabled: expanded || trailer.status === "running",
+    refetchInterval: trailer.status === "running" ? 3000 : false,
+    staleTime: trailer.status === "running" ? 0 : 60_000,
+  });
+
+  const liveStatus = fullTrailer?.status ?? trailer.status;
+  const livePhase  = fullTrailer?.phase  ?? trailer.phase;
+
+  return (
+    <div className="rounded-lg border border-border/50 bg-card/50 overflow-hidden">
+      <button
+        className="w-full flex items-center gap-3 px-3 py-2.5 text-left hover:bg-muted/20 transition-colors"
+        onClick={() => setExpanded(!expanded)}
+      >
+        <Film className="w-4 h-4 text-muted-foreground shrink-0" />
+        <div className="flex-1 min-w-0">
+          <div className="text-xs font-mono text-muted-foreground/70 truncate">
+            {new Date(trailer.created_at).toLocaleString()}
+          </div>
+        </div>
+        <TrailerStatusBadge status={liveStatus} phase={livePhase} />
+        {expanded
+          ? <ChevronDown className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+          : <ChevronRight className="w-3.5 h-3.5 text-muted-foreground shrink-0" />}
+      </button>
+
+      {expanded && (
+        <div className="border-t border-border/40 px-3 pb-3">
+          {liveStatus === "running" && (
+            <div className="flex items-center gap-2 py-4 text-sm text-muted-foreground">
+              <Loader2 className="w-4 h-4 animate-spin text-primary" />
+              <span className="font-mono text-xs">{PHASE_LABELS[livePhase] ?? livePhase}</span>
+            </div>
+          )}
+          {liveStatus === "failed" && (
+            <div className="py-3 text-xs text-destructive font-mono">
+              {fullTrailer?.error ?? "Pipeline failed — check server logs."}
+            </div>
+          )}
+          {(liveStatus === "ready" || liveStatus === "blocked") && fullTrailer && (
+            <TrailerPackageView trailer={fullTrailer} />
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TrailerPanel({ workId, lifecycle }: { workId: string; lifecycle: string }) {
+  const queryClient = useQueryClient();
+
+  const { data, isLoading } = useQuery<{ trailers: TrailerListItem[]; count: number }>({
+    queryKey: ["trailers", workId],
+    queryFn: async () => {
+      const r = await apiFetch(`${BASE}/works/${workId}/trailers`);
+      if (!r.ok) throw new Error("Failed to load trailers");
+      return r.json();
+    },
+    enabled: !!workId,
+    staleTime: 30_000,
+    // Poll while any trailer is running
+    refetchInterval: 5000,
+  });
+
+  const generateMutation = useMutation({
+    mutationFn: async () => {
+      const r = await apiFetch(`${BASE}/works/${workId}/trailer`, { method: "POST" });
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}));
+        throw new Error(body?.detail ?? "Failed to start trailer generation");
+      }
+      return r.json();
+    },
+    onSuccess: () => {
+      toast.success("Trailer Architect pipeline started");
+      queryClient.invalidateQueries({ queryKey: ["trailers", workId] });
+    },
+    onError: (err: Error) => {
+      toast.error(err.message);
+    },
+  });
+
+  const isCanon = lifecycle === "canon";
+  const hasRunning = data?.trailers.some(t => t.status === "running") ?? false;
+
+  return (
+    <Card>
+      <CardContent className="p-4 space-y-4">
+        {/* Header */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Film className="w-4 h-4 text-muted-foreground" />
+            <h3 className="text-xs font-mono uppercase tracking-widest text-muted-foreground">
+              Trailer Architect
+            </h3>
+            {data && data.count > 0 && (
+              <span className="px-1.5 py-0.5 rounded-full text-[10px] font-mono bg-muted/60 text-muted-foreground">
+                {data.count}
+              </span>
+            )}
+          </div>
+
+          <Button
+            size="sm"
+            variant="outline"
+            className="gap-1.5 h-7 text-xs border-primary/30 text-primary hover:bg-primary/5 disabled:opacity-50"
+            onClick={() => generateMutation.mutate()}
+            disabled={!isCanon || generateMutation.isPending || hasRunning}
+            title={!isCanon ? "Only CANON works can generate trailers — promote this Work to canon first" : undefined}
+          >
+            {generateMutation.isPending || hasRunning
+              ? <Loader2 className="w-3 h-3 animate-spin" />
+              : <Sparkles className="w-3 h-3" />}
+            {hasRunning ? "Generating…" : "Generate Trailer"}
+          </Button>
+        </div>
+
+        {/* Canon guard note */}
+        {!isCanon && (
+          <div className="flex items-start gap-2 px-3 py-2 rounded-lg border border-amber-200 bg-amber-50/60 text-xs text-amber-800">
+            <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+            <span>
+              Trailer generation is only available for <strong>CANON</strong> works.
+              Promote this Work's lifecycle to canon to unlock this feature.
+            </span>
+          </div>
+        )}
+
+        {/* Trailer list */}
+        {isLoading ? (
+          <div className="space-y-2">
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-10 w-full" />
+          </div>
+        ) : !data || data.count === 0 ? (
+          <div className="text-sm text-muted-foreground italic font-serif py-6 text-center border border-dashed border-border/60 rounded-lg">
+            No trailers generated yet.
+            {isCanon
+              ? ` Click "Generate Trailer" to create your first production package.`
+              : " Promote this Work to canon to unlock trailer generation."}
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {data.trailers.map((t) => (
+              <TrailerItem key={t.id} trailer={t} workId={workId} />
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 // ─── Book tab ─────────────────────────────────────────────────────────────────
 
 export function BookTab({ workId }: { workId: string }) {
   const queryClient = useQueryClient();
   const [settingCanonical, setSettingCanonical] = useState<string | null>(null);
+
+  // Fetch work lifecycle for the Trailer Architect canon guard
+  const { data: workData } = useQuery<{ lifecycle?: string }>({
+    queryKey: ["work-lifecycle", workId],
+    queryFn: async () => {
+      const r = await apiFetch(`${BASE}/works/${workId}`);
+      if (!r.ok) return {};
+      const d = await r.json();
+      return { lifecycle: d.work?.lifecycle ?? d.lifecycle ?? "" };
+    },
+    enabled: !!workId,
+    staleTime: 60_000,
+  });
+  const workLifecycle = workData?.lifecycle ?? "";
 
   const { data, isLoading, isError } = useQuery({
     queryKey: ["book-intelligence", workId],
@@ -856,6 +1227,9 @@ export function BookTab({ workId }: { workId: string }) {
           </div>
         </div>
       </div>
+
+      {/* Trailer Architect */}
+      <TrailerPanel workId={workId} lifecycle={workLifecycle} />
     </div>
   );
 }
