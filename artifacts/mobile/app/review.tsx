@@ -21,11 +21,22 @@ import {
   Text,
   View,
 } from 'react-native';
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withSpring,
+  withTiming,
+  runOnJS,
+} from 'react-native-reanimated';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { Feather } from '@expo/vector-icons';
 import { Stack, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useColors } from '@/hooks/useColors';
 import { mobileFetch } from '@/lib/api';
+
+const SWIPE_THRESHOLD = 60;  // px to commit a swipe decision
+const SWIPE_EXIT     = 450;  // px card travels before it leaves screen
 
 const DOMAIN = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
 const API = `https://${DOMAIN}/api`;
@@ -175,11 +186,12 @@ function ReviewCard({
     isDupe ? String(item.evidence?.doc_a_id ?? '') || null : null,
   );
 
+  // ── Swipe animation state ─────────────────────────────────────────────────
+  const translateX = useSharedValue(0);
+
   const resolve = async (decision: 'approve' | 'reject' | 'defer') => {
     setPending(decision);
     try {
-      // item.id is already namespaced: "knowledge:abc123", so the route is
-      // POST /api/review/knowledge:abc123/resolve
       const r = await mobileFetch(`${API}/review/${item.id}/resolve`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -197,6 +209,8 @@ function ReviewCard({
       }
       onResolved(item.id);
     } catch (e: any) {
+      // Snap card back on failure (handles both button-tap and swipe paths)
+      translateX.value = withSpring(0);
       Alert.alert(
         'Could not resolve',
         e?.message ?? 'Something went wrong. Please try again.',
@@ -207,221 +221,284 @@ function ReviewCard({
     }
   };
 
+  // Pan gesture — horizontal-only, fails on vertical scroll so the FlatList
+  // can still scroll normally.
+  const pan = Gesture.Pan()
+    .activeOffsetX([-10, 10])
+    .failOffsetY([-8, 8])
+    .enabled(pending === null)
+    .onUpdate(e => {
+      translateX.value = e.translationX;
+    })
+    .onEnd(e => {
+      if (e.translationX >= SWIPE_THRESHOLD) {
+        // Commit approve: animate card off to the right, then fire API
+        translateX.value = withTiming(SWIPE_EXIT, { duration: 220 });
+        runOnJS(resolve)('approve');
+      } else if (e.translationX <= -SWIPE_THRESHOLD) {
+        // Commit reject: animate card off to the left, then fire API
+        translateX.value = withTiming(-SWIPE_EXIT, { duration: 220 });
+        runOnJS(resolve)('reject');
+      } else {
+        // Below threshold — bounce back
+        translateX.value = withSpring(0, { damping: 18, stiffness: 200 });
+      }
+    });
+
+  // Card slides with the finger
+  const cardAnimStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: translateX.value }],
+  }));
+
+  // Green hint fades in as card moves right
+  const approveHintStyle = useAnimatedStyle(() => {
+    const opacity = Math.min(1, Math.max(0, translateX.value / SWIPE_THRESHOLD));
+    return { opacity };
+  });
+
+  // Red hint fades in as card moves left
+  const rejectHintStyle = useAnimatedStyle(() => {
+    const opacity = Math.min(1, Math.max(0, -translateX.value / SWIPE_THRESHOLD));
+    return { opacity };
+  });
+
   return (
-    <View
-      style={[
-        rvStyles.card,
-        {
-          backgroundColor: colors.card,
-          borderColor: colors.border,
-          borderLeftColor: meta.color,
-        },
-      ]}
-    >
-      {/* Type badge + confidence */}
-      <View style={rvStyles.cardHeader}>
-        <View
+    <View style={rvStyles.swipeContainer}>
+      {/* ── Approve hint (revealed behind card when swiping right) ── */}
+      <Animated.View style={[rvStyles.swipeHintLeft, approveHintStyle]}>
+        <Feather name="thumbs-up" size={22} color="#22c55e" />
+        <Text style={{ fontSize: 12, fontFamily: 'Inter_700Bold', color: '#22c55e', marginTop: 3 }}>
+          Approve
+        </Text>
+      </Animated.View>
+
+      {/* ── Reject hint (revealed behind card when swiping left) ── */}
+      <Animated.View style={[rvStyles.swipeHintRight, rejectHintStyle]}>
+        <Feather name="thumbs-down" size={22} color="#ef4444" />
+        <Text style={{ fontSize: 12, fontFamily: 'Inter_700Bold', color: '#ef4444', marginTop: 3 }}>
+          Reject
+        </Text>
+      </Animated.View>
+
+      {/* ── The card itself ── */}
+      <GestureDetector gesture={pan}>
+        <Animated.View
           style={[
-            rvStyles.typeBadge,
+            rvStyles.card,
             {
-              backgroundColor: meta.color + '20',
-              borderColor: meta.color + '44',
-            },
-          ]}
-        >
-          <Feather name={meta.icon as any} size={11} color={meta.color} />
-          <Text
-            style={{
-              fontSize: 11,
-              fontFamily: 'Inter_500Medium',
-              color: meta.color,
-            }}
-          >
-            {meta.label}
-          </Text>
-        </View>
-        <ConfidenceBar value={item.confidence} />
-      </View>
-
-      {/* Title */}
-      <Text
-        style={[rvStyles.itemTitle, { color: colors.foreground }]}
-        numberOfLines={2}
-      >
-        {item.title}
-      </Text>
-
-      {/* Description */}
-      <Text
-        style={[rvStyles.itemDesc, { color: colors.foreground + 'cc' }]}
-        numberOfLines={3}
-      >
-        {item.description}
-      </Text>
-
-      {/* Evidence */}
-      <EvidenceLine item={item} />
-
-      {/* Duplicate: canonical doc picker */}
-      {isDupe && (
-        <View
-          style={{
-            flexDirection: 'row',
-            alignItems: 'center',
-            gap: 6,
-            flexWrap: 'wrap',
-          }}
-        >
-          <Text
-            style={{
-              fontSize: 11,
-              fontFamily: 'Inter_400Regular',
-              color: colors.mutedForeground,
-            }}
-          >
-            Keep on approve:
-          </Text>
-          {(['a', 'b'] as const).map(side => {
-            const id = String(item.evidence?.[`doc_${side}_id`] ?? '');
-            const label = String(
-              item.evidence?.[`doc_${side}_title`] ??
-                `Document ${side.toUpperCase()}`,
-            );
-            if (!id) return null;
-            const selected = canonical === id;
-            return (
-              <Pressable
-                key={side}
-                onPress={() => setCanonical(id)}
-                style={[
-                  rvStyles.canonicalBtn,
-                  {
-                    borderColor: selected ? colors.primary : colors.border,
-                    backgroundColor: selected
-                      ? colors.primary + '18'
-                      : 'transparent',
-                  },
-                ]}
-              >
-                <Text
-                  style={{
-                    fontSize: 11,
-                    fontFamily: selected
-                      ? 'Inter_600SemiBold'
-                      : 'Inter_400Regular',
-                    color: selected ? colors.primary : colors.mutedForeground,
-                  }}
-                  numberOfLines={1}
-                >
-                  {label}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </View>
-      )}
-
-      {/* Action buttons */}
-      <View style={rvStyles.actions}>
-        {/* Approve */}
-        <Pressable
-          onPress={() => resolve('approve')}
-          disabled={pending != null}
-          style={({ pressed }) => [
-            rvStyles.actionBtn,
-            {
-              borderColor: '#22c55e44',
-              backgroundColor: pressed ? '#22c55e18' : '#22c55e0a',
-              opacity: pending != null ? 0.55 : 1,
-            },
-          ]}
-        >
-          {pending === 'approve' ? (
-            <ActivityIndicator
-              size="small"
-              color="#22c55e"
-              style={{ transform: [{ scale: 0.65 }] }}
-            />
-          ) : (
-            <Feather name="thumbs-up" size={13} color="#22c55e" />
-          )}
-          <Text
-            style={{
-              fontSize: 12,
-              fontFamily: 'Inter_600SemiBold',
-              color: '#22c55e',
-            }}
-          >
-            Approve
-          </Text>
-        </Pressable>
-
-        {/* Reject */}
-        <Pressable
-          onPress={() => resolve('reject')}
-          disabled={pending != null}
-          style={({ pressed }) => [
-            rvStyles.actionBtn,
-            {
-              borderColor: '#ef444444',
-              backgroundColor: pressed ? '#ef444418' : '#ef44440a',
-              opacity: pending != null ? 0.55 : 1,
-            },
-          ]}
-        >
-          {pending === 'reject' ? (
-            <ActivityIndicator
-              size="small"
-              color="#ef4444"
-              style={{ transform: [{ scale: 0.65 }] }}
-            />
-          ) : (
-            <Feather name="thumbs-down" size={13} color="#ef4444" />
-          )}
-          <Text
-            style={{
-              fontSize: 12,
-              fontFamily: 'Inter_600SemiBold',
-              color: '#ef4444',
-            }}
-          >
-            Reject
-          </Text>
-        </Pressable>
-
-        {/* Defer */}
-        <Pressable
-          onPress={() => resolve('defer')}
-          disabled={pending != null}
-          style={({ pressed }) => [
-            rvStyles.actionBtn,
-            {
+              backgroundColor: colors.card,
               borderColor: colors.border,
-              backgroundColor: pressed ? colors.muted : 'transparent',
-              opacity: pending != null ? 0.55 : 1,
+              borderLeftColor: meta.color,
             },
+            cardAnimStyle,
           ]}
         >
-          {pending === 'defer' ? (
-            <ActivityIndicator
-              size="small"
-              color={colors.mutedForeground}
-              style={{ transform: [{ scale: 0.65 }] }}
-            />
-          ) : (
-            <Feather name="clock" size={13} color={colors.mutedForeground} />
-          )}
+          {/* Type badge + confidence */}
+          <View style={rvStyles.cardHeader}>
+            <View
+              style={[
+                rvStyles.typeBadge,
+                {
+                  backgroundColor: meta.color + '20',
+                  borderColor: meta.color + '44',
+                },
+              ]}
+            >
+              <Feather name={meta.icon as any} size={11} color={meta.color} />
+              <Text
+                style={{
+                  fontSize: 11,
+                  fontFamily: 'Inter_500Medium',
+                  color: meta.color,
+                }}
+              >
+                {meta.label}
+              </Text>
+            </View>
+            <ConfidenceBar value={item.confidence} />
+          </View>
+
+          {/* Title */}
           <Text
-            style={{
-              fontSize: 12,
-              fontFamily: 'Inter_500Medium',
-              color: colors.mutedForeground,
-            }}
+            style={[rvStyles.itemTitle, { color: colors.foreground }]}
+            numberOfLines={2}
           >
-            Defer 7d
+            {item.title}
           </Text>
-        </Pressable>
-      </View>
+
+          {/* Description */}
+          <Text
+            style={[rvStyles.itemDesc, { color: colors.foreground + 'cc' }]}
+            numberOfLines={3}
+          >
+            {item.description}
+          </Text>
+
+          {/* Evidence */}
+          <EvidenceLine item={item} />
+
+          {/* Duplicate: canonical doc picker */}
+          {isDupe && (
+            <View
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 6,
+                flexWrap: 'wrap',
+              }}
+            >
+              <Text
+                style={{
+                  fontSize: 11,
+                  fontFamily: 'Inter_400Regular',
+                  color: colors.mutedForeground,
+                }}
+              >
+                Keep on approve:
+              </Text>
+              {(['a', 'b'] as const).map(side => {
+                const id = String(item.evidence?.[`doc_${side}_id`] ?? '');
+                const label = String(
+                  item.evidence?.[`doc_${side}_title`] ??
+                    `Document ${side.toUpperCase()}`,
+                );
+                if (!id) return null;
+                const selected = canonical === id;
+                return (
+                  <Pressable
+                    key={side}
+                    onPress={() => setCanonical(id)}
+                    style={[
+                      rvStyles.canonicalBtn,
+                      {
+                        borderColor: selected ? colors.primary : colors.border,
+                        backgroundColor: selected
+                          ? colors.primary + '18'
+                          : 'transparent',
+                      },
+                    ]}
+                  >
+                    <Text
+                      style={{
+                        fontSize: 11,
+                        fontFamily: selected
+                          ? 'Inter_600SemiBold'
+                          : 'Inter_400Regular',
+                        color: selected ? colors.primary : colors.mutedForeground,
+                      }}
+                      numberOfLines={1}
+                    >
+                      {label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          )}
+
+          {/* Action buttons */}
+          <View style={rvStyles.actions}>
+            {/* Approve */}
+            <Pressable
+              onPress={() => resolve('approve')}
+              disabled={pending != null}
+              style={({ pressed }) => [
+                rvStyles.actionBtn,
+                {
+                  borderColor: '#22c55e44',
+                  backgroundColor: pressed ? '#22c55e18' : '#22c55e0a',
+                  opacity: pending != null ? 0.55 : 1,
+                },
+              ]}
+            >
+              {pending === 'approve' ? (
+                <ActivityIndicator
+                  size="small"
+                  color="#22c55e"
+                  style={{ transform: [{ scale: 0.65 }] }}
+                />
+              ) : (
+                <Feather name="thumbs-up" size={13} color="#22c55e" />
+              )}
+              <Text
+                style={{
+                  fontSize: 12,
+                  fontFamily: 'Inter_600SemiBold',
+                  color: '#22c55e',
+                }}
+              >
+                Approve
+              </Text>
+            </Pressable>
+
+            {/* Reject */}
+            <Pressable
+              onPress={() => resolve('reject')}
+              disabled={pending != null}
+              style={({ pressed }) => [
+                rvStyles.actionBtn,
+                {
+                  borderColor: '#ef444444',
+                  backgroundColor: pressed ? '#ef444418' : '#ef44440a',
+                  opacity: pending != null ? 0.55 : 1,
+                },
+              ]}
+            >
+              {pending === 'reject' ? (
+                <ActivityIndicator
+                  size="small"
+                  color="#ef4444"
+                  style={{ transform: [{ scale: 0.65 }] }}
+                />
+              ) : (
+                <Feather name="thumbs-down" size={13} color="#ef4444" />
+              )}
+              <Text
+                style={{
+                  fontSize: 12,
+                  fontFamily: 'Inter_600SemiBold',
+                  color: '#ef4444',
+                }}
+              >
+                Reject
+              </Text>
+            </Pressable>
+
+            {/* Defer */}
+            <Pressable
+              onPress={() => resolve('defer')}
+              disabled={pending != null}
+              style={({ pressed }) => [
+                rvStyles.actionBtn,
+                {
+                  borderColor: colors.border,
+                  backgroundColor: pressed ? colors.muted : 'transparent',
+                  opacity: pending != null ? 0.55 : 1,
+                },
+              ]}
+            >
+              {pending === 'defer' ? (
+                <ActivityIndicator
+                  size="small"
+                  color={colors.mutedForeground}
+                  style={{ transform: [{ scale: 0.65 }] }}
+                />
+              ) : (
+                <Feather name="clock" size={13} color={colors.mutedForeground} />
+              )}
+              <Text
+                style={{
+                  fontSize: 12,
+                  fontFamily: 'Inter_500Medium',
+                  color: colors.mutedForeground,
+                }}
+              >
+                Defer 7d
+              </Text>
+            </Pressable>
+          </View>
+        </Animated.View>
+      </GestureDetector>
     </View>
   );
 }
@@ -895,5 +972,34 @@ const rvStyles = StyleSheet.create({
     borderWidth: 1,
     flex: 1,
     minWidth: 80,
+  },
+
+  // Swipe gesture container + hint layers
+  swipeContainer: {
+    position: 'relative',
+    overflow: 'hidden',
+    borderRadius: 10,
+  },
+  swipeHintLeft: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: '#22c55e18',
+    alignItems: 'flex-start',
+    justifyContent: 'center',
+    paddingLeft: 20,
+  },
+  swipeHintRight: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: '#ef444418',
+    alignItems: 'flex-end',
+    justifyContent: 'center',
+    paddingRight: 20,
   },
 });
