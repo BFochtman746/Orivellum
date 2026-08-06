@@ -1002,6 +1002,13 @@ function AudiobookTab({
   const [playing, setPlaying] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
+  // Async document-TTS job state
+  const [vsAbJobId, setVsAbJobId] = useState<string | null>(null);
+  const [vsAbSegsDone, setVsAbSegsDone] = useState(0);
+  const [vsAbSegsTotal, setVsAbSegsTotal] = useState(0);
+  const vsAbJobIdRef = useRef<string | null>(null);
+  const vsAbPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
   // ── Proactive AI voice suggestion ────────────────────────────────────────────
   // Fires in the background whenever a Work is selected; the card appears
   // only when the result is ready — nothing blocks the form.
@@ -1036,6 +1043,17 @@ function AudiobookTab({
 
   const selectedVoiceMeta = voices.find(v => v.id === voiceId);
 
+  // Cleanup: cancel any in-flight document job when the component unmounts.
+  useEffect(() => {
+    return () => {
+      if (vsAbPollRef.current) { clearInterval(vsAbPollRef.current); vsAbPollRef.current = null; }
+      if (vsAbJobIdRef.current) {
+        apiFetch(`${BASE}/studio/tts/document/${vsAbJobIdRef.current}`, { method: "DELETE" }).catch(() => {});
+        vsAbJobIdRef.current = null;
+      }
+    };
+  }, []);
+
   async function handleGenerate() {
     const hasTarget = mode === "work" ? !!workId : !!docId;
     if (!hasTarget) return;
@@ -1043,10 +1061,10 @@ function AudiobookTab({
     setAudioUrl(null);
     setPlaying(false);
 
-    try {
-      let resp: Response;
-      if (mode === "work") {
-        resp = await apiFetch(`${BASE}/studio/tts/work`, {
+    if (mode === "work") {
+      // Work audiobook: synchronous endpoint (tts/work unchanged)
+      try {
+        const resp = await apiFetch(`${BASE}/studio/tts/work`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -1054,32 +1072,84 @@ function AudiobookTab({
             include_credits: credits, acx_mastering: acx,
           }),
         });
-      } else {
-        resp = await apiFetch(`${BASE}/studio/tts/document`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ doc_id: docId, voice: voiceId, speed }),
-        });
+        if (!resp.ok) {
+          const err = await resp.json().catch(() => ({}));
+          throw new Error((err as any).detail ?? `HTTP ${resp.status}`);
+        }
+        const blob = await resp.blob();
+        const url  = URL.createObjectURL(blob);
+        const name = `${works.find((w: any) => w.id === workId)?.title ?? "audiobook"}.mp3`;
+        setAudioUrl(url);
+        setAudioName(name);
+        toast.success("Audiobook ready — tap play below");
+      } catch (e: any) {
+        toast.error(`Audiobook failed: ${e.message}`, { duration: 10_000 });
+      } finally {
+        setLoading(false);
       }
+      return;
+    }
 
+    // Document mode: async job flow
+    const toastId = toast.loading("Starting audiobook generation…");
+    try {
+      const resp = await apiFetch(`${BASE}/studio/tts/document`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ doc_id: docId, voice: voiceId, speed }),
+      });
       if (!resp.ok) {
         const err = await resp.json().catch(() => ({}));
         throw new Error((err as any).detail ?? `HTTP ${resp.status}`);
       }
-
-      const blob = await resp.blob();
-      const url  = URL.createObjectURL(blob);
-      const name = mode === "work"
-        ? `${works.find((w: any) => w.id === workId)?.title ?? "audiobook"}.mp3`
-        : `${docs.find((d: any) => d.id === docId)?.title ?? "audiobook"}.mp3`;
-      setAudioUrl(url);
-      setAudioName(name);
-      toast.success("Audiobook ready — tap play below");
+      const { job_id, total_segments } = await resp.json();
+      toast.dismiss(toastId);
+      vsAbJobIdRef.current = job_id;
+      setVsAbJobId(job_id);
+      setVsAbSegsTotal(total_segments);
+      setVsAbSegsDone(0);
+      // loading stays true while polling
+      vsAbPollRef.current = setInterval(async () => {
+        try {
+          const sr = await apiFetch(`${BASE}/studio/tts/document/${job_id}/status`);
+          if (!sr.ok) {
+            if (sr.status === 404) {
+              clearInterval(vsAbPollRef.current!); vsAbPollRef.current = null;
+              vsAbJobIdRef.current = null; setVsAbJobId(null); setLoading(false);
+              toast.error("Server restarted — audiobook job was lost. Please try again.");
+            }
+            return;
+          }
+          const status = await sr.json();
+          setVsAbSegsDone(status.segments_done ?? 0);
+          const terminal = ["done", "failed", "cancelled"].includes(status.state);
+          if (terminal) {
+            clearInterval(vsAbPollRef.current!); vsAbPollRef.current = null;
+            vsAbJobIdRef.current = null; setVsAbJobId(null); setLoading(false);
+            if (status.state === "done") {
+              const serveUrl = `${BASE}/studio/outputs/serve?path=${encodeURIComponent(status.mp3_path)}`;
+              setAudioUrl(serveUrl);
+              setAudioName(`${docs.find((d: any) => d.id === docId)?.title ?? "audiobook"}.mp3`);
+              toast.success("Audiobook ready — tap play below");
+            } else if (status.state === "failed") {
+              toast.error(`Audiobook failed: ${status.error ?? "unknown error"}`, { duration: 10_000 });
+            } else {
+              toast("Audiobook generation cancelled.");
+            }
+          }
+        } catch { /* transient poll errors */ }
+      }, 2000);
     } catch (e: any) {
-      toast.error(`Audiobook failed: ${e.message}`, { duration: 10_000 });
-    } finally {
+      toast.error(`Audiobook failed: ${e.message}`, { id: toastId, duration: 10_000 });
       setLoading(false);
     }
+  }
+
+  async function handleCancelDocGenerate() {
+    if (!vsAbJobIdRef.current) return;
+    try {
+      await apiFetch(`${BASE}/studio/tts/document/${vsAbJobIdRef.current}`, { method: "DELETE" });
+    } catch { /* best-effort */ }
   }
 
   function togglePlay() {
@@ -1280,19 +1350,48 @@ function AudiobookTab({
           </div>
         )}
 
-        {/* Generate button */}
-        <Button
-          onClick={handleGenerate}
-          disabled={!hasTarget || loading}
-          className="w-full gap-2 h-11"
-          size="lg"
-        >
-          {loading ? (
-            <><Loader2 className="w-4 h-4 animate-spin" /> Generating audiobook… (may take several minutes)</>
-          ) : (
-            <><BookHeadphones className="w-5 h-5" /> Generate Audiobook</>
-          )}
-        </Button>
+        {/* Generate button / progress bar */}
+        {mode === "document" && vsAbJobId ? (
+          <div className="space-y-2">
+            <div className="flex items-center gap-3">
+              <div className="flex-1 space-y-1.5">
+                <div className="flex justify-between text-xs text-muted-foreground">
+                  <span className="flex items-center gap-1.5">
+                    <Loader2 className="w-3 h-3 animate-spin" /> Generating audiobook…
+                  </span>
+                  <span>{vsAbSegsDone}/{vsAbSegsTotal}</span>
+                </div>
+                <div className="h-2 bg-muted rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-primary rounded-full transition-all duration-500"
+                    style={{ width: vsAbSegsTotal > 0 ? `${Math.round((vsAbSegsDone / vsAbSegsTotal) * 100)}%` : "0%" }}
+                  />
+                </div>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleCancelDocGenerate}
+                className="shrink-0 h-8 text-destructive border-destructive/40 hover:bg-destructive/10"
+              >
+                <X className="w-3.5 h-3.5 mr-1" /> Cancel
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <Button
+            onClick={handleGenerate}
+            disabled={!hasTarget || loading}
+            className="w-full gap-2 h-11"
+            size="lg"
+          >
+            {loading ? (
+              <><Loader2 className="w-4 h-4 animate-spin" /> Generating audiobook… (may take several minutes)</>
+            ) : (
+              <><BookHeadphones className="w-5 h-5" /> Generate Audiobook</>
+            )}
+          </Button>
+        )}
 
         {mode === "work" && (
           <p className="text-xs text-muted-foreground text-center -mt-2">

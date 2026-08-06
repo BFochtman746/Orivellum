@@ -448,13 +448,32 @@ function AudiobookPanel() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [playing, setPlaying] = useState(false);
 
+  // Async document-TTS job state
+  const [abJobId, setAbJobId]       = useState<string | null>(null);
+  const [abSegsDone, setAbSegsDone] = useState(0);
+  const [abSegsTotal, setAbSegsTotal] = useState(0);
+  const abJobIdRef = useRef<string | null>(null);
+  const abPollRef  = useRef<ReturnType<typeof setInterval> | null>(null);
+
   const selectedDoc = docs.find((d: any) => d.id === docId);
+
+  // Cancel any in-flight job on unmount.
+  useEffect(() => {
+    return () => {
+      if (abPollRef.current) { clearInterval(abPollRef.current); abPollRef.current = null; }
+      if (abJobIdRef.current) {
+        apiFetch(`${BASE}/studio/tts/document/${abJobIdRef.current}`, { method: "DELETE" }).catch(() => {});
+        abJobIdRef.current = null;
+      }
+    };
+  }, []);
 
   async function handleGenerate() {
     if (!docId) return;
     setLoading(true);
     setAudioUrl(null);
     setPlaying(false);
+    const toastId = toast.loading("Starting audiobook generation…");
     try {
       const resp = await apiFetch(`${BASE}/studio/tts/document`, {
         method: "POST",
@@ -465,17 +484,54 @@ function AudiobookPanel() {
         const err = await resp.json().catch(() => ({}));
         throw new Error((err as any).detail ?? `HTTP ${resp.status}`);
       }
-      const blob = await resp.blob();
-      const url  = URL.createObjectURL(blob);
-      const name = `${selectedDoc?.title || "audiobook"}.mp3`;
-      setAudioUrl(url);
-      setAudioName(name);
-      toast.success("Audiobook ready — tap play below");
+      const { job_id, total_segments } = await resp.json();
+      toast.dismiss(toastId);
+      abJobIdRef.current = job_id;
+      setAbJobId(job_id);
+      setAbSegsTotal(total_segments);
+      setAbSegsDone(0);
+      // loading stays true while polling
+      abPollRef.current = setInterval(async () => {
+        try {
+          const sr = await apiFetch(`${BASE}/studio/tts/document/${job_id}/status`);
+          if (!sr.ok) {
+            if (sr.status === 404) {
+              clearInterval(abPollRef.current!); abPollRef.current = null;
+              abJobIdRef.current = null; setAbJobId(null); setLoading(false);
+              toast.error("Server restarted — audiobook job was lost. Please try again.");
+            }
+            return;
+          }
+          const status = await sr.json();
+          setAbSegsDone(status.segments_done ?? 0);
+          const terminal = ["done", "failed", "cancelled"].includes(status.state);
+          if (terminal) {
+            clearInterval(abPollRef.current!); abPollRef.current = null;
+            abJobIdRef.current = null; setAbJobId(null); setLoading(false);
+            if (status.state === "done") {
+              const serveUrl = `${BASE}/studio/outputs/serve?path=${encodeURIComponent(status.mp3_path)}`;
+              setAudioUrl(serveUrl);
+              setAudioName(`${selectedDoc?.title || "audiobook"}.mp3`);
+              toast.success("Audiobook ready — tap play below");
+            } else if (status.state === "failed") {
+              toast.error(`Audiobook failed: ${status.error ?? "unknown error"}`, { duration: 10_000 });
+            } else {
+              toast("Audiobook generation cancelled.");
+            }
+          }
+        } catch { /* transient poll errors */ }
+      }, 2000);
     } catch (e: any) {
-      toast.error(`Audiobook failed: ${e.message}`, { duration: 10_000 });
-    } finally {
+      toast.error(`Audiobook failed: ${e.message}`, { id: toastId, duration: 10_000 });
       setLoading(false);
     }
+  }
+
+  async function handleCancelGenerate() {
+    if (!abJobIdRef.current) return;
+    try {
+      await apiFetch(`${BASE}/studio/tts/document/${abJobIdRef.current}`, { method: "DELETE" });
+    } catch { /* best-effort */ }
   }
 
   function togglePlay() {
@@ -563,11 +619,38 @@ function AudiobookPanel() {
           </div>
         </div>
 
-        <Button onClick={handleGenerate} disabled={!docId || loading || voicesError || voices.length === 0} className="w-full gap-2">
-          {loading
-            ? <><Loader2 className="w-4 h-4 animate-spin" />Converting to audio… (may take a few minutes)</>
-            : <><BookHeadphones className="w-4 h-4" />Generate Audiobook</>}
-        </Button>
+        {abJobId ? (
+          <div className="flex items-center gap-3">
+            <div className="flex-1 space-y-1.5">
+              <div className="flex justify-between text-xs text-muted-foreground">
+                <span className="flex items-center gap-1.5">
+                  <Loader2 className="w-3 h-3 animate-spin" /> Generating audiobook…
+                </span>
+                <span>{abSegsDone}/{abSegsTotal}</span>
+              </div>
+              <div className="h-2 bg-muted rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-primary rounded-full transition-all duration-500"
+                  style={{ width: abSegsTotal > 0 ? `${Math.round((abSegsDone / abSegsTotal) * 100)}%` : "0%" }}
+                />
+              </div>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleCancelGenerate}
+              className="shrink-0 h-8 text-destructive border-destructive/40 hover:bg-destructive/10"
+            >
+              <X className="w-3.5 h-3.5 mr-1" /> Cancel
+            </Button>
+          </div>
+        ) : (
+          <Button onClick={handleGenerate} disabled={!docId || loading || voicesError || voices.length === 0} className="w-full gap-2">
+            {loading
+              ? <><Loader2 className="w-4 h-4 animate-spin" />Converting to audio… (may take a few minutes)</>
+              : <><BookHeadphones className="w-4 h-4" />Generate Audiobook</>}
+          </Button>
+        )}
 
         {audioUrl && (
           <div className="flex items-center gap-3 p-3 rounded-lg bg-muted/30 border border-border/50">

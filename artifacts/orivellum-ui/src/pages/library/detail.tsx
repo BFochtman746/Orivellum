@@ -1297,20 +1297,51 @@ export default function DocumentDetail() {
     }
   };
 
-  // Reset the TTS session when navigating between documents so audio from a
-  // previous doc can never surface on the new one.
+  // Reset TTS session + cancel any in-flight audiobook job when navigating.
   useEffect(() => {
-    return () => resetTts();
+    return () => {
+      resetTts();
+      _clearAbPoll();
+      _cancelAbOnServer();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [docId]);
 
-  // ── Download audiobook ────────────────────────────────────────────────────
-  const [abDownloading, setAbDownloading] = useState(false);
+  // ── Download audiobook (async job) ──────────────────────────────────────
+  const [abJobId, setAbJobId]       = useState<string | null>(null);
+  const [abSegsDone, setAbSegsDone] = useState(0);
+  const [abSegsTotal, setAbSegsTotal] = useState(0);
+  const [abState, setAbState]       = useState<"idle" | "running" | "cancelling">("idle");
+  const abPollRef   = useRef<ReturnType<typeof setInterval> | null>(null);
+  const abJobIdRef  = useRef<string | null>(null);   // stable ref for cleanup
+
+  const _clearAbPoll = () => {
+    if (abPollRef.current !== null) {
+      clearInterval(abPollRef.current);
+      abPollRef.current = null;
+    }
+  };
+
+  const _cancelAbOnServer = () => {
+    const jid = abJobIdRef.current;
+    if (jid) {
+      apiFetch(`${BASE}/studio/tts/document/${jid}`, { method: "DELETE" }).catch(() => {});
+      abJobIdRef.current = null;
+    }
+  };
+
+  const _resetAb = () => {
+    _clearAbPoll();
+    abJobIdRef.current = null;
+    setAbJobId(null);
+    setAbSegsDone(0);
+    setAbSegsTotal(0);
+    setAbState("idle");
+  };
 
   const handleDownloadAudiobook = async () => {
-    if (!docId || abDownloading) return;
-    setAbDownloading(true);
-    const toastId = toast.loading("Generating audiobook… this may take a minute for long documents.");
+    if (!docId || abState !== "idle") return;
+    const toastId = toast.loading("Starting audiobook generation…");
     try {
       const resp = await apiFetch(`${BASE}/studio/tts/document`, {
         method: "POST",
@@ -1326,22 +1357,56 @@ export default function DocumentDetail() {
         try { detail = (await resp.json()).detail ?? detail; } catch { /* ignore */ }
         throw new Error(detail);
       }
-      const blob = await resp.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      const safeName = (doc?.title ?? "audiobook").replace(/[^a-zA-Z0-9_\-. ]/g, "_").trim() || "audiobook";
-      a.href = url;
-      a.download = `${safeName}.mp3`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-      toast.success("Audiobook downloaded!", { id: toastId });
+      const { job_id, total_segments } = await resp.json();
+      toast.dismiss(toastId);
+      abJobIdRef.current = job_id;
+      setAbJobId(job_id);
+      setAbSegsTotal(total_segments);
+      setAbSegsDone(0);
+      setAbState("running");
+
+      // Poll for progress every 2 s.
+      abPollRef.current = setInterval(async () => {
+        try {
+          const sr = await apiFetch(`${BASE}/studio/tts/document/${job_id}/status`);
+          if (!sr.ok) return;
+          const status = await sr.json();
+          setAbSegsDone(status.segments_done ?? 0);
+          setAbSegsTotal(status.total_segments ?? total_segments);
+
+          if (status.state === "done") {
+            _clearAbPoll();
+            // Trigger download via anchor — session cookies are sent automatically.
+            const a = document.createElement("a");
+            a.href = `${BASE}/studio/outputs/serve?path=${encodeURIComponent(status.mp3_path)}`;
+            a.download = status.filename ?? "audiobook.mp3";
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            _resetAb();
+            toast.success("Audiobook downloaded!");
+          } else if (status.state === "failed") {
+            _resetAb();
+            toast.error(`Audiobook failed: ${status.error ?? "unknown error"}`, { duration: 10_000 });
+          } else if (status.state === "cancelled") {
+            _resetAb();
+            toast("Audiobook generation cancelled.");
+          }
+        } catch { /* poll errors are transient */ }
+      }, 2000);
+
     } catch (e: any) {
       toast.error(`Audiobook failed: ${e?.message ?? "unknown error"}`, { id: toastId, duration: 10_000 });
-    } finally {
-      setAbDownloading(false);
+      _resetAb();
     }
+  };
+
+  const handleCancelAudiobook = async () => {
+    if (!abJobId) return;
+    setAbState("cancelling");
+    try {
+      await apiFetch(`${BASE}/studio/tts/document/${abJobId}`, { method: "DELETE" });
+    } catch { /* best-effort */ }
   };
 
   const handleDelete = () => {
@@ -1454,28 +1519,57 @@ export default function DocumentDetail() {
               <><BookHeadphones className="w-3.5 h-3.5 mr-1.5" /> Read Aloud</>
             )}
           </Button>
-          <TooltipProvider delayDuration={300}>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleDownloadAudiobook}
-                  disabled={abDownloading || readiness !== "ready"}
-                  title={readiness !== "ready" ? "Document must be fully processed before generating an audiobook" : "Download entire document as an MP3 audiobook"}
-                >
-                  {abDownloading ? (
-                    <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Generating…</>
-                  ) : (
-                    <><Download className="w-3.5 h-3.5 mr-1.5" /> Audiobook</>
-                  )}
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom" className="max-w-52 text-center text-xs">
-                Download the whole document as a single MP3 — uses your current voice and speed settings
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
+          {abState !== "idle" ? (
+            /* ── Audiobook progress inline ──────────────────────────────── */
+            <div className="flex items-center gap-2">
+              <div className="flex flex-col min-w-36">
+                <div className="flex justify-between text-xs text-muted-foreground mb-0.5">
+                  <span>
+                    {abState === "cancelling" ? "Cancelling…" : "Generating audiobook…"}
+                  </span>
+                  <span>{abSegsDone}/{abSegsTotal}</span>
+                </div>
+                <div className="h-1.5 bg-muted rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-primary rounded-full transition-all duration-500"
+                    style={{ width: abSegsTotal > 0 ? `${Math.round((abSegsDone / abSegsTotal) * 100)}%` : "0%" }}
+                  />
+                </div>
+              </div>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7 shrink-0 text-destructive hover:text-destructive hover:bg-destructive/10"
+                onClick={handleCancelAudiobook}
+                disabled={abState === "cancelling"}
+                title="Cancel audiobook generation"
+              >
+                <X className="w-3.5 h-3.5" />
+              </Button>
+            </div>
+          ) : (
+            /* ── Idle: show Audiobook download button ───────────────────── */
+            <TooltipProvider delayDuration={300}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleDownloadAudiobook}
+                    disabled={readiness !== "ready"}
+                    title={readiness !== "ready"
+                      ? "Document must be fully processed before generating an audiobook"
+                      : "Download entire document as an MP3 audiobook"}
+                  >
+                    <Download className="w-3.5 h-3.5 mr-1.5" /> Audiobook
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" className="max-w-52 text-center text-xs">
+                  Download the whole document as a single MP3 — uses your current voice and speed settings
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )}
           <Button
             variant="outline"
             size="sm"

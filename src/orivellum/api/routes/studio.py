@@ -1833,23 +1833,218 @@ async def _stream_tts_events(body: "TTSRequest"):
 
 
 # ── Document-to-Audiobook ─────────────────────────────────────────────────────
+# Per-job registry: {state, segments_done, total_segments, cancel (threading.Event),
+#                    mp3_path, filename, error}
+_doc_tts_jobs: dict[str, dict] = {}
+_doc_tts_jobs_lock = threading.Lock()
+
+
+def _run_doc_tts_job(
+    job_id: str,
+    body: "DocumentTTSRequest",
+    segments: list[str],
+    full_text: str,
+    doc: dict,
+    db,
+    cfg,
+) -> None:
+    """Background worker: synthesise all segments and update _doc_tts_jobs."""
+    with _doc_tts_jobs_lock:
+        job = _doc_tts_jobs.get(job_id)
+    if job is None:
+        return
+
+    cancel_event: threading.Event = job["cancel"]
+    out_dir = Path(cfg.data_dir) / "outputs"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    espeak_voice = _ESPEAK_VOICE_MAP.get(body.voice, "en+f4")
+    wpm          = max(80, min(400, int(175 * body.speed)))
+    kokoro_voice = _resolve_kokoro_voice(body.voice)
+
+    # Determine best available TTS engine once (AI > Kokoro > espeak-ng).
+    ai_ok = False
+    try:
+        import httpx
+        probe = httpx.get(f"{cfg.serving.base_url}/models", timeout=2.0)
+        ai_ok = probe.status_code == 200
+    except Exception:
+        ai_ok = False
+
+    kokoro_engine = None if ai_ok else _get_kokoro()
+
+    try:
+        import soundfile as _sf
+    except ImportError:
+        _sf = None  # type: ignore[assignment]
+
+    wav_paths: list[Path] = []
+    tmp_dir = Path(tempfile.mkdtemp())
+
+    try:
+        for idx, seg in enumerate(segments):
+            # Honour cancellation between segments.
+            if cancel_event.is_set():
+                with _doc_tts_jobs_lock:
+                    _doc_tts_jobs[job_id]["state"] = "cancelled"
+                return
+
+            wav_path    = tmp_dir / f"seg_{idx:04d}.wav"
+            synthesised = False
+
+            # Strategy 1: AI server TTS
+            if ai_ok:
+                try:
+                    import httpx as _hx
+                    r = _hx.post(
+                        f"{cfg.serving.base_url}/audio/speech",
+                        json={"model": cfg.serving.tts_model,
+                              "input": seg, "voice": body.voice,
+                              "response_format": "wav", "speed": body.speed},
+                        timeout=60,
+                    )
+                    if r.status_code == 200:
+                        wav_path.write_bytes(r.content)
+                        synthesised = True
+                except Exception:
+                    pass
+
+            # Strategy 2: Kokoro ONNX (human-quality, local)
+            if not synthesised and kokoro_engine is not None and _sf is not None:
+                try:
+                    samples, sample_rate = kokoro_engine.create(
+                        seg, voice=kokoro_voice, speed=body.speed, lang="en-us",
+                    )
+                    _sf.write(str(wav_path), samples, sample_rate)
+                    synthesised = True
+                except Exception as ke:
+                    logger.warning("Kokoro failed on segment %d: %s", idx, ke)
+
+            # Strategy 3: espeak-ng (always-available robotic fallback)
+            if not synthesised:
+                res = subprocess.run(
+                    ["espeak-ng", "-v", espeak_voice, "-s", str(wpm),
+                     "-w", str(wav_path), seg],
+                    capture_output=True, text=True, timeout=60,
+                )
+                if res.returncode != 0:
+                    raise RuntimeError(
+                        f"espeak-ng failed on segment {idx}: {res.stderr}"
+                    )
+
+            wav_paths.append(wav_path)
+            with _doc_tts_jobs_lock:
+                _doc_tts_jobs[job_id]["segments_done"] = idx + 1
+
+        # Check cancellation before the expensive ffmpeg step.
+        if cancel_event.is_set():
+            with _doc_tts_jobs_lock:
+                _doc_tts_jobs[job_id]["state"] = "cancelled"
+            return
+
+        # ── Concatenate all WAVs → single high-quality MP3 ───────────────────
+        concat_list = tmp_dir / "concat.txt"
+        concat_list.write_text(
+            "\n".join(f"file '{p}'" for p in wav_paths), encoding="utf-8"
+        )
+
+        safe_title = re.sub(r'[^\w\-]', '_', (doc.get("title") or "audiobook"))[:60]
+        mp3_name   = f"{safe_title}_{uuid.uuid4().hex[:6]}.mp3"
+        mp3_path   = out_dir / mp3_name
+
+        ff = subprocess.run(
+            ["ffmpeg", "-y", "-f", "concat", "-safe", "0",
+             "-i", str(concat_list),
+             "-codec:a", "libmp3lame", "-q:a", "2",
+             str(mp3_path)],
+            capture_output=True, timeout=300,
+        )
+        if ff.returncode != 0:
+            raise RuntimeError(f"ffmpeg concat failed: {ff.stderr.decode()[:300]}")
+
+        # Hard-link into the library BEFORE rotation so the file survives the
+        # rolling 50-output window regardless of rotation timing.
+        _ab_rel = _link_output_sync(mp3_path)
+        _rotate_outputs(out_dir)
+
+        # Amendment-1: register as searchable library document in background.
+        doc_title = doc.get("title") or "audiobook"
+        from orivellum.api.executor import get_executor as _gex
+        _gex().submit(
+            _register_output_bg, mp3_path, full_text[:8000], "mp3",
+            f"Audiobook: {doc_title}", prelinked_rel=_ab_rel,
+            origin_id=body.doc_id,
+        )
+
+        # Push notification — best-effort daemon thread.
+        try:
+            from orivellum.capabilities.push import notify_push_best_effort as _push
+            _doc_label = (doc.get("title") or body.doc_id)[:50]
+            threading.Thread(
+                target=_push,
+                args=(db, "🎙️ Audiobook ready",
+                      f'"{_doc_label}" audiobook is ready to play',
+                      {"screen": f"library/{body.doc_id}"}),
+                daemon=True,
+            ).start()
+        except Exception:
+            pass
+
+        # ── Mark job done ─────────────────────────────────────────────────────
+        rel_path = str(mp3_path.relative_to(out_dir))
+        with _doc_tts_jobs_lock:
+            _doc_tts_jobs[job_id].update({
+                "state":    "done",
+                "mp3_path": rel_path,
+                "filename": mp3_name,
+            })
+
+    except FileNotFoundError:
+        import sys as _sys
+        hint = (
+            "espeak-ng is not installed. Run scripts\\setup-windows.ps1 to install it."
+            if _sys.platform == "win32"
+            else "espeak-ng is not installed. Run: nix-env -iA nixpkgs.espeak-ng"
+        )
+        logger.error("Document TTS job %s: %s", job_id, hint)
+        with _doc_tts_jobs_lock:
+            _doc_tts_jobs[job_id].update({"state": "failed", "error": hint})
+
+    except Exception as exc:
+        logger.error("Document TTS job %s failed: %s", job_id, exc)
+        with _doc_tts_jobs_lock:
+            _doc_tts_jobs[job_id].update({
+                "state": "failed",
+                "error": str(exc)[:300],
+            })
+
+    finally:
+        # Clean up temp WAVs regardless of outcome.
+        for p in wav_paths:
+            p.unlink(missing_ok=True)
+        try:
+            (tmp_dir / "concat.txt").unlink(missing_ok=True)
+            tmp_dir.rmdir()
+        except Exception:
+            pass
+
 
 class DocumentTTSRequest(BaseModel):
     doc_id: str
     voice: str = "af_heart"
     speed: float = 1.0
     max_segments: int = 60  # cap at ~90 000 chars / ~1 hour of reading
-    return_url: bool = False  # when True, return JSON {ok, path} instead of FileResponse (for mobile)
+    return_url: bool = False  # kept for backward-compat; ignored in async flow
 
 
 @router.post("/studio/tts/document")
 def synthesize_document(body: DocumentTTSRequest):
-    """Convert an entire library document to an audiobook MP3.
+    """Kick off async audiobook generation; returns {job_id, total_segments} immediately.
 
-    Fetches all extracted text chunks for *doc_id*, joins them, splits at
-    paragraph/sentence boundaries, synthesises each segment with espeak-ng (or
-    the configured AI TTS endpoint), then concatenates everything into a single
-    MP3 via ffmpeg and saves it to the outputs directory.
+    The heavy TTS + ffmpeg work runs in the shared background executor so the
+    HTTP response returns in milliseconds.  Poll
+    GET  /studio/tts/document/{job_id}/status  for progress.
+    Send DELETE /studio/tts/document/{job_id}  to cancel.
     """
     db  = get_db()
     cfg = get_config()
@@ -1879,164 +2074,57 @@ def synthesize_document(body: DocumentTTSRequest):
     if not segments:
         raise HTTPException(422, "Could not extract readable text from this document.")
 
-    out_dir = Path(cfg.data_dir) / "outputs"
-    out_dir.mkdir(parents=True, exist_ok=True)
+    # ── Create job entry ──────────────────────────────────────────────────────
+    job_id       = str(uuid.uuid4())
+    cancel_event = threading.Event()
 
-    espeak_voice = _ESPEAK_VOICE_MAP.get(body.voice, "en+f4")
-    wpm          = max(80, min(400, int(175 * body.speed)))
-    # All 28 catalog IDs are valid Kokoro voice IDs.
-    kokoro_voice = _resolve_kokoro_voice(body.voice)
+    with _doc_tts_jobs_lock:
+        _doc_tts_jobs[job_id] = {
+            "state":          "running",
+            "segments_done":  0,
+            "total_segments": len(segments),
+            "cancel":         cancel_event,
+            "mp3_path":       None,
+            "filename":       None,
+            "error":          None,
+        }
 
-    wav_paths: list[Path] = []
-    tmp_dir   = Path(tempfile.mkdtemp())
+    from orivellum.api.executor import _tracked_submit
+    _tracked_submit(
+        _run_doc_tts_job,
+        job_id, body, segments, full_text, doc, db, cfg,
+        kind="tts",
+        label=f"audiobook:{(doc.get('title') or body.doc_id)[:30]}",
+    )
 
-    # ── Determine best available TTS engine once ──────────────────────────────
-    # Priority: 1) AI server  2) Kokoro ONNX  3) espeak-ng (robotic fallback)
-    ai_ok = False
-    try:
-        import httpx
-        probe = httpx.get(f"{cfg.serving.base_url}/models", timeout=2.0)
-        ai_ok = probe.status_code == 200
-    except Exception:
-        ai_ok = False
+    return {"job_id": job_id, "total_segments": len(segments)}
 
-    kokoro_engine = None if ai_ok else _get_kokoro()   # skip Kokoro if AI server is up
 
-    try:
-        import soundfile as _sf
-        import numpy as _np
-    except ImportError:
-        _sf = None  # type: ignore[assignment]
+@router.get("/studio/tts/document/{job_id}/status")
+def get_doc_tts_status(job_id: str):
+    """Return current progress for a document TTS job."""
+    with _doc_tts_jobs_lock:
+        raw = _doc_tts_jobs.get(job_id)
+    if raw is None:
+        raise HTTPException(404, f"TTS job {job_id!r} not found")
+    # Never serialise the threading.Event.
+    job = {k: v for k, v in raw.items() if k != "cancel"}
+    return {"job_id": job_id, **job}
 
-    try:
-        for idx, seg in enumerate(segments):
-            wav_path = tmp_dir / f"seg_{idx:04d}.wav"
-            synthesised = False
 
-            # Strategy 1: AI server TTS
-            if ai_ok:
-                try:
-                    import httpx as _hx
-                    r = _hx.post(
-                        f"{cfg.serving.base_url}/audio/speech",
-                        json={"model": cfg.serving.tts_model,  # configurable: tts-1-hd / tts-1 / etc.
-                              "input": seg,
-                              "voice": body.voice, "response_format": "wav",
-                              "speed": body.speed},
-                        timeout=60,
-                    )
-                    if r.status_code == 200:
-                        wav_path.write_bytes(r.content)
-                        synthesised = True
-                except Exception:
-                    pass
-
-            # Strategy 2: Kokoro ONNX (human-quality, local)
-            if not synthesised and kokoro_engine is not None and _sf is not None:
-                try:
-                    samples, sample_rate = kokoro_engine.create(
-                        seg, voice=kokoro_voice, speed=body.speed, lang="en-us",
-                    )
-                    _sf.write(str(wav_path), samples, sample_rate)
-                    synthesised = True
-                except Exception as ke:
-                    logger.warning("Kokoro failed on segment %d: %s", idx, ke)
-
-            # Strategy 3: espeak-ng (always-available robotic fallback)
-            if not synthesised:
-                res = subprocess.run(
-                    ["espeak-ng", "-v", espeak_voice, "-s", str(wpm),
-                     "-w", str(wav_path), seg],
-                    capture_output=True, text=True, timeout=60,
-                )
-                if res.returncode != 0:
-                    raise RuntimeError(f"espeak-ng failed on segment {idx}: {res.stderr}")
-
-            wav_paths.append(wav_path)
-
-        # ── Concatenate all WAVs → single high-quality MP3 ────────────────────
-        concat_list = tmp_dir / "concat.txt"
-        concat_list.write_text(
-            "\n".join(f"file '{p}'" for p in wav_paths), encoding="utf-8"
-        )
-
-        safe_title = re.sub(r'[^\w\-]', '_', (doc.get("title") or "audiobook"))[:60]
-        mp3_name   = f"{safe_title}_{uuid.uuid4().hex[:6]}.mp3"
-        mp3_path   = out_dir / mp3_name
-
-        ff = subprocess.run(
-            ["ffmpeg", "-y", "-f", "concat", "-safe", "0",
-             "-i", str(concat_list),
-             "-codec:a", "libmp3lame", "-q:a", "2",   # q:a 2 = ~190 kbps, near-transparent
-             str(mp3_path)],
-            capture_output=True, timeout=300,
-        )
-        if ff.returncode != 0:
-            raise RuntimeError(f"ffmpeg concat failed: {ff.stderr.decode()[:300]}")
-
-        # Hard-link the audiobook into the library BEFORE rotation so the file
-        # survives the rolling 50-output window regardless of when the background
-        # thread starts.  This is the core of the durable Save invariant.
-        _ab_rel = _link_output_sync(mp3_path)
-        _rotate_outputs(out_dir)
-
-        # Amendment-1: register the audiobook as a searchable library document.
-        # Use the source document's text as content so "find the audiobook for X"
-        # resolves via the audio file's own library entry.
-        doc_title = doc.get("title") or "audiobook"
-        from orivellum.api.executor import get_executor as _gex
-        _gex().submit(
-            _register_output_bg, mp3_path, full_text[:8000], "mp3",
-            f"Audiobook: {doc_title}", prelinked_rel=_ab_rel,
-            origin_id=body.doc_id,
-        )
-
-        # Push notification — document audiobook ready (best-effort, daemon thread)
-        try:
-            from orivellum.capabilities.push import notify_push_best_effort as _push_doc_ab
-            import threading as _push_thr_doc
-            _doc_label = (doc.get("title") or body.doc_id)[:50]
-            _push_thr_doc.Thread(
-                target=_push_doc_ab,
-                args=(
-                    get_db(),
-                    "🎙️ Audiobook ready",
-                    f'"{_doc_label}" audiobook is ready to play',
-                    {"screen": f"library/{body.doc_id}"},
-                ),
-                daemon=True,
-            ).start()
-        except Exception:
-            pass
-
-        if body.return_url:
-            # Mobile clients can't play a streaming FileResponse directly;
-            # return the serve path so they can create an authenticated player.
-            rel = str(mp3_path.relative_to(out_dir))
-            return {"ok": True, "path": rel, "filename": mp3_name}
-        return FileResponse(str(mp3_path), media_type="audio/mpeg",
-                            filename=mp3_name)
-
-    except FileNotFoundError:
-        import sys as _sys
-        hint = (
-            "espeak-ng is not installed. Run scripts\\setup-windows.ps1 to install it."
-            if _sys.platform == "win32"
-            else "espeak-ng is not installed. Run: nix-env -iA nixpkgs.espeak-ng"
-        )
-        raise HTTPException(503, hint)
-    except Exception as exc:
-        logger.error("Document TTS failed: %s", exc)
-        raise HTTPException(500, f"Audiobook generation failed: {exc}")
-    finally:
-        # Clean up temp WAVs
-        for p in wav_paths:
-            p.unlink(missing_ok=True)
-        try:
-            (tmp_dir / "concat.txt").unlink(missing_ok=True)
-            tmp_dir.rmdir()
-        except Exception:
-            pass
+@router.delete("/studio/tts/document/{job_id}")
+def cancel_doc_tts(job_id: str):
+    """Signal cancellation for a running document TTS job."""
+    with _doc_tts_jobs_lock:
+        job = _doc_tts_jobs.get(job_id)
+    if job is None:
+        raise HTTPException(404, f"TTS job {job_id!r} not found")
+    if job["state"] != "running":
+        return {"ok": True, "state": job["state"]}
+    job["cancel"].set()
+    with _doc_tts_jobs_lock:
+        _doc_tts_jobs[job_id]["state"] = "cancelling"
+    return {"ok": True, "state": "cancelling"}
 
 
 # ── Outputs ───────────────────────────────────────────────────────────────────
