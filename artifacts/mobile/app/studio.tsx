@@ -489,6 +489,21 @@ function VoiceBrowserCard({
                 </View>
               )}
 
+              {/* "Generating sample…" label — visible only during first-time
+                  server-side generation (5–15 s). Floats below the accent
+                  badge so the user knows the wait is server-side, not a freeze. */}
+              {isLoading && (
+                <Text
+                  style={[
+                    voiceCardStyles.generatingLabel,
+                    { color: colors.mutedForeground },
+                  ]}
+                  numberOfLines={1}
+                >
+                  Generating sample…
+                </Text>
+              )}
+
               {/* Sample preview button — shows spinner while the first-time
                   MP3 is being generated server-side (can take 5–15 s). */}
               <Pressable
@@ -600,6 +615,12 @@ const voiceCardStyles = StyleSheet.create({
     paddingVertical: 2,
   },
   tagText: { fontSize: 9, fontFamily: 'Inter_400Regular' },
+  generatingLabel: {
+    fontSize: 9,
+    fontFamily: 'Inter_400Regular',
+    fontStyle: 'italic',
+    opacity: 0.7,
+  },
 });
 
 // ── Playback (single shared player) ─────────────────────────────────────────────
