@@ -789,6 +789,35 @@ export default function WriteDeskPage() {
     editor.chain().focus().insertContentAt(to, '\n' + text).run();
   }, [editor]);
 
+  // ── iOS keyboard: keep cursor above keyboard ──────────────────────────────
+  //
+  // When the iPhone software keyboard opens, the visual viewport shrinks.
+  // TipTap's ProseMirror editor doesn't automatically re-scroll to the cursor
+  // in response — so if the cursor was near the bottom, it ends up hidden
+  // beneath the keyboard. We listen to visualViewport "resize" events and call
+  // scrollIntoView() whenever the viewport height decreases (keyboard opening).
+  // This has no effect on desktop or Android where visualViewport is absent or
+  // doesn't trigger on keyboard events.
+  useEffect(() => {
+    const vv = typeof window !== 'undefined' ? window.visualViewport : null;
+    if (!editor || !vv) return;
+
+    let prevHeight = vv.height;
+
+    const handleResize = () => {
+      const newHeight = vv.height;
+      if (newHeight < prevHeight) {
+        // Viewport shrank → software keyboard just opened (or expanded).
+        // Ask ProseMirror to scroll the cursor into the visible area.
+        editor.commands.scrollIntoView();
+      }
+      prevHeight = newHeight;
+    };
+
+    vv.addEventListener('resize', handleResize);
+    return () => { vv.removeEventListener('resize', handleResize); };
+  }, [editor]);
+
   // ── Word count display ────────────────────────────────────────────────────
 
   const wordCount = editor?.storage.characterCount?.words() ?? 0;
