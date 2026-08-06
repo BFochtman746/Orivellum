@@ -112,6 +112,22 @@ def learning_reset_concept(work_id: str, concept_id: str):
     return {"reset": deleted, "concept_id": concept_id, "scope": "concept"}
 
 
+@router.get("/works/{work_id}/learning/due")
+def learning_due(work_id: str):
+    """Return concepts with next_review_at <= now, sorted by urgency (most overdue first).
+
+    Use this to populate a 'Due for review' section in the UI.  Each concept carries
+    the standard mastery fields plus HLR fields: half_life_days, next_review_at,
+    review_session_count, and is_due=True.
+    """
+    db = get_db()
+    if not db.get_work(work_id):
+        raise HTTPException(404, f"Work {work_id!r} not found")
+    from orivellum.capabilities.learning import list_due_concepts
+    due = list_due_concepts(db, work_id)
+    return {"due": due, "count": len(due)}
+
+
 @router.post("/works/{work_id}/learning/assess")
 async def learning_assess(work_id: str, body: AssessBody):
     """Score the student's answer, update streak, and return routing decision."""

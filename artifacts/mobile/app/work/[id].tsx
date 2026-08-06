@@ -2317,7 +2317,7 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
   const [session, setSession]   = useState<MobileSession | null>(null);
   const [answer, setAnswer]     = useState('');
   const [result, setResult]     = useState<MobileAssessResult | null>(null);
-  const [summary, setSummary]   = useState<{ total: number; graduated: number; mastery_pct: number } | null>(null);
+  const [summary, setSummary]   = useState<{ total: number; graduated: number; mastery_pct: number; due_count?: number } | null>(null);
   const [errorMsg, setErrorMsg] = useState('');
   const [sessionCorrect, setSessionCorrect] = useState(0);
   const [learnView, setLearnView] = useState<'study' | 'concepts'>('study');
@@ -2663,12 +2663,13 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
             {concepts.map((c: any) => {
               // Mastery tier
               const passes = c.consecutive_passes ?? 0;
+              const isDue  = c.is_due && c.graduated; // overdue spaced-repetition review
               const tier: 'graduated' | 'in_progress' | 'not_started' =
                 c.graduated ? 'graduated' : passes > 0 ? 'in_progress' : 'not_started';
-              const tierLabel = tier === 'graduated' ? 'Graduated' : tier === 'in_progress' ? 'In progress' : 'Not started';
-              const tierCol   = tier === 'graduated' ? '#16a34a' : tier === 'in_progress' ? colors.primary : colors.mutedForeground;
-              const tierBg    = tier === 'graduated' ? '#16a34a18' : tier === 'in_progress' ? colors.primary + '18' : colors.muted;
-              const borderCol = tier === 'graduated' ? '#16a34a44' : tier === 'in_progress' ? colors.primary + '33' : colors.border;
+              const tierLabel = isDue ? 'Due' : tier === 'graduated' ? 'Graduated' : tier === 'in_progress' ? 'In progress' : 'Not started';
+              const tierCol   = isDue ? '#d97706' : tier === 'graduated' ? '#16a34a' : tier === 'in_progress' ? colors.primary : colors.mutedForeground;
+              const tierBg    = isDue ? '#fef3c7' : tier === 'graduated' ? '#16a34a18' : tier === 'in_progress' ? colors.primary + '18' : colors.muted;
+              const borderCol = isDue ? '#fbbf2455' : tier === 'graduated' ? '#16a34a44' : tier === 'in_progress' ? colors.primary + '33' : colors.border;
               const barPct    = tier === 'graduated' ? 100 : Math.min(99, Math.round((passes / 3) * 100));
 
               // Last-practised label
@@ -2706,7 +2707,7 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
                   {/* Header row: icon + subject + tier badge + chevron */}
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                     <Feather
-                      name={tier === 'graduated' ? 'award' : tier === 'in_progress' ? 'trending-up' : 'circle'}
+                      name={isDue ? 'clock' : tier === 'graduated' ? 'award' : tier === 'in_progress' ? 'trending-up' : 'circle'}
                       size={14}
                       color={tierCol}
                     />
@@ -2753,7 +2754,7 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
 
       {/* Mastery bar — only shown in study view */}
       {learnView === 'study' && summary && (
-        <View style={{ marginBottom: 20 }}>
+        <View style={{ marginBottom: 12 }}>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 5 }}>
             <Text style={[styles.itemMeta, { color: colors.mutedForeground }]}>
               {summary.graduated}/{summary.total} graduated
@@ -2773,6 +2774,45 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
             />
           </View>
         </View>
+      )}
+
+      {/* Due for review banner — study view only, shown when concepts are overdue */}
+      {learnView === 'study' && summary && (summary.due_count ?? 0) > 0 && (
+        <Pressable
+          onPress={async () => {
+            // Load a question for the most-overdue concept
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            try {
+              const r = await mobileFetch(`${apiBase}/works/${workId}/learning/due`);
+              if (r.ok) {
+                const d = await r.json();
+                const first = d.due?.[0];
+                if (first?.id) { await loadQuestion(first.id); }
+                else { await loadQuestion(null); }
+              } else {
+                await loadQuestion(null);
+              }
+            } catch {
+              await loadQuestion(null);
+            }
+          }}
+          style={({ pressed }: { pressed: boolean }) => ({
+            flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+            backgroundColor: '#fef3c7', borderWidth: 1, borderColor: '#fbbf24',
+            borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10, marginBottom: 14,
+            opacity: pressed ? 0.8 : 1,
+          })}
+        >
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <Feather name="clock" size={15} color="#d97706" />
+            <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: '#92400e' }}>
+              {summary.due_count} concept{summary.due_count !== 1 ? 's' : ''} due for review
+            </Text>
+          </View>
+          <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: '#d97706' }}>
+            Review →
+          </Text>
+        </Pressable>
       )}
 
       {/* Concept chip — study view only */}

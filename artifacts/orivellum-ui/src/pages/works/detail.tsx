@@ -2740,7 +2740,7 @@ function LearnTab({ workId }: { workId: string }) {
   const [session, setSession]   = useState<LearningSession | null>(null);
   const [answer, setAnswer]     = useState("");
   const [result, setResult]     = useState<AssessResult | null>(null);
-  const [summary, setSummary]   = useState<{ total: number; graduated: number; mastery_pct: number } | null>(null);
+  const [summary, setSummary]   = useState<{ total: number; graduated: number; mastery_pct: number; due_count?: number } | null>(null);
   const [error, setError]       = useState<string | null>(null);
   const [showConcepts, setShowConcepts] = useState(false);
   const [concepts, setConcepts] = useState<any[]>([]);
@@ -3043,6 +3043,31 @@ function LearnTab({ workId }: { workId: string }) {
         </Card>
       )}
 
+      {/* Review due banner — shown above concept map when concepts are overdue */}
+      {(() => {
+        const dueConcepts = concepts.filter((c: any) => c.is_due);
+        if (dueConcepts.length === 0) return null;
+        return (
+          <div className="flex items-center justify-between px-4 py-3 rounded-xl border border-amber-400/40 bg-amber-50/80 dark:bg-amber-900/20">
+            <div className="flex items-center gap-2">
+              <Clock className="w-4 h-4 text-amber-600 shrink-0" />
+              <span className="text-sm font-medium text-amber-800 dark:text-amber-200">
+                {dueConcepts.length} concept{dueConcepts.length !== 1 ? "s" : ""} due for review
+              </span>
+              <span className="text-xs text-amber-600/80 dark:text-amber-400/80 font-mono">
+                — spaced-repetition schedule
+              </span>
+            </div>
+            <button
+              onClick={() => startOrContinue(dueConcepts[0]?.id)}
+              className="text-xs font-mono font-semibold text-amber-700 dark:text-amber-300 hover:underline shrink-0 ml-2"
+            >
+              Start review →
+            </button>
+          </div>
+        );
+      })()}
+
       {/* Concept map (collapsible) */}
       {concepts.length > 0 && (
         <div className="border border-border/50 rounded-xl overflow-hidden">
@@ -3051,27 +3076,49 @@ function LearnTab({ workId }: { workId: string }) {
             className="w-full flex items-center justify-between px-4 py-3 text-xs font-mono uppercase tracking-wider text-muted-foreground hover:bg-muted/30 transition-colors"
           >
             <span>Concept map ({concepts.length})</span>
-            <ChevronDown className={`w-4 h-4 transition-transform ${showConcepts ? "rotate-180" : ""}`} />
+            {summary?.due_count ? (
+              <span className="flex items-center gap-1.5 text-amber-600 font-semibold">
+                <Clock className="w-3 h-3" />
+                {summary.due_count} due
+              </span>
+            ) : (
+              <ChevronDown className={`w-4 h-4 transition-transform ${showConcepts ? "rotate-180" : ""}`} />
+            )}
           </button>
           {showConcepts && (
             <div className="divide-y divide-border/30">
               {concepts.map((c: any) => {
                 const hasProgress = c.consecutive_passes > 0 || c.graduated;
                 const isResetting = resettingConcept === c.id;
+                const isDue = c.is_due && c.graduated;
                 return (
                   <div key={c.id} className="flex items-center justify-between px-4 py-2.5 text-sm group">
                     <div className="flex items-center gap-2">
-                      {c.graduated
+                      {isDue
+                        ? <Clock className="w-3.5 h-3.5 text-amber-500" />
+                        : c.graduated
                         ? <Check className="w-3.5 h-3.5 text-emerald-500" />
                         : c.consecutive_passes > 0
                         ? <div className="w-3.5 h-3.5 rounded-full border-2 border-amber-400" />
                         : <div className="w-3.5 h-3.5 rounded-full border border-muted-foreground/40" />}
-                      <span className={c.graduated ? "text-emerald-700 dark:text-emerald-400 font-medium" : ""}>{c.subject}</span>
+                      <span className={
+                        isDue ? "text-amber-700 dark:text-amber-300 font-medium"
+                        : c.graduated ? "text-emerald-700 dark:text-emerald-400 font-medium"
+                        : ""
+                      }>{c.subject}</span>
                     </div>
                     <div className="flex items-center gap-2">
-                      <span className="text-xs font-mono text-muted-foreground">
-                        {c.graduated ? "✓ done" : c.consecutive_passes > 0 ? `${c.consecutive_passes}/3` : "—"}
-                      </span>
+                      {isDue ? (
+                        <span className="text-xs font-mono font-semibold text-amber-600 bg-amber-50 dark:bg-amber-900/30 border border-amber-300/50 px-1.5 py-0.5 rounded">
+                          Due
+                        </span>
+                      ) : (
+                        <span className="text-xs font-mono text-muted-foreground">
+                          {c.graduated
+                            ? (c.half_life_days > 7 ? "✓ durable" : `HL ${c.half_life_days?.toFixed(1)}d`)
+                            : c.consecutive_passes > 0 ? `${c.consecutive_passes}/3` : "—"}
+                        </span>
+                      )}
                       {hasProgress && (
                         <button
                           onClick={() => resetConcept(c.id, c.subject)}

@@ -1553,4 +1553,19 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             FOREIGN KEY (book_id) REFERENCES genesis_books(id)
         )
     """),
+
+    # v93 — Spaced Repetition (HLR) columns on work_mastery.
+    # Adds per-record fields needed by the Half-Life Regression student model:
+    #   last_reviewed_at     — ISO-8601 timestamp of the session (backfilled from created_at)
+    #   next_review_at       — predicted optimal next review time (now + half_life_days)
+    #   half_life_days       — current predicted forgetting half-life in fractional days
+    #   review_session_count — distinct calendar-day sessions (gate for durable mastery: ≥ 3)
+    (93, "Add HLR spaced-repetition columns to work_mastery", """
+        ALTER TABLE work_mastery ADD COLUMN last_reviewed_at TEXT;
+        ALTER TABLE work_mastery ADD COLUMN next_review_at   TEXT;
+        ALTER TABLE work_mastery ADD COLUMN half_life_days   REAL    NOT NULL DEFAULT 1.0;
+        ALTER TABLE work_mastery ADD COLUMN review_session_count INTEGER NOT NULL DEFAULT 0;
+        UPDATE work_mastery SET last_reviewed_at = created_at WHERE last_reviewed_at IS NULL;
+        CREATE INDEX IF NOT EXISTS work_mastery_next_review ON work_mastery(next_review_at);
+    """),
 ]

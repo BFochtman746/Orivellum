@@ -22,10 +22,15 @@ from typing import Any
 
 logger = logging.getLogger("orivellum.learning")
 
-_GRAD_THRESHOLD   = 0.75   # score at or above this counts as a pass
-_PASSES_TO_GRAD   = 3      # consecutive passes needed to graduate
-_MAX_SEED_SUBJ    = 20     # max subjects to seed from knowledge
-_MAX_KN_CONTEXT   = 5      # knowledge items to include in question/assess prompts
+_GRAD_THRESHOLD        = 0.75   # score at or above this counts as a pass
+_PASSES_TO_GRAD        = 3      # consecutive passes needed to graduate
+_MAX_SEED_SUBJ         = 20     # max subjects to seed from knowledge
+_MAX_KN_CONTEXT        = 5      # knowledge items to include in question/assess prompts
+
+# ── HLR (Half-Life Regression) spaced-repetition constants ───────────────────
+_HLR_MIN_HALF_LIFE     = 0.5    # floor: 12 h (never schedule sooner than this)
+_HLR_DURABLE_HALF_LIFE = 7.0   # a concept is "durably mastered" only when HL > 7 days
+_HLR_DURABLE_SESSIONS  = 3     # …AND reviewed on ≥ 3 distinct calendar days
 
 
 # ─── Internal helpers ──────────────────────────────────────────────────────────
@@ -107,22 +112,44 @@ def _get_concept(db: Any, concept_id: str) -> dict | None:
 def _get_mastery(db: Any, concept_id: str) -> dict:
     """Latest mastery record for the concept, or defaults.
 
-    Includes ``last_practised`` (ISO-8601 string or None) so callers can display
-    when the user last answered a question for this concept.
+    Includes ``last_practised`` (ISO-8601 string or None), HLR fields
+    (half_life_days, next_review_at, review_session_count), and is_due flag.
     """
     with db._lock:
         row = db._conn.execute(
-            """SELECT score, consecutive_passes, created_at AS last_practised
+            """SELECT score, consecutive_passes,
+                      created_at AS last_practised,
+                      COALESCE(last_reviewed_at, created_at) AS last_reviewed_at,
+                      next_review_at,
+                      COALESCE(half_life_days, 1.0)       AS half_life_days,
+                      COALESCE(review_session_count, 0)   AS review_session_count
                FROM work_mastery
                WHERE concept_id=? ORDER BY created_at DESC LIMIT 1""",
             (concept_id,),
         ).fetchone()
-    return dict(row) if row else {"score": 0.0, "consecutive_passes": 0, "last_practised": None}
+    if row:
+        m = dict(row)
+    else:
+        m = {
+            "score": 0.0, "consecutive_passes": 0, "last_practised": None,
+            "last_reviewed_at": None, "next_review_at": None,
+            "half_life_days": 1.0, "review_session_count": 0,
+        }
+    now = _now()
+    m["is_due"] = bool(m.get("next_review_at") and m["next_review_at"] <= now)
+    return m
 
 
 def _is_graduated(db: Any, concept_id: str) -> bool:
+    """Durable mastery requires ≥3 consecutive passes, ≥3 distinct-day sessions, and HL > 7d."""
     m = _get_mastery(db, concept_id)
-    return m["consecutive_passes"] >= _PASSES_TO_GRAD
+    if m["consecutive_passes"] < _PASSES_TO_GRAD:
+        return False
+    # Durable gate: review_session_count and half_life threshold
+    return (
+        m["review_session_count"] >= _HLR_DURABLE_SESSIONS
+        and m["half_life_days"] > _HLR_DURABLE_HALF_LIFE
+    )
 
 
 def _knowledge_for_concept(db: Any, work_id: str, subject: str) -> list[dict]:
@@ -233,7 +260,7 @@ def seed_concepts(db: Any, work_id: str, base_url: str, model: str) -> list[dict
 
 
 def list_concepts(db: Any, work_id: str) -> list[dict]:
-    """Return all concepts for the work, each annotated with mastery state."""
+    """Return all concepts for the work, each annotated with mastery state and HLR fields."""
     with db._lock:
         rows = db._conn.execute(
             "SELECT * FROM work_concepts WHERE work_id=? ORDER BY created_at ASC",
@@ -243,32 +270,51 @@ def list_concepts(db: Any, work_id: str) -> list[dict]:
     for row in rows:
         c = dict(row)
         m = _get_mastery(db, c["id"])
-        c["score"]              = m["score"]
-        c["consecutive_passes"] = m["consecutive_passes"]
-        c["graduated"]          = m["consecutive_passes"] >= _PASSES_TO_GRAD
-        c["last_practised"]     = m.get("last_practised")   # ISO-8601 or None
+        c["score"]                = m["score"]
+        c["consecutive_passes"]   = m["consecutive_passes"]
+        c["graduated"]            = _is_graduated(db, c["id"])
+        c["last_practised"]       = m.get("last_practised")      # ISO-8601 or None
+        # HLR fields
+        c["half_life_days"]       = m.get("half_life_days", 1.0)
+        c["next_review_at"]       = m.get("next_review_at")
+        c["review_session_count"] = m.get("review_session_count", 0)
+        c["is_due"]               = m.get("is_due", False)
         result.append(c)
     return result
 
 
 def next_concept_id(db: Any, work_id: str) -> str | None:
-    """Pick the next concept to study.
+    """Pick the next concept to study using HLR priority.
 
-    Priority: ungraduated concepts with the fewest passes; prefer those whose
-    prereq is already graduated (or has no prereq).
+    Priority order:
+    1. Overdue graduated concepts (next_review_at <= now), most overdue first —
+       these have been mastered but are predicted to be forgotten soon.
+    2. Ungraduated concepts with prerequisites met, fewest consecutive passes first.
+    3. Any remaining ungraduated concepts.
     """
     concepts = list_concepts(db, work_id)
     if not concepts:
         return None
+    now = _now()
+
+    # 1. Overdue graduated concepts (spaced-repetition reviews)
+    overdue = [
+        c for c in concepts
+        if c.get("is_due") and c.get("next_review_at", "") <= now
+    ]
+    if overdue:
+        # Most overdue first (smallest next_review_at = waited longest)
+        overdue.sort(key=lambda c: (c.get("next_review_at") or ""))
+        return overdue[0]["id"]
+
+    # 2. Ungraduated concepts
     ungrad = [c for c in concepts if not c["graduated"]]
     if not ungrad:
         return None
 
-    # Prefer concepts whose prereq is graduated (or none)
     graduated_ids = {c["id"] for c in concepts if c["graduated"]}
     ready = [c for c in ungrad if c.get("prereq_id") in graduated_ids or c.get("prereq_id") is None]
     pool = ready if ready else ungrad
-    # Fewest consecutive passes first (weakest concept)
     pool.sort(key=lambda c: (c["consecutive_passes"], c["created_at"]))
     return pool[0]["id"]
 
@@ -387,21 +433,32 @@ def assess_answer(
 
 
 def get_mastery_summary(db: Any, work_id: str) -> dict:
-    """Return aggregate mastery stats for the work."""
-    concepts = list_concepts(db, work_id)
+    """Return aggregate mastery stats for the work, including HLR due_count."""
+    concepts  = list_concepts(db, work_id)
     total     = len(concepts)
     graduated = sum(1 for c in concepts if c["graduated"])
     in_prog   = sum(1 for c in concepts if not c["graduated"] and c["consecutive_passes"] > 0)
     not_start = total - graduated - in_prog
     pct       = round(graduated / total * 100) if total else 0
+    due_count = sum(1 for c in concepts if c.get("is_due"))
     return {
         "total":        total,
         "graduated":    graduated,
         "in_progress":  in_prog,
         "not_started":  not_start,
         "mastery_pct":  pct,
+        "due_count":    due_count,
         "concepts":     concepts,
     }
+
+
+def list_due_concepts(db: Any, work_id: str) -> list[dict]:
+    """Return concepts whose next_review_at is overdue, sorted by urgency (most overdue first)."""
+    now      = _now()
+    concepts = list_concepts(db, work_id)
+    due      = [c for c in concepts if c.get("next_review_at") and c["next_review_at"] <= now]
+    due.sort(key=lambda c: c.get("next_review_at") or "")
+    return due
 
 
 # ─── Private helpers ──────────────────────────────────────────────────────────
@@ -426,27 +483,67 @@ def _compute_route(db: Any, concept_id: str, score: float) -> str:
 
 
 def _record_mastery(db: Any, concept_id: str, score: float, route: str, feedback: str) -> None:
-    """Insert a mastery record and update the consecutive-pass streak."""
+    """Insert a mastery record, update the consecutive-pass streak, and apply HLR update.
+
+    HLR formula (Duolingo 2016):
+        new_half_life = max(_HLR_MIN_HALF_LIFE, old_half_life × 2^(score − 0.5))
+
+    A score of 1.0 roughly doubles the half-life; a score of 0.0 roughly halves it;
+    a score of 0.5 leaves it unchanged.  The next review is scheduled at
+    now + new_half_life days.
+
+    review_session_count is incremented only when the new session falls on a different
+    UTC calendar date from the previous one (preventing gaming by rapid repetition).
+    """
     now = _now()
     mid = _uuid()
 
-    # Compute updated consecutive_passes
+    # Load previous mastery state (includes HLR fields)
     prev = _get_mastery(db, concept_id)
+
+    # ── consecutive passes ───────────────────────────────────────────────────
     if score >= _GRAD_THRESHOLD:
         cons = prev["consecutive_passes"] + 1
     else:
-        cons = 0   # reset streak on failure
+        cons = 0  # reset streak on failure
+
+    # ── HLR half-life update ─────────────────────────────────────────────────
+    old_hl = float(prev.get("half_life_days") or 1.0)
+    new_hl = max(_HLR_MIN_HALF_LIFE, old_hl * (2 ** (score - 0.5)))
+
+    # next_review_at = now + new_half_life days
+    import datetime as _dt
+    now_dt = _dt.datetime.fromisoformat(now.replace("Z", "+00:00")) if now.endswith("Z") else _dt.datetime.fromisoformat(now)
+    next_review_dt = now_dt + _dt.timedelta(days=new_hl)
+    next_review_at = next_review_dt.isoformat()
+
+    # ── session-count gate (distinct calendar days) ──────────────────────────
+    prev_session_count = int(prev.get("review_session_count") or 0)
+    prev_date = (prev.get("last_reviewed_at") or "")[:10]   # "YYYY-MM-DD"
+    today = now[:10]
+    if prev_date != today:
+        new_session_count = prev_session_count + 1
+    else:
+        new_session_count = prev_session_count  # same day: don't increment
 
     with db._lock:
         db._conn.execute(
-            """INSERT INTO work_mastery(id,concept_id,score,consecutive_passes,brief_feedback,routed_to,created_at)
-               VALUES(?,?,?,?,?,?,?)""",
-            (mid, concept_id, score, cons, feedback, route, now),
+            """INSERT INTO work_mastery(
+                   id, concept_id, score, consecutive_passes,
+                   brief_feedback, routed_to, created_at,
+                   last_reviewed_at, next_review_at,
+                   half_life_days, review_session_count)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+            (mid, concept_id, score, cons,
+             feedback, route, now,
+             now, next_review_at,
+             new_hl, new_session_count),
         )
         db._conn.commit()
     try:
         db.audit("learning.mastery_recorded", object_id=concept_id,
-                 object_type="learning_concept", actor="system", detail=f"score={score:.2f}")
+                 object_type="learning_concept", actor="system",
+                 detail=f"score={score:.2f} hl={new_hl:.2f}d next={next_review_at[:10]}")
     except Exception:
         pass
 
