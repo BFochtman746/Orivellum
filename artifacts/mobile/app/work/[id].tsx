@@ -125,21 +125,37 @@ function TabBar({ active, onSelect, colors, badges = {}, onNavigateGraph }: {
         );
       })}
       {/* "More" discloses secondary tabs */}
-      <Pressable
-        onPress={openMore}
-        style={[
-          styles.tab,
-          isSecondaryActive && { borderBottomColor: colors.primary, borderBottomWidth: 2 },
-        ]}
-      >
-        <Text style={[
-          styles.tabLabel,
-          { color: isSecondaryActive ? colors.primary : colors.mutedForeground,
-            fontFamily: isSecondaryActive ? 'Inter_600SemiBold' : 'Inter_400Regular' },
-        ]}>
-          {isSecondaryActive ? activeSecondaryLabel : '•••'}
-        </Text>
-      </Pressable>
+      {(() => {
+        const secondaryBadgeTotal = SECONDARY_TABS.reduce(
+          (sum, t) => sum + (badges[t.key] ?? 0), 0,
+        );
+        return (
+          <Pressable
+            onPress={openMore}
+            style={[
+              styles.tab,
+              isSecondaryActive && { borderBottomColor: colors.primary, borderBottomWidth: 2 },
+            ]}
+          >
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+              <Text style={[
+                styles.tabLabel,
+                { color: isSecondaryActive ? colors.primary : colors.mutedForeground,
+                  fontFamily: isSecondaryActive ? 'Inter_600SemiBold' : 'Inter_400Regular' },
+              ]}>
+                {isSecondaryActive ? activeSecondaryLabel : '•••'}
+              </Text>
+              {!isSecondaryActive && secondaryBadgeTotal > 0 && (
+                <View style={{ backgroundColor: '#ef4444', borderRadius: 8, minWidth: 16, paddingHorizontal: 3, alignItems: 'center' }}>
+                  <Text style={{ color: '#fff', fontSize: 9, fontFamily: 'Inter_700Bold', lineHeight: 14 }}>
+                    {secondaryBadgeTotal}
+                  </Text>
+                </View>
+              )}
+            </View>
+          </Pressable>
+        );
+      })()}
     </ScrollView>
   );
 }
@@ -2680,7 +2696,7 @@ function BookIntelTab({
 }
 
 // ─── Intelligence Tab ────────────────────────────────────────────────────────
-function IntelligenceTab({ workId }: { workId: string }) {
+function IntelligenceTab({ workId, onHighGapCount }: { workId: string; onHighGapCount?: (n: number) => void }) {
   const colors = useColors();
   const router = useRouter();
   const [completeness, setCompleteness] = useState<any>(null);
@@ -2701,9 +2717,14 @@ function IntelligenceTab({ workId }: { workId: string }) {
       setCompleteness(c);
       setGaps(g);
       setStats(s);
+      // Surface high/critical gap count to parent for the tab badge
+      const urgentCount = (g?.gaps ?? []).filter(
+        (gap: any) => gap.severity === 'critical' || gap.severity === 'high',
+      ).length;
+      onHighGapCount?.(urgentCount);
     } catch { setFetchError(true); }
     finally { setLoading(false); }
-  }, [workId]);
+  }, [workId, onHighGapCount]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -2842,6 +2863,8 @@ export default function WorkDetailScreen() {
   const validTabs: Tab[] = ['overview','docs','knowledge','tasks','conversations','learn','gaps','book','brainstorm','intelligence'];
   const initTab: Tab = validTabs.includes(tabParam as Tab) ? (tabParam as Tab) : 'overview';
   const [activeTab, setActiveTab] = useState<Tab>(initTab);
+  // Badge count for the Intelligence tab — updated when the tab loads its gap data
+  const [intelHighGaps, setIntelHighGaps] = useState(0);
   const [newTaskText, setNewTaskText] = useState('');
   const [newTaskPriority, setNewTaskPriority] = useState(0);
   const [addingTask, setAddingTask] = useState(false);
@@ -2925,6 +2948,21 @@ export default function WorkDetailScreen() {
       })
       .catch(() => {});
   }, [id]);
+
+  // Eagerly fetch gap count so the Intelligence badge appears before the tab is visited.
+  useEffect(() => {
+    if (!id) return;
+    mobileFetch(`https://${domain}/api/works/${id}/gaps`)
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        if (!d) return;
+        const urgent = (d.gaps ?? []).filter(
+          (g: any) => g.severity === 'critical' || g.severity === 'high',
+        ).length;
+        setIntelHighGaps(urgent);
+      })
+      .catch(() => {});
+  }, [id, domain]);
 
   const resolveReviewItem = async (itemId: string, decision: 'approve' | 'reject' | 'defer') => {
     setResolvingId(itemId);
@@ -3642,7 +3680,7 @@ export default function WorkDetailScreen() {
         );
       }
       case 'intelligence':
-        return <IntelligenceTab workId={id} />;
+        return <IntelligenceTab workId={id} onHighGapCount={setIntelHighGaps} />;
       case 'brainstorm':
         return <BrainstormTab key={brainstormSeed} workId={id} colors={colors} initialSeed={brainstormSeed || qParam} initialContext={brainstormContext} />;
     }
@@ -3697,6 +3735,7 @@ export default function WorkDetailScreen() {
           tasks: (tasksData?.tasks ?? []).filter((t: any) => t.status !== 'completed').length || undefined,
           conversations: (convsData?.conversations ?? []).length || undefined,
           overview: reviewItems.length || undefined,
+          intelligence: intelHighGaps || undefined,
         }}
         onNavigateGraph={() =>
           router.push(`/graph?work_id=${id}&work_title=${encodeURIComponent(work?.title ?? '')}` as any)

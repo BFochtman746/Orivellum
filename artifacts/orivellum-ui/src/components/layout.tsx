@@ -22,7 +22,7 @@ import {
   ChevronRight, Plus, Search, Archive, RotateCcw,
   Pencil, Check, X, Menu, DownloadCloud, Feather,
   ALargeSmall, Loader2, CheckCircle2, ExternalLink, Gauge, Inbox, Wand2, SlidersHorizontal,
-  BookMarked, GraduationCap, Zap,
+  BookMarked, GraduationCap, Zap, Package,
 } from "lucide-react";
 import { useConnectivity } from "@/lib/useConnectivity";
 import { useQuery } from "@tanstack/react-query";
@@ -54,10 +54,11 @@ const PHASES = [
     id: "create",
     label: "Create",
     icon: Wand2,
-    routes: ["/studio", "/write"],
+    routes: ["/studio", "/write", "/finishing"],
     items: [
-      { name: "Studio",     href: "/studio", icon: Mic },
-      { name: "Write desk", href: "/write",  icon: Feather },
+      { name: "Studio",     href: "/studio",    icon: Mic },
+      { name: "Write desk", href: "/write",     icon: Feather },
+      { name: "Finishing",  href: "/finishing", icon: Package },
     ],
   },
   {
