@@ -668,6 +668,25 @@ interface TrailerListItem {
   updated_at: string;
 }
 
+interface TrailerFinding {
+  code: string;
+  severity: string;
+  msg: string;
+}
+
+interface TrailerPkg {
+  brief: Record<string, unknown>;
+  concept: Record<string, unknown>;
+  method: Record<string, unknown>;
+  plan: Record<string, unknown>;
+  validation: { status: string; critical: number; findings: TrailerFinding[] };
+  status: string;
+  status_badge: string;
+  generated: string;
+  docs: Record<string, string>;
+  shot_prompts: Record<string, string>;
+}
+
 interface TrailerPackage {
   id: string;
   work_id: string;
@@ -676,18 +695,7 @@ interface TrailerPackage {
   error?: string | null;
   created_at: string;
   updated_at: string;
-  package: {
-    brief: Record<string, unknown>;
-    concept: Record<string, unknown>;
-    method: Record<string, unknown>;
-    plan: Record<string, unknown>;
-    validation: { status: string; critical: number; findings: { code: string; severity: string; msg: string }[] };
-    status: string;
-    status_badge: string;
-    generated: string;
-    docs: Record<string, string>;
-    shot_prompts: Record<string, string>;
-  } | null;
+  package: TrailerPkg | null;
 }
 
 const PHASE_LABELS: Record<string, string> = {
@@ -744,28 +752,47 @@ function TrailerPackageView({ trailer }: { trailer: TrailerPackage }) {
     );
   }
 
-  const brief = pkg.brief as Record<string, unknown>;
-  const concept = pkg.concept as Record<string, unknown>;
-  const shots: unknown[] = (pkg.plan as Record<string, unknown>)?.shots as unknown[] ?? [];
-  const docKeys = Object.keys(pkg.docs ?? {});
+  // ── Pre-extract all typed data so JSX never sees `unknown` ──────────────
+  const statusReady    = pkg.status === "READY";
+  const statusBadge    = pkg.status_badge;
+  const generated      = pkg.generated;
+  const criticalFindings = (pkg.validation.findings as TrailerFinding[])
+    .filter(f => f.severity === "critical");
+  const docKeys        = Object.keys(pkg.docs ?? {});
+  const activeDocText  = activeDoc ? (pkg.docs[activeDoc] ?? "") : "";
+
+  // Brief fields
+  const logline  = typeof pkg.brief.logline  === "string" ? pkg.brief.logline  : "";
+  const genre    = typeof pkg.brief.genre    === "string" ? pkg.brief.genre    : "";
+  const tone     = Array.isArray(pkg.brief.tone) ? (pkg.brief.tone as string[]).slice(0, 3) : [];
+
+  // Concept fields
+  const conceptName  = typeof pkg.concept.name  === "string" ? pkg.concept.name  : "";
+  const conceptAngle = typeof pkg.concept.angle === "string" ? pkg.concept.angle : "";
+  const conceptBeats = Array.isArray(pkg.concept.beats) ? (pkg.concept.beats as string[]) : [];
+
+  // Plan fields
+  const planRaw    = pkg.plan as Record<string, unknown>;
+  const shotCount  = Array.isArray(planRaw?.shots) ? (planRaw.shots as unknown[]).length : 0;
+  const duration   = typeof planRaw?.duration === "number" ? String(planRaw.duration) : "?";
 
   return (
     <div className="space-y-4 pt-2">
       {/* Status */}
       <div className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-xs font-mono ${
-        pkg.status === "READY"
+        statusReady
           ? "border-emerald-200 bg-emerald-50/60 text-emerald-800"
           : "border-amber-200 bg-amber-50/60 text-amber-800"
       }`}>
-        {pkg.status === "READY"
+        {statusReady
           ? <CheckCircle className="w-3.5 h-3.5 shrink-0" />
           : <AlertCircle className="w-3.5 h-3.5 shrink-0" />}
-        <span className="font-semibold">{pkg.status_badge}</span>
-        <span className="opacity-70 ml-auto">Generated {pkg.generated}</span>
+        <span className="font-semibold">{statusBadge}</span>
+        <span className="opacity-70 ml-auto">Generated {generated}</span>
       </div>
 
       {/* Blocking findings */}
-      {pkg.validation?.findings?.filter(f => f.severity === "critical").map((f, i) => (
+      {criticalFindings.map((f, i) => (
         <div key={i} className="flex items-start gap-2 px-3 py-2 rounded border border-destructive/30 bg-destructive/5 text-xs text-destructive">
           <XCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
           <span><strong>{f.code}</strong> — {f.msg}</span>
@@ -775,25 +802,23 @@ function TrailerPackageView({ trailer }: { trailer: TrailerPackage }) {
       {/* Brief summary */}
       <div className="rounded-lg border border-border/50 bg-muted/20 p-3 space-y-1.5 text-xs">
         <div className="text-[10px] font-mono uppercase tracking-widest text-muted-foreground mb-2">Book Brief</div>
-        {brief.logline && (
-          <p className="font-serif text-sm leading-snug">"{String(brief.logline)}"</p>
-        )}
+        {logline && <p className="font-serif text-sm leading-snug">"{logline}"</p>}
         <div className="flex flex-wrap gap-2 pt-1">
-          {brief.genre && <Badge variant="secondary" className="font-mono text-[9px]">{String(brief.genre)}</Badge>}
-          {(brief.tone as string[] | undefined)?.slice(0, 3).map((t, i) => (
+          {genre && <Badge variant="secondary" className="font-mono text-[9px]">{genre}</Badge>}
+          {tone.map((t, i) => (
             <Badge key={i} variant="outline" className="font-mono text-[9px]">{t}</Badge>
           ))}
         </div>
       </div>
 
       {/* Chosen concept */}
-      {concept.name && (
+      {conceptName && (
         <div className="rounded-lg border border-primary/20 bg-primary/[0.03] p-3 text-xs space-y-1">
           <div className="text-[10px] font-mono uppercase tracking-widest text-primary/70">Chosen Concept</div>
-          <div className="font-semibold font-serif">{String(concept.name)}</div>
-          <div className="text-muted-foreground">{String(concept.angle ?? "")}</div>
+          <div className="font-semibold font-serif">{conceptName}</div>
+          <div className="text-muted-foreground">{conceptAngle}</div>
           <div className="flex flex-wrap gap-1 pt-1">
-            {(concept.beats as string[] | undefined)?.map((b, i) => (
+            {conceptBeats.map((b, i) => (
               <span key={i} className="px-2 py-0.5 rounded-full bg-muted/50 border border-border/50 text-[10px] font-mono">
                 {b}
               </span>
@@ -805,9 +830,9 @@ function TrailerPackageView({ trailer }: { trailer: TrailerPackage }) {
       {/* Shot count */}
       <div className="flex items-center gap-2 text-xs text-muted-foreground font-mono">
         <Film className="w-3.5 h-3.5" />
-        {shots.length} shot{shots.length !== 1 ? "s" : ""} planned
+        {shotCount} shot{shotCount !== 1 ? "s" : ""} planned
         <span className="opacity-50">·</span>
-        {(pkg.plan as Record<string, unknown>)?.duration as number ?? "?"}s runtime
+        {duration}s runtime
       </div>
 
       {/* Human-readable doc tabs */}
@@ -829,10 +854,10 @@ function TrailerPackageView({ trailer }: { trailer: TrailerPackage }) {
               </button>
             ))}
           </div>
-          {activeDoc && pkg.docs[activeDoc] && (
+          {activeDoc && activeDocText && (
             <div className="rounded-lg border border-border/50 bg-muted/10 p-3 max-h-80 overflow-y-auto">
               <pre className="text-[11px] font-mono whitespace-pre-wrap leading-relaxed">
-                {pkg.docs[activeDoc]}
+                {activeDocText}
               </pre>
             </div>
           )}

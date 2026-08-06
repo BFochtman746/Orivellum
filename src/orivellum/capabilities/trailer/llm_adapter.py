@@ -21,6 +21,8 @@ class OrivellumLLM:
     def __init__(self, cfg: dict, offline: bool = False):
         self.cfg = cfg
         self.offline = offline or os.environ.get("MEDIA_STUDIO_OFFLINE") == "1"
+        # Track which calls fell back to offline stubs for transparency
+        self.fallback_stages: list[str] = []
 
     # ------------------------------------------------------------------
     def json(self, *, model: str, system: str, user: str, schema_hint: str) -> dict:
@@ -36,17 +38,33 @@ class OrivellumLLM:
 
         try:
             from orivellum.capabilities.llm import llm_call
-            raw = llm_call(
-                system=system,
-                user=prompt,
+            messages = [
+                {"role": "system", "content": system},
+                {"role": "user",   "content": prompt},
+            ]
+            # Pass the raw config object so llm_call picks up base_url/model
+            raw_cfg = self.cfg.get("_cfg_obj")
+            result = llm_call(
+                messages,
+                cfg=raw_cfg,
                 purpose=f"trailer:{model}",
-                # Pass through max_tokens if configured
-                **({"max_tokens": self.cfg.get("max_tokens", 4096)} if self.cfg.get("max_tokens") else {}),
+                timeout=float(self.cfg.get("llm", {}).get("timeout_seconds", 300)),
+                temperature=float(self.cfg.get("llm", {}).get("temperature", 0.4)),
             )
-            return _parse_json(raw)
+            if result.ok and result.text:
+                return _parse_json(result.text)
+            # Live call failed — fall through to offline stub
+            logger.warning(
+                "Trailer LLM call failed (ok=%s, error=%s); using offline stub.",
+                result.ok,
+                result.error,
+            )
         except Exception as exc:
-            logger.warning("Trailer LLM call failed (%s); falling back to offline stub", exc)
-            return _offline_stub(schema_hint, user)
+            logger.warning("Trailer LLM call raised %s; using offline stub.", exc)
+
+        # Record that this stage fell back
+        self.fallback_stages.append(model)
+        return _offline_stub(schema_hint, user)
 
 
 # ---------------------------------------------------------------------------
