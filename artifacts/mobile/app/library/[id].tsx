@@ -208,16 +208,155 @@ export default function LibraryDocDetail() {
     }
   };
 
-  // ── Read Aloud (TTS) ────────────────────────────────────────────────────────
+  // ── Read Aloud (TTS) — chunked multi-part playback ────────────────────────
+  // Long documents are split into ~4 500-char parts, synthesized on demand
+  // (current part + one prefetch ahead), and played back with auto-advance.
+  // A monotonic session id prevents stale synthesis results from a previous
+  // invocation from clobbering state owned by the current one.
   type TtsState = 'idle' | 'loading' | 'playing' | 'paused' | 'error';
   const [ttsState, setTtsState] = useState<TtsState>('idle');
+  const [ttsChunks, setTtsChunks] = useState<string[]>([]);
+  const [ttsIndex, setTtsIndex] = useState(0);
   const ttsPlayerRef = useRef<AudioPlayer | null>(null);
+  const ttsSessionRef = useRef(0);
+  const ttsPathCacheRef = useRef<Map<number, string>>(new Map()); // part → serve path
+  const ttsPromisesRef = useRef<Map<number, Promise<string>>>(new Map()); // in-flight
 
   useEffect(() => {
-    return () => { ttsPlayerRef.current?.remove(); };
+    return () => {
+      ttsSessionRef.current++;
+      ttsPlayerRef.current?.remove();
+      ttsPathCacheRef.current.clear();
+      ttsPromisesRef.current.clear();
+    };
   }, []);
 
   const domain = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
+
+  // ── TTS helpers ─────────────────────────────────────────────────────────────
+
+  const TTS_PART_CHARS = 4500;
+  const TTS_STALE = 'tts-stale';
+
+  /** Split extracted text into ≤4 500-char parts at paragraph / sentence
+   *  boundaries.  Uses only basic string ops so it works in Hermes/JSC. */
+  const splitTextForTts = (text: string): string[] => {
+    const paras = text.replace(/\n{3,}/g, '\n\n').split(/\n\n+/);
+    const parts: string[] = [];
+    let cur = '';
+    const flush = () => { if (cur.trim()) parts.push(cur.trim()); cur = ''; };
+    for (const p of paras) {
+      if (p.length > TTS_PART_CHARS) {
+        // Split at sentence boundaries (safe regex — no lookbehind)
+        const sentences = p.replace(/([.!?])\s+/g, '$1\n').split('\n').filter(Boolean);
+        for (const s of sentences) {
+          if (cur && cur.length + s.length + 1 > TTS_PART_CHARS) flush();
+          cur += (cur ? ' ' : '') + s;
+          while (cur.length > TTS_PART_CHARS) {
+            parts.push(cur.slice(0, TTS_PART_CHARS));
+            cur = cur.slice(TTS_PART_CHARS);
+          }
+        }
+      } else {
+        if (cur && cur.length + p.length + 2 > TTS_PART_CHARS) flush();
+        cur += (cur ? '\n\n' : '') + p;
+      }
+    }
+    flush();
+    return parts;
+  };
+
+  /** Synthesize one part, cache its serve-path, and return it.
+   *  Single-flight per part via promise map; stale-session results discarded. */
+  const synthesizePart = (parts: string[], i: number): Promise<string> => {
+    const session = ttsSessionRef.current;
+    const cached = ttsPathCacheRef.current.get(i);
+    if (cached) return Promise.resolve(cached);
+    const inflight = ttsPromisesRef.current.get(i);
+    if (inflight) return inflight;
+    const p = (async () => {
+      const res = await mobileFetch(`https://${domain}/api/studio/tts`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: parts[i], voice: 'af_heart', speed: 1.0, return_url: true }),
+      });
+      if (ttsSessionRef.current !== session) throw new Error(TTS_STALE);
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error((err as any).detail ?? `HTTP ${res.status}`);
+      }
+      const json = await res.json();
+      if (ttsSessionRef.current !== session) throw new Error(TTS_STALE);
+      const path = json.path as string;
+      ttsPathCacheRef.current.set(i, path);
+      return path;
+    })();
+    p.finally(() => {
+      if (ttsPromisesRef.current.get(i) === p) ttsPromisesRef.current.delete(i);
+    }).catch(() => {});
+    ttsPromisesRef.current.set(i, p);
+    return p;
+  };
+
+  /** Create a player for part `i`, start it, and wire auto-advance. */
+  const playPartAt = async (parts: string[], i: number) => {
+    const session = ttsSessionRef.current;
+    setTtsState('loading');
+    try {
+      const servePath = await synthesizePart(parts, i);
+      if (ttsSessionRef.current !== session) return;
+      const token = getApiToken();
+      const uri = `https://${domain}/api/studio/outputs/serve?path=${encodeURIComponent(servePath)}`;
+      ttsPlayerRef.current?.remove();
+      ttsPlayerRef.current = null;
+      await setAudioModeAsync({ playsInSilentMode: true });
+      const player = createAudioPlayer({
+        uri,
+        headers: token ? { authorization: `Bearer ${token}` } : undefined,
+      });
+      ttsPlayerRef.current = player;
+      player.play();
+      setTtsIndex(i);
+      setTtsState('playing');
+      // Prefetch next part in the background
+      if (i + 1 < parts.length) synthesizePart(parts, i + 1).catch(() => {});
+      // Auto-advance on natural end-of-part
+      player.addListener('playbackStatusUpdate', (status) => {
+        if (!status.playing && status.currentTime > 0 && status.duration > 0
+            && status.currentTime >= status.duration - 0.5) {
+          if (ttsSessionRef.current !== session) return;
+          const next = i + 1;
+          if (next < parts.length) {
+            playPartAt(parts, next);
+          } else {
+            // All parts finished
+            setTtsState('idle');
+            setTtsChunks([]);
+            setTtsIndex(0);
+            ttsPlayerRef.current?.remove();
+            ttsPlayerRef.current = null;
+          }
+        }
+      });
+    } catch (e: any) {
+      if (e?.message !== TTS_STALE && ttsSessionRef.current === session) {
+        setTtsState('error');
+        Alert.alert('Read Aloud failed', e?.message ?? 'Could not synthesize audio');
+        setTimeout(() => setTtsState('idle'), 2000);
+      }
+    }
+  };
+
+  const stopTts = () => {
+    ttsSessionRef.current++;
+    ttsPlayerRef.current?.remove();
+    ttsPlayerRef.current = null;
+    ttsPathCacheRef.current.clear();
+    ttsPromisesRef.current.clear();
+    setTtsState('idle');
+    setTtsChunks([]);
+    setTtsIndex(0);
+  };
 
   const { data: docData, isLoading: docLoading, isError: docError, refetch: refetchDoc } =
     useGetDocument(id ?? '', { query: { enabled: !!id, staleTime: 15_000 } } as any);
@@ -357,36 +496,43 @@ export default function LibraryDocDetail() {
       setTtsState('playing');
       return;
     }
+    // Start a fresh session
+    ttsSessionRef.current++;
+    ttsPlayerRef.current?.remove();
+    ttsPlayerRef.current = null;
+    ttsPathCacheRef.current.clear();
+    ttsPromisesRef.current.clear();
+    setTtsChunks([]);
+    setTtsIndex(0);
     setTtsState('loading');
+    const session = ttsSessionRef.current;
     try {
-      await setAudioModeAsync({ playsInSilentMode: true });
-      const res = await mobileFetch(`https://${domain}/api/studio/tts/document`, {
-        method: 'POST',
-        body: JSON.stringify({ doc_id: id, return_url: true }),
-      });
-      if (!res.ok) throw new Error(await res.text());
-      const json = await res.json();
-      const token = getApiToken();
-      const serveUri = `https://${domain}/api/studio/outputs/serve?path=${encodeURIComponent(json.path)}`;
-      const player = createAudioPlayer({
-        uri: serveUri,
-        headers: token ? { authorization: `Bearer ${token}` } : undefined,
-      });
-      ttsPlayerRef.current = player;
-      player.play();
-      setTtsState('playing');
-      player.addListener('playbackStatusUpdate', (status) => {
-        // Detect natural end-of-playback: not playing after content has started
-        if (!status.playing && status.currentTime > 0 && status.duration > 0
-            && status.currentTime >= status.duration - 0.5) {
-          setTtsState('idle');
-          ttsPlayerRef.current = null;
+      // Prefer already-extracted text; fall back to joining chunks
+      let text: string = (doc?.extracted_text as string) || '';
+      if (!text.trim()) {
+        const res = await mobileFetch(`https://${domain}/api/library/${id}/chunks`);
+        if (ttsSessionRef.current !== session) return;
+        if (res.ok) {
+          const data = await res.json();
+          if (ttsSessionRef.current !== session) return;
+          text = (data.chunks ?? []).map((c: any) => c.text ?? '').filter(Boolean).join('\n\n');
         }
-      });
+      }
+      text = text.trim();
+      if (!text) {
+        setTtsState('idle');
+        Alert.alert('No text', 'This document has no readable text to play.');
+        return;
+      }
+      const parts = splitTextForTts(text);
+      setTtsChunks(parts);
+      await playPartAt(parts, 0);
     } catch (e: any) {
-      setTtsState('error');
-      Alert.alert('Read Aloud failed', e?.message ?? 'Could not generate audio');
-      setTimeout(() => setTtsState('idle'), 2000);
+      if (ttsSessionRef.current === session) {
+        setTtsState('error');
+        Alert.alert('Read Aloud failed', e?.message ?? 'Could not start playback');
+        setTimeout(() => setTtsState('idle'), 2000);
+      }
     }
   };
 
@@ -699,27 +845,44 @@ export default function LibraryDocDetail() {
         )}
 
         {doc.readiness === 'ready' && (
-          <Pressable
-            onPress={handleListen}
-            disabled={ttsState === 'loading' || ttsState === 'error'}
-            style={[styles.listenBtn, { borderColor: colors.primary + '55', backgroundColor: colors.primary + '0f' }]}
-          >
-            {ttsState === 'loading' ? (
-              <ActivityIndicator size="small" color={colors.primary} />
-            ) : (
-              <Feather
-                name={ttsState === 'playing' ? 'pause' : ttsState === 'paused' ? 'play' : 'headphones'}
-                size={14}
-                color={colors.primary}
-              />
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 10 }}>
+            <Pressable
+              onPress={handleListen}
+              disabled={ttsState === 'loading' || ttsState === 'error'}
+              style={[styles.listenBtn, { borderColor: colors.primary + '55', backgroundColor: colors.primary + '0f', marginTop: 0 }]}
+            >
+              {ttsState === 'loading' ? (
+                <ActivityIndicator size="small" color={colors.primary} />
+              ) : (
+                <Feather
+                  name={ttsState === 'playing' ? 'pause' : ttsState === 'paused' ? 'play' : 'headphones'}
+                  size={14}
+                  color={colors.primary}
+                />
+              )}
+              <Text style={[styles.listenBtnText, { color: colors.primary }]}>
+                {ttsState === 'loading' ? 'Generating…'
+                  : ttsState === 'playing' ? 'Pause'
+                  : ttsState === 'paused' ? 'Resume'
+                  : 'Listen'}
+              </Text>
+              {ttsChunks.length > 1 && (ttsState === 'playing' || ttsState === 'paused' || ttsState === 'loading') && (
+                <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: colors.primary + 'bb' }}>
+                  {ttsIndex + 1}/{ttsChunks.length}
+                </Text>
+              )}
+            </Pressable>
+            {(ttsState === 'playing' || ttsState === 'paused') && (
+              <Pressable
+                onPress={stopTts}
+                style={[styles.listenBtn, { borderColor: '#dc262655', backgroundColor: '#dc26260f', marginTop: 0 }]}
+                hitSlop={6}
+              >
+                <Feather name="square" size={13} color="#dc2626" />
+                <Text style={[styles.listenBtnText, { color: '#dc2626' }]}>Stop</Text>
+              </Pressable>
             )}
-            <Text style={[styles.listenBtnText, { color: colors.primary }]}>
-              {ttsState === 'loading' ? 'Generating…'
-                : ttsState === 'playing' ? 'Pause'
-                : ttsState === 'paused' ? 'Resume'
-                : 'Listen'}
-            </Text>
-          </Pressable>
+          </View>
         )}
       </View>
 

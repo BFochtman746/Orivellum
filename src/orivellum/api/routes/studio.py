@@ -1314,6 +1314,7 @@ class TTSRequest(BaseModel):
     voice: str = "af_heart"
     speed: float = 1.0   # 0.5 – 2.0
     stream: bool = False  # True → SSE per-segment streaming; False → full-file (legacy)
+    return_url: bool = False  # mobile: return JSON {ok,path,filename} instead of FileResponse
 
 
 @router.post("/studio/tts")
@@ -1388,6 +1389,8 @@ async def synthesize_speech(body: TTSRequest):
                     _register_output_bg, Path(tmp.name), body.text, "mp3",
                     f"TTS clip: {body.text[:60]}", prelinked_rel=_tts_rel,
                 )
+                if body.return_url:
+                    return {"ok": True, "path": str(_tts_rel), "filename": "speech.mp3"}
                 return FileResponse(tmp.name, media_type="audio/mpeg",
                                     filename="speech.mp3")
     except Exception as exc:
@@ -1443,6 +1446,8 @@ async def synthesize_speech(body: TTSRequest):
                     _register_output_bg, Path(mp3_path), body.text, "mp3",
                     f"TTS clip: {body.text[:60]}", prelinked_rel=_kok_rel,
                 )
+                if body.return_url:
+                    return {"ok": True, "path": str(_kok_rel), "filename": "speech.mp3"}
                 return FileResponse(mp3_path, media_type="audio/mpeg",
                                     filename="speech.mp3")
     except Exception as exc:
@@ -1495,6 +1500,8 @@ async def synthesize_speech(body: TTSRequest):
                 _register_output_bg, Path(mp3_path), body.text, "mp3",
                 f"TTS clip: {body.text[:60]}", prelinked_rel=_esp_mp3_rel,
             )
+            if body.return_url:
+                return {"ok": True, "path": str(_esp_mp3_rel), "filename": "speech.mp3"}
             return FileResponse(mp3_path, media_type="audio/mpeg",
                                 filename="speech.mp3")
         else:
@@ -1519,6 +1526,8 @@ async def synthesize_speech(body: TTSRequest):
                 _register_output_bg, Path(wav_path2), body.text, "wav",
                 f"TTS clip: {body.text[:60]}", prelinked_rel=_esp_wav_rel,
             )
+            if body.return_url:
+                return {"ok": True, "path": str(_esp_wav_rel), "filename": "speech.wav"}
             return FileResponse(wav_path2, media_type="audio/wav",
                                 filename="speech.wav")
 
