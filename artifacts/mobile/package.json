@@ -58,9 +58,11 @@
   "dependencies": {
     "expo-audio": "^57.0.3",
     "expo-clipboard": "^57.0.1",
+    "expo-device": "~8.0.10",
     "expo-document-picker": "^57.0.1",
     "expo-file-system": "~19.0.23",
     "expo-media-library": "~18.2.1",
+    "expo-notifications": "~0.32.17",
     "expo-secure-store": "^57.0.1",
     "expo-sharing": "^57.0.8",
     "react-native-markdown-display": "^7.0.2"

@@ -1331,4 +1331,34 @@ MIGRATIONS: list[tuple[int, str, str]] = [
     (79, "Add context_prefix column to chunks for contextual retrieval", """
         ALTER TABLE chunks ADD COLUMN context_prefix TEXT
     """),
+
+    # v80 — Expo push notification tokens from mobile clients.
+    #
+    # Each row stores one device token.  A single user typically has at most one
+    # device, but the table supports multiple tokens so tablets / device upgrades
+    # are handled automatically — old tokens that Expo rejects are pruned by the
+    # nightshift orphan pass (future work).
+    (80, "Push notification tokens table", """
+        CREATE TABLE IF NOT EXISTS push_tokens (
+            id         TEXT PRIMARY KEY,
+            token      TEXT NOT NULL UNIQUE,
+            platform   TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS push_tokens_token ON push_tokens(token);
+    """),
+
+    # v81 — Scope push tokens to the authenticated identity that registered them.
+    #
+    # key_hash is the SHA-256 hex digest of the API key used when the device
+    # called POST /api/users/push-token.  Server-side notification senders filter
+    # by this hash so that — in any deployment with multiple API keys — a device
+    # only receives events for resources owned by the same identity.  NULL rows
+    # (pre-migration tokens) are treated as "owner unknown" and targeted only
+    # when no key_hash filter is supplied.
+    (81, "Add key_hash ownership column to push_tokens", """
+        ALTER TABLE push_tokens ADD COLUMN key_hash TEXT;
+        CREATE INDEX IF NOT EXISTS push_tokens_key_hash ON push_tokens(key_hash);
+    """),
 ]

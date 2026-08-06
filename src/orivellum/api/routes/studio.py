@@ -1249,6 +1249,24 @@ def synthesize_work_audiobook(body: WorkAudiobookRequest):
             f"Audiobook: {work_title}", prelinked_rel=_ab_rel,
         )
 
+        # Push notification — work audiobook ready (best-effort, daemon thread)
+        try:
+            from orivellum.capabilities.push import notify_push_best_effort as _push_ab
+            import threading as _push_thr_ab
+            _push_label = work_title[:50] if work_title else "Your Work"
+            _push_thr_ab.Thread(
+                target=_push_ab,
+                args=(
+                    get_db(),
+                    "🎙️ Audiobook ready",
+                    f'"{_push_label}" audiobook is ready to play',
+                    {"screen": "studio"},
+                ),
+                daemon=True,
+            ).start()
+        except Exception:
+            pass
+
         if body.return_url:
             rel = str(mp3_path.relative_to(out_dir))
             return {"ok": True, "path": rel, "filename": mp3_path.name, "work_title": work_title}
@@ -1695,6 +1713,24 @@ def synthesize_document(body: DocumentTTSRequest):
             f"Audiobook: {doc_title}", prelinked_rel=_ab_rel,
             origin_id=body.doc_id,
         )
+
+        # Push notification — document audiobook ready (best-effort, daemon thread)
+        try:
+            from orivellum.capabilities.push import notify_push_best_effort as _push_doc_ab
+            import threading as _push_thr_doc
+            _doc_label = (doc.get("title") or body.doc_id)[:50]
+            _push_thr_doc.Thread(
+                target=_push_doc_ab,
+                args=(
+                    get_db(),
+                    "🎙️ Audiobook ready",
+                    f'"{_doc_label}" audiobook is ready to play',
+                    {"screen": f"library/{body.doc_id}"},
+                ),
+                daemon=True,
+            ).start()
+        except Exception:
+            pass
 
         if body.return_url:
             # Mobile clients can't play a streaming FileResponse directly;

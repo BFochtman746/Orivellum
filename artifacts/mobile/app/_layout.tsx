@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -21,10 +21,73 @@ import {
   Inter_700Bold,
   useFonts,
 } from '@expo-google-fonts/inter';
-import { Stack } from 'expo-router';
+import { router, Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
+import * as Device from 'expo-device';
+import * as Notifications from 'expo-notifications';
 import { setBaseUrl } from '@workspace/api-client-react';
 import { loadToken, saveToken, validateKey } from '@/lib/token';
+
+// ── Push notifications ────────────────────────────────────────────────────────
+
+// Configure how notifications are presented while the app is in the foreground.
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldPlaySound: true,
+    shouldSetBadge: false,
+    shouldShowBanner: true,
+    shouldShowList: true,
+  }),
+});
+
+/**
+ * Request permission, obtain an Expo push token, and register it with the
+ * Orivellum API server.  Safe to call multiple times — idempotent server-side.
+ */
+async function registerForPushNotificationsAsync(
+  apiBaseUrl: string,
+  bearerToken: string,
+): Promise<void> {
+  // Expo push tokens are only available on real devices.
+  if (!Device.isDevice) return;
+
+  try {
+    const { status: existingStatus } = await Notifications.getPermissionsAsync();
+    let finalStatus = existingStatus;
+
+    if (existingStatus !== 'granted') {
+      const { status } = await Notifications.requestPermissionsAsync();
+      finalStatus = status;
+    }
+
+    // User declined — respect the decision silently.
+    if (finalStatus !== 'granted') return;
+
+    // getExpoPushTokenAsync needs a projectId for production EAS builds.
+    // Read it from env; fall back to omitting it (works in Expo Go / dev builds).
+    const projectId = process.env.EXPO_PUBLIC_PROJECT_ID as string | undefined;
+    const expoPushToken = await Notifications.getExpoPushTokenAsync(
+      projectId ? { projectId } : undefined,
+    );
+
+    // Register with the Orivellum server so backend can fan-out notifications.
+    await fetch(`${apiBaseUrl}/api/users/push-token`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${bearerToken}`,
+      },
+      body: JSON.stringify({
+        token: expoPushToken.data,
+        platform: Platform.OS,
+      }),
+    });
+  } catch (err) {
+    // Non-fatal — push is optional.  Log for dev debugging only.
+    if (__DEV__) console.warn('[push] registerForPushNotificationsAsync:', err);
+  }
+}
 
 const BASE_URL = `https://${process.env.EXPO_PUBLIC_DOMAIN ?? ''}`;
 
@@ -181,9 +244,12 @@ export default function RootLayout() {
     Inter_700Bold,
   });
   const [authState, setAuthState] = useState<AuthState>('loading');
+  // Store the bearer token so push registration can authenticate with the server.
+  const bearerTokenRef = useRef<string | null>(null);
 
   useEffect(() => {
     loadToken().then((token) => {
+      bearerTokenRef.current = token;
       setAuthState(token ? 'authenticated' : 'unauthenticated');
     });
   }, []);
@@ -193,6 +259,70 @@ export default function RootLayout() {
       SplashScreen.hideAsync();
     }
   }, [fontsLoaded, fontError, authState]);
+
+  // Register for push notifications once the user is authenticated.
+  useEffect(() => {
+    if (authState !== 'authenticated') return;
+    const token = bearerTokenRef.current;
+    if (!token) return;
+    registerForPushNotificationsAsync(BASE_URL, token);
+  }, [authState]);
+
+  // ── Notification deep-link routing ───────────────────────────────────────────
+  //
+  // `navigateToScreen` is the single routing handler for notification taps.
+  // It is called from two places:
+  //   1. `addNotificationResponseReceivedListener` — fires when the app is in
+  //      the foreground or already in the background (resumed via tap).
+  //   2. `getLastNotificationResponseAsync()` — fires on cold start when the
+  //      app was killed and the user tapped a notification to open it.
+  //
+  // Both paths must use the same logic so the experience is consistent.
+
+  const navigateToScreen = React.useCallback((screen: string) => {
+    if (screen.startsWith('library/')) {
+      const docId = screen.slice('library/'.length);
+      router.push(`/library/${docId}` as any);
+    } else if (screen === 'studio') {
+      router.push('/studio' as any);
+    } else if (screen === 'governance') {
+      // Governance lives in the Works tab on mobile.
+      router.push('/(tabs)' as any);
+    } else {
+      // Fallback: trust whatever screen path the server specified.
+      router.push(`/${screen}` as any);
+    }
+  }, []);
+
+  // Foreground / background tap listener.
+  useEffect(() => {
+    const subscription = Notifications.addNotificationResponseReceivedListener(
+      (response) => {
+        const screen = response.notification.request.content.data?.screen as
+          | string
+          | undefined;
+        if (screen) navigateToScreen(screen);
+      },
+    );
+    return () => subscription.remove();
+  }, [navigateToScreen]);
+
+  // Cold-start: app was killed and user tapped a notification to open it.
+  // `getLastNotificationResponseAsync` returns the pending response (if any)
+  // that Expo held while the app was not running — we route it here once the
+  // navigator is mounted and the auth state is resolved.
+  useEffect(() => {
+    if (authState === 'loading') return;
+    Notifications.getLastNotificationResponseAsync().then((response) => {
+      if (!response) return;
+      const screen = response.notification.request.content.data?.screen as
+        | string
+        | undefined;
+      if (screen) navigateToScreen(screen);
+    }).catch(() => {
+      // Non-fatal — cold-start routing is best-effort.
+    });
+  }, [authState, navigateToScreen]);
 
   if ((!fontsLoaded && !fontError) || authState === 'loading') return null;
 

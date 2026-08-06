@@ -511,6 +511,25 @@ def _pass_gap_analysis(db: "OrivellumDB", report: list[str]) -> None:
             report.append(f"Research gaps — {len(high_gaps)} critical item(s) across "
                           f"{len(active_works)} work(s):")
             report.extend(f"  ⚠ {line}" for line in high_gaps[:10])
+
+            # Push notification — high gaps discovered (best-effort, daemon thread)
+            try:
+                from orivellum.capabilities.push import notify_push_best_effort as _push_gaps
+                import threading as _push_thr_gaps
+                _n = len(high_gaps)
+                # e.g. "My Novel: Missing antagonist motivation"  → "My Novel"
+                _first_work = high_gaps[0].split(":")[0].strip()[:30]
+                _gap_body = (
+                    f"{_n} new knowledge gap{'s' if _n != 1 else ''} found"
+                    + (f" in {_first_work}" if _first_work else "")
+                )
+                _push_thr_gaps.Thread(
+                    target=_push_gaps,
+                    args=(db, "💡 Knowledge gaps found", _gap_body, {"screen": "governance"}),
+                    daemon=True,
+                ).start()
+            except Exception:
+                pass
         elif active_works:
             report.append(f"Research coverage: no critical gaps across "
                           f"{len(active_works)} work(s)")

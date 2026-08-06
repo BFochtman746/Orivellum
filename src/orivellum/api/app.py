@@ -361,11 +361,13 @@ def create_app() -> FastAPI:
         auth, health, works, conversations, library, knowledge,
         projects, backups, studio, files, system, dashboard, learning, write,
         mcos, review, claims, pklos, intake, generate, topics, actions, mcp,
+        users,
     )
     _route_modules = [
         auth, health, works, conversations, library, knowledge,
         projects, backups, studio, files, system, dashboard, learning, write,
         mcos, review, claims, pklos, intake, generate, topics, actions, mcp,
+        users,
     ]
     for module in _route_modules:
         app.include_router(module.router)
