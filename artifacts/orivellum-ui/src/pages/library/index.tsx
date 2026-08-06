@@ -517,7 +517,46 @@ function ImportDialog({ onSuccess, defaultOpen = false }: ImportDialogProps) {
     });
   };
 
+  // Retry all failed files at once — same loop as handleImport but scoped to
+  // error-state entries. Clears the stop flag first so the XHRs are sent.
+  const handleRetryFailed = async () => {
+    const errorIndices = queue
+      .map((s, i) => (s.state === "error" ? i : -1))
+      .filter((i) => i >= 0);
+    if (!errorIndices.length || uploading) return;
+    cancelledRef.current = false;
+    setUploading(true);
+
+    for (const i of errorIndices) {
+      if (cancelledRef.current) {
+        updateStatus(i, { state: "cancelled", pct: 0 });
+        continue;
+      }
+      await uploadOne(queue[i], i, workId);
+    }
+
+    onSuccess();
+    setUploading(false);
+
+    if (cancelledRef.current) {
+      setQueue((final) => {
+        const done = final.filter((s) => s.state === "done" || s.state === "duplicate").length;
+        const total = final.length;
+        if (done > 0) {
+          toast.info(`Import stopped — ${done} of ${total} uploaded`, { duration: 5000 });
+        } else {
+          toast.info("Import cancelled — no files were uploaded");
+        }
+        return final;
+      });
+    } else {
+      setQueue((final) => { finishRun(final); return final; });
+    }
+  };
+
   const anyPending = queue.some((s) => s.state === "pending");
+  const anyError   = queue.some((s) => s.state === "error");
+  const errorCount = queue.filter((s) => s.state === "error").length;
   const uploadingCount = queue.filter((s) => s.state === "uploading").length;
   const doneCount = queue.filter((s) => s.state === "done" || s.state === "duplicate").length;
   const total = queue.length;
@@ -669,9 +708,21 @@ function ImportDialog({ onSuccess, defaultOpen = false }: ImportDialogProps) {
               Stop
             </Button>
           ) : (
-            <Button onClick={handleImport} disabled={!anyPending}>
-              {`Import ${queue.filter(s => s.state === "pending").length || ""} ${queue.filter(s => s.state === "pending").length === 1 ? "file" : "files"}`.trim()}
-            </Button>
+            <>
+              {anyError && (
+                <Button
+                  variant="outline"
+                  onClick={handleRetryFailed}
+                  className="gap-1.5"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  Retry {errorCount} failed
+                </Button>
+              )}
+              <Button onClick={handleImport} disabled={!anyPending}>
+                {`Import ${queue.filter(s => s.state === "pending").length || ""} ${queue.filter(s => s.state === "pending").length === 1 ? "file" : "files"}`.trim()}
+              </Button>
+            </>
           )}
         </DialogFooter>
       </DialogContent>
