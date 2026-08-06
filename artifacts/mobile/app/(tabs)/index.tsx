@@ -152,8 +152,10 @@ function ServerHealthCard() {
       if (!r.ok) return null;
       return r.json();
     },
-    refetchInterval: 15_000,
-    staleTime: 13_000,
+    // Poll at 5 s on mobile (fast enough to watch live generation without
+    // the complexity of a separate jobs-running check).
+    refetchInterval: 5_000,
+    staleTime: 4_000,
   });
 
   if (isLoading) {

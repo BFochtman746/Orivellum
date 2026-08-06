@@ -2054,7 +2054,77 @@ interface HwData {
   error: string | null;
 }
 
+// ─── Sparkline (pure SVG, no external deps) ────────────────────────────────────
+// Renders a 60-second rolling window of metric percentages (0–100).
+
+const SPARKLINE_CAP = 30; // keeps last 30 readings (covers 60 s at 2 s poll)
+
+function Sparkline({
+  data,
+  color,
+  w = 88,
+  h = 28,
+}: {
+  data: number[];
+  color: string;
+  w?: number;
+  h?: number;
+}) {
+  if (data.length < 2) return null;
+  const pad = 2;
+  const inner = h - pad * 2;
+  const max = Math.max(...data, 1);
+  const pts = data
+    .map((v, i) => {
+      const x = ((i / (data.length - 1)) * w).toFixed(1);
+      const y = (pad + inner - (v / max) * inner).toFixed(1);
+      return `${x},${y}`;
+    })
+    .join(" ");
+  return (
+    <svg width={w} height={h} style={{ display: "block", overflow: "visible" }} aria-hidden>
+      {/* subtle fill */}
+      <polyline
+        points={`0,${h} ${pts} ${w},${h}`}
+        fill={color}
+        fillOpacity={0.08}
+        stroke="none"
+      />
+      {/* line */}
+      <polyline
+        points={pts}
+        fill="none"
+        stroke={color}
+        strokeWidth={1.5}
+        strokeLinejoin="round"
+        strokeLinecap="round"
+        opacity={0.85}
+      />
+      {/* terminal dot */}
+      {(() => {
+        const last = pts.split(" ").at(-1)?.split(",");
+        if (!last) return null;
+        return <circle cx={last[0]} cy={last[1]} r={2.5} fill={color} opacity={0.9} />;
+      })()}
+    </svg>
+  );
+}
+
 function HardwareCard() {
+  const qc = useQueryClient();
+
+  // ── Rolling history (one entry per successful poll) ─────────────────────────
+  const [cpuHist,  setCpuHist]  = useState<number[]>([]);
+  const [ramHist,  setRamHist]  = useState<number[]>([]);
+  const [vramHist, setVramHist] = useState<number[]>([]);
+
+  // ── Subscribe to the jobs cache (JobsCard already fetches it — no extra requests) ──
+  const { data: jobsSnap } = useQuery<{ running: number } | null>({
+    queryKey: ["system", "jobs"],
+    enabled: false,  // read-only subscriber; JobsCard owns the fetch lifecycle
+  });
+  const isGenerating = (jobsSnap?.running ?? 0) > 0;
+
   const { data, isLoading, refetch, isFetching } = useQuery<HwData | null>({
     queryKey: ["system", "hardware"],
     queryFn: async () => {
@@ -2062,17 +2132,37 @@ function HardwareCard() {
       if (!r.ok) return null;
       return r.json();
     },
-    // Task spec: live gauges that update every 15 seconds
-    refetchInterval: 15_000,
-    staleTime: 13_000,
+    // Poll at 2 s while jobs are running (generation is happening);
+    // drop back to 15 s when idle.
+    refetchInterval: isGenerating ? 2_000 : 15_000,
+    staleTime: isGenerating ? 1_500 : 13_000,
   });
+
+  // Append each successful snapshot to the rolling history.
+  useEffect(() => {
+    if (!data) return;
+    const push = (prev: number[], val: number | null | undefined) =>
+      val == null ? prev : [...prev.slice(-(SPARKLINE_CAP - 1)), val];
+    setCpuHist(prev => push(prev, data.cpu_percent));
+    setRamHist(prev => push(prev, data.ram?.percent ?? null));
+    const g0 = data.gpus?.[0];
+    const vp =
+      g0?.vram_used_mb != null && g0?.vram_total_mb != null && g0.vram_total_mb > 0
+        ? (g0.vram_used_mb / g0.vram_total_mb) * 100
+        : undefined;
+    setVramHist(prev => push(prev, vp));
+  }, [data]);
+
+  function barColor(p: number) {
+    return p > 90 ? "#ef4444" : p > 70 ? "#f59e0b" : "#22c55e";
+  }
 
   function bar(pct: number | null | undefined) {
     const p = pct ?? 0;
-    const color = p > 90 ? "bg-destructive" : p > 70 ? "bg-amber-500" : "bg-emerald-500";
+    const cls = p > 90 ? "bg-destructive" : p > 70 ? "bg-amber-500" : "bg-emerald-500";
     return (
       <div className="h-1.5 w-full bg-muted rounded-full overflow-hidden">
-        <div className={`h-full rounded-full transition-all duration-700 ${color}`}
+        <div className={`h-full rounded-full transition-all duration-700 ${cls}`}
              style={{ width: `${Math.min(p, 100)}%` }} />
       </div>
     );
@@ -2094,6 +2184,13 @@ function HardwareCard() {
           {data?.uptime_seconds != null && (
             <span className="text-xs font-mono text-muted-foreground/60">
               {uptimeLabel(data.uptime_seconds)}
+            </span>
+          )}
+          {/* LIVE badge — shown while generation is running and poll is accelerated */}
+          {isGenerating && (
+            <span className="flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-emerald-500/12 border border-emerald-500/25 text-[10px] font-mono font-medium text-emerald-600">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+              LIVE 2s
             </span>
           )}
         </h2>
@@ -2122,6 +2219,11 @@ function HardwareCard() {
               </span>
             </div>
             {bar(data.cpu_percent)}
+            {cpuHist.length >= 2 && (
+              <div className="mt-2">
+                <Sparkline data={cpuHist} color={barColor(data.cpu_percent ?? 0)} />
+              </div>
+            )}
           </div>
 
           {/* RAM */}
@@ -2137,6 +2239,11 @@ function HardwareCard() {
               )}
             </div>
             {bar(data.ram?.percent)}
+            {ramHist.length >= 2 && data.ram && (
+              <div className="mt-2">
+                <Sparkline data={ramHist} color={barColor(data.ram.percent)} />
+              </div>
+            )}
           </div>
 
           {/* Disk */}
@@ -2157,9 +2264,11 @@ function HardwareCard() {
           {/* GPU(s) — full-width row per GPU */}
           {data.gpu_available && data.gpus.length > 0 ? (
             data.gpus.map((gpu, i) => {
-              const vramPct = gpu.vram_used_mb && gpu.vram_total_mb
-                ? (gpu.vram_used_mb / gpu.vram_total_mb) * 100
-                : null;
+              const vramPct =
+                gpu.vram_used_mb != null && gpu.vram_total_mb != null && gpu.vram_total_mb > 0
+                  ? (gpu.vram_used_mb / gpu.vram_total_mb) * 100
+                  : null;
+              const utilPct = gpu.utilization_percent;
               return (
                 <div key={i} className="md:col-span-3 space-y-1.5 p-4 rounded-lg border border-border/50 bg-muted/10">
                   <div className="flex items-center justify-between text-xs font-mono mb-2 gap-2">
@@ -2172,8 +2281,8 @@ function HardwareCard() {
                           {(gpu.vram_used_mb / 1024).toFixed(1)} / {(gpu.vram_total_mb / 1024).toFixed(1)} GB VRAM
                         </span>
                       )}
-                      {gpu.utilization_percent != null && (
-                        <span className="text-muted-foreground">{gpu.utilization_percent}% util</span>
+                      {utilPct != null && (
+                        <span className="text-muted-foreground">{utilPct}% util</span>
                       )}
                       {gpu.temp_c != null && (
                         <span className={gpu.temp_c > 85 ? "text-destructive" : gpu.temp_c > 70 ? "text-amber-600" : "text-muted-foreground"}>
@@ -2182,8 +2291,12 @@ function HardwareCard() {
                       )}
                     </span>
                   </div>
-                  {vramPct != null ? bar(vramPct) : (
-                    gpu.utilization_percent != null ? bar(gpu.utilization_percent) : null
+                  {vramPct != null ? bar(vramPct) : utilPct != null ? bar(utilPct) : null}
+                  {/* VRAM sparkline */}
+                  {i === 0 && vramHist.length >= 2 && vramPct != null && (
+                    <div className="mt-2">
+                      <Sparkline data={vramHist} color={barColor(vramPct)} />
+                    </div>
                   )}
                 </div>
               );
