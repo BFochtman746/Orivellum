@@ -601,6 +601,28 @@ def set_ai_extraction_setting(body: AiExtractionUpdate):
     return {"enabled": body.enabled, "ok": True}
 
 
+# ── AI Re-ranking setting ──────────────────────────────────────────────────────
+
+@router.get("/system/settings/ai-reranking")
+def get_ai_reranking_setting():
+    """Return whether LLM-powered listwise re-ranking is enabled for chat retrieval."""
+    db = get_db()
+    enabled = db.get_setting("ai_reranking_enabled", "false").lower() == "true"
+    return {"enabled": enabled}
+
+
+class AiRerankingUpdate(BaseModel):
+    enabled: bool
+
+
+@router.put("/system/settings/ai-reranking")
+def set_ai_reranking_setting(body: AiRerankingUpdate):
+    """Enable or disable LLM-powered re-ranking of retrieved passages before chat injection."""
+    db = get_db()
+    db.set_setting("ai_reranking_enabled", "true" if body.enabled else "false", actor="user")
+    return {"enabled": body.enabled, "ok": True}
+
+
 # ── Vision model settings + probe ─────────────────────────────────────────────
 
 @router.get("/system/settings/vision-model")

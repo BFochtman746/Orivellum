@@ -1069,6 +1069,36 @@ function useSetAiExtractionSetting() {
   });
 }
 
+function useAiRerankingSetting() {
+  return useQuery({
+    queryKey: ["system", "ai-reranking"],
+    queryFn: async () => {
+      const r = await apiFetch(`${API_BASE}/api/system/settings/ai-reranking`);
+      if (!r.ok) throw new Error("Failed to fetch AI re-ranking setting");
+      return r.json() as Promise<{ enabled: boolean }>;
+    },
+    staleTime: 30_000,
+  });
+}
+
+function useSetAiRerankingSetting() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (enabled: boolean) => {
+      const r = await apiFetch(`${API_BASE}/api/system/settings/ai-reranking`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled }),
+      });
+      if (!r.ok) throw new Error("Failed to update AI re-ranking setting");
+      return r.json();
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["system", "ai-reranking"] });
+    },
+  });
+}
+
 // ─── Semantic search / embeddings card ───────────────────────────────────────
 
 type EmbedProbeResult = { ok: boolean; dims?: number; status?: string; detail: string };
@@ -1477,6 +1507,8 @@ export default function System() {
   const { data: capsResp, isLoading: loadingCaps } = useListCapabilities();
   const { data: aiExtraction, isLoading: loadingAiExt } = useAiExtractionSetting();
   const setAiExtraction = useSetAiExtractionSetting();
+  const { data: aiReranking, isLoading: loadingAiRerank } = useAiRerankingSetting();
+  const setAiReranking = useSetAiRerankingSetting();
 
   const aiStatus = (health?.services?.ai as Record<string, string> | undefined)?.status;
   const aiEndpoint = (health?.services?.ai as Record<string, string> | undefined)?.endpoint;
@@ -1614,6 +1646,44 @@ export default function System() {
                   onCheckedChange={(checked) => setAiExtraction.mutate(checked)}
                   disabled={setAiExtraction.isPending}
                   aria-label="Enable AI-powered knowledge extraction"
+                />
+              )}
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* AI Re-ranking Setting */}
+      <Card>
+        <CardContent className="p-6">
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex items-start gap-3">
+              <Sparkles className="w-5 h-5 text-primary mt-0.5 shrink-0" />
+              <div className="space-y-1">
+                <h3 className="font-medium text-sm">AI-Powered Search Re-ranking</h3>
+                <p className="text-sm text-muted-foreground max-w-xl">
+                  When enabled, retrieved passages are re-scored by your local AI before being
+                  injected into chat — so the most relevant evidence always reaches the model
+                  first. BM25 re-ranking runs regardless; this adds a listwise AI pass on the
+                  top&nbsp;10 candidates. Adds roughly 1–3&nbsp;s to first response time.
+                </p>
+                {!aiOnline && (
+                  <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">
+                    Requires the local AI engine to be running. Enable it now and it will activate
+                    automatically once the AI service is available.
+                  </p>
+                )}
+              </div>
+            </div>
+            <div className="shrink-0 pt-0.5">
+              {loadingAiRerank ? (
+                <Skeleton className="h-6 w-11 rounded-full" />
+              ) : (
+                <Switch
+                  checked={aiReranking?.enabled ?? false}
+                  onCheckedChange={(checked) => setAiReranking.mutate(checked)}
+                  disabled={setAiReranking.isPending || !aiOnline}
+                  aria-label="Enable AI-powered search re-ranking"
                 />
               )}
             </div>

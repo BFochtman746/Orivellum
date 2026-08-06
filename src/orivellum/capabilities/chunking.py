@@ -107,7 +107,7 @@ def generate_context_prefixes_for_doc(
             return 0
 
         from orivellum.capabilities.llm import llm_call
-        from orivellum.config import load_config
+        from orivellum.configuration.config import load_config
 
         cfg = load_config()
 

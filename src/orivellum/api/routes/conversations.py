@@ -1247,6 +1247,16 @@ def _build_system_prompt(db: Any, conv: dict, scope: str = "work",
             knowledge_hits = hybrid_search_knowledge(user_query, db,
                                                      limit=_CONTEXT_KNOWLEDGE * 2)
 
+            # Re-rank knowledge hits by BM25 (always) + optional LLM listwise
+            # (gated by ai_reranking_enabled setting).  Re-ranking bubbles the
+            # most query-relevant items to the top before token-budget filtering
+            # so the 30% budget is used on the best candidates, not arbitrary ones.
+            try:
+                from orivellum.capabilities.rerank import rerank_candidates as _rerank
+                knowledge_hits = _rerank(user_query, knowledge_hits, db)
+            except Exception as _rk_exc:
+                logger.debug("Knowledge re-rank skipped (non-fatal): %s", _rk_exc)
+
             # Token budget: 30% of context_window for all injected knowledge.
             # Count cap (_CONTEXT_KNOWLEDGE / _CONTEXT_CHUNKS) is a backstop.
             _k_budget = int(_get_effective_context_window(db) * 0.30)
@@ -1268,6 +1278,13 @@ def _build_system_prompt(db: Any, conv: dict, scope: str = "work",
             from orivellum.capabilities.embeddings import hybrid_search_chunks
             chunk_hits = hybrid_search_chunks(user_query, db, work_id=None,
                                               limit=_CONTEXT_CHUNKS * 2)
+
+            # Re-rank chunk hits by the same pipeline as knowledge hits.
+            try:
+                from orivellum.capabilities.rerank import rerank_candidates as _rerank_c
+                chunk_hits = _rerank_c(user_query, chunk_hits, db)
+            except Exception as _rk_c_exc:
+                logger.debug("Chunk re-rank skipped (non-fatal): %s", _rk_c_exc)
 
             # Chunks share what remains of the 30% budget after knowledge items
             _c_budget = max(0, _k_budget - _k_used)
