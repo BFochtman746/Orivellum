@@ -207,8 +207,18 @@ async def generate_quiz(work_id: str, count: int = 5):
     title = (work.get("title") or "this topic") if work else "this topic"
 
     # Fetch concepts so each question can be tagged with the concept it tests.
+    # Cap at 20 most-studied concepts to keep the prompt within context limits;
+    # Works with 50+ concepts would otherwise inflate the prompt by hundreds of
+    # tokens and risk silent truncation on smaller models.
+    _CONCEPT_CAP = 20
     from orivellum.capabilities.learning import list_concepts
     concepts = list_concepts(db, work_id)
+    if len(concepts) > _CONCEPT_CAP:
+        concepts = sorted(
+            concepts,
+            key=lambda c: c.get("consecutive_passes") or 0,
+            reverse=True,
+        )[:_CONCEPT_CAP]
     has_concepts = bool(concepts)
 
     if has_concepts:
