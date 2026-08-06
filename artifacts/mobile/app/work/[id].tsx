@@ -1176,6 +1176,7 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
   const [learnView, setLearnView] = useState<'study' | 'concepts'>('study');
   const [concepts, setConcepts] = useState<any[]>([]);
   const [conceptsLoading, setConceptsLoading] = useState(false);
+  const [resettingConcept, setResettingConcept] = useState<string | null>(null);
 
   const SESSION_LIMIT = 5; // correct answers before "session complete" screen
 
@@ -1240,6 +1241,35 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
       const r = await mobileFetch(`${apiBase}/works/${workId}/learning/concepts`);
       if (r.ok) { const d = await r.json(); setConcepts(d.concepts ?? []); }
     } catch { /* non-fatal */ } finally { setConceptsLoading(false); }
+  }, [apiBase, workId]);
+
+  const resetConcept = useCallback(async (conceptId: string, subject: string) => {
+    Alert.alert(
+      'Reset streak',
+      `Reset the mastery streak for "${subject}"? The concept will re-enter the study queue.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Reset',
+          style: 'destructive',
+          onPress: async () => {
+            setResettingConcept(conceptId);
+            try {
+              await mobileFetch(`${apiBase}/works/${workId}/learning/concepts/${conceptId}/reset`, { method: 'POST' });
+              // Refresh summary + list
+              const [sr, cr] = await Promise.all([
+                mobileFetch(`${apiBase}/works/${workId}/learning/summary`),
+                mobileFetch(`${apiBase}/works/${workId}/learning/concepts`),
+              ]);
+              if (sr.ok) { const d = await sr.json(); setSummary(d); }
+              if (cr.ok) { const d = await cr.json(); setConcepts(d.concepts ?? []); }
+            } catch { /* non-fatal */ } finally {
+              setResettingConcept(null);
+            }
+          },
+        },
+      ]
+    );
   }, [apiBase, workId]);
 
   /** Tap on a concept row → load a focused question for that concept and switch to study view. */
@@ -1510,11 +1540,18 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
                 <Pressable
                   key={c.id}
                   onPress={() => focusOnConcept(c.id)}
+                  onLongPress={() => {
+                    const hasProgress = (c.consecutive_passes ?? 0) > 0 || c.graduated;
+                    if (!hasProgress) return;
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                    resetConcept(c.id, c.subject);
+                  }}
+                  delayLongPress={450}
                   accessibilityRole="button"
                   accessibilityLabel={`Study ${c.subject}`}
                   style={({ pressed }: { pressed: boolean }) => ({
                     borderWidth: 1, borderRadius: 10, padding: 12, marginBottom: 8,
-                    borderColor: borderCol,
+                    borderColor: resettingConcept === c.id ? '#f59e0b55' : borderCol,
                     backgroundColor: tier === 'graduated' ? '#16a34a08' : 'transparent',
                     opacity: pressed ? 0.75 : 1,
                   })}

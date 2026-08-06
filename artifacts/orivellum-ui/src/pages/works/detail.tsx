@@ -85,6 +85,7 @@ import {
   Package,
   Download,
   Zap,
+  RotateCcw,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -2525,6 +2526,7 @@ function LearnTab({ workId }: { workId: string }) {
   const [error, setError]       = useState<string | null>(null);
   const [showConcepts, setShowConcepts] = useState(false);
   const [concepts, setConcepts] = useState<any[]>([]);
+  const [resettingConcept, setResettingConcept] = useState<string | null>(null);
 
   const apiBase = API_BASE_WORKS;
 
@@ -2628,6 +2630,27 @@ function LearnTab({ workId }: { workId: string }) {
     if (!result) { await startOrContinue(null); return; }
     if (result.summary.mastery_pct === 100) { setPhase("all_done"); return; }
     await startOrContinue(result.next_concept_id);
+  };
+
+  const resetConcept = async (conceptId: string, subject: string) => {
+    if (!confirm(`Reset the mastery streak for "${subject}"? It will re-enter the study queue.`)) return;
+    setResettingConcept(conceptId);
+    try {
+      const r = await apiFetch(`${apiBase}/works/${workId}/learning/concepts/${conceptId}/reset`, { method: "POST" });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      // Refresh concept list in-place
+      const sumR = await apiFetch(`${apiBase}/works/${workId}/learning/summary`);
+      if (sumR.ok) {
+        const d = await sumR.json();
+        setSummary(d);
+        setConcepts(d.concepts ?? []);
+      }
+      toast.success("Streak reset — concept re-enters the study queue");
+    } catch {
+      toast.error("Could not reset concept streak");
+    } finally {
+      setResettingConcept(null);
+    }
   };
 
   const routeLabel: Record<RouteAction, string> = {
@@ -2814,21 +2837,39 @@ function LearnTab({ workId }: { workId: string }) {
           </button>
           {showConcepts && (
             <div className="divide-y divide-border/30">
-              {concepts.map((c: any) => (
-                <div key={c.id} className="flex items-center justify-between px-4 py-2.5 text-sm">
-                  <div className="flex items-center gap-2">
-                    {c.graduated
-                      ? <Check className="w-3.5 h-3.5 text-emerald-500" />
-                      : c.consecutive_passes > 0
-                      ? <div className="w-3.5 h-3.5 rounded-full border-2 border-amber-400" />
-                      : <div className="w-3.5 h-3.5 rounded-full border border-muted-foreground/40" />}
-                    <span className={c.graduated ? "text-emerald-700 dark:text-emerald-400 font-medium" : ""}>{c.subject}</span>
+              {concepts.map((c: any) => {
+                const hasProgress = c.consecutive_passes > 0 || c.graduated;
+                const isResetting = resettingConcept === c.id;
+                return (
+                  <div key={c.id} className="flex items-center justify-between px-4 py-2.5 text-sm group">
+                    <div className="flex items-center gap-2">
+                      {c.graduated
+                        ? <Check className="w-3.5 h-3.5 text-emerald-500" />
+                        : c.consecutive_passes > 0
+                        ? <div className="w-3.5 h-3.5 rounded-full border-2 border-amber-400" />
+                        : <div className="w-3.5 h-3.5 rounded-full border border-muted-foreground/40" />}
+                      <span className={c.graduated ? "text-emerald-700 dark:text-emerald-400 font-medium" : ""}>{c.subject}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-mono text-muted-foreground">
+                        {c.graduated ? "✓ done" : c.consecutive_passes > 0 ? `${c.consecutive_passes}/3` : "—"}
+                      </span>
+                      {hasProgress && (
+                        <button
+                          onClick={() => resetConcept(c.id, c.subject)}
+                          disabled={isResetting}
+                          title="Reset streak — re-enter study queue"
+                          className="opacity-0 group-hover:opacity-60 hover:!opacity-100 p-1 rounded text-muted-foreground hover:text-destructive transition-all"
+                        >
+                          {isResetting
+                            ? <Loader2 className="w-3 h-3 animate-spin" />
+                            : <RotateCcw className="w-3 h-3" />}
+                        </button>
+                      )}
+                    </div>
                   </div>
-                  <span className="text-xs font-mono text-muted-foreground">
-                    {c.graduated ? "✓ done" : c.consecutive_passes > 0 ? `${c.consecutive_passes}/3` : "—"}
-                  </span>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
