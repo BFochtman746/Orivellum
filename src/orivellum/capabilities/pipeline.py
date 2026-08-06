@@ -365,6 +365,16 @@ def process_document(doc_id: str, file_path: str, kind: str,
                 else "Archive is empty or contains no supported file types."
             )
             db.update_document_extracted(doc_id, summary, 0, readiness="ready")
+            # Record upload provenance for the ZIP container itself.
+            # (Each child already gets a "zip_extract" row inside
+            # _explode_zip_into_documents; this row covers the archive doc_id.)
+            try:
+                from orivellum.capabilities.persist import record_provenance as _rp_zip
+                _zip_rec = db.get_document(doc_id)
+                _zip_sha = (_zip_rec or {}).get("sha256")
+                _rp_zip(doc_id, "upload", db, origin_id=_zip_sha, work_id=work_id)
+            except Exception as _prov_exc:
+                logger.debug("ZIP upload provenance non-fatal for %s: %s", doc_id, _prov_exc)
             try:
                 import json as _jz
                 with db._lock:
@@ -443,6 +453,17 @@ def process_document(doc_id: str, file_path: str, kind: str,
             readiness="ready",
         )
         logger.info("Doc %s processed — %d words, ready", doc_id, result.word_count)
+
+        # Record upload provenance so recall queries ("find everything I added
+        # about X") can surface this document.  origin_id is the document's
+        # sha256 — the most stable identifier for the physical file.
+        try:
+            from orivellum.capabilities.persist import record_provenance as _rp
+            _doc_rec = db.get_document(doc_id)
+            _sha = (_doc_rec or {}).get("sha256")
+            _rp(doc_id, "upload", db, origin_id=_sha, work_id=work_id)
+        except Exception as _prov_exc:
+            logger.debug("Upload provenance non-fatal for %s: %s", doc_id, _prov_exc)
 
         # Step 4.4: context prefixes + chunk embeddings.
         #

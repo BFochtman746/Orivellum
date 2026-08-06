@@ -899,5 +899,142 @@ class TestRotationRace(unittest.TestCase):
                          f"Expected exactly 1 library entry; found {len(entries)}: {entries}")
 
 
+class TestUploadProvenance(unittest.TestCase):
+    """process_document() must write an object_provenance row for every uploaded document.
+
+    Exercises the "upload" provenance source added to capabilities/pipeline.py so that
+    recall queries ("find everything I added about X") can surface ingested documents
+    alongside Studio outputs and generated notes.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.db, self.cfg = _make_db_and_cfg(self.tmp)
+
+    def _write_doc(self, name: str, content: str, work_id: str | None = None) -> tuple[str, str]:
+        """Create a temp file and matching documents row; return (doc_id, file_path)."""
+        import hashlib
+
+        lib_dir = Path(self.tmp) / "data" / "library"
+        lib_dir.mkdir(parents=True, exist_ok=True)
+        doc_file = lib_dir / name
+        doc_file.write_text(content, encoding="utf-8")
+        sha = hashlib.sha256(doc_file.read_bytes()).hexdigest()
+
+        doc = self.db.create_document(
+            title=Path(name).stem,
+            source=str(doc_file),
+            sha256=sha,
+            kind="text",
+            work_id=work_id,
+        )
+        return doc["id"], str(doc_file)
+
+    def test_plain_upload_creates_provenance_row(self):
+        """process_document writes source='upload' provenance for a basic text file."""
+        from orivellum.capabilities.pipeline import process_document
+
+        doc_id, file_path = self._write_doc(
+            "plain_upload.txt",
+            "The quick brown fox jumps over the lazy dog.",
+        )
+
+        process_document(doc_id, file_path, "text", None, "Plain Upload", self.db)
+
+        with self.db._lock:
+            prov = self.db._conn.execute(
+                "SELECT source, work_id FROM object_provenance WHERE object_id=?",
+                (doc_id,),
+            ).fetchone()
+
+        self.assertIsNotNone(prov,
+                             "No provenance row created for uploaded document")
+        self.assertEqual(prov["source"], "upload",
+                         f"Expected source='upload', got {prov['source']!r}")
+        self.assertIsNone(prov["work_id"],
+                          "work_id should be None for an unscoped upload")
+
+    def test_upload_with_work_id_sets_provenance_work_id(self):
+        """process_document passes work_id into the provenance row for work-linked docs."""
+        from orivellum.capabilities.pipeline import process_document
+
+        # Create a work so the FK is satisfied
+        work = self.db.create_work("Test Work")
+        work_id = work["id"]
+
+        doc_id, file_path = self._write_doc(
+            "work_upload.txt",
+            "This document belongs to a specific Work.",
+            work_id=work_id,
+        )
+
+        process_document(doc_id, file_path, "text", work_id, "Work Upload", self.db)
+
+        with self.db._lock:
+            prov = self.db._conn.execute(
+                "SELECT source, work_id FROM object_provenance WHERE object_id=?",
+                (doc_id,),
+            ).fetchone()
+
+        self.assertIsNotNone(prov)
+        self.assertEqual(prov["source"], "upload")
+        self.assertEqual(prov["work_id"], work_id,
+                         "Provenance work_id must match the document's linked Work")
+
+    def test_origin_id_is_sha256_of_uploaded_file(self):
+        """process_document uses the document sha256 as the provenance origin_id."""
+        import hashlib
+        from orivellum.capabilities.pipeline import process_document
+
+        doc_id, file_path = self._write_doc(
+            "sha_upload.txt",
+            "Content with a specific SHA for origin_id verification.",
+        )
+        expected_sha = hashlib.sha256(
+            Path(file_path).read_bytes()
+        ).hexdigest()
+
+        process_document(doc_id, file_path, "text", None, "SHA Upload", self.db)
+
+        with self.db._lock:
+            prov = self.db._conn.execute(
+                "SELECT origin_id FROM object_provenance WHERE object_id=?",
+                (doc_id,),
+            ).fetchone()
+
+        self.assertIsNotNone(prov)
+        self.assertEqual(prov["origin_id"], expected_sha,
+                         "origin_id must be the sha256 of the uploaded file")
+
+    def test_provenance_row_exists_after_readiness_is_ready(self):
+        """Provenance is recorded only after the document reaches readiness='ready'.
+
+        This verifies the row exists alongside a correctly-marked document, not
+        during an intermediate state such as 'imported' or 'transcribing'.
+        """
+        from orivellum.capabilities.pipeline import process_document
+
+        doc_id, file_path = self._write_doc(
+            "readiness_upload.txt",
+            "A document that must be ready and have provenance simultaneously.",
+        )
+
+        process_document(doc_id, file_path, "text", None, "Readiness Upload", self.db)
+
+        with self.db._lock:
+            doc = self.db._conn.execute(
+                "SELECT readiness FROM documents WHERE id=?", (doc_id,)
+            ).fetchone()
+            prov = self.db._conn.execute(
+                "SELECT id FROM object_provenance WHERE object_id=? AND source='upload'",
+                (doc_id,),
+            ).fetchone()
+
+        self.assertEqual(doc["readiness"], "ready",
+                         "Document readiness must be 'ready' after process_document")
+        self.assertIsNotNone(prov,
+                             "Provenance row must exist when document is ready")
+
+
 if __name__ == "__main__":
     unittest.main()
