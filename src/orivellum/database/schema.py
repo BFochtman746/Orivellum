@@ -1452,4 +1452,23 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             PRIMARY KEY (conversation_id, client_msg_id)
         )
     """),
+
+    # v88 — Sliding-window context summarization.
+    # Long conversations exceed the model context window; this column stores an
+    # auto-generated rolling prose summary of the oldest exchanges.  The summary
+    # is injected at the top of the system prompt so every reply benefits from
+    # older context without paying the full token cost.
+    (88, "Add context_summary column to conversations", """
+        ALTER TABLE conversations ADD COLUMN context_summary TEXT
+    """),
+
+    # v89 — Coverage cursor for the sliding-window summarizer.
+    # summary_cursor_id holds the DB id of the last message already folded into
+    # context_summary.  On each background run the summarizer loads only the
+    # messages AFTER this cursor that fall outside the verbatim history window,
+    # ensuring every excluded exchange is captured exactly once rather than
+    # repeatedly re-folding the same earliest batch.
+    (89, "Add summary_cursor_id coverage cursor to conversations", """
+        ALTER TABLE conversations ADD COLUMN summary_cursor_id TEXT
+    """),
 ]

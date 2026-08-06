@@ -1269,6 +1269,41 @@ export default function ChatScreen() {
               </View>
             ) : null
           }
+          ListFooterComponent={
+            (conversation as any)?.context_summary ? (
+              <View style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 8,
+                paddingHorizontal: 20,
+                paddingVertical: 12,
+              }}>
+                <View style={{ flex: 1, height: 1, backgroundColor: colors.border, opacity: 0.4 }} />
+                <View style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 5,
+                  paddingHorizontal: 10,
+                  paddingVertical: 5,
+                  borderRadius: 99,
+                  borderWidth: 1,
+                  borderColor: colors.border,
+                  backgroundColor: colors.muted + '60',
+                }}>
+                  <Feather name="clock" size={10} color={colors.mutedForeground} style={{ opacity: 0.6 }} />
+                  <Text style={{
+                    fontSize: 10,
+                    fontFamily: 'Inter_400Regular',
+                    color: colors.mutedForeground,
+                    opacity: 0.7,
+                  }}>
+                    Earlier context summarized
+                  </Text>
+                </View>
+                <View style={{ flex: 1, height: 1, backgroundColor: colors.border, opacity: 0.4 }} />
+              </View>
+            ) : null
+          }
         />
 
         {/* Input bar */}

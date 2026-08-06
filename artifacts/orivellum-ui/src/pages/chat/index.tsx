@@ -2052,6 +2052,21 @@ export default function Chat() {
                   </div>
                 ) : (
                   <ErrorBoundary label="message list">
+                  {/* ── Earlier context summarized indicator ─────────────────
+                      Shown at the top of the message list when the server has
+                      condensed older exchanges into a rolling summary.  This
+                      tells the user their earlier context is still active even
+                      though those messages are no longer visible in full. */}
+                  {!!(conv as any)?.context_summary && (
+                    <div className="flex items-center gap-3 py-1 select-none" aria-label="Earlier context summarized">
+                      <div className="flex-1 h-px bg-border/40" />
+                      <div className="flex items-center gap-1.5 px-3 py-1 rounded-full border border-border/50 bg-muted/30 text-[11px] font-mono text-muted-foreground/60">
+                        <History className="w-3 h-3 shrink-0" />
+                        Earlier context summarized
+                      </div>
+                      <div className="flex-1 h-px bg-border/40" />
+                    </div>
+                  )}
                   {displayMessages.map((msg, msgIdx) => (
                     <div key={msg.id} data-msg-id={msg.id} data-role={msg.role} className={`flex gap-3 ${msg.role === "user" ? "flex-row-reverse" : ""}`}>
                       <div className={`w-7 h-7 shrink-0 rounded-sm flex items-center justify-center

@@ -1240,6 +1240,96 @@ class OrivellumDB:
             result.append(d)
         return result
 
+    def count_messages(self, conv_id: str) -> int:
+        """Return the true total count of messages in a conversation.
+
+        Uses COUNT(*) so it is accurate even when the conversation has more
+        messages than any LIMIT-based call would return.
+        """
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT COUNT(*) FROM messages WHERE conversation_id=?", (conv_id,)
+            ).fetchone()
+        return int(row[0]) if row else 0
+
+    def get_recent_messages(self, conv_id: str, limit: int) -> list[dict]:
+        """Return the *limit* most-recent messages for a conversation in ascending order.
+
+        Queries ``ORDER BY created_at DESC, id DESC LIMIT ?`` (newest first) then
+        reverses the result, giving the true latest-window in chronological order.
+        This is what ``_build_messages()`` needs for the verbatim prompt history —
+        ``get_messages()`` with an ascending LIMIT returns the OLDEST messages, which
+        is wrong for the recent-context use case.
+
+        Uses ``(created_at, id)`` as the compound sort key so that messages sharing
+        the same timestamp (e.g. programmatically seeded test data) are ordered
+        deterministically by their UUID id rather than arbitrarily.
+        """
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM messages WHERE conversation_id=?"
+                " ORDER BY created_at DESC, id DESC LIMIT ?",
+                (conv_id, limit),
+            ).fetchall()
+        result = []
+        for r in rows:
+            d = dict(r)
+            d["meta"] = _jload(d.get("meta"), {})
+            result.append(d)
+        result.reverse()   # restore chronological (ascending) order
+        return result
+
+    def get_messages_range(
+        self, conv_id: str, offset: int, limit: int
+    ) -> list[dict]:
+        """Fetch a slice of a conversation's messages by position (0-based offset).
+
+        Returns up to *limit* messages starting at *offset* in the canonical
+        ``(created_at ASC, id ASC)`` total order — the same order used by
+        ``count_messages`` and ``get_message_position`` so cursor arithmetic is
+        consistent across all summarizer operations.
+        """
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM messages WHERE conversation_id=?"
+                " ORDER BY created_at ASC, id ASC LIMIT ? OFFSET ?",
+                (conv_id, limit, offset),
+            ).fetchall()
+        result = []
+        for r in rows:
+            d = dict(r)
+            d["meta"] = _jload(d.get("meta"), {})
+            result.append(d)
+        return result
+
+    def get_message_position(self, conv_id: str, message_id: str) -> int | None:
+        """Return the 0-based position of *message_id* in the conversation's
+        canonical ``(created_at ASC, id ASC)`` total order.
+
+        Uses a compound predicate — ``created_at < target_ts  OR
+        (created_at = target_ts AND id <= target_id)`` — so that messages sharing
+        the same timestamp resolve deterministically by their id, matching the
+        order used by ``get_messages_range``.
+
+        Returns None when the message does not exist in this conversation (e.g.
+        deleted), so the caller can reset the cursor rather than skipping candidates.
+        """
+        with self._lock:
+            target = self._conn.execute(
+                "SELECT created_at, id FROM messages WHERE id=? AND conversation_id=?",
+                (message_id, conv_id),
+            ).fetchone()
+            if target is None:
+                return None
+            ts, mid = target[0], target[1]
+            count = self._conn.execute(
+                "SELECT COUNT(*) FROM messages"
+                " WHERE conversation_id=?"
+                "   AND (created_at < ? OR (created_at = ? AND id <= ?))",
+                (conv_id, ts, ts, mid),
+            ).fetchone()
+        return int(count[0]) - 1 if count else 0
+
     def search_messages(self, query: str, limit: int = 50) -> list[dict]:
         """Full-text search across all conversation messages.
 
@@ -1842,6 +1932,34 @@ class OrivellumDB:
                 f"UPDATE conversations SET {set_clause} WHERE id=?", vals
             )
         return self.get_conversation(conv_id)
+
+    def update_conversation_summary(
+        self,
+        conv_id: str,
+        summary: str,
+        cursor_id: str | None = None,
+    ) -> None:
+        """Store (or replace) the rolling context summary and advance the cursor.
+
+        *cursor_id* is the DB id of the last message folded into *summary*.
+        Passing it atomically with the summary ensures the cursor and content
+        are always consistent — no partial updates.
+
+        Lightweight lock-only write — not part of the governed audit chain
+        because summaries are machine-generated and regenerated on demand.
+        """
+        with self._lock:
+            if cursor_id is not None:
+                self._conn.execute(
+                    "UPDATE conversations SET context_summary=?, summary_cursor_id=? WHERE id=?",
+                    (summary, cursor_id, conv_id),
+                )
+            else:
+                self._conn.execute(
+                    "UPDATE conversations SET context_summary=? WHERE id=?",
+                    (summary, conv_id),
+                )
+            self._conn.commit()
 
     def set_conversation_web_search(self, conv_id: str, enabled: bool) -> dict | None:
         """Toggle web search grounding on/off for a conversation.
