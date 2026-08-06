@@ -1531,8 +1531,10 @@ export default function Studio() {
       {/* Page header */}
       <div className="flex items-center justify-between px-6 py-4 border-b border-border/50 shrink-0">
         <div>
-          <h1 className="text-2xl font-serif font-semibold tracking-tight">Studio</h1>
-          <p className="text-sm text-muted-foreground font-serif">
+          <span className="eyebrow mb-1">The Press Room</span>
+          <h1 className="vellum-h1">Studio</h1>
+          <div className="gilt-rule w-24" />
+          <p className="text-[13px] mt-1" style={{ color: 'var(--ink-soft)' }}>
             Voice narration · Image generation · Document workshop
           </p>
         </div>

@@ -2179,9 +2179,11 @@ export default function System() {
 
   return (
     <div className="space-y-8 animate-in fade-in duration-500 max-w-5xl mx-auto">
-      <div className="border-b border-border/50 pb-4">
-        <h1 className="text-3xl font-serif font-semibold tracking-tight">System Status</h1>
-        <p className="text-muted-foreground mt-1 font-serif">Infrastructure health and local AI capabilities.</p>
+      <div className="pb-4" style={{ borderBottom: '1px solid var(--line)' }}>
+        <span className="eyebrow mb-1">Under the Hood</span>
+        <h1 className="vellum-h1">The Engine</h1>
+        <div className="gilt-rule w-32" />
+        <p className="text-[13px] mt-1.5" style={{ color: 'var(--ink-soft)' }}>Infrastructure health and local AI capabilities.</p>
       </div>
 
       <ProfileCard />

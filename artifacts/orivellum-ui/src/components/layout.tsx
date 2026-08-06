@@ -783,11 +783,13 @@ function MobileNavSheet({ open, onClose }: { open: boolean; onClose: () => void 
         </div>
 
         {/* App branding row */}
-        <div className="px-5 py-2.5 flex items-center gap-2.5 border-b border-border/30 shrink-0">
-          <div className="bg-primary text-primary-foreground w-7 h-7 rounded-sm flex items-center justify-center font-serif font-bold text-base shrink-0">
-            O
+        <div className="px-5 py-3 flex items-center gap-2.5 shrink-0" style={{ borderBottom: '1px solid var(--line)' }}>
+          <div className="w-7 h-7 rounded-[8px] flex items-center justify-center font-serif font-bold text-base shrink-0 text-[#F4EEE1]" style={{ background: 'var(--green-raw)' }}>
+            <span style={{ fontVariationSettings: '"opsz" 40' }}>O</span>
           </div>
-          <span className="font-serif font-bold text-lg tracking-tight">Orivellum</span>
+          <span className="brand-orivellum">
+            Ori<span className="brand-accent">vellum</span>
+          </span>
         </div>
 
         {/* 3-column nav grid — thumb-friendly ≥80px tall cells */}
@@ -841,8 +843,8 @@ function MobileHeader({
   const title = useRouteTitle();
   return (
     <div
-      className="lg:hidden flex items-center px-2 border-b border-border/30 bg-background/95 backdrop-blur-sm z-10 shrink-0"
-      style={{ paddingTop: "max(0.75rem, var(--sai-top))", paddingBottom: "0.75rem" }}
+      className="lg:hidden flex items-center px-2 z-10 shrink-0 glass-vellum"
+      style={{ paddingTop: "max(0.75rem, var(--sai-top))", paddingBottom: "0.75rem", borderBottom: '1px solid var(--line)' }}
     >
       {/* App-menu button — ≥44×44pt touch target per HIG */}
       <button
@@ -946,11 +948,15 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
       <div className="flex w-full overflow-hidden" style={{ height: "var(--visual-viewport-height, 100dvh)" }}>
         {/* Desktop sidebar — hidden on mobile */}
         <Sidebar className="hidden lg:flex border-r border-border/50 bg-sidebar flex-col w-56 shrink-0">
-          <SidebarHeader className="px-4 py-3 flex flex-row items-center gap-2 border-b border-border/30">
-            <div className="bg-primary text-primary-foreground w-7 h-7 rounded-sm flex items-center justify-center font-serif font-bold text-base shrink-0">
-              O
+          <SidebarHeader className="px-5 py-3.5 flex flex-row items-center gap-3 border-b shrink-0" style={{ borderColor: 'var(--line)' }}>
+            {/* Forest-green sigil */}
+            <div className="w-7 h-7 rounded-[8px] flex items-center justify-center font-serif font-bold text-base shrink-0 text-[#F4EEE1]" style={{ background: 'var(--green-raw)' }}>
+              <span style={{ fontVariationSettings: '"opsz" 40' }}>O</span>
             </div>
-            <div className="font-serif font-bold text-lg tracking-tight">Orivellum</div>
+            {/* VELLUM brand — Fraunces with gilt accent on "vellum" */}
+            <div className="brand-orivellum">
+              Ori<span className="brand-accent">vellum</span>
+            </div>
           </SidebarHeader>
           <SidebarContent className="flex-1 min-h-0 overflow-hidden">
             <SidebarInner onNavigate={() => {}} />

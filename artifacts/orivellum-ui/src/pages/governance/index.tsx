@@ -791,16 +791,15 @@ export default function GovernancePage() {
     <div className="space-y-6 animate-in fade-in duration-300 max-w-4xl">
 
       {/* Header */}
-      <div className="border-b border-border/50 pb-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Shield className="w-6 h-6 text-primary" />
-            <div>
-              <h1 className="text-2xl font-serif font-semibold tracking-tight">Governance</h1>
-              <p className="text-muted-foreground text-sm font-serif mt-0.5">
-                Review AI-extracted knowledge before it becomes a fact.
-              </p>
-            </div>
+      <div className="pb-4" style={{ borderBottom: '1px solid var(--line)' }}>
+        <div className="flex items-start justify-between">
+          <div>
+            <span className="eyebrow mb-1">Nothing unverified becomes true</span>
+            <h1 className="vellum-h1">Review</h1>
+            <div className="gilt-rule w-28" />
+            <p className="text-[13px] mt-1.5" style={{ color: 'var(--ink-soft)' }}>
+              Approve what becomes canon.
+            </p>
           </div>
           <div className="flex items-center gap-3">
             <span className="hidden sm:flex items-center gap-1.5 text-[10px] font-mono text-muted-foreground/50 border border-border/30 rounded px-2 py-1">

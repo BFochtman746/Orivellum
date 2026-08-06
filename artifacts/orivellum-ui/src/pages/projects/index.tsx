@@ -41,8 +41,10 @@ export default function Projects() {
     <div className="space-y-6 animate-in fade-in duration-500">
       <div className="flex items-center justify-between border-b border-border/50 pb-4">
         <div>
-          <h1 className="text-3xl font-serif font-semibold tracking-tight">Mastery Projects</h1>
-          <p className="text-muted-foreground mt-1 font-serif">Track structured learning and concept mastery.</p>
+          <span className="eyebrow mb-1">The Tutor</span>
+          <h1 className="vellum-h1">Mastery Projects</h1>
+          <div className="gilt-rule w-40" />
+          <p className="text-[13px] mt-1.5" style={{ color: 'var(--ink-soft)' }}>Track structured learning and concept mastery.</p>
         </div>
 
         <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>

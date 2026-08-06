@@ -101,9 +101,11 @@ export default function TopicsPage() {
         <div className="flex items-center gap-3">
           <Network className="w-6 h-6 text-primary" />
           <div>
-            <h1 className="text-2xl font-serif font-semibold tracking-tight">Topic Graph</h1>
-            <p className="text-sm text-muted-foreground font-serif mt-0.5">
-              Semantic clusters across your entire library — discovered automatically.
+            <span className="eyebrow mb-1">Everything, linked</span>
+            <h1 className="vellum-h1">The Web</h1>
+            <div className="gilt-rule w-24" />
+            <p className="text-[13px] mt-1.5" style={{ color: 'var(--ink-soft)' }}>
+              Concepts and sources — and the edges between them.
             </p>
           </div>
         </div>

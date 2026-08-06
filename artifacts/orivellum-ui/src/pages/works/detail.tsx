@@ -316,17 +316,18 @@ export default function WorkDetail() {
           ) : (
             <div>
               <div className="flex items-start gap-3">
-                <h1 className="text-4xl font-serif font-semibold tracking-tight">{work.title}</h1>
+                <h1 className="vellum-h1">{work.title}</h1>
                 <button
                   onClick={startEdit}
-                  className="mt-2 p-1.5 rounded text-muted-foreground/50 hover:text-muted-foreground hover:bg-muted/50 transition-colors"
+                  className="mt-3 p-1.5 rounded text-muted-foreground/50 hover:text-muted-foreground hover:bg-muted/50 transition-colors"
                   title="Edit title and description"
                 >
                   <Pencil className="w-3.5 h-3.5" />
                 </button>
               </div>
+              <div className="gilt-rule w-40" />
               {work.description ? (
-                <p className="text-lg text-muted-foreground font-serif italic mt-2 max-w-3xl leading-relaxed">
+                <p className="text-[14px] mt-1.5 max-w-3xl leading-relaxed epigraph" style={{ fontSize: '14.5px', margin: '6px 0 0', borderLeft: 'none', paddingLeft: 0 }}>
                   {work.description}
                 </p>
               ) : (
@@ -2471,11 +2472,20 @@ function GapsTab({ workId, onBrainstorm }: { workId: string; onBrainstorm?: (see
           </h4>
           <div className="flex flex-wrap gap-2">
             {data.suggested_queries.map((q, i) => (
-              <span key={i} className="px-3 py-1.5 rounded-full text-xs font-mono border border-border/60 bg-muted/20 text-muted-foreground hover:text-foreground transition-colors cursor-default">
+              <button
+                key={i}
+                onClick={() => onBrainstorm?.(q)}
+                className="px-3 py-1.5 rounded-full text-xs font-mono border border-border/60 bg-muted/20 text-muted-foreground hover:text-foreground hover:border-primary/40 hover:bg-primary/5 transition-colors cursor-pointer flex items-center gap-1.5 group"
+                title="Brainstorm this query"
+              >
+                <Lightbulb className="w-3 h-3 opacity-50 group-hover:opacity-100 group-hover:text-primary transition-colors" />
                 {q}
-              </span>
+              </button>
             ))}
           </div>
+          {onBrainstorm && (
+            <p className="text-[10px] text-muted-foreground/60 font-mono">Tap a query to brainstorm it in the Ideas tab</p>
+          )}
         </div>
       )}
     </div>

@@ -296,11 +296,13 @@ export default function WorksList() {
       <ImportFromLibraryDialog open={isImportOpen}  onClose={() => setIsImportOpen(false)} />
 
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-border/50 pb-4">
+      <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4 border-b pb-4" style={{ borderColor: 'var(--line)' }}>
         <div>
-          <h1 className="text-3xl font-serif font-semibold tracking-tight">Works</h1>
-          <p className="text-muted-foreground mt-1 font-serif text-sm">
-            Your books, research projects, and structured knowledge.
+          <span className="eyebrow mb-1">In Progress</span>
+          <h1 className="vellum-h1">Works &amp; Books</h1>
+          <div className="gilt-rule w-36" />
+          <p className="text-[13px] mt-1.5" style={{ color: 'var(--ink-soft)' }}>
+            Manuscripts through the pipeline, B0 to B17.
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">

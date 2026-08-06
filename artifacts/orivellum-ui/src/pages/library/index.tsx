@@ -950,8 +950,10 @@ export default function Library() {
         <div className="border-b border-border/50 pb-4">
           <div className="flex items-start gap-4 flex-wrap justify-between">
             <div className="min-w-0">
-              <h1 className="text-3xl font-serif font-semibold tracking-tight">Library</h1>
-              <p className="text-muted-foreground mt-1 font-serif">
+              <span className="eyebrow mb-1">The Collection</span>
+              <h1 className="vellum-h1">Library</h1>
+              <div className="gilt-rule w-40" />
+              <p className="text-[13px] mt-1.5" style={{ color: 'var(--ink-soft)' }}>
                 {isLoading ? "Loading…" : `${docs.length} document${docs.length !== 1 ? "s" : ""}${search || readinessFilter !== "all" || kindFilter !== "all" || workFilter !== "all" || lifecycleFilter !== "all" ? " matching filters" : ""}`}
               </p>
             </div>

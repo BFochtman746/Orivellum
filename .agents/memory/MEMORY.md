@@ -61,3 +61,4 @@
 - [Chapter-first novel architecture](orivellum-chapter-arch.md) — schema v84 chapter_id on knowledge; llm_harvest_by_chapters() fiction prompt; two-line heading detection; scene_count in meta; chat chapter scoping; caps raised to 2M.
 - [GENESIS Book Origination System](orivellum-genesis.md) — schema v92; 10-gate ledger; _deps not auth import; ON CONFLICT uses excluded.updated_at; ledger_append needs UUID id.
 - [DeepFilterNet3 audio enhancement](orivellum-audio-enhancement.md) — step 0 in _extract_audio(); db setting audio_enhance_enabled; GET/PUT /system/settings/audio-enhance; AudioEnhancementCard in system page.
+- [VELLUM design system](vellum-design-system.md) — fonts, glass utilities, tokens, tier badges, editorial typography all applied; follow the page header pattern for new pages.

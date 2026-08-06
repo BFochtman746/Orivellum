@@ -120,37 +120,74 @@ function LoginForm({ onSuccess }: { onSuccess: () => void }) {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background">
-      <div className="w-full max-w-sm space-y-6 p-8">
-        <div className="space-y-1 text-center">
-          <div className="flex items-center justify-center gap-2 mb-4">
-            <span className="text-2xl font-bold tracking-tight">Orivellum</span>
+    <div className="min-h-screen flex items-center justify-center bg-background relative overflow-hidden">
+      {/* Radial gradient ground — matches VELLUM paper background */}
+      <div
+        className="absolute inset-0 pointer-events-none"
+        style={{ background: 'radial-gradient(130% 100% at 50% 0%, #efe7d6 0%, #e6dcc7 55%, #dccfb4 100%)' }}
+        aria-hidden
+      />
+
+      <div className="w-full max-w-[360px] space-y-8 px-6 py-10 relative z-10">
+        {/* Brand */}
+        <div className="text-center space-y-3">
+          <div className="flex items-center justify-center gap-2.5 mb-1">
+            <div
+              className="w-9 h-9 rounded-[10px] flex items-center justify-center text-[#F4EEE1] font-serif font-bold text-lg"
+              style={{ background: 'var(--green-raw)' }}
+            >
+              <span style={{ fontVariationSettings: '"opsz" 40' }}>O</span>
+            </div>
+            <span className="brand-orivellum text-[22px]">
+              Ori<span className="brand-accent">vellum</span>
+            </span>
           </div>
-          <p className="text-sm text-muted-foreground">
-            Enter your API key to continue
+          {/* Gilt rule */}
+          <div className="gilt-rule mx-auto max-w-[180px]" />
+          <p className="eyebrow" style={{ color: 'var(--ink-faint)' }}>
+            Sovereign knowledge
           </p>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <Input
-            type="password"
-            placeholder="API key"
-            value={key}
-            onChange={(e) => setKey(e.target.value)}
-            autoFocus
-            disabled={loading}
+        {/* Glass card */}
+        <div
+          className="rounded-[18px] p-7 space-y-5 glass-card relative overflow-hidden"
+          style={{ border: '1px solid var(--line)' }}
+        >
+          {/* Lens flare */}
+          <div
+            className="absolute top-0 left-0 right-0 h-px pointer-events-none"
+            style={{ background: 'linear-gradient(90deg, transparent, var(--vellum-hi) 40%, var(--vellum-hi) 60%, transparent)' }}
           />
-          {error && (
-            <p className="text-sm text-destructive">{error}</p>
-          )}
-          <Button type="submit" className="w-full" disabled={loading || !key.trim()}>
-            {loading ? 'Checking…' : 'Continue'}
-          </Button>
-        </form>
+          <div className="space-y-1">
+            <p className="text-[15px] font-medium" style={{ color: 'var(--ink-raw)' }}>
+              Enter your access key
+            </p>
+            <p className="text-[12.5px]" style={{ color: 'var(--ink-faint)' }}>
+              Nothing leaves your machine.
+            </p>
+          </div>
+          <form onSubmit={handleSubmit} className="space-y-3.5">
+            <Input
+              type="password"
+              placeholder="API key"
+              value={key}
+              onChange={(e) => setKey(e.target.value)}
+              autoFocus
+              disabled={loading}
+              className="rounded-[12px] border-[var(--line-2)] bg-[var(--paper-2)] placeholder:text-[var(--ink-faint)]"
+            />
+            {error && (
+              <p className="text-[12.5px]" style={{ color: 'var(--rust)' }}>{error}</p>
+            )}
+            <Button type="submit" className="w-full rounded-[12px]" disabled={loading || !key.trim()}>
+              {loading ? 'Checking…' : 'Continue →'}
+            </Button>
+          </form>
+        </div>
 
-        <p className="text-xs text-muted-foreground text-center">
-          Find your key in the API server startup logs or{' '}
-          <code className="font-mono">data/api_key.txt</code>
+        <p className="text-[11px] text-center font-mono" style={{ color: 'var(--ink-faint)', letterSpacing: '0.04em' }}>
+          key in startup logs · <code>data/api_key.txt</code>
         </p>
       </div>
     </div>

@@ -4,33 +4,29 @@ import { cn } from '@/lib/utils';
 import { cva, type VariantProps } from 'class-variance-authority';
 
 const buttonVariants = cva(
-  'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0' +
-    ' hover-elevate active-elevate-2',
+  // Base: Bricolage Grotesque (via font-sans), spring-like active scale
+  'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-[13px] text-sm font-medium transition-[transform,box-shadow,border-color,background-color] duration-150 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 active:scale-[0.97]',
   {
     variants: {
       variant: {
+        // Forest green solid (VELLUM .btn)
         default:
-          // @replit: no hover, and add primary border
-          'bg-primary text-primary-foreground border border-primary-border',
+          'bg-[var(--green-raw)] text-[#F4EEE1] shadow-[var(--shadow-1)] border border-[var(--green-2)] dark:text-[#12100b] hover:bg-[var(--green-2)] hover:shadow-[var(--shadow-2)]',
         destructive:
-          'bg-destructive text-destructive-foreground shadow-sm border-destructive-border',
+          'bg-[var(--rust)] text-[#F4EEE1] shadow-[var(--shadow-1)] border border-[rgba(178,67,30,0.6)] hover:bg-[#a33a18]',
+        // Ghost: transparent with gilt hairline border (VELLUM .btn.ghost)
         outline:
-          // @replit Shows the background color of whatever card / sidebar / accent background it is inside of.
-          // Inherits the current text color. Uses shadow-xs. no shadow on active
-          // No hover state
-          ' border [border-color:var(--button-outline)] shadow-xs active:shadow-none ',
+          'bg-transparent text-[var(--green-raw)] border border-[var(--gilt-line)] hover:bg-[var(--gilt-soft)] hover:border-[var(--gilt)] dark:text-[var(--green-2)]',
         secondary:
-          // @replit border, no hover, no shadow, secondary border.
-          'border bg-secondary text-secondary-foreground border border-secondary-border ',
-        // @replit no hover, transparent border
-        ghost: 'border border-transparent',
-        link: 'text-primary underline-offset-4 hover:underline',
+          'bg-[var(--gilt-soft)] text-[var(--ink-raw)] border border-[var(--gilt-line)] hover:bg-[var(--gilt-soft)] dark:text-[var(--ink-soft)]',
+        ghost:
+          'border border-transparent hover:border-[var(--line-2)] hover:bg-[var(--green-soft)]',
+        link: 'text-[var(--green-raw)] underline-offset-4 hover:underline dark:text-[var(--green-2)]',
       },
       size: {
-        // @replit changed sizes
-        default: 'min-h-9 px-4 py-2',
-        sm: 'min-h-8 rounded-md px-3 text-xs',
-        lg: 'min-h-10 rounded-md px-8',
+        default: 'min-h-10 px-4 py-2.5',
+        sm: 'min-h-8 rounded-[10px] px-3 text-xs',
+        lg: 'min-h-11 rounded-[14px] px-8 text-[15px]',
         icon: 'h-9 w-9',
       },
     },

@@ -152,13 +152,12 @@ export default function LearnPage() {
   return (
     <div className="space-y-8 max-w-5xl animate-in fade-in slide-in-from-bottom-4 duration-500">
       {/* Header */}
-      <div className="space-y-1">
-        <div className="flex items-center gap-2">
-          <GraduationCap className="w-6 h-6 text-primary" />
-          <h1 className="text-3xl font-serif font-semibold tracking-tight">Learn</h1>
-        </div>
-        <p className="text-muted-foreground text-sm">
-          Socratic study sessions across all your Works. Select a Work to start or continue a session.
+      <div>
+        <span className="eyebrow mb-1">The Tutor</span>
+        <h1 className="vellum-h1">Learn</h1>
+        <div className="gilt-rule w-28" />
+        <p className="text-[13px] mt-1.5" style={{ color: 'var(--ink-soft)' }}>
+          Socratic study sessions grounded in your own sources.
         </p>
       </div>
 

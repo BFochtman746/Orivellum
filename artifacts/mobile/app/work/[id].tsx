@@ -1077,10 +1077,11 @@ function GapsTab({
         })
       )}
 
-      {/* ── Suggested searches ────────────────────────────────────────────────
+      {/* ── Suggested research queries ────────────────────────────────────────
           Rendered whenever the API returns suggested_queries, regardless of
-          whether gaps are present. Each chip opens a new work-linked chat
-          with the query pre-filled so users can act on suggestions in one tap.
+          whether gaps are present. Each chip launches a brainstorm session in
+          the Ideas tab with context_type="research_planning" pre-set so users
+          can act on suggestions in one tap.
       ── */}
       {Array.isArray(data?.suggested_queries) && (data.suggested_queries as string[]).length > 0 && (
         <View style={{ marginTop: 24 }}>
@@ -1091,15 +1092,18 @@ function GapsTab({
               color: colors.mutedForeground,
               letterSpacing: 0.6,
               textTransform: 'uppercase',
-              marginBottom: 8,
+              marginBottom: 4,
             }}
           >
-            Suggested Searches
+            Suggested Research Queries
+          </Text>
+          <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: colors.mutedForeground, marginBottom: 10, opacity: 0.7 }}>
+            Tap to brainstorm in the Ideas tab
           </Text>
           {(data.suggested_queries as string[]).map((q: string, i: number) => (
             <Pressable
               key={i}
-              onPress={() => onResearch(q)}
+              onPress={() => onBrainstorm(q)}
               style={({ pressed }) => ({
                 flexDirection: 'row',
                 alignItems: 'center',
@@ -1113,9 +1117,9 @@ function GapsTab({
                 marginBottom: 8,
               })}
               accessibilityRole="button"
-              accessibilityLabel={`Research: ${q}`}
+              accessibilityLabel={`Brainstorm: ${q}`}
             >
-              <Feather name="search" size={13} color={colors.primary} />
+              <Feather name="zap" size={13} color={colors.primary} />
               <Text
                 style={{
                   flex: 1,
