@@ -23,6 +23,103 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useGetDocument, useListWorks } from '@workspace/api-client-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
+// ── Related documents collapsible section ────────────────────────────────────
+
+interface RelatedDoc {
+  doc_id: string;
+  title: string;
+  kind: string | null;
+  similarity: number | null;
+  link_type: string;
+  shared_topics: Array<{ id: string; name: string }>;
+}
+
+function RelatedSection({ docId, domain, colors, onNavigate }: {
+  docId: string;
+  domain: string;
+  colors: ReturnType<typeof import('@/hooks/useColors').useColors>;
+  onNavigate: (id: string) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const { data, isLoading } = useQuery<{ doc_id: string; related: RelatedDoc[] }>({
+    queryKey: ['doc-related-mobile', docId],
+    queryFn: async () => {
+      const res = await mobileFetch(`https://${domain}/api/library/${docId}/related`);
+      if (!res.ok) throw new Error('Failed to load related');
+      return res.json();
+    },
+    enabled: !!docId && expanded,
+    staleTime: 120_000,
+  });
+  const related = data?.related ?? [];
+
+  return (
+    <View style={[{ borderWidth: 1, borderRadius: 8, overflow: 'hidden', marginBottom: 12 }, { borderColor: colors.border }]}>
+      <Pressable
+        onPress={() => setExpanded((v) => !v)}
+        style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 12, backgroundColor: colors.muted + '33' }}
+      >
+        <Text style={{ fontSize: 11, fontFamily: 'Inter_600SemiBold', color: colors.mutedForeground, letterSpacing: 0.8 }}>
+          RELATED DOCUMENTS
+        </Text>
+        <Feather name={expanded ? 'chevron-up' : 'chevron-down'} size={14} color={colors.mutedForeground} />
+      </Pressable>
+      {expanded && (
+        <View>
+          {isLoading ? (
+            <ActivityIndicator color={colors.primary} style={{ margin: 16 }} />
+          ) : related.length === 0 ? (
+            <Text style={{ padding: 12, fontSize: 12, fontFamily: 'Inter_400Regular', color: colors.mutedForeground }}>
+              No related documents found yet. Run clustering to discover connections.
+            </Text>
+          ) : (
+            related.map((item) => (
+              <Pressable
+                key={item.doc_id}
+                onPress={() => onNavigate(item.doc_id)}
+                style={({ pressed }) => [{
+                  padding: 12, borderTopWidth: 1, borderTopColor: colors.border,
+                  flexDirection: 'row', alignItems: 'center', gap: 10,
+                  opacity: pressed ? 0.7 : 1,
+                }]}
+              >
+                <Feather name="file-text" size={14} color={colors.mutedForeground} />
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={{ fontSize: 13, fontFamily: 'Inter_500Medium', color: colors.foreground }} numberOfLines={1}>
+                    {item.title || '(untitled)'}
+                  </Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 }}>
+                    {item.kind ? (
+                      <Text style={{ fontSize: 9, fontFamily: 'Inter_600SemiBold', color: colors.mutedForeground, textTransform: 'uppercase', letterSpacing: 0.4 }}>
+                        {item.kind}
+                      </Text>
+                    ) : null}
+                    {item.shared_topics.length > 0 && (
+                      <Text style={{ fontSize: 10, fontFamily: 'Inter_400Regular', color: colors.mutedForeground + '99' }} numberOfLines={1}>
+                        {item.shared_topics[0].name}
+                      </Text>
+                    )}
+                  </View>
+                </View>
+                {/* Similarity badge — identical to web UI percentage chip */}
+                {item.similarity != null && (
+                  <View style={{ backgroundColor: colors.primary + '18', paddingHorizontal: 7, paddingVertical: 3, borderRadius: 5 }}>
+                    <Text style={{ fontSize: 10, fontFamily: 'Inter_700Bold', color: colors.primary }}>
+                      {Math.round(item.similarity * 100)}%
+                    </Text>
+                  </View>
+                )}
+                <Feather name="chevron-right" size={13} color={colors.mutedForeground} />
+              </Pressable>
+            ))
+          )}
+        </View>
+      )}
+    </View>
+  );
+}
+
+
 // ── Chunks collapsible section ──────────────────────────────────────────────
 
 function ChunksSection({ docId, domain, colors }: {
@@ -1073,6 +1170,15 @@ export default function LibraryDocDetail() {
               })}
             </>
           )}
+        {/* Related documents — lazy-loaded on expand */}
+        {doc.readiness === 'ready' && (
+          <RelatedSection
+            docId={id ?? ''}
+            domain={domain}
+            colors={colors}
+            onNavigate={(relatedId) => router.push(`/library/${relatedId}` as any)}
+          />
+        )}
         </View>
       </ScrollView>
 
