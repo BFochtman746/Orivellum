@@ -4,6 +4,8 @@ Strategy:
 - Target ~500 words per chunk, ~50-word overlap between consecutive chunks
 - Respect page boundaries when possible (one page → one or more chunks)
 - Write chunks + FTS index via db.add_chunk()
+- Optionally enrich each chunk with a short AI-generated context prefix
+  (Anthropic Contextual Retrieval technique) via generate_context_prefixes_for_doc()
 """
 from __future__ import annotations
 
@@ -15,6 +17,20 @@ if TYPE_CHECKING:
     from orivellum.database.db import OrivellumDB
 
 logger = logging.getLogger(__name__)
+
+# Max characters of the document's opening text sent as context to the LLM
+# when generating per-chunk context prefixes.  Large enough to give meaningful
+# context; small enough to keep prompt tokens low.
+_CTX_EXCERPT_CHARS = 2_000
+
+# Max characters of the chunk text sent to the LLM in the prefix-generation
+# prompt.  Full chunk text can be up to ~3 000 chars (500 words); we send the
+# first 600 chars to stay well within a small token budget.
+_CTX_CHUNK_SAMPLE = 600
+
+# Batch size for the nightshift context-prefix backfill (max chunks per run).
+CTX_BACKFILL_BATCH = 20
+CTX_BACKFILL_MAX = 100
 
 _TARGET_WORDS = 500
 _OVERLAP_WORDS = 50
@@ -64,6 +80,97 @@ def _sliding_chunks(text: str, target: int = _TARGET_WORDS,
             break
         start = end - overlap
     return chunks
+
+
+def generate_context_prefixes_for_doc(
+    doc_id: str,
+    db: "OrivellumDB",
+    *,
+    doc_title: str = "",
+    doc_text_excerpt: str = "",
+) -> int:
+    """Generate AI context prefixes for all un-prefixed chunks of a document.
+
+    Implements the Anthropic Contextual Retrieval technique: each chunk receives
+    a short 1-2 sentence description of (a) which document it comes from and
+    (b) what broader topic/section it belongs to.  The prefix is stored in
+    ``chunks.context_prefix`` and later prepended to the raw chunk text when
+    computing embeddings, improving retrieval accuracy for dense corpora.
+
+    Gated by the ``ai_extraction_enabled`` DB setting (same gate as
+    ``llm_harvest``).  Safe to call from a daemon thread — never raises.
+
+    Returns the number of prefixes successfully generated.
+    """
+    try:
+        if db.get_setting("ai_extraction_enabled", "false") != "true":
+            return 0
+
+        from orivellum.capabilities.llm import llm_call
+        from orivellum.config import load_config
+
+        cfg = load_config()
+
+        with db._lock:
+            rows = db._conn.execute(
+                """SELECT id, text, page FROM chunks
+                   WHERE doc_id=? AND context_prefix IS NULL AND length(text) > 40
+                   ORDER BY page, rowid""",
+                (doc_id,),
+            ).fetchall()
+
+        if not rows:
+            return 0
+
+        title_str = (doc_title or "Document").strip()
+        excerpt = (doc_text_excerpt or "")[:_CTX_EXCERPT_CHARS].strip()
+
+        generated = 0
+        for i in range(0, len(rows), CTX_BACKFILL_BATCH):
+            batch = list(rows[i : i + CTX_BACKFILL_BATCH])
+            for row in batch:
+                chunk_id = row["id"]
+                chunk_sample = (row["text"] or "")[:_CTX_CHUNK_SAMPLE]
+                prompt_parts = [f'Document: "{title_str}"']
+                if excerpt:
+                    prompt_parts.append(
+                        f"Opening content:\n{excerpt}"
+                    )
+                prompt_parts.append(
+                    f"Passage:\n{chunk_sample}\n\n"
+                    "Write a 1-2 sentence context for this passage that states "
+                    "which document it comes from and what broader topic or section "
+                    "it covers. Start directly with the context — no preamble, "
+                    "no labels, no bullet points."
+                )
+                messages = [{"role": "user", "content": "\n\n".join(prompt_parts)}]
+                result = llm_call(
+                    messages,
+                    cfg=cfg,
+                    db=db,
+                    purpose="chunk.context_prefix",
+                    timeout=20,
+                    max_tokens=120,
+                    temperature=0.0,
+                )
+                if result.ok and result.text:
+                    prefix = result.text.strip()[:500]
+                    db.update_chunk_context_prefix(chunk_id, prefix)
+                    generated += 1
+
+        if generated:
+            logger.info(
+                "Generated %d context prefix(es) for doc %s", generated, doc_id[:8]
+            )
+        return generated
+
+    except Exception as exc:
+        logger.debug(
+            "generate_context_prefixes_for_doc: non-fatal error for doc %s: %s",
+            doc_id[:8],
+            exc,
+        )
+        return 0
 
 
 def chunk_and_store(result: "ExtractionResult", doc_id: str, db: "OrivellumDB") -> int:

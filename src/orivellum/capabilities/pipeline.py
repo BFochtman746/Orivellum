@@ -444,16 +444,41 @@ def process_document(doc_id: str, file_path: str, kind: str,
         )
         logger.info("Doc %s processed — %d words, ready", doc_id, result.word_count)
 
-        # Step 4.4: chunk embeddings — daemon thread so semantic search picks
-        # up new documents quickly without ever blocking readiness.  When the
-        # embeddings endpoint is down this exits quietly; the nightly backfill
-        # catches up later.
+        # Step 4.4: context prefixes + chunk embeddings.
+        #
+        # Context-prefix generation (Anthropic Contextual Retrieval) runs first
+        # in a daemon thread so it enriches each chunk before the vector is
+        # computed.  Embedding follows in the same thread so the stored vector
+        # always reflects any prefix that was successfully generated.
+        #
+        # When the LLM is unavailable (ai_extraction_enabled=false or the
+        # endpoint is down), generate_context_prefixes_for_doc() returns 0
+        # silently and embed_chunks_for_doc() falls through to bare-text
+        # embedding — preserving the pre-existing behaviour.
+        def _enrich_and_embed(doc_id: str, db: "OrivellumDB",
+                              title: str, text_excerpt: str) -> None:
+            try:
+                from orivellum.capabilities.chunking import generate_context_prefixes_for_doc
+                generate_context_prefixes_for_doc(
+                    doc_id, db,
+                    doc_title=title,
+                    doc_text_excerpt=text_excerpt,
+                )
+            except Exception as _pfx_exc:
+                logger.debug("Context-prefix generation non-fatal for %s: %s",
+                             doc_id, _pfx_exc)
+            try:
+                from orivellum.capabilities.embeddings import embed_chunks_for_doc
+                embed_chunks_for_doc(doc_id, db)
+            except Exception as _emb_exc:
+                logger.debug("Embedding non-fatal for %s: %s", doc_id, _emb_exc)
+
         try:
-            from orivellum.capabilities.embeddings import embed_chunks_for_doc
             from orivellum.api.executor import get_executor as _gex_emb
-            _gex_emb().submit(embed_chunks_for_doc, doc_id, db)
+            _text_excerpt = result.full_text[:2000] if result.full_text else ""
+            _gex_emb().submit(_enrich_and_embed, doc_id, db, title, _text_excerpt)
         except Exception as _emb_exc:
-            logger.debug("Embedding kickoff non-fatal for %s: %s", doc_id, _emb_exc)
+            logger.debug("Enrich+embed kickoff non-fatal for %s: %s", doc_id, _emb_exc)
 
         # Step 4.5: chapter/section extraction — runs after readiness so it
         # never delays the document appearing as usable.  Non-fatal: failure

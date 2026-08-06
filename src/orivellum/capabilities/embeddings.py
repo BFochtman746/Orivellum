@@ -263,26 +263,40 @@ def backfill_embeddings(db: "OrivellumDB", max_items: int = 200) -> int:
     Returns the number of new vectors stored (0 when endpoint unavailable).
     """
     embedded = 0
-    for object_type, sql in (
+    for object_type, sql, _use_prefix in (
+        # Chunks: fetch context_prefix so we embed prefix+text when available.
         ("chunk",
-         """SELECT c.id, c.text FROM chunks c
+         """SELECT c.id, c.text, c.context_prefix FROM chunks c
             LEFT JOIN vectors v ON v.object_id = c.id AND v.object_type='chunk'
-            WHERE v.id IS NULL AND length(c.text) > 40 LIMIT ?"""),
+            WHERE v.id IS NULL AND length(c.text) > 40 LIMIT ?""",
+         True),
         ("knowledge",
-         """SELECT k.id, k.text FROM knowledge k
+         """SELECT k.id, k.text, NULL as context_prefix FROM knowledge k
             LEFT JOIN vectors v ON v.object_id = k.id AND v.object_type='knowledge'
             WHERE v.id IS NULL AND k.review_status != 'rejected'
-              AND length(k.text) > 20 LIMIT ?"""),
+              AND length(k.text) > 20 LIMIT ?""",
+         False),
         ("conv_chunk",
-         """SELECT cc.id, cc.text FROM conversation_chunks cc
+         """SELECT cc.id, cc.text, NULL as context_prefix FROM conversation_chunks cc
             LEFT JOIN vectors v ON v.object_id = cc.id AND v.object_type='conv_chunk'
-            WHERE v.id IS NULL AND length(cc.text) > 30 LIMIT ?"""),
+            WHERE v.id IS NULL AND length(cc.text) > 30 LIMIT ?""",
+         False),
     ):
         with db._lock:
             rows = db._conn.execute(sql, (max_items,)).fetchall()
         for i in range(0, len(rows), _BACKFILL_BATCH):
             batch = rows[i:i + _BACKFILL_BATCH]
-            vecs = embed_texts([r["text"] for r in batch])
+            # For chunks: prepend any stored context prefix to the embedded text
+            # so the vector reflects the enriched representation used at query time.
+            if _use_prefix:
+                texts = [
+                    ((r["context_prefix"] + "\n\n" + r["text"])
+                     if r["context_prefix"] else r["text"])
+                    for r in batch
+                ]
+            else:
+                texts = [r["text"] for r in batch]
+            vecs = embed_texts(texts)
             if vecs is None:
                 return embedded  # endpoint down — stop quietly
             for r, v in zip(batch, vecs):
@@ -309,7 +323,7 @@ def embed_chunks_for_doc(doc_id: str, db: "OrivellumDB") -> int:
     try:
         with db._lock:
             rows = db._conn.execute(
-                """SELECT c.id, c.text FROM chunks c
+                """SELECT c.id, c.text, c.context_prefix FROM chunks c
                    LEFT JOIN vectors v ON v.object_id = c.id AND v.object_type='chunk'
                    WHERE c.doc_id=? AND v.id IS NULL AND length(c.text) > 40""",
                 (doc_id,),
@@ -317,7 +331,14 @@ def embed_chunks_for_doc(doc_id: str, db: "OrivellumDB") -> int:
         embedded = 0
         for i in range(0, len(rows), _BACKFILL_BATCH):
             batch = rows[i:i + _BACKFILL_BATCH]
-            vecs = embed_texts([r["text"] for r in batch])
+            # Prepend context_prefix when available so the vector reflects the
+            # enriched representation used at retrieval time.
+            texts = [
+                ((r["context_prefix"] + "\n\n" + r["text"])
+                 if r["context_prefix"] else r["text"])
+                for r in batch
+            ]
+            vecs = embed_texts(texts)
             if vecs is None:
                 return embedded  # endpoint down — nightly backfill will catch up
             for r, v in zip(batch, vecs):
@@ -383,7 +404,8 @@ def semantic_search(query: str, db: "OrivellumDB", object_type: str = "knowledge
                      WHERE v.object_type='conv_chunk'"""
     else:
         all_sql = """SELECT v.object_id, v.embedding, v.dim,
-                            c.text, c.doc_id, d.title AS doc_title, d.work_id
+                            c.text, c.context_prefix, c.doc_id,
+                            d.title AS doc_title, d.work_id
                      FROM vectors v
                      JOIN chunks c ON c.id = v.object_id
                      JOIN documents d ON d.id = c.doc_id

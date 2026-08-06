@@ -569,6 +569,99 @@ def _pass_evidence(db: "OrivellumDB", report: list[str]) -> None:
         logger.warning("Evidence pass failed: %s", exc)
 
 
+def _pass_context_prefix_backfill(db: "OrivellumDB", report: list[str]) -> None:
+    """Generate AI context prefixes for up to 100 un-prefixed chunks.
+
+    Implements the Anthropic Contextual Retrieval technique: each chunk
+    receives a short 1-2 sentence description of the document it came from
+    and the broader topic it covers.  The prefix is stored in
+    ``chunks.context_prefix`` and prepended to the raw chunk text when
+    computing embeddings at query time.
+
+    Gated by ``ai_extraction_enabled``.  After generating prefixes,
+    the updated chunks are re-embedded so vectors reflect the enriched text.
+    Only runs when new chunks without prefixes exist — a no-op once the
+    library is fully enriched.
+    """
+    try:
+        if db.get_setting("ai_extraction_enabled", "false") != "true":
+            return
+
+        from orivellum.capabilities.chunking import (
+            CTX_BACKFILL_MAX,
+            generate_context_prefixes_for_doc,
+        )
+        from orivellum.capabilities.embeddings import embed_chunks_for_doc
+
+        # Find up to CTX_BACKFILL_MAX distinct documents that have un-prefixed chunks,
+        # ordered by most recently created so fresh imports are enriched first.
+        with db._lock:
+            doc_rows = db._conn.execute(
+                """SELECT DISTINCT c.doc_id, d.title, d.extracted_text
+                   FROM chunks c
+                   JOIN documents d ON d.id = c.doc_id
+                   WHERE c.context_prefix IS NULL AND length(c.text) > 40
+                   ORDER BY d.created_at DESC
+                   LIMIT 20""",
+            ).fetchall()
+
+        if not doc_rows:
+            return
+
+        total_generated = 0
+        total_reembedded = 0
+        remaining = CTX_BACKFILL_MAX
+
+        for row in doc_rows:
+            if remaining <= 0:
+                break
+            doc_id = row["doc_id"]
+            doc_title = row["title"] or ""
+            # Use the stored extracted text as the document excerpt for context.
+            doc_excerpt = (row["extracted_text"] or "")[:2000]
+            try:
+                n = generate_context_prefixes_for_doc(
+                    doc_id, db,
+                    doc_title=doc_title,
+                    doc_text_excerpt=doc_excerpt,
+                )
+                if n:
+                    total_generated += n
+                    remaining -= n
+                    # Re-embed the chunks that now have a prefix so vectors are
+                    # consistent with what will be shown at retrieval time.
+                    # Delete existing vectors first so embed_chunks_for_doc picks
+                    # them up (it only embeds un-vectorised chunks).
+                    with db._lock:
+                        prefixed_ids = db._conn.execute(
+                            """SELECT id FROM chunks
+                               WHERE doc_id=? AND context_prefix IS NOT NULL""",
+                            (doc_id,),
+                        ).fetchall()
+                    if prefixed_ids:
+                        ids = [r["id"] for r in prefixed_ids]
+                        placeholders = ",".join("?" * len(ids))
+                        with db._lock:
+                            db._conn.execute(
+                                f"DELETE FROM vectors WHERE object_id IN ({placeholders})"
+                                f" AND object_type='chunk'",
+                                ids,
+                            )
+                            db._conn.commit()
+                        total_reembedded += embed_chunks_for_doc(doc_id, db)
+            except Exception as exc:
+                logger.debug("Context-prefix backfill failed for doc %s: %s",
+                             doc_id[:8], exc)
+
+        if total_generated:
+            report.append(
+                f"Context prefixes: generated {total_generated} prefix(es), "
+                f"re-embedded {total_reembedded} chunk(s)"
+            )
+    except Exception as exc:
+        logger.warning("Context-prefix backfill pass failed: %s", exc)
+
+
 def _pass_embeddings(db: "OrivellumDB", report: list[str]) -> None:
     """Embed up to 300 unembedded knowledge items."""
     try:
@@ -987,12 +1080,16 @@ def _run_nightshift_passes(db: "OrivellumDB", cfg: "OrivellumConfig") -> None:
     logger.info("Nightshift pass 8/13: evidence rescoring")
     _pass_evidence(db, report)
 
-    # 9 — Semantic embedding backfill
-    logger.info("Nightshift pass 9/13: embedding backfill")
+    # 9 — Contextual chunk prefix generation (Anthropic Contextual Retrieval)
+    logger.info("Nightshift pass 9/18: context-prefix backfill")
+    _pass_context_prefix_backfill(db, report)
+
+    # 10 — Semantic embedding backfill
+    logger.info("Nightshift pass 10/18: embedding backfill")
     _pass_embeddings(db, report)
 
-    # 10 — Work stats refresh
-    logger.info("Nightshift pass 10/13: work stats refresh")
+    # 11 — Work stats refresh
+    logger.info("Nightshift pass 11/18: work stats refresh")
     _pass_work_stats(db, report)
 
     # 11 — MCOS benchmark evaluations

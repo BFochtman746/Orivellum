@@ -1185,13 +1185,17 @@ def _build_system_prompt(db: Any, conv: dict, scope: str = "work",
                             })
 
                     for _fci in _trusted_fc:
-                        _ft = _fci.get("text", "").strip()
+                        _fraw_text = _fci.get("text", "").strip()
+                        _fpfx = (_fci.get("context_prefix") or "").strip()
+                        # Surface context prefix + raw text so the model gets the
+                        # enriched representation that matches the stored vector.
+                        _ft = ((_fpfx + "\n\n" + _fraw_text) if _fpfx else _fraw_text)
                         _fdoc = _fci.get("doc_title") or "document"
                         _fdate = (_fci.get("created_at") or "")[:10]
                         _fdate_tag = f" | {_fdate}" if _fdate else ""
                         if _ft:
                             _fparts.append(
-                                f"  [from \"{_fdoc}\"{_fdate_tag}] {_ft[:400]}"
+                                f"  [from \"{_fdoc}\"{_fdate_tag}] {_ft[:500]}"
                             )
                         if out_sources is not None:
                             out_sources.append({
@@ -1202,7 +1206,7 @@ def _build_system_prompt(db: Any, conv: dict, scope: str = "work",
                                 "source_doc_id": _fci.get("doc_id"),
                                 "doc_id": _fci.get("doc_id"),
                                 "doc_title": _fdoc,
-                                "passage": _ft[:200],
+                                "passage": _fraw_text[:200],
                                 "filter": _fdesc,
                             })
 
@@ -1351,10 +1355,14 @@ def _build_system_prompt(db: Any, conv: dict, scope: str = "work",
                                     "passage": text[:200],
                                 })
                     for c in group["chunks"]:
-                        text = c.get("text", "").strip()
+                        raw_text = c.get("text", "").strip()
+                        prefix = (c.get("context_prefix") or "").strip()
+                        # Prepend AI-generated context prefix when present so the
+                        # model receives the enriched chunk that matches the vector.
+                        text = (prefix + "\n\n" + raw_text) if prefix else raw_text
                         doc  = c.get("doc_title") or "document"
                         if text:
-                            context_parts.append(f"  [from \"{doc}\"] {text[:400]}")
+                            context_parts.append(f"  [from \"{doc}\"] {text[:500]}")
                             if out_sources is not None:
                                 real_wid = c.get("work_id")
                                 out_sources.append({
@@ -1367,7 +1375,7 @@ def _build_system_prompt(db: Any, conv: dict, scope: str = "work",
                                     # Legacy fields kept for the existing footer link
                                     "doc_id": c.get("doc_id"),
                                     "doc_title": doc,
-                                    "passage": text[:200],
+                                    "passage": raw_text[:200],
                                 })
 
                 # ── Prepend claim block; append verification instruction ──

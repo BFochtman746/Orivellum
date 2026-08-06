@@ -1317,4 +1317,18 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             updated_at  TEXT NOT NULL
         );
     """),
+
+    # v79 — Contextual chunking: short AI-generated context sentence per chunk.
+    #
+    # Implements the Anthropic "Contextual Retrieval" technique: before embedding
+    # each chunk we prepend a 1-2 sentence context prefix that names the document
+    # and the broader topic the passage belongs to.  The prefix is stored here
+    # so it can be (a) used when re-embedding existing chunks and (b) surfaced in
+    # the system prompt alongside the raw chunk text.
+    #
+    # NULL means "not yet generated" — the nightshift backfill pass fills these in
+    # for documents that existed before this migration.
+    (79, "Add context_prefix column to chunks for contextual retrieval", """
+        ALTER TABLE chunks ADD COLUMN context_prefix TEXT
+    """),
 ]

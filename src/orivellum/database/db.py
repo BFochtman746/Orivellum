@@ -1807,7 +1807,7 @@ class OrivellumDB:
 
         # BM25 + snippet query (SQLite FTS5 auxiliary functions)
         q_ranked = f"""
-            SELECT c.id, c.doc_id, c.page, c.text, c.created_at,
+            SELECT c.id, c.doc_id, c.page, c.text, c.context_prefix, c.created_at,
                    d.title as doc_title, d.kind as doc_kind, d.work_id,
                    bm25(chunks_fts) as bm25_score,
                    snippet(chunks_fts, 0, '[[', ']]', '…', 24) as snippet
@@ -1820,7 +1820,7 @@ class OrivellumDB:
 
         # Plain FTS fallback (no BM25/snippet) for older SQLite builds
         q_plain = f"""
-            SELECT c.id, c.doc_id, c.page, c.text, c.created_at,
+            SELECT c.id, c.doc_id, c.page, c.text, c.context_prefix, c.created_at,
                    d.title as doc_title, d.kind as doc_kind, d.work_id,
                    NULL as bm25_score, NULL as snippet
             FROM chunks_fts
@@ -2531,7 +2531,7 @@ class OrivellumDB:
         args: list = []
 
         _select = (
-            "SELECT c.id, c.doc_id, c.page, c.text, c.created_at,"
+            "SELECT c.id, c.doc_id, c.page, c.text, c.context_prefix, c.created_at,"
             " d.title AS doc_title, d.kind AS doc_kind, d.work_id,"
             " d.created_at AS doc_created_at"
         )
@@ -2686,10 +2686,17 @@ class OrivellumDB:
     # Chunks (extracted text segments, FTS-indexed)
     # -------------------------------------------------------------------------
 
-    def add_chunk(self, doc_id: str, text: str, page: int = 0) -> str:
+    def add_chunk(self, doc_id: str, text: str, page: int = 0,
+                  context_prefix: str | None = None) -> str:
         """Insert a text chunk and update the FTS index. Returns chunk id.
 
         chunks.id is a FK to objects(id), so we must register it there first.
+
+        ``context_prefix`` is an optional AI-generated 1-2 sentence context
+        sentence (Anthropic Contextual Retrieval technique).  When present it is
+        stored in the chunks row and prepended to the raw text before embedding
+        so retrieval quality improves.  NULL means "not yet generated"; the
+        nightshift backfill fills these in for existing chunks.
         """
         cid = _uuid()
         now = _now()
@@ -2707,14 +2714,28 @@ class OrivellumDB:
                 (cid, "chunk", now, now),
             )
             self._conn.execute(
-                "INSERT INTO chunks(id,doc_id,page,text,created_at) VALUES(?,?,?,?,?)",
-                (cid, doc_id, page, text, now),
+                "INSERT INTO chunks(id,doc_id,page,text,context_prefix,created_at) VALUES(?,?,?,?,?,?)",
+                (cid, doc_id, page, text, context_prefix, now),
             )
             self._conn.execute(
                 "INSERT INTO chunks_fts(chunk_id,doc_id,text) VALUES(?,?,?)",
                 (cid, doc_id, text),
             )
         return cid
+
+    def update_chunk_context_prefix(self, chunk_id: str, prefix: str) -> None:
+        """Store an AI-generated context prefix for a chunk (idempotent update).
+
+        Called by the context-prefix generation pipeline after ``add_chunk()``.
+        Thread-safe; uses ``_lock`` directly (no audit event — this is a
+        background enrichment, not a user-visible mutation).
+        """
+        with self._lock:
+            self._conn.execute(
+                "UPDATE chunks SET context_prefix=? WHERE id=?",
+                (prefix, chunk_id),
+            )
+            self._conn.commit()
 
     def delete_chunks(self, doc_id: str) -> None:
         """Remove all chunks for a document (e.g. before re-extracting)."""
