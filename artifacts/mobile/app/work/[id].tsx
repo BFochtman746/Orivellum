@@ -39,6 +39,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import type { Document, KnowledgeItem, Task } from '@workspace/api-client-react';
 import { OfflineBanner, ErrorScreen } from '@/components/OfflineBanner';
+import { readCache, writeCache } from '@/lib/cache';
 
 type Tab = 'overview' | 'docs' | 'knowledge' | 'tasks' | 'conversations' | 'learn' | 'gaps' | 'book' | 'brainstorm' | 'intelligence';
 
@@ -2692,6 +2693,22 @@ export default function WorkDetailScreen() {
   const { data: workData, isError: workError, refetch: refetchWork } = useGetWork(id, { query: { staleTime: 30_000 } } as any);
   const { data: docsData, isLoading: docsLoading, isError: docsError, refetch: refetchDocs } = useGetWorkDocuments(id, { query: { staleTime: 20_000, refetchInterval: (q: any) => (q.state.data?.documents ?? []).some((d: any) => d.readiness === 'imported') ? 4_000 : false } } as any);
   const { data: knData, isLoading: knLoading, isError: knError, refetch: refetchKn } = useGetWorkKnowledge(id, { query: { staleTime: 30_000 } } as any);
+
+  // ── Knowledge offline cache ───────────────────────────────────────────────
+  const [cachedKn, setCachedKn] = useState<any[]>([]);
+  useEffect(() => {
+    if (knData?.knowledge?.length) {
+      writeCache(`work:${id}:knowledge`, knData.knowledge);
+      setCachedKn(knData.knowledge);
+    }
+  }, [knData?.knowledge, id]);
+  useEffect(() => {
+    if (knError && cachedKn.length === 0) {
+      readCache<any[]>(`work:${id}:knowledge`).then(entry => {
+        if (entry?.data?.length) setCachedKn(entry.data);
+      });
+    }
+  }, [knError, id]);
   const { data: tasksData, isLoading: tasksLoading, isError: tasksError, refetch: refetchTasks } = useGetWorkTasks(id, { query: { staleTime: 30_000 } } as any);
   const { data: convsData, isLoading: convsLoading, isError: convsError, refetch: refetchConvs } = useListConversations(
     { work_id: id, limit: 50 } as any,
@@ -2919,7 +2936,7 @@ export default function WorkDetailScreen() {
   const topPad = isWeb ? 67 : insets.top + 44;
 
   const docs = docsData?.documents ?? [];
-  const knowledge = knData?.knowledge ?? [];
+  const knowledge = knData?.knowledge ?? cachedKn;
   const tasks = tasksData?.tasks ?? [];
 
   const renderTabContent = () => {

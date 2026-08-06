@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  AppState,
   KeyboardAvoidingView,
   Platform,
   StyleSheet,
@@ -9,6 +10,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { syncToCache, flushMessageQueue } from '@/lib/offlineCache';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
@@ -246,6 +248,8 @@ export default function RootLayout() {
   const [authState, setAuthState] = useState<AuthState>('loading');
   // Store the bearer token so push registration can authenticate with the server.
   const bearerTokenRef = useRef<string | null>(null);
+  // Tracks whether a background cache sync is in progress.
+  const [syncing, setSyncing] = useState(false);
 
   useEffect(() => {
     loadToken().then((token) => {
@@ -266,6 +270,41 @@ export default function RootLayout() {
     const token = bearerTokenRef.current;
     if (!token) return;
     registerForPushNotificationsAsync(BASE_URL, token);
+  }, [authState]);
+
+  // ── Offline cache sync ────────────────────────────────────────────────────
+  //
+  // Run an initial sync as soon as the user is authenticated, then re-sync
+  // every time the app comes back to the foreground (AppState 'active').
+  // flushMessageQueue() is called first on foreground so any messages the
+  // user typed while offline are delivered before we overwrite cache data.
+
+  useEffect(() => {
+    if (authState !== 'authenticated') return;
+    // On first auth (including cold start after an offline session): flush any
+    // messages that were queued before the app was closed, then sync the cache.
+    // flushMessageQueue uses a single-flight lock so concurrent calls (e.g. an
+    // immediate AppState 'active' event) are collapsed into one in-flight fetch.
+    setSyncing(true);
+    flushMessageQueue()
+      .then(() => syncToCache())
+      .finally(() => setSyncing(false));
+  }, [authState]);
+
+  useEffect(() => {
+    if (authState !== 'authenticated') return;
+    const sub = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active') {
+        setSyncing(true);
+        // Flush queued messages first, then refresh cache.
+        // The single-flight lock in flushMessageQueue() means this is a no-op
+        // if the initial-auth flush above is still running.
+        flushMessageQueue()
+          .then(() => syncToCache())
+          .finally(() => setSyncing(false));
+      }
+    });
+    return () => sub.remove();
   }, [authState]);
 
   // ── Notification deep-link routing ───────────────────────────────────────────
@@ -342,6 +381,32 @@ export default function RootLayout() {
             <KeyboardProvider>
               <RootLayoutNav />
             </KeyboardProvider>
+            {/* ── Sync indicator ─────────────────────────────────────────
+                Shown briefly while the background cache sync is running.
+                Positioned above the native tab bar (approx 80pt).       */}
+            {syncing && (
+              <View
+                style={{
+                  position: 'absolute',
+                  bottom: Platform.OS === 'ios' ? 90 : 70,
+                  left: 20,
+                  right: 20,
+                  backgroundColor: 'rgba(15,23,42,0.82)',
+                  borderRadius: 10,
+                  paddingHorizontal: 14,
+                  paddingVertical: 8,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 8,
+                  pointerEvents: 'none',
+                }}
+              >
+                <ActivityIndicator size="small" color="#7c9e8e" />
+                <Text style={{ color: '#e2e8f0', fontSize: 12 }}>
+                  Syncing offline cache…
+                </Text>
+              </View>
+            )}
           </GestureHandlerRootView>
         </QueryClientProvider>
       </ErrorBoundary>

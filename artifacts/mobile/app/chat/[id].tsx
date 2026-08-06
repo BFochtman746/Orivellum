@@ -35,10 +35,16 @@ import * as Clipboard from 'expo-clipboard';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { Message } from '@workspace/api-client-react';
 import { OfflineBanner } from '@/components/OfflineBanner';
+import { readCache, writeCache } from '@/lib/cache';
+import { queueMessage, flushMessageQueue, getOutboxForConversation } from '@/lib/offlineCache';
 
 const LAST_MODEL_KEY = 'orivellum:lastModel';
 
-type LocalMessage = Message & { isError?: boolean; localImageUri?: string };
+// `queued` marks a user message that was held in the offline outbox.
+// `msgId` is the stable outbox idempotency key — used to reconcile which
+// bubbles were actually delivered after a flush (avoids text-based matching
+// which breaks for identical repeated messages).
+type LocalMessage = Message & { isError?: boolean; localImageUri?: string; queued?: boolean; msgId?: string };
 
 function MessageBubble({ message, colors, isDark, onResend, onRetry, highlighted }: { message: LocalMessage; colors: any; isDark: boolean; onResend?: () => void; onRetry?: () => void; highlighted?: boolean }) {
   const isUser = message.role === 'user';
@@ -339,6 +345,15 @@ function MessageBubble({ message, colors, isDark, onResend, onRetry, highlighted
             colors={colors}
           />
         )}
+        {/* Queued indicator — shown when the message is held in the offline outbox */}
+        {isUser && !!(message as LocalMessage).queued && (
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3, marginTop: 3 }}>
+            <Feather name="clock" size={10} color={colors.mutedForeground} style={{ opacity: 0.6 }} />
+            <Text style={{ fontSize: 10, fontFamily: 'Inter_400Regular', color: colors.mutedForeground, opacity: 0.7 }}>
+              Queued — will send when back online
+            </Text>
+          </View>
+        )}
         {copied && (
           <Text style={{ fontSize: 10, color: colors.mutedForeground, marginTop: 2, fontFamily: 'Inter_400Regular' }}>
             Copied ✓
@@ -593,24 +608,95 @@ export default function ChatScreen() {
     }
   };
 
-  // Sync server messages into local state on first load
+  // ── Message cache: persist to disk so messages survive offline / restart ──
+  // Write to cache whenever the server delivers messages.
+  useEffect(() => {
+    if (serverMessages.length > 0 && id) {
+      writeCache(`conversation:${id}:messages`, serverMessages);
+    }
+  }, [serverMessages, id]);
+
+  // Sync server messages into local state on first load.
+  // If the server is unreachable and we have no data, fall back to disk cache.
   useEffect(() => {
     if (!initialized && serverMessages.length > 0) {
       setLocalMessages(serverMessages);
       setInitialized(true);
-    } else if (!initialized && !isLoading) {
+    } else if (!initialized && !isLoading && !isError) {
       setInitialized(true);
+    } else if (!initialized && !isLoading && isError && id) {
+      // Server unreachable — try disk cache so past messages are still readable.
+      readCache<Message[]>(`conversation:${id}:messages`).then(entry => {
+        if (entry?.data?.length) {
+          setLocalMessages(entry.data);
+        }
+        setInitialized(true);
+      });
     }
-  }, [serverMessages, isLoading, initialized]);
+  }, [serverMessages, isLoading, isError, initialized, id]);
 
-  // #40 — When the server comes back (isError flips false), clear send-failure state
-  //        so the composer re-enables automatically without requiring a manual retry.
+  // ── Hydrate queued bubbles from the outbox on mount / init ─────────────────
+  // When the screen opens (or comes back online after a cache-only load),
+  // restore any messages that are still sitting in the offline outbox so the
+  // user can see they are pending — even after app restart.
+  // Deduplication uses the stable msgId, not text, so identical repeated
+  // messages are each tracked as separate pending entries.
+  const outboxHydratedRef = useRef(false);
+  useEffect(() => {
+    if (!initialized || !id || outboxHydratedRef.current) return;
+    outboxHydratedRef.current = true;
+    getOutboxForConversation(id).then((pending) => {
+      if (!pending.length) return;
+      const queuedBubbles: LocalMessage[] = pending.map((entry) => ({
+        id: `queued-${entry.msgId}`,
+        conversation_id: id,
+        role: 'user' as const,
+        text: entry.text,
+        created_at: new Date(entry.ts).toISOString(),
+        queued: true,
+        msgId: entry.msgId,
+      }));
+      setLocalMessages((prev) => {
+        // Avoid duplicates — skip entries whose msgId is already in the list.
+        const existingMsgIds = new Set(
+          prev.filter((m) => (m as LocalMessage).msgId).map((m) => (m as LocalMessage).msgId)
+        );
+        const fresh = queuedBubbles.filter((b) => !existingMsgIds.has(b.msgId));
+        return fresh.length ? [...prev, ...fresh] : prev;
+      });
+    }).catch(() => {});
+  }, [initialized, id]);
+
+  // #40 — When the server comes back (isError flips false), flush queued messages
+  //        and reconcile the UI using stable msgIds — not text — so identical
+  //        repeated messages are tracked independently.
   const prevIsErrorRef = useRef(false);
   useEffect(() => {
     if (prevIsErrorRef.current && !isError && initialized) {
       setSendFailed(false);
-      // Purge optimistic error bubbles so the conversation looks clean after recovery
+      // Remove only hard-error bubbles immediately; queued bubbles stay until
+      // we confirm delivery below so messages are never visually lost.
       setLocalMessages((prev) => prev.filter((m) => !(m as any).isError));
+
+      // Flush, then read what remains in the outbox for *this* conversation.
+      // Only remove bubbles whose msgId is no longer in the outbox (confirmed
+      // delivered).  Failed entries keep their queued bubble and msgId.
+      flushMessageQueue()
+        .then((sent) =>
+          getOutboxForConversation(id).then((remaining) => {
+            const stillPendingIds = new Set(remaining.map((m) => m.msgId));
+            setLocalMessages((prev) =>
+              prev.filter(
+                (m) =>
+                  !(m as LocalMessage).queued ||
+                  stillPendingIds.has((m as LocalMessage).msgId ?? ''),
+              ),
+            );
+            // Refresh server messages only when at least one was delivered.
+            if (sent > 0) refetch();
+          }),
+        )
+        .catch(() => {});
     }
     prevIsErrorRef.current = isError;
   }, [isError, initialized]);
@@ -882,6 +968,11 @@ export default function ChatScreen() {
       ? (trimmed ? `[Image] ${trimmed}` : '[Image attached]')
       : trimmed;
 
+    // Stable client-side ID used for the idempotency key and queued-bubble
+    // reconciliation.  Generated once per send attempt so a retry of the
+    // same message reuses the same key and the server suppresses the duplicate.
+    const clientMsgId = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+
     const userMsg: LocalMessage = {
       id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
       conversation_id: id,
@@ -890,6 +981,8 @@ export default function ChatScreen() {
       created_at: new Date().toISOString(),
       // Keep local URI for thumbnail display; never sent to server
       localImageUri: imageToSend?.uri,
+      // Carry the idempotency key so queued reconciliation can match by ID.
+      msgId: clientMsgId,
     };
 
     setLocalMessages((prev) => [...prev, userMsg]);
@@ -902,6 +995,9 @@ export default function ChatScreen() {
         text: trimmed || (imageToSend ? 'What is in this image?' : ''),
         stream: false,
         deep: deepMode,
+        // Server persists this in messages.client_msg_id (schema v86) and
+        // checks it before storing so retries after a lost response are safe.
+        client_msg_id: clientMsgId,
       };
       if (imageToSend?.base64) {
         payload.image_b64 = imageToSend.base64;
@@ -938,20 +1034,34 @@ export default function ChatScreen() {
         msg.toLowerCase().includes('vision') ||
         msg.toLowerCase().includes('multimodal') ||
         msg.toLowerCase().includes('does not support image');
-      const errMsg: LocalMessage = {
-        id: Date.now().toString() + 'err',
-        conversation_id: id,
-        role: 'assistant',
-        text: isNetworkError
-          ? 'Cannot reach the server. Check your connection and try again.'
-          : isVisionError
-          ? 'This model does not support images. Set a vision-capable model in System Settings (e.g. llava, qwen2-vl).'
-          : 'Something went wrong sending your message. Please try again.',
-        created_at: new Date().toISOString(),
-        isError: true,
-      };
-      setLocalMessages((prev) => [...prev, errMsg]);
-      setSendFailed(true);
+
+      if (isNetworkError && trimmed && !imageToSend) {
+        // Server unreachable and no image — queue the message for delivery
+        // once connectivity returns, and mark the optimistic bubble as "queued"
+        // so the user can see it's pending rather than lost.
+        // Pass the same clientMsgId that was put on the optimistic bubble so
+        // the outbox entry and bubble share a stable key for reconciliation.
+        await queueMessage(id, trimmed, clientMsgId).catch(() => {});
+        setLocalMessages((prev) =>
+          prev.map((m) => m.id === userMsg.id ? { ...m, queued: true } : m)
+        );
+        setSendFailed(true);
+      } else {
+        const errMsg: LocalMessage = {
+          id: Date.now().toString() + 'err',
+          conversation_id: id,
+          role: 'assistant',
+          text: isNetworkError
+            ? 'Cannot reach the server. Check your connection and try again.'
+            : isVisionError
+            ? 'This model does not support images. Set a vision-capable model in System Settings (e.g. llava, qwen2-vl).'
+            : 'Something went wrong sending your message. Please try again.',
+          created_at: new Date().toISOString(),
+          isError: true,
+        };
+        setLocalMessages((prev) => [...prev, errMsg]);
+        setSendFailed(true);
+      }
     } finally {
       setSending(false);
       inputRef.current?.focus();

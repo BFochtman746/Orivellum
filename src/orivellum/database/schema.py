@@ -1416,4 +1416,40 @@ MIGRATIONS: list[tuple[int, str, str]] = [
     (85, "Add suggested_queries_json to work_gap_cache", """
         ALTER TABLE work_gap_cache ADD COLUMN suggested_queries_json TEXT NOT NULL DEFAULT '[]'
     """),
+
+    # v86 — Client-supplied idempotency key for offline message delivery.
+    # Mobile clients queue messages while offline and flush them on reconnect.
+    # A stable client_msg_id prevents duplicate delivery when the server
+    # processes the request but the client loses the response and retries.
+    # UNIQUE per conversation: the same message re-sent to the same conversation
+    # is suppressed; it can be legitimately resent to a different conversation.
+    (86, "Add client_msg_id idempotency key to messages", """
+        ALTER TABLE messages ADD COLUMN client_msg_id TEXT;
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_client_msg_id
+            ON messages(conversation_id, client_msg_id)
+            WHERE client_msg_id IS NOT NULL
+    """),
+
+    # v87 — Generation claim lock for client_msg_id idempotency.
+    # Tracks per-(conversation, client_msg_id) generation state so that
+    # concurrent retries cannot both generate AI replies, and so the
+    # assistant reply is linked directly to the originating request rather
+    # than inferred by timestamp ordering.
+    #
+    # state:
+    #   'processing' — generation is claimed; a request is generating
+    #   'completed'  — generation finished; assistant_msg_id is set
+    #
+    # A 'processing' slot older than 10 minutes is considered abandoned
+    # (server crashed mid-generation) and may be reclaimed.
+    (87, "Add message_idempotency generation claim table", """
+        CREATE TABLE IF NOT EXISTS message_idempotency (
+            conversation_id  TEXT NOT NULL,
+            client_msg_id    TEXT NOT NULL,
+            state            TEXT NOT NULL DEFAULT 'processing',
+            assistant_msg_id TEXT,
+            created_at       TEXT NOT NULL,
+            PRIMARY KEY (conversation_id, client_msg_id)
+        )
+    """),
 ]

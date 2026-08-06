@@ -28,6 +28,7 @@ import * as Haptics from 'expo-haptics';
 import type { Conversation } from '@workspace/api-client-react';
 import { OfflineBanner, ErrorScreen } from '@/components/OfflineBanner';
 import { stripMarkdown } from '@/lib/stripMarkdown';
+import { readCache, writeCache } from '@/lib/cache';
 
 function ConversationItem({ item, onArchive, onDelete, onRename }: { item: Conversation; onArchive?: (id: string) => void; onDelete?: (id: string) => void; onRename?: (id: string, title: string) => void }) {
   const colors = useColors();
@@ -147,7 +148,31 @@ export default function ConversationsScreen() {
     { archived: showArchived, limit: 200 } as any,
     { query: { refetchInterval: 15_000, staleTime: 10_000 } } as any
   );
-  const allConversations = data?.conversations ?? [];
+
+  // ── Offline cache ─────────────────────────────────────────────────────────
+  const [cachedConvs, setCachedConvs] = useState<any[]>([]);
+  const [usingConvCache, setUsingConvCache] = useState(false);
+
+  useEffect(() => {
+    if (data?.conversations?.length) {
+      writeCache('conversations:list', data.conversations);
+      setCachedConvs(data.conversations);
+      setUsingConvCache(false);
+    }
+  }, [data?.conversations]);
+
+  useEffect(() => {
+    if (isError) {
+      readCache<any[]>('conversations:list').then(entry => {
+        if (entry?.data?.length) {
+          setCachedConvs(entry.data);
+          setUsingConvCache(true);
+        }
+      });
+    }
+  }, [isError]);
+
+  const allConversations = (isError && usingConvCache) ? cachedConvs : (data?.conversations ?? []);
 
   // API-backed FTS search (when query >= 2 chars)
   const isSearchMode = debouncedSearch.trim().length >= 2;

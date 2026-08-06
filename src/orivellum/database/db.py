@@ -1426,16 +1426,20 @@ class OrivellumDB:
 
     def add_message(self, conv_id: str, role: str, text: str,
                     meta: dict | None = None,
-                    state: str = "done") -> dict:
+                    state: str = "done",
+                    client_msg_id: str | None = None) -> dict:
         """Insert a message and bump the conversation's updated_at.
 
         Args:
-            conv_id: conversation to append to.
-            role:    "user" or "assistant".
-            text:    message body (may be empty for a pre-created streaming stub).
-            meta:    arbitrary JSON metadata.
-            state:   initial MessageState — defaults to "done" (use "queued"
-                     when pre-creating an assistant stub for a streaming reply).
+            conv_id:       conversation to append to.
+            role:          "user" or "assistant".
+            text:          message body (may be empty for a pre-created streaming stub).
+            meta:          arbitrary JSON metadata.
+            state:         initial MessageState — defaults to "done" (use "queued"
+                           when pre-creating an assistant stub for a streaming reply).
+            client_msg_id: stable client-generated idempotency key.  When set,
+                           a UNIQUE index on (conversation_id, client_msg_id)
+                           prevents duplicate rows from offline-queue retries.
         """
         mid = _uuid()
         now = _now()
@@ -1450,11 +1454,46 @@ class OrivellumDB:
             actor="user" if role == "user" else "system",
             detail=f"{role} {state} {_wc}w",
         ):
-            self._conn.execute(
-                """INSERT INTO messages(id,conversation_id,role,text,meta,created_at,state)
-                   VALUES(?,?,?,?,?,?,?)""",
-                (mid, conv_id, role, text, _jdump(meta or {}), now, state),
-            )
+            if client_msg_id:
+                # Atomic insert-or-ignore: the UNIQUE index on
+                # (conversation_id, client_msg_id) is the authoritative
+                # conflict path — no separate check-then-insert race.
+                cursor = self._conn.execute(
+                    """INSERT OR IGNORE INTO messages
+                           (id,conversation_id,role,text,meta,created_at,state,client_msg_id)
+                       VALUES(?,?,?,?,?,?,?,?)""",
+                    (mid, conv_id, role, text, _jdump(meta or {}), now, state, client_msg_id),
+                )
+                if cursor.rowcount == 0:
+                    # Row already exists — return its id so the caller can
+                    # look up the paired AI response and avoid re-generating.
+                    existing = self._conn.execute(
+                        """SELECT id, conversation_id, role, text, meta,
+                                  created_at, state
+                             FROM messages
+                            WHERE conversation_id=? AND client_msg_id=?""",
+                        (conv_id, client_msg_id),
+                    ).fetchone()
+                    if existing:
+                        return {
+                            "id": existing[0],
+                            "conversation_id": existing[1],
+                            "role": existing[2],
+                            "text": existing[3],
+                            "meta": _jload(existing[4] or "{}"),
+                            "created_at": existing[5],
+                            "state": existing[6],
+                            "_is_duplicate": True,
+                        }
+                    # Extremely unlikely: index collision but row gone — fall
+                    # through and let the caller treat it as a fresh insert.
+            else:
+                cursor = self._conn.execute(
+                    """INSERT INTO messages
+                           (id,conversation_id,role,text,meta,created_at,state,client_msg_id)
+                       VALUES(?,?,?,?,?,?,?,?)""",
+                    (mid, conv_id, role, text, _jdump(meta or {}), now, state, None),
+                )
             self._conn.execute(
                 "UPDATE conversations SET updated_at=? WHERE id=?", (now, conv_id)
             )
@@ -1473,7 +1512,7 @@ class OrivellumDB:
             except Exception:
                 pass
         return {"id": mid, "conversation_id": conv_id, "role": role, "text": text,
-                "state": state, "meta": meta or {}, "created_at": now}
+                "state": state, "meta": meta or {}, "created_at": now, "_is_duplicate": False}
 
     def transition_message(self, msg_id: str, to_state: str) -> None:
         """Apply a MESSAGE_SM state transition to an existing message.
@@ -1574,6 +1613,173 @@ class OrivellumDB:
                 self._conn.commit()
         except Exception as exc:  # noqa: BLE001
             logger.debug("FTS sync skipped for message %s: %s", msg_id, exc)
+
+    # ── Idempotency helpers for offline message queue ─────────────────────────
+    #
+    # Mobile clients send a stable client_msg_id when flushing queued offline
+    # messages.  The two methods below provide an atomic "insert user message +
+    # claim generation slot" and a "mark generation complete" operation.
+    #
+    # The _IDEM_STALE_MINUTES threshold governs when a 'processing' slot is
+    # considered abandoned (server crashed mid-generation) and may be reclaimed.
+
+    _IDEM_STALE_MINUTES = 10
+
+    def store_user_msg_and_claim(
+        self,
+        conv_id: str,
+        text: str,
+        meta: dict | None,
+        client_msg_id: str,
+    ) -> tuple[str, str | None, dict]:
+        """Atomically insert the user message and claim the idempotency slot.
+
+        Everything runs under a single ``self._lock`` acquisition so no
+        concurrent request can interleave between the user-message INSERT and
+        the idempotency-slot INSERT.
+
+        Returns a 3-tuple ``(action, existing_ai_id, user_msg_dict)`` where
+        action is one of:
+
+        ``'generate'``
+            This call is the generation claimant.  Proceed with AI generation
+            then call ``complete_idempotency()`` with the assistant msg id.
+
+        ``'return'``
+            A prior request already completed.  Fetch the assistant message
+            with id ``existing_ai_id`` and return it — skip generation.
+
+        ``'processing'``
+            Another request is currently generating.  Return HTTP 409 to the
+            caller so it stays in the outbox for the next retry.
+        """
+        now = _now()
+        mid = _uuid()
+        with self._lock:
+            # ── Step 1: try to insert the user message ─────────────────────
+            user_cur = self._conn.execute(
+                """INSERT OR IGNORE INTO messages
+                       (id, conversation_id, role, text, meta,
+                        created_at, state, client_msg_id)
+                   VALUES (?, ?, 'user', ?, ?, ?, 'done', ?)""",
+                (mid, conv_id, text, _jdump(meta or {}), now, client_msg_id),
+            )
+            is_new_msg = user_cur.rowcount == 1
+
+            if is_new_msg:
+                # Keep conversation timestamp current.
+                self._conn.execute(
+                    "UPDATE conversations SET updated_at=? WHERE id=?", (now, conv_id)
+                )
+                # Keep FTS index in sync.
+                try:
+                    self._conn.execute("DELETE FROM messages_fts WHERE msg_id=?", (mid,))
+                    self._conn.execute(
+                        "INSERT INTO messages_fts(text, role, msg_id, conversation_id)"
+                        " VALUES (?, 'user', ?, ?)",
+                        (text, mid, conv_id),
+                    )
+                except Exception:
+                    pass
+                # ── Step 2: claim the idempotency slot ─────────────────────
+                # INSERT OR IGNORE means if another concurrent request somehow
+                # beat us to both the user-msg and the slot (impossible under
+                # the lock, but defensive), we simply do not overwrite it.
+                self._conn.execute(
+                    """INSERT OR IGNORE INTO message_idempotency
+                           (conversation_id, client_msg_id, state, created_at)
+                       VALUES (?, ?, 'processing', ?)""",
+                    (conv_id, client_msg_id, now),
+                )
+                self._conn.commit()
+                user_msg = {
+                    "id": mid, "conversation_id": conv_id, "role": "user",
+                    "text": text, "meta": meta or {}, "created_at": now,
+                    "state": "done",
+                }
+                return ("generate", None, user_msg)
+
+            # ── Duplicate user message: inspect idempotency slot ───────────
+            existing_user = self._conn.execute(
+                """SELECT id, text, meta, created_at, state
+                     FROM messages
+                    WHERE conversation_id=? AND client_msg_id=?""",
+                (conv_id, client_msg_id),
+            ).fetchone()
+            user_dict = {
+                "id": existing_user[0] if existing_user else mid,
+                "conversation_id": conv_id, "role": "user",
+                "text": existing_user[1] if existing_user else text,
+                "meta": _jload(existing_user[2] if existing_user else None, {}),
+                "created_at": existing_user[3] if existing_user else now,
+                "state": existing_user[4] if existing_user else "done",
+            }
+
+            slot = self._conn.execute(
+                """SELECT state, assistant_msg_id, created_at
+                     FROM message_idempotency
+                    WHERE conversation_id=? AND client_msg_id=?""",
+                (conv_id, client_msg_id),
+            ).fetchone()
+
+            if slot is None:
+                # Slot missing = the original request crashed before it could
+                # claim.  Claim now as crash recovery.
+                self._conn.execute(
+                    """INSERT OR IGNORE INTO message_idempotency
+                           (conversation_id, client_msg_id, state, created_at)
+                       VALUES (?, ?, 'processing', ?)""",
+                    (conv_id, client_msg_id, now),
+                )
+                self._conn.commit()
+                return ("generate", None, user_dict)
+
+            state, ai_msg_id, slot_created = slot[0], slot[1], slot[2]
+
+            if state == "completed":
+                return ("return", ai_msg_id, user_dict)
+
+            # state == 'processing' — check staleness
+            stale = self._conn.execute(
+                """SELECT 1 FROM message_idempotency
+                    WHERE conversation_id=? AND client_msg_id=?
+                      AND created_at < datetime('now', ?)""",
+                (conv_id, client_msg_id, f"-{self._IDEM_STALE_MINUTES} minutes"),
+            ).fetchone()
+            if stale:
+                # Stale slot = server crashed mid-generation.  Reclaim it.
+                self._conn.execute(
+                    """UPDATE message_idempotency
+                          SET state='processing', assistant_msg_id=NULL, created_at=?
+                        WHERE conversation_id=? AND client_msg_id=?""",
+                    (now, conv_id, client_msg_id),
+                )
+                self._conn.commit()
+                return ("generate", None, user_dict)
+
+            # Active 'processing' slot — another request is generating.
+            return ("processing", None, user_dict)
+
+    def complete_idempotency(
+        self,
+        conv_id: str,
+        client_msg_id: str,
+        assistant_msg_id: str,
+    ) -> None:
+        """Mark the idempotency slot as completed with the given AI reply id.
+
+        Call this immediately after storing the assistant message so that any
+        subsequent retry with the same client_msg_id returns the existing reply
+        rather than generating a new one.
+        """
+        with self._lock:
+            self._conn.execute(
+                """UPDATE message_idempotency
+                      SET state='completed', assistant_msg_id=?
+                    WHERE conversation_id=? AND client_msg_id=?""",
+                (assistant_msg_id, conv_id, client_msg_id),
+            )
+            self._conn.commit()
 
     def update_conversation(self, conv_id: str, title: str | None = None,
                             archived: bool | None = None,

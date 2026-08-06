@@ -153,6 +153,10 @@ class MessageSend(BaseModel):
     # Optional base64-encoded image for vision-model chat
     image_b64: str | None = None
     image_media_type: str = "image/jpeg"
+    # Stable client-generated idempotency key.  Mobile clients include this
+    # when flushing queued offline messages so the server can suppress
+    # duplicates if the client retries after a lost response.
+    client_msg_id: str | None = None
 
 
 class ContinueBody(BaseModel):
@@ -335,21 +339,89 @@ async def send_message(conv_id: str, body: MessageSend):
         if thumb:
             user_meta["image_thumbnail_b64"] = thumb
 
-    # Duplicate-send guard: skip storing user message if an identical one was stored
-    # within the last 5 seconds (protects against React StrictMode double-calls,
-    # client retries, and accidental double-taps).  We still proceed with the AI
-    # response so the user does not see a silent failure.
-    with db._lock:
-        recent_dup = db._conn.execute(
-            """SELECT id FROM messages
-               WHERE conversation_id=? AND role='user' AND text=?
-               AND created_at > datetime('now','-5 seconds')""",
-            (conv_id, stored_text)
-        ).fetchone()
-    if recent_dup:
-        logger.debug("Duplicate user message suppressed for conv %s", conv_id)
+    # ── Duplicate-send guard ───────────────────────────────────────────────────
+    # Two complementary paths:
+    #
+    # A. client_msg_id path (offline retry / mobile queue flush):
+    #    store_user_msg_and_claim() performs two INSERTs atomically under a
+    #    single db._lock acquisition so no concurrent request can interleave
+    #    between inserting the user message and claiming the generation slot.
+    #    Returns one of three actions:
+    #      'generate'   — we are the sole claimant; proceed with AI generation
+    #      'return'     — a prior request completed; return its assistant reply
+    #      'processing' — another request is currently generating; return 409
+    #
+    # B. Recency text check (React StrictMode / double-tap, no client_msg_id):
+    #    Best-effort; narrow 5-second window is acceptable for this path.
+    #    The user message is suppressed but AI generation still proceeds.
+
+    # Tracks whether we're the idempotency claimant so we can call
+    # complete_idempotency() after every assistant message store.
+    _idem_client_msg_id: str | None = None
+
+    if body.client_msg_id:
+        _idem_action, _existing_ai_id, _user_msg = db.store_user_msg_and_claim(
+            conv_id, stored_text, user_meta or None, body.client_msg_id,
+        )
+
+        if _idem_action == "return":
+            # A previous request completed — fetch and return the stored reply.
+            logger.debug(
+                "Idempotent return (client_msg_id=%s) for conv %s — "
+                "serving existing assistant reply %s",
+                body.client_msg_id, conv_id, _existing_ai_id,
+            )
+            with db._lock:
+                ai_row = db._conn.execute(
+                    """SELECT id, conversation_id, role, text, meta, created_at, state
+                         FROM messages WHERE id=?""",
+                    (_existing_ai_id,),
+                ).fetchone()
+            if ai_row:
+                import json as _json
+                return {
+                    "message": {
+                        "id": ai_row[0],
+                        "conversation_id": ai_row[1],
+                        "role": ai_row[2],
+                        "text": ai_row[3],
+                        "meta": _json.loads(ai_row[4] or "{}"),
+                        "created_at": ai_row[5],
+                        "state": ai_row[6],
+                    }
+                }
+            # Slot said 'completed' but message row is gone — fall through to
+            # generate a replacement (treat as crash recovery).
+            _idem_client_msg_id = body.client_msg_id
+
+        elif _idem_action == "processing":
+            # Another request is currently generating — tell the client to
+            # retry later.  The message stays in the mobile outbox.
+            logger.debug(
+                "Idempotency 409 (client_msg_id=%s) for conv %s — "
+                "generation already in progress",
+                body.client_msg_id, conv_id,
+            )
+            from fastapi import Response as _Response
+            return _Response(status_code=409, content="Generation in progress — retry later")
+
+        else:
+            # _idem_action == 'generate': we are the claimant.
+            _idem_client_msg_id = body.client_msg_id
+
     else:
-        db.add_message(conv_id, "user", stored_text, meta=user_meta or None)
+        # No idempotency key — use the narrow recency-text heuristic.
+        with db._lock:
+            recent_dup = db._conn.execute(
+                """SELECT id FROM messages
+                   WHERE conversation_id=? AND role='user' AND text=?
+                   AND created_at > datetime('now','-5 seconds')""",
+                (conv_id, stored_text)
+            ).fetchone()
+        if recent_dup:
+            logger.debug("Duplicate user message suppressed (recency) for conv %s", conv_id)
+        else:
+            db.add_message(conv_id, "user", stored_text, meta=user_meta or None)
 
     import asyncio, threading
 
@@ -422,6 +494,8 @@ async def send_message(conv_id: str, body: MessageSend):
             existing = tool_meta.get("sources", [])
             tool_meta = {**tool_meta, "sources": [*existing, *ns_sources]}
         msg = db.add_message(conv_id, "assistant", tool_text, meta=tool_meta)
+        if _idem_client_msg_id:
+            db.complete_idempotency(conv_id, _idem_client_msg_id, msg["id"])
         _maybe_auto_title(db, conv, body.text)
         try:
             from orivellum.api.executor import _tracked_submit as _ts_prb1
@@ -453,6 +527,8 @@ async def send_message(conv_id: str, body: MessageSend):
             if ns_sources:
                 clarify_meta["sources"] = ns_sources
             msg = db.add_message(conv_id, "assistant", question, meta=clarify_meta)
+            if _idem_client_msg_id:
+                db.complete_idempotency(conv_id, _idem_client_msg_id, msg["id"])
             _maybe_auto_title(db, conv, body.text)
             try:
                 from orivellum.api.executor import _tracked_submit as _ts_prb2
@@ -483,6 +559,8 @@ async def send_message(conv_id: str, body: MessageSend):
                     council_meta["sources"] = ns_sources
                 msg = db.add_message(conv_id, "assistant", council_reply,
                                      meta=council_meta)
+                if _idem_client_msg_id:
+                    db.complete_idempotency(conv_id, _idem_client_msg_id, msg["id"])
                 _maybe_auto_title(db, conv, body.text)
                 try:
                     from orivellum.api.executor import _tracked_submit as _ts_prb3
@@ -530,6 +608,8 @@ async def send_message(conv_id: str, body: MessageSend):
         ns_meta["retrieval_strategy"] = _ns_strategy_meta["retrieval_strategy"]
         ns_meta["query_type"] = _ns_strategy_meta.get("query_type", "")
     msg = db.add_message(conv_id, "assistant", reply, meta=ns_meta)
+    if _idem_client_msg_id:
+        db.complete_idempotency(conv_id, _idem_client_msg_id, msg["id"])
     _maybe_auto_title(db, conv, body.text)
     # Background: embed exchange + inference memory capture (non-streaming)
     try:
