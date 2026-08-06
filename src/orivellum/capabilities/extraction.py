@@ -45,7 +45,7 @@ class ExtractionResult:
 # PDF
 # ---------------------------------------------------------------------------
 
-def _extract_pdf(path: Path) -> ExtractionResult:
+def _extract_pdf(path: Path, db=None) -> ExtractionResult:
     # --- pdfplumber (primary: best for text-layer PDFs) ---
     try:
         import pdfplumber
@@ -103,6 +103,11 @@ def _extract_pdf(path: Path) -> ExtractionResult:
         logger.info("pypdf also found no text in %s — falling back to markitdown", path.name)
     except Exception as exc:
         logger.warning("pypdf failed on %s: %s — falling back to markitdown", path.name, exc)
+
+    # --- VLM OCR (scanned / image-only pages — when vision model configured) ---
+    vlm_result = _vlm_pdf_ocr(path, db=db)
+    if vlm_result is not None and vlm_result.ok:
+        return vlm_result
 
     # --- markitdown (final fallback: handles image-heavy / complex PDFs) ---
     return _extract_fallback(path, "pdf")
@@ -298,8 +303,110 @@ def _extract_text(path: Path, kind: str = "text") -> ExtractionResult:
 
 
 # ---------------------------------------------------------------------------
-# Image (OCR)
+# Image (OCR) + VLM PDF OCR
 # ---------------------------------------------------------------------------
+
+_VLM_OCR_PROMPT = (
+    "Transcribe all text from this document image exactly, "
+    "preserving structure, headings, and layout. "
+    "Return only the text, with no commentary."
+)
+
+
+def _vlm_pdf_ocr(path: Path, db=None) -> "ExtractionResult | None":
+    """Use the configured vision LLM to OCR a scanned (image-only) PDF.
+
+    Renders each page with pdf2image at 150 DPI, encodes as JPEG base64,
+    and POSTs to the vision model with a transcription prompt.
+    Returns None when the vision model is not configured, pdf2image is
+    unavailable, or the attempt fails entirely — so the caller falls through
+    to markitdown cleanly.
+    """
+    try:
+        from orivellum.configuration.config import load_config
+        cfg = load_config()
+        _vision_model: str = ""
+        try:
+            from orivellum.api._deps import get_db as _get_db
+            _db = _get_db()
+            _vision_model = _db.get_setting("vision_model", "") or cfg.serving.vision_model
+        except Exception:
+            _vision_model = cfg.serving.vision_model
+        if not _vision_model:
+            return None
+
+        try:
+            from pdf2image import convert_from_path  # type: ignore[import]
+        except ImportError:
+            logger.debug("pdf2image not installed — VLM PDF OCR unavailable")
+            return None
+
+        import base64
+        import io
+        from orivellum.capabilities.llm import llm_call
+
+        pages_pil = convert_from_path(str(path), dpi=150)
+        if not pages_pil:
+            return None
+
+        page_segs: list[PageSegment] = []
+        page_headings: list[str] = []
+
+        for i, page_img in enumerate(pages_pil, 1):
+            try:
+                if page_img.mode not in ("RGB", "L"):
+                    page_img = page_img.convert("RGB")
+                buf = io.BytesIO()
+                page_img.save(buf, format="JPEG", quality=85)
+                b64 = base64.b64encode(buf.getvalue()).decode()
+
+                result = llm_call(
+                    [{
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": _VLM_OCR_PROMPT},
+                            {"type": "image_url",
+                             "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
+                        ],
+                    }],
+                    base_url=cfg.serving.base_url,
+                    model=_vision_model,
+                    timeout=cfg.serving.extraction_timeout_sec,
+                    purpose="extraction.ocr",
+                    db=db,
+                )
+                text = (result.text or "").strip()
+                if not text:
+                    continue
+                seg = PageSegment(page=i, text=text)
+                first_line = text.splitlines()[0].strip()
+                if first_line and len(first_line) < 120:
+                    seg.heading = first_line
+                    page_headings.append(first_line)
+                page_segs.append(seg)
+            except Exception as page_exc:
+                logger.warning("VLM OCR failed on page %d of %s: %s", i, path.name, page_exc)
+
+        if not page_segs:
+            return None
+
+        full = "\n\n".join(s.text for s in page_segs)
+        logger.info(
+            "VLM PDF OCR: %s — %d pages, %d words (model=%s)",
+            path.name, len(page_segs), len(full.split()), _vision_model,
+        )
+        return ExtractionResult(
+            kind="pdf",
+            full_text=full,
+            word_count=len(full.split()),
+            pages=page_segs,
+            headings=page_headings,
+            meta={"ocr_engine": "vlm", "ocr_model": _vision_model},
+        )
+    except Exception as exc:
+        logger.warning("VLM PDF OCR failed on %s: %s", path.name, exc)
+    return None
+
 
 def _probe_tesseract() -> None:
     """Ensure pytesseract can find the tesseract binary.
@@ -817,6 +924,8 @@ def extract(path: str | Path, kind: str, db=None) -> ExtractionResult:
             result = _extract_image(path, db=db)
         elif kind == "audio":
             result = _extract_audio(path, db=db)
+        elif kind == "pdf":
+            result = _extract_pdf(path, db=db)
         else:
             result = handler(path)  # type: ignore[call-arg]
     except Exception as exc:

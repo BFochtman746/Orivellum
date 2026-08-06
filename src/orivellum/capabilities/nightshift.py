@@ -374,11 +374,27 @@ def _pass_orphan_cleanup(db: "OrivellumDB", report: list[str]) -> None:
 
 def _pass_stuck_docs(db: "OrivellumDB", cfg: "OrivellumConfig",
                      report: list[str]) -> None:
-    """Re-queue all stuck documents (imported/error/no_text) that have a file."""
+    """Re-queue all stuck documents (imported/error/no_text) that have a file.
+
+    When a vision model is configured, no_text PDF/image documents are
+    excluded here because pass 5b (_pass_no_text_reextract) owns those rows.
+    This prevents both passes from spawning workers for the same document
+    concurrently and producing duplicate chunks/knowledge items.
+    """
     try:
         from orivellum.capabilities.pipeline import process_document as _proc
         lib_root = Path(cfg.data_dir) / "library"
         stuck = _get_stuck_docs(db, max_docs=20)
+
+        # Exclude no_text PDF/image docs when VLM is configured — pass 5b owns them.
+        _vlm = db.get_setting("vision_model", "").strip() or cfg.serving.vision_model
+        if _vlm:
+            stuck = [
+                d for d in stuck
+                if not (d.get("readiness") == "no_text"
+                        and d.get("kind") in ("pdf", "image"))
+            ]
+
         queue: list[dict] = []
         for sdoc in stuck:
             content_path = sdoc.get("content_path")
@@ -417,6 +433,80 @@ def _pass_stuck_docs(db: "OrivellumDB", cfg: "OrivellumConfig",
         logger.info("Nightshift: queued %d stuck docs for sequential recovery", len(queue))
     except Exception as exc:
         logger.warning("Stuck-doc pass failed: %s", exc)
+
+
+def _pass_no_text_reextract(db: "OrivellumDB", cfg: "OrivellumConfig",
+                            report: list[str]) -> None:
+    """Re-extract PDF/image docs stuck in no_text when a vision model is now configured.
+
+    Tesseract sometimes returns nothing for scanned PDFs (rotated pages, unusual
+    fonts, handwriting, etc.).  When the user later enables a VLM (vision_model),
+    those documents can be recovered automatically on the next nightshift run.
+    """
+    try:
+        vision_model = (db.get_setting("vision_model", "").strip()
+                        or cfg.serving.vision_model)
+        if not vision_model:
+            # No VLM configured — nothing to do; Tesseract already ran.
+            return
+
+        with db._lock:
+            rows = db._conn.execute(
+                """SELECT d.id, d.kind, d.work_id, d.title,
+                          d.content_path, d.source
+                   FROM documents d
+                   WHERE d.readiness = 'no_text'
+                     AND d.kind IN ('pdf', 'image')
+                   ORDER BY d.created_at DESC
+                   LIMIT 30""",
+            ).fetchall()
+        docs = [dict(r) for r in rows]
+
+        if not docs:
+            return
+
+        lib_root = Path(cfg.data_dir) / "library"
+        queue: list[dict] = []
+        for doc in docs:
+            content_path = doc.get("content_path")
+            file_path: Path | None = None
+            if content_path:
+                file_path = lib_root / content_path
+            elif doc.get("source"):
+                file_path = Path(doc["source"])
+            if not file_path or not file_path.exists():
+                continue
+            queue.append({**doc, "_file_path": str(file_path)})
+
+        if not queue:
+            return
+
+        from orivellum.capabilities.pipeline import process_document as _proc
+
+        def _worker(items: list[dict]) -> None:
+            for it in items:
+                try:
+                    db.update_document_extracted(it["id"], "", 0,
+                                                 readiness="imported",
+                                                 error_message=None)
+                    _proc(doc_id=it["id"], file_path=it["_file_path"],
+                          kind=it.get("kind") or "pdf",
+                          work_id=it.get("work_id"),
+                          title=it.get("title") or it["id"],
+                          db=db)
+                except Exception as exc:
+                    logger.warning("VLM re-extract failed for %s: %s", it["id"], exc)
+
+        threading.Thread(target=_worker, args=(queue,),
+                         name="nightshift-vlm-reextract", daemon=True).start()
+        report.append(
+            f"VLM re-extract: queued {len(queue)} no_text PDF/image doc(s) "
+            f"(vision_model={vision_model})"
+        )
+        logger.info("Nightshift VLM re-extract: queued %d no_text docs via %s",
+                    len(queue), vision_model)
+    except Exception as exc:
+        logger.warning("VLM re-extract pass failed (non-fatal): %s", exc)
 
 
 def _pass_sparse_harvest(db: "OrivellumDB", report: list[str]) -> int:
@@ -1087,6 +1177,10 @@ def _run_nightshift_passes(db: "OrivellumDB", cfg: "OrivellumConfig") -> None:
     # 5 — Retry stuck documents
     logger.info("Nightshift pass 5/13: stuck document recovery")
     _pass_stuck_docs(db, cfg, report)
+
+    # 5b — VLM re-extraction of no_text PDFs/images (when vision model now configured)
+    logger.info("Nightshift pass 5b: VLM no_text re-extraction")
+    _pass_no_text_reextract(db, cfg, report)
 
     # 6 — Harvest sparse documents
     logger.info("Nightshift pass 6/13: sparse document harvest")

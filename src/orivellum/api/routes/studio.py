@@ -2492,6 +2492,41 @@ _STATUS_PROBE_TIMEOUT = 2.0   # per-URL connect timeout (seconds)
 _STATUS_GLOBAL_TIMEOUT = 5.0  # hard wall-clock deadline for the entire status check
 
 
+def _probe_vision_model_listed(base_url: str, model_name: str) -> bool:
+    """Return True when *model_name* appears in the AI server's /models list.
+
+    This is stronger than a bare server-up check: it validates that the
+    configured vision model is actually loaded and served, not just that
+    the endpoint is reachable.  Returns False on any error or timeout.
+    """
+    import json as _json
+    import urllib.request as _ur
+
+    if not model_name:
+        return False
+    try:
+        models_url = base_url.rstrip("/") + "/models"
+        with _ur.urlopen(models_url, timeout=_STATUS_PROBE_TIMEOUT) as resp:
+            body = _json.loads(resp.read().decode("utf-8"))
+        # OpenAI-compatible response: {"data": [{"id": "..."}]}
+        # Lemonade may also return {"models": [...]} or a flat list of strings.
+        if isinstance(body, list):
+            entries: list = body
+        elif isinstance(body, dict):
+            entries = body.get("data") or body.get("models") or []
+        else:
+            entries = []
+        loaded_ids: set[str] = set()
+        for e in entries:
+            if isinstance(e, dict):
+                loaded_ids.add(e.get("id") or e.get("name") or "")
+            elif isinstance(e, str) and e:
+                loaded_ids.add(e)
+        return model_name in loaded_ids
+    except Exception:
+        return False
+
+
 def _url_probe(url: str) -> tuple[bool, int | None]:
     """Probe a single URL; return (reachable, latency_ms). Never raises."""
     import time
@@ -2533,6 +2568,10 @@ def studio_status():
     deadline = time.monotonic() + _STATUS_GLOBAL_TIMEOUT
     results: dict[str, object] = {}
 
+    # Resolve vision model for OCR probe (done before pool so the lambda captures it)
+    _vision_model_for_probe = (db.get_setting("vision_model", "").strip()
+                               or cfg.serving.vision_model)
+
     pool = _cf.ThreadPoolExecutor(max_workers=16, thread_name_prefix="studio-probe")
     try:
         futs: dict[str, _cf.Future] = {
@@ -2541,6 +2580,13 @@ def studio_status():
             "a1111":     pool.submit(_url_probe, "http://localhost:7860"),
             "comfy":     pool.submit(_url_probe, "http://localhost:8188"),
             "tesseract": pool.submit(_probe_tesseract_ok),
+            # Vision model probe: checks /models list, not just server reachability.
+            # Returns False when vision_model is unset (no inference call made).
+            "vision_model_listed": pool.submit(
+                _probe_vision_model_listed,
+                cfg.serving.base_url,
+                _vision_model_for_probe,
+            ),
         }
         if custom_url:
             futs["custom"] = pool.submit(_url_probe, custom_url)
@@ -2552,7 +2598,9 @@ def studio_status():
             try:
                 results[key] = fut.result(timeout=remaining)
             except Exception:
-                results[key] = (False, None) if key != "tesseract" else False
+                # Scalar probes (tesseract, vision_model_listed) default to False;
+                # URL probes default to (False, None).
+                results[key] = False if key in ("tesseract", "vision_model_listed") else (False, None)
     finally:
         # Do NOT wait for threads still blocked on their TCP connect timeout.
         # Threads will finish within _STATUS_PROBE_TIMEOUT (2 s) on their own.
@@ -2618,6 +2666,21 @@ def studio_status():
                   ([] if pillow_ok else ["Pillow"]) + \
                   ([] if pytesseract_ok else ["pytesseract"])
 
+    # VLM-based OCR — active when vision_model is set AND the /models probe confirmed
+    # the model is loaded.  _vision_model_for_probe was resolved before the thread pool
+    # so both the probe and the response use the same value.
+    _vision_model_cfg = _vision_model_for_probe  # alias for response clarity
+    _vlm_reachable = bool(results.get("vision_model_listed", False))
+    _vlm_ocr_active = bool(_vision_model_cfg) and _vlm_reachable
+
+    # Active OCR engine: VLM beats Tesseract when both are available.
+    if _vlm_ocr_active:
+        _active_ocr_engine: str | None = "vlm"
+    elif tess_ok and pillow_ok and pytesseract_ok:
+        _active_ocr_engine = "tesseract"
+    else:
+        _active_ocr_engine = None
+
     return {
         "tts": {
             "available": best_tts is not None,
@@ -2639,9 +2702,20 @@ def studio_status():
             "backends": img_backends,
         },
         "ocr": {
-            "available": tess_ok and pillow_ok and pytesseract_ok,
-            "engine": "tesseract" if tess_ok else None,
-            "missing": ocr_missing,
+            # available = at least one OCR path is operational
+            "available": _vlm_ocr_active or (tess_ok and pillow_ok and pytesseract_ok),
+            # engine: "vlm" (VLM-primary, ~96% DocVQA) |
+            #         "tesseract" (fallback, ~72% DocVQA) |
+            #         null (no OCR available)
+            # "active_engine" is an alias — same value — for new callers.
+            "engine": _active_ocr_engine,
+            "active_engine": _active_ocr_engine,
+            # VLM details
+            "vlm_model": _vision_model_cfg if _vision_model_cfg else None,
+            "vlm_active": _vlm_ocr_active,
+            # Tesseract details
+            "tesseract_available": tess_ok and pillow_ok and pytesseract_ok,
+            "missing": ocr_missing if not _vlm_ocr_active else [],
         },
         "last_checked": datetime.now(timezone.utc).isoformat(),
     }
