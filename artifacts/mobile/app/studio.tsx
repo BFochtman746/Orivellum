@@ -885,6 +885,390 @@ const vdStyles = StyleSheet.create({
   },
 });
 
+// ── Voice Recommender (Work-aware AI narrator picks) ─────────────────────────────
+
+interface RecommendRec {
+  voice_id: string;
+  score: number;
+  headline: string;
+  rationale: string;
+  dimension_match: string;
+  voice?: VoiceEntry;
+}
+
+interface RecommendResult {
+  work_id: string;
+  work_title: string;
+  genre_analysis: string;
+  narrator_profile: string;
+  recommendations: RecommendRec[];
+}
+
+/**
+ * Collapsible card that calls POST /api/studio/voices/recommend for a Work
+ * and presents the top 3 narrator matches with score, rationale, sample
+ * preview, and a one-tap "Use this voice" action.
+ *
+ * Visual design mirrors VoiceDesignerCard for consistency.
+ */
+function VoiceRecommenderCard({
+  workId,
+  workTitle,
+  voices,
+  audio,
+  onUseVoice,
+}: {
+  workId: string | null;
+  workTitle?: string;
+  voices: VoiceEntry[];
+  audio: ReturnType<typeof useSharedAudio>;
+  onUseVoice: (id: string) => void;
+}) {
+  const colors = useColors();
+  const [open, setOpen]           = useState(false);
+  const [loading, setLoading]     = useState(false);
+  const [result, setResult]       = useState<RecommendResult | null>(null);
+  const [errorMsg, setErrorMsg]   = useState('');
+
+  /**
+   * cachedWorkId — workId whose result is currently shown (null = no cache).
+   * requestGen   — monotonically increasing counter; each fetchRecs call
+   *                captures its own generation token. Responses only apply
+   *                state when their token still equals the current counter.
+   *                This handles:
+   *                  • rapid Retry (same Work, two in-flight requests)
+   *                  • A→B→A selection (same wid, different generation)
+   *                  • A→null (unmount / deselect path below)
+   */
+  const cachedWorkId = useRef<string | null>(null);
+  const requestGen   = useRef(0);
+
+  /** Invalidate any in-flight request without issuing a new one. */
+  const invalidate = () => { ++requestGen.current; };
+
+  /**
+   * fetchRecs is the SINGLE place a recommendation POST is dispatched.
+   * Ownership is tracked by a per-call generation token, not by workId,
+   * so even two calls for the same Work can be correctly distinguished.
+   */
+  const fetchRecs = async (wid: string) => {
+    const myGen = ++requestGen.current; // unique token for this call
+    cachedWorkId.current = null;
+
+    setLoading(true);
+    setResult(null);
+    setErrorMsg('');
+
+    try {
+      const resp = await mobileFetch(`${API}/studio/voices/recommend`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ work_id: wid, top_n: 3 }),
+      });
+
+      if (requestGen.current !== myGen) return; // superseded — discard
+
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        throw new Error((err as any).detail ?? `HTTP ${resp.status}`);
+      }
+
+      const data: RecommendResult = await resp.json();
+
+      if (requestGen.current !== myGen) return; // superseded after JSON parse
+
+      setResult(data);
+      cachedWorkId.current = wid;
+    } catch (e: any) {
+      if (requestGen.current !== myGen) return; // stale error — discard silently
+      setErrorMsg(e?.message ?? 'Recommendation unavailable — the AI may be offline');
+    } finally {
+      if (requestGen.current === myGen) setLoading(false);
+    }
+  };
+
+  /** Invalidate in-flight requests on unmount to prevent post-unmount state updates. */
+  useEffect(() => () => { invalidate(); }, []);
+
+  /**
+   * When workId becomes null (user deselects the Work): close the panel,
+   * clear all state, and invalidate any in-flight request immediately.
+   * This runs before the fetch-dispatch effect so the panel never shows
+   * stale picks after the work context is removed.
+   */
+  useEffect(() => {
+    if (!workId) {
+      invalidate();
+      setOpen(false);
+      setResult(null);
+      setErrorMsg('');
+      setLoading(false);
+      cachedWorkId.current = null;
+    }
+  }, [workId]);
+
+  /**
+   * The effect is the ONLY dispatch point — handleOpen only sets open=true.
+   * Runs when open flips true or workId changes while open.
+   * The null-workId effect above already closed the panel before this fires
+   * in the deselect case, so the `open && workId` guard is always correct.
+   */
+  useEffect(() => {
+    if (open && workId && cachedWorkId.current !== workId) {
+      fetchRecs(workId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workId, open]);
+
+  /** Only open if a Work is actually selected; fetching is handled by the effect. */
+  const handleOpen = () => { if (workId) setOpen(true); };
+
+  const handleUse = (id: string) => {
+    onUseVoice(id);
+    setOpen(false);
+  };
+
+  // ── Collapsed trigger ────────────────────────────────────────────────────────
+  if (!open) {
+    const hasFreshResult = result !== null && cachedWorkId.current === workId;
+    return (
+      <Pressable
+        onPress={workId ? handleOpen : undefined}
+        disabled={!workId}
+        style={({ pressed }) => ({
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 6,
+          paddingHorizontal: 12,
+          paddingVertical: 8,
+          borderRadius: 8,
+          borderWidth: 1,
+          borderColor: workId ? colors.primary + '55' : colors.border,
+          backgroundColor: workId ? colors.primary + '0a' : 'transparent',
+          alignSelf: 'flex-start',
+          opacity: !workId ? 0.4 : pressed ? 0.7 : 1,
+        })}
+        accessibilityRole="button"
+        accessibilityLabel="AI narrator recommendations for this Work"
+      >
+        <Feather name="star" size={12} color={workId ? colors.primary : colors.mutedForeground} />
+        <Text style={{
+          fontSize: 12,
+          fontFamily: 'Inter_500Medium',
+          color: workId ? colors.primary : colors.mutedForeground,
+        }}>
+          {hasFreshResult ? 'AI picks · tap to review' : 'Best for this Work'}
+        </Text>
+        {hasFreshResult && (
+          <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: colors.primary }} />
+        )}
+      </Pressable>
+    );
+  }
+
+  // ── Expanded panel ────────────────────────────────────────────────────────────
+  return (
+    <View style={[vdStyles.container, {
+      borderColor: colors.primary + '44',
+      backgroundColor: colors.primary + '06',
+    }]}>
+      {/* Header */}
+      <View style={vdStyles.header}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          <Feather name="star" size={14} color={colors.primary} />
+          <Text style={{ fontSize: 14, fontFamily: 'Inter_600SemiBold', color: colors.foreground }}>
+            Best for {workTitle ? `"${workTitle}"` : 'this Work'}
+          </Text>
+        </View>
+        <Pressable onPress={() => setOpen(false)} hitSlop={10}>
+          <Feather name="x" size={16} color={colors.mutedForeground} />
+        </Pressable>
+      </View>
+
+      <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: colors.mutedForeground, lineHeight: 17 }}>
+        AI casting director analysis — genre, tone, and style matched to the best available narrators.
+      </Text>
+
+      {/* Loading */}
+      {loading && (
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 6 }}>
+          <ActivityIndicator size="small" color={colors.primary} />
+          <Text style={{ fontSize: 13, fontFamily: 'Inter_400Regular', color: colors.mutedForeground }}>
+            Analysing your Work…
+          </Text>
+        </View>
+      )}
+
+      {/* Error with retry */}
+      {!!errorMsg && !loading && (
+        <View style={{ gap: 8 }}>
+          <View style={[vdStyles.infoBox, { borderColor: '#ef444444', backgroundColor: '#ef444410' }]}>
+            <Feather name="alert-circle" size={12} color="#ef4444" />
+            <Text style={{ color: '#ef4444', fontSize: 12, fontFamily: 'Inter_400Regular', flex: 1, lineHeight: 17 }}>
+              {errorMsg}
+            </Text>
+          </View>
+          <Pressable
+            onPress={() => workId && fetchRecs(workId)}
+            style={({ pressed }) => [styles.primaryButton, {
+              backgroundColor: colors.muted,
+              opacity: pressed ? 0.7 : 1,
+            }]}
+          >
+            <Feather name="refresh-cw" size={14} color={colors.foreground} />
+            <Text style={[styles.primaryButtonText, { color: colors.foreground }]}>Retry</Text>
+          </Pressable>
+        </View>
+      )}
+
+      {/* Results */}
+      {result && !loading && (
+        <View style={{ gap: 10 }}>
+          {/* Genre analysis */}
+          {!!result.genre_analysis && (
+            <View style={[vdStyles.infoBox, {
+              borderColor: colors.primary + '33',
+              backgroundColor: colors.primary + '08',
+            }]}>
+              <Feather name="book-open" size={12} color={colors.primary} />
+              <Text style={{ color: colors.primary, fontSize: 12, fontFamily: 'Inter_400Regular', flex: 1, lineHeight: 17 }}>
+                {result.genre_analysis}
+              </Text>
+            </View>
+          )}
+
+          {/* Narrator profile */}
+          {!!result.narrator_profile && (
+            <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: colors.mutedForeground, lineHeight: 17 }}>
+              Ideal narrator: {result.narrator_profile}
+            </Text>
+          )}
+
+          {/* Ranked voice cards */}
+          {(result.recommendations ?? []).slice(0, 3).map((rec, i) => {
+            const v: VoiceEntry = (rec.voice as VoiceEntry | undefined) ??
+              voices.find(vv => vv.id === rec.voice_id) ??
+              { id: rec.voice_id, name: rec.voice_id };
+            const isPlaying  = audio.playingKey === `sample-${v.id}`;
+            const sampleUri  = `${API}/studio/voices/${encodeURIComponent(v.id)}/sample`;
+            const accentCol  = v.accent === 'british' ? '#3b82f6' : '#f59e0b';
+            const genderSym  = v.gender === 'feminine' ? '♀' : v.gender === 'masculine' ? '♂' : '◆';
+            const score      = rec.score ?? 0;
+            const scoreColor = score >= 85 ? '#22c55e' : score >= 70 ? '#f59e0b' : colors.mutedForeground;
+
+            return (
+              <View
+                key={v.id}
+                style={[vdStyles.matchCard, {
+                  borderColor: i === 0 ? colors.primary + '55' : colors.border,
+                  backgroundColor: i === 0 ? colors.primary + '06' : colors.card,
+                }]}
+              >
+                {/* Name row */}
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                  {i === 0 && (
+                    <View style={[vdStyles.bestBadge, {
+                      backgroundColor: colors.primary + '20',
+                      borderColor: colors.primary + '44',
+                    }]}>
+                      <Text style={{ fontSize: 9, fontFamily: 'Inter_600SemiBold', color: colors.primary }}>
+                        TOP PICK
+                      </Text>
+                    </View>
+                  )}
+                  <Text style={{ fontSize: 14, fontFamily: 'Inter_600SemiBold', color: colors.foreground }}>
+                    {v.name}
+                  </Text>
+                  <Text style={{ fontSize: 12, color: colors.mutedForeground }}>{genderSym}</Text>
+                  {v.accent && (
+                    <View style={[vdStyles.accentBadge, {
+                      borderColor: accentCol + '55',
+                      backgroundColor: accentCol + '18',
+                    }]}>
+                      <Text style={{ fontSize: 9, fontFamily: 'Inter_600SemiBold', color: accentCol }}>
+                        {v.accent === 'american' ? 'US' : v.accent === 'british' ? 'UK' : v.accent}
+                      </Text>
+                    </View>
+                  )}
+                  <Text style={{
+                    marginLeft: 'auto' as any,
+                    fontSize: 16, fontFamily: 'Inter_700Bold', color: scoreColor,
+                  }}>
+                    {score}%
+                  </Text>
+                </View>
+
+                {/* Headline */}
+                {!!rec.headline && (
+                  <Text style={{ fontSize: 13, fontFamily: 'Inter_500Medium', color: colors.foreground, lineHeight: 18 }}>
+                    {rec.headline}
+                  </Text>
+                )}
+
+                {/* Rationale */}
+                {!!rec.rationale && (
+                  <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: colors.mutedForeground, lineHeight: 17 }}>
+                    {rec.rationale}
+                  </Text>
+                )}
+
+                {/* Genre tags */}
+                {v.tags && v.tags.length > 0 && (
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 4 }}>
+                    {v.tags.slice(0, 3).map(tag => (
+                      <View key={tag} style={[voiceCardStyles.tag, { borderColor: colors.border }]}>
+                        <Text style={[voiceCardStyles.tagText, { color: colors.mutedForeground }]}>{tag}</Text>
+                      </View>
+                    ))}
+                  </View>
+                )}
+
+                {/* Preview + Use */}
+                <View style={{ flexDirection: 'row', gap: 8 }}>
+                  <Pressable
+                    onPress={() => audio.toggle(`sample-${v.id}`, sampleUri)}
+                    style={[vdStyles.actionBtn, {
+                      borderColor: isPlaying ? colors.primary : colors.border,
+                      backgroundColor: isPlaying ? colors.primary + '18' : 'transparent',
+                      flex: 1,
+                    }]}
+                  >
+                    <Feather
+                      name={isPlaying ? 'pause' : 'play'}
+                      size={13}
+                      color={isPlaying ? colors.primary : colors.mutedForeground}
+                    />
+                    <Text style={{
+                      fontSize: 12, fontFamily: 'Inter_500Medium',
+                      color: isPlaying ? colors.primary : colors.mutedForeground,
+                    }}>
+                      {isPlaying ? 'Playing…' : 'Preview'}
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => handleUse(v.id)}
+                    style={({ pressed }) => [vdStyles.actionBtn, {
+                      backgroundColor: colors.primary,
+                      borderColor: colors.primary,
+                      flex: 1,
+                      opacity: pressed ? 0.85 : 1,
+                    }]}
+                  >
+                    <Feather name="check" size={13} color={colors.primaryForeground} />
+                    <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: colors.primaryForeground }}>
+                      Use {v.name}
+                    </Text>
+                  </Pressable>
+                </View>
+              </View>
+            );
+          })}
+        </View>
+      )}
+    </View>
+  );
+}
+
 // ── TTS panel ───────────────────────────────────────────────────────────────────
 
 function TTSPanel({
@@ -903,6 +1287,21 @@ function TTSPanel({
   const [loading, setLoading] = useState(false);
   const [resultUri, setResultUri] = useState<string | null>(null);
   const overLimit = text.length > 10_000;
+
+  // Optional Work context for AI narrator recommendations
+  const [works, setWorks] = useState<{ id: string; title: string }[]>([]);
+  const [recWorkId, setRecWorkId] = useState<string | null>(null);
+
+  useEffect(() => {
+    mobileFetch(`${API}/works`)
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        if (d?.works) {
+          setWorks(d.works.map((w: any) => ({ id: w.id, title: w.title ?? 'Untitled' })));
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   const handleSynthesize = async () => {
     if (!text.trim() || overLimit) return;
@@ -962,6 +1361,56 @@ function TTSPanel({
           audio={audio}
           onUseVoice={setVoice}
         />
+        {/* AI narrator recommendations — optional Work context */}
+        {works.length > 0 && (
+          <View style={{ gap: 8 }}>
+            <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: colors.mutedForeground }}>
+              Select a Work for AI narrator picks:
+            </Text>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={{ flexDirection: 'row', gap: 6 }}
+            >
+              {works.map(w => {
+                const active = w.id === recWorkId;
+                return (
+                  <Pressable
+                    key={w.id}
+                    onPress={() => setRecWorkId(active ? null : w.id)}
+                    style={{
+                      paddingHorizontal: 12,
+                      paddingVertical: 7,
+                      borderRadius: 8,
+                      borderWidth: 1,
+                      borderColor: active ? colors.primary : colors.border,
+                      backgroundColor: active ? colors.primary + '22' : 'transparent',
+                      maxWidth: 160,
+                    }}
+                  >
+                    <Text
+                      numberOfLines={1}
+                      style={{
+                        fontSize: 12,
+                        fontFamily: 'Inter_500Medium',
+                        color: active ? colors.primary : colors.mutedForeground,
+                      }}
+                    >
+                      {w.title}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+            <VoiceRecommenderCard
+              workId={recWorkId}
+              workTitle={works.find(w => w.id === recWorkId)?.title}
+              voices={voices}
+              audio={audio}
+              onUseVoice={setVoice}
+            />
+          </View>
+        )}
         <VoiceBrowserCard
           voices={voices}
           selectedId={voice}
@@ -2108,6 +2557,14 @@ function AudiobookPanel({
       {/* Voice selector */}
       <View style={styles.field}>
         <FieldLabel>Narrator voice</FieldLabel>
+        {/* AI narrator recommendations — auto-populates from the selected Work */}
+        <VoiceRecommenderCard
+          workId={workId}
+          workTitle={selectedWork?.title}
+          voices={voices}
+          audio={audio}
+          onUseVoice={setVoice}
+        />
         <VoiceBrowserCard
           voices={voices}
           selectedId={voice}
