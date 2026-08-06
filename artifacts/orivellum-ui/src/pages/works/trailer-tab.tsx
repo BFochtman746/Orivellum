@@ -77,11 +77,12 @@ interface TrailerShot {
   upscale?: string;
 }
 
-// Combined package shape when format="both"
+// Combined package shape when format="both" or "all"
 interface CombinedTrailerPackage {
-  format: "both";
+  format: "both" | "all";
   full: TrailerPackage["package"];
   short: TrailerPackage["package"];
+  square?: TrailerPackage["package"];
   brief: Record<string, unknown>;
   concept: TrailerConcept;
   method: Record<string, unknown>;
@@ -90,7 +91,7 @@ interface CombinedTrailerPackage {
   status_badge: string;
 }
 
-type TrailerFormat = "full" | "short";
+type TrailerFormat = "full" | "short" | "square";
 
 interface TrailerNarrationLine {
   t_start: number;
@@ -781,12 +782,16 @@ function TrailerPackageDetail({ trailer }: { trailer: TrailerPackage }) {
     );
   }
 
-  // Support combined {format:"both", full:{...}, short:{...}} packages
-  const isCombined = (rawPkg as any).format === "both";
+  // Support combined {format:"both"|"all", full:{...}, short:{...}, square?:{...}} packages
+  const combinedFmt: string | undefined = (rawPkg as any).format;
+  const isCombined = combinedFmt === "both" || combinedFmt === "all";
+  const hasSquare  = combinedFmt === "all" && !!(rawPkg as any).square;
   const pkg: any = isCombined
     ? activeFmt === "short"
       ? (rawPkg as any).short
-      : (rawPkg as any).full
+      : activeFmt === "square" && hasSquare
+        ? (rawPkg as any).square
+        : (rawPkg as any).full
     : rawPkg;
 
   // Shots and narration — resolved from the active sub-package
@@ -826,18 +831,21 @@ function TrailerPackageDetail({ trailer }: { trailer: TrailerPackage }) {
 
   return (
     <div className="space-y-4">
-      {/* Format toggle — only shown for combined "both" packages */}
+      {/* Format toggle — only shown for combined "both"/"all" packages */}
       {isCombined && (
         <div className="flex items-center gap-1 p-0.5 rounded-lg bg-muted/50 border border-border/50 w-fit">
           {(
             [
-              { value: "full",  Icon: Monitor,    label: "Full trailer",  sub: "75 s · 16:9" },
-              { value: "short", Icon: Smartphone, label: "Social clip",   sub: "30 s · 9:16" },
+              { value: "full",   Icon: Monitor,    label: "Full trailer", sub: "75 s · 16:9" },
+              { value: "short",  Icon: Smartphone, label: "Social clip",  sub: "30 s · 9:16" },
+              ...(hasSquare
+                ? [{ value: "square" as const, Icon: Layers, label: "Square",      sub: "30 s · 1:1" }]
+                : []),
             ] as const
           ).map(({ value, Icon, label, sub }) => (
             <button
               key={value}
-              onClick={() => setActiveFmt(value)}
+              onClick={() => setActiveFmt(value as TrailerFormat)}
               className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-mono transition-all ${
                 activeFmt === value
                   ? "bg-background border border-border shadow-sm text-foreground"
@@ -869,7 +877,8 @@ function TrailerPackageDetail({ trailer }: { trailer: TrailerPackage }) {
           </span>
           <span className="text-xs font-mono text-muted-foreground">
             {shots.length} shots · ~{duration}s
-            {activeFmt === "short" && <span className="ml-1 text-sky-600">· 9:16</span>}
+            {activeFmt === "short"  && <span className="ml-1 text-sky-600">· 9:16</span>}
+            {activeFmt === "square" && <span className="ml-1 text-violet-600">· 1:1</span>}
           </span>
         </div>
         <Button
@@ -1038,15 +1047,17 @@ function TrailerHistoryRow({ trailer, workId }: { trailer: TrailerListItem; work
 // ─── Main tab ─────────────────────────────────────────────────────────────────
 
 // Format picker labels / icons
-const FORMAT_OPTIONS: { value: TrailerFormat | "both"; Icon: React.FC<{ className?: string }>; label: string; desc: string }[] = [
-  { value: "both",  Icon: Blend,      label: "Full + Social",  desc: "75 s 16:9 & 30 s 9:16" },
-  { value: "full",  Icon: Monitor,    label: "Full trailer",   desc: "75 s · 16:9" },
-  { value: "short", Icon: Smartphone, label: "Social clip",    desc: "30 s · 9:16 Reels/TikTok/Shorts" },
+const FORMAT_OPTIONS: { value: TrailerFormat | "both" | "all"; Icon: React.FC<{ className?: string }>; label: string; desc: string }[] = [
+  { value: "all",    Icon: Blend,      label: "All three",      desc: "16:9 + 9:16 + 1:1 in one job" },
+  { value: "both",   Icon: Blend,      label: "Full + Social",  desc: "75 s 16:9 & 30 s 9:16" },
+  { value: "full",   Icon: Monitor,    label: "Full trailer",   desc: "75 s · 16:9" },
+  { value: "short",  Icon: Smartphone, label: "Social 9:16",    desc: "30 s · 9:16 Reels/TikTok/Shorts" },
+  { value: "square", Icon: Layers,     label: "Square 1:1",     desc: "30 s · 1:1 Instagram Feed/LinkedIn" },
 ];
 
 export function TrailerTab({ workId }: { workId: string }) {
   const queryClient = useQueryClient();
-  const [genFormat, setGenFormat] = useState<"full" | "short" | "both">("both");
+  const [genFormat, setGenFormat] = useState<"full" | "short" | "square" | "both" | "all">("all");
 
   const { data, isLoading } = useQuery<{ trailers: TrailerListItem[]; count: number }>({
     queryKey: ["trailers", workId],

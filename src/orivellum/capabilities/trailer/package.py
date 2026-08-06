@@ -12,6 +12,163 @@ import json
 import datetime
 
 
+def build_square(*, brief: dict, concept: dict, method: dict, plan: dict, validation: dict) -> dict:
+    """Return the square (1:1 768×768) production package dict."""
+    stamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+    status = validation["status"]
+    badge = "READY" if status == "READY" else f"BLOCKED ({validation['critical']} critical)"
+
+    shot_prompts = {}
+    for i, s in enumerate(plan.get("shots", [])):
+        shot_prompts[f"shot_{i:02d}"] = (
+            f"# SHOT {i:02d} — {s.get('beat', '')}  [{s.get('beat_type','').upper()}]\n\n"
+            f"[IMAGE MODEL] {s.get('image_model')}\n"
+            f"[POSITIVE]\n{s.get('image_prompt', '')}\n\n"
+            f"[NEGATIVE]\n{s.get('negative_prompt', '')}\n\n"
+            f"[VIDEO MODEL] {s.get('video_model')} (image-to-video)\n"
+            f"[MOTION]\n{s.get('motion_prompt', '')}\n\n"
+            f"[SETTINGS] {s.get('resolution')} · {s.get('frames')} frames "
+            f"· {s.get('steps')} steps · {s.get('duration')}s\n"
+            f"[SQUARE FRAMING] {s.get('square_framing_note', '')}\n"
+            f"[SEED] {s.get('seed_policy')}\n"
+            f"[UPSCALE] {s.get('upscale')}\n"
+        )
+
+    crop_rule = (plan.get("assembly") or {}).get(
+        "crop_rule",
+        "Centre-third crop: outer 25% all sides cropped — key subject must be in centre 50%.",
+    )
+
+    return {
+        "brief": brief,
+        "concept": concept,
+        "method": method,
+        "plan": plan,
+        "validation": validation,
+        "generated": stamp,
+        "status": status,
+        "status_badge": badge,
+        "format": "square",
+        "aspect_ratio": "1:1",
+        "duration_s": 30,
+        "platform_targets": plan.get("platform_targets",
+                                     ["Instagram Feed", "LinkedIn", "Twitter/X", "Facebook"]),
+        "crop_rule": crop_rule,
+        "docs": {
+            "production_package": _square_master_md(brief, concept, plan, validation, stamp),
+            "book_brief": _brief_md(brief),
+            "concepts": _concepts_md(concept, plan),
+            "method": _method_md(method),
+            "shotlist": _square_shotlist_md(plan),
+            "narration_script": _narration_md(plan),
+            "music_brief": _music_md(plan),
+            "titles": _titles_md(plan),
+            "assembly_sheet": _square_assembly_md(plan, crop_rule),
+        },
+        "shot_prompts": shot_prompts,
+    }
+
+
+def _square_master_md(brief, concept, plan, val, stamp) -> str:
+    status = val["status"]
+    badge = "✅ READY" if status == "READY" else f"⛔ BLOCKED ({val['critical']} critical)"
+    platforms = ", ".join(plan.get("platform_targets",
+                                   ["Instagram Feed", "LinkedIn", "Twitter/X", "Facebook"]))
+    lines = [
+        f"# Square Feed Package — {brief.get('title', '(untitled)')}",
+        "",
+        f"*Generated {stamp} by Trailer Architect. Status: **{badge}***",
+        "",
+        f"**Format.** 30 s · 1:1 square · {platforms}",
+        f"**Logline.** {brief.get('logline', '')}",
+        "",
+        f"**Concept.** {concept.get('name')} — {concept.get('angle')}",
+        "",
+        "## Centre-Crop Rule",
+        "",
+        "Render source at 1280×1280 (or square diagonal of 9:16 source). "
+        "Crop to 768×768 by removing equal margins on all four sides (outer 25%). "
+        "**Key subject must stay inside the centre 50% of the frame both horizontally and vertically.**",
+        "",
+        "## Shots",
+        "",
+    ]
+    for i, s in enumerate(plan.get("shots", [])):
+        lines.append(
+            f"- Shot {i:02d} [{s.get('beat_type','').upper()}] "
+            f"**{s.get('beat','')}** · {s.get('duration')}s · {s.get('resolution')}"
+        )
+    lines += [
+        "",
+        "## Next Step",
+        "",
+        "1. Generate each shot still at 768×768 (1:1 native).",
+        "2. Add auto-captions — bottom 15% safe zone.",
+        "3. Export at 30 fps H.264; master LUFS per ASSEMBLY_SHEET.",
+        "",
+    ]
+    if status != "READY":
+        lines += ["## ⛔ Blocking findings", ""]
+        lines += [f"- **{f['code']}** — {f['msg']}" for f in val["findings"]]
+    return "\n".join(lines)
+
+
+def _square_shotlist_md(plan: dict) -> str:
+    lines = ["# Square Shot List (1:1 · 30 s)", ""]
+    for i, s in enumerate(plan.get("shots", [])):
+        lines += [
+            f"## Shot {i:02d} [{s.get('beat_type','').upper()}] — {s.get('beat', '')}  "
+            f"({s.get('duration', '?')}s)",
+            f"**Description:** {s.get('description', '')}",
+            f"**Square framing:** {s.get('square_framing_note', '')}",
+            f"**Image model:** {s.get('image_model', '?')}  ·  {s.get('resolution')}",
+            f"**Image prompt:** {s.get('image_prompt', '')}",
+            f"**Motion prompt:** {s.get('motion_prompt', '')}",
+            f"**Negative:** {s.get('negative_prompt', '')}",
+            f"**On-screen text:** {s.get('on_screen_text', '')}",
+            "",
+        ]
+    return "\n".join(lines)
+
+
+def _square_assembly_md(plan: dict, crop_rule: str) -> str:
+    a = plan.get("assembly", {})
+    tl = a.get("timeline", {})
+    lines = [
+        "# Assembly Sheet — Square (1:1 / 768×768)",
+        "",
+        "## Centre-Crop Rule",
+        "",
+        crop_rule,
+        "",
+        "## Video track (V1)", "",
+    ]
+    for c in tl.get("V1_video", []):
+        lines.append(f"- Shot {c['shot']:02d} @ {c['in']}s for {c['dur']}s")
+    lines += ["", "## Narration (A1)", ""]
+    for c in tl.get("A1_narration", []):
+        lines.append(f"- {c['t']}s — {c['line']}")
+    duck = (tl.get("A2_music") or [{}])[0].get("duck_under_vo_db", "?")
+    lines += [
+        "", "## Music (A2)",
+        f"- score.wav @ 0s, duck {duck} dB under VO",
+        "",
+        "## Caption Safe Zone",
+        "- Bottom 15% of frame reserved for text overlays",
+        "",
+        "## Transitions", f"- {a.get('transitions', 'hard cut')}",
+        "", "## Audio mix", "",
+    ]
+    for k, v in a.get("audio_mix", {}).items():
+        lines.append(f"- {k}: {v} LUFS")
+    lines += ["", "## Masters", ""]
+    for m in a.get("masters", []):
+        lines.append(f"- {m['aspect']} — {m.get('note', '')}")
+    e = a.get("export", {})
+    lines += ["", "## Export", f"- {e.get('codec')} · {e.get('fps')} fps · {e.get('duration_s')}s"]
+    return "\n".join(lines) + "\n"
+
+
 def build_short(*, brief: dict, concept: dict, method: dict, plan: dict, validation: dict) -> dict:
     """Return the short-form (30 s 9:16) production package dict."""
     stamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -152,6 +309,10 @@ def build(*, brief: dict, concept: dict, method: dict, plan: dict, validation: d
         "generated": stamp,
         "status": status,
         "status_badge": badge,
+        "format": "full",
+        "aspect_ratio": "16:9",
+        "duration_s": plan.get("duration", 75),
+        "platform_targets": ["YouTube", "Vimeo", "Cinema"],
         # Human-readable markdown snippets (for the UI)
         "docs": {
             "production_package": _master_md(brief, concept, method, plan, validation, stamp),

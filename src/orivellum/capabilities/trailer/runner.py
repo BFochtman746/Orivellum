@@ -17,6 +17,7 @@ import traceback
 from . import (
     analyze, concept as concept_mod, method as method_mod,
     plan as plan_mod, plan_short as plan_short_mod,
+    plan_square as plan_square_mod,
     validate, package,
 )
 from .config import build_trailer_config
@@ -25,7 +26,7 @@ from .io_orivellum import book_text_from_work
 
 logger = logging.getLogger(__name__)
 
-VALID_FORMATS = ("full", "short", "both")
+VALID_FORMATS = ("full", "short", "square", "both", "all")
 
 
 def run_trailer_pipeline(
@@ -97,8 +98,9 @@ def run_trailer_pipeline(
 
         full_pkg: dict | None = None
         short_pkg: dict | None = None
+        square_pkg: dict | None = None
 
-        if fmt in ("full", "both"):
+        if fmt in ("full", "both", "all"):
             built_full = plan_mod.run(llm, cfg, brief, chosen, method)
             built_full["_all_concepts"] = cres["concepts"]
             val_full = validate.check(brief, chosen, method, built_full)
@@ -110,7 +112,7 @@ def run_trailer_pipeline(
                 validation=val_full,
             )
 
-        if fmt in ("short", "both"):
+        if fmt in ("short", "both", "all"):
             _update("running", "plan_short")
             built_short = plan_short_mod.run(llm, cfg, brief, chosen, method)
             built_short["_all_concepts"] = cres["concepts"]
@@ -123,6 +125,19 @@ def run_trailer_pipeline(
                 validation=val_short,
             )
 
+        if fmt in ("square", "all"):
+            _update("running", "plan_square")
+            built_square = plan_square_mod.run(llm, cfg, brief, chosen, method)
+            built_square["_all_concepts"] = cres["concepts"]
+            val_square = validate.check(brief, chosen, method, built_square)
+            square_pkg = package.build_square(
+                brief=brief,
+                concept=chosen,
+                method=method,
+                plan=built_square,
+                validation=val_square,
+            )
+
         # ── stage 5/6: package ─────────────────────────────────────────────
         _update("running", "package")
 
@@ -132,8 +147,11 @@ def run_trailer_pipeline(
         elif fmt == "short":
             final_pkg = short_pkg
             val_status = short_pkg["validation"]["status"]  # type: ignore[index]
-        else:
-            # Both — wrap in a combined envelope
+        elif fmt == "square":
+            final_pkg = square_pkg
+            val_status = square_pkg["validation"]["status"]  # type: ignore[index]
+        elif fmt == "both":
+            # Landscape + vertical — backward-compatible envelope
             full_ready  = full_pkg["validation"]["status"] == "READY"   # type: ignore[index]
             short_ready = short_pkg["validation"]["status"] == "READY"  # type: ignore[index]
             val_status  = "READY" if (full_ready and short_ready) else "BLOCKED"
@@ -155,6 +173,34 @@ def run_trailer_pipeline(
                 "status_badge": "READY" if val_status == "READY"
                                 else f"BLOCKED (full={'✅' if full_ready else '⛔'} "
                                      f"short={'✅' if short_ready else '⛔'})",
+            }
+        else:
+            # 'all' — all three formats in one envelope
+            full_ready   = full_pkg["validation"]["status"] == "READY"    # type: ignore[index]
+            short_ready  = short_pkg["validation"]["status"] == "READY"   # type: ignore[index]
+            square_ready = square_pkg["validation"]["status"] == "READY"  # type: ignore[index]
+            val_status   = "READY" if (full_ready and short_ready and square_ready) else "BLOCKED"
+            final_pkg = {
+                "format":       "all",
+                "full":         full_pkg,
+                "short":        short_pkg,
+                "square":       square_pkg,
+                # Shared fields promoted from full package for legacy compatibility
+                "brief":        full_pkg["brief"],        # type: ignore[index]
+                "concept":      full_pkg["concept"],      # type: ignore[index]
+                "method":       full_pkg["method"],       # type: ignore[index]
+                "generated":    full_pkg["generated"],    # type: ignore[index]
+                "docs":         full_pkg["docs"],         # type: ignore[index]
+                "plan":         full_pkg["plan"],         # type: ignore[index]
+                "validation":   full_pkg["validation"],  # type: ignore[index]
+                "shot_prompts": full_pkg["shot_prompts"], # type: ignore[index]
+                "status":       val_status,
+                "status_badge": (
+                    "READY" if val_status == "READY"
+                    else f"BLOCKED (16:9={'✅' if full_ready else '⛔'} "
+                         f"9:16={'✅' if short_ready else '⛔'} "
+                         f"1:1={'✅' if square_ready else '⛔'})"
+                ),
             }
 
         final_status = "ready" if val_status == "READY" else "blocked"

@@ -1408,9 +1408,16 @@ async def evidence_rescore(work_id: str):
 async def create_trailer(
     work_id: str,
     format: str = Query(
-        default="both",
-        description="Package format: 'full' (75 s 16:9), 'short' (30 s 9:16 social), or 'both'.",
-        pattern="^(full|short|both)$",
+        default="all",
+        description=(
+            "Package format: "
+            "'full' (75 s 16:9 landscape), "
+            "'short' (30 s 9:16 social — Reels/TikTok/Shorts), "
+            "'square' (30 s 1:1 — Instagram Feed/LinkedIn), "
+            "'both' (full + short, legacy), or "
+            "'all' (all three formats in one job — default)."
+        ),
+        pattern="^(full|short|square|both|all)$",
     ),
 ):
     """Enqueue a Trailer Architect job for a Work.
@@ -1418,9 +1425,11 @@ async def create_trailer(
     Returns immediately with the new trailer record (status='running').
     The pipeline runs in the background via the thread-pool executor.
 
-    format='full'  → standard 75 s 16:9 landscape package only
-    format='short' → 30 s 9:16 social clip only (Reels/TikTok/Shorts)
-    format='both'  → both packages in one job (default)
+    format='full'   → standard 75 s 16:9 landscape package only
+    format='short'  → 30 s 9:16 social clip only (Reels/TikTok/Shorts)
+    format='square' → 30 s 1:1 square crop (Instagram Feed/LinkedIn/Twitter/X)
+    format='both'   → full + short in one job (legacy; prefer 'all')
+    format='all'    → all three formats in one job (default)
 
     The Work must have at least one document with readiness='ready' and
     non-empty extracted_text so the pipeline has content to analyse.

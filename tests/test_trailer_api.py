@@ -145,6 +145,40 @@ class TrailerEligibilityTests(unittest.TestCase):
             self.assertIn("trailer_id", body)
             self.assertEqual(body["status"], "running")
 
+    def test_format_square_accepted_by_route(self):
+        """format=square must be accepted by the route (not rejected with 422)."""
+        work = self.db.create_work(title="Square Work", work_type="writing")
+        _make_ready_doc(self.db, work["id"])
+        r = self.client.post(f"/api/works/{work['id']}/trailer?format=square")
+        self.assertIn(r.status_code, (200, 500),
+                      f"format=square rejected unexpectedly: {r.status_code} — {r.text[:300]}")
+        if r.status_code == 200:
+            body = r.json()
+            self.assertIn("trailer_id", body)
+            self.assertEqual(body["format"], "square",
+                             "Response must echo back format='square'")
+
+    def test_format_all_accepted_by_route(self):
+        """format=all must be accepted by the route (not rejected with 422)."""
+        work = self.db.create_work(title="All Formats Work", work_type="writing")
+        _make_ready_doc(self.db, work["id"])
+        r = self.client.post(f"/api/works/{work['id']}/trailer?format=all")
+        self.assertIn(r.status_code, (200, 500),
+                      f"format=all rejected unexpectedly: {r.status_code} — {r.text[:300]}")
+        if r.status_code == 200:
+            body = r.json()
+            self.assertIn("trailer_id", body)
+            self.assertEqual(body["format"], "all",
+                             "Response must echo back format='all'")
+
+    def test_invalid_format_rejected_with_422(self):
+        """An unknown format value must be rejected before the pipeline starts."""
+        work = self.db.create_work(title="Bad Format Work", work_type="writing")
+        _make_ready_doc(self.db, work["id"])
+        r = self.client.post(f"/api/works/{work['id']}/trailer?format=widescreen")
+        self.assertEqual(r.status_code, 422,
+                         f"Expected 422 for unknown format, got {r.status_code}")
+
 
 # ---------------------------------------------------------------------------
 # API: list and detail
@@ -474,6 +508,140 @@ class TrailerPipelineSmokeTests(unittest.TestCase):
                 "\n\n\n", text,
                 f"short shot_prompts[{key!r}] contains consecutive blank lines.",
             )
+
+    # ── format=square ──────────────────────────────────────────────────────
+
+    def test_offline_square_pipeline_completes_and_sets_ready(self):
+        """format='square' must reach status='ready' in offline mode."""
+        t = self.db.create_trailer(self.work_id)
+        result = _run_offline(self.db, self.work_id, t["id"], fmt="square")
+        self.assertEqual(result["status"], "ready",
+                         f"Error: {result.get('error')}")
+        pkg = result["_pkg"]
+        self.assertEqual(pkg.get("format"), "square")
+        self.assertEqual(pkg.get("aspect_ratio"), "1:1")
+        self.assertEqual(pkg.get("duration_s"), 30)
+
+    def test_square_plan_exactly_3_shots_with_beat_types_and_resolution(self):
+        """Square offline plan: exactly 3 shots, correct beat_types, 768x768 resolution."""
+        t = self.db.create_trailer(self.work_id)
+        result = _run_offline(self.db, self.work_id, t["id"], fmt="square")
+        pkg = result["_pkg"]
+        shots = pkg.get("plan", {}).get("shots", [])
+
+        self.assertEqual(len(shots), 3,
+                         f"Expected exactly 3 shots, got {len(shots)}")
+        for i, (s, expected_type) in enumerate(zip(shots, ("hook", "peak", "close"))):
+            self.assertEqual(
+                s.get("beat_type"), expected_type,
+                f"Shot {i} beat_type should be '{expected_type}', got {s.get('beat_type')!r}",
+            )
+            self.assertEqual(
+                s.get("resolution"), "768x768",
+                f"Shot {i} resolution must be 768x768 for 1:1 square, got {s.get('resolution')!r}",
+            )
+            self.assertIn("square_framing_note", s,
+                          f"Shot {i} missing square_framing_note")
+            self.assertTrue(s["square_framing_note"],
+                            f"Shot {i} square_framing_note is empty")
+        total_dur = sum(s.get("duration", 0) for s in shots)
+        self.assertEqual(total_dur, 30,
+                         f"Shot durations must sum to 30s, got {total_dur}s")
+
+    def test_square_plan_narration_within_30s(self):
+        """Square offline plan: all narration t_start values must be within [0, 30)."""
+        t = self.db.create_trailer(self.work_id)
+        result = _run_offline(self.db, self.work_id, t["id"], fmt="square")
+        pkg = result["_pkg"]
+        narration = pkg.get("plan", {}).get("narration", [])
+        for ln in narration:
+            t_start = ln.get("t_start", 0)
+            self.assertGreaterEqual(t_start, 0,
+                                    f"Narration t_start {t_start} < 0")
+            self.assertLess(t_start, 30,
+                            f"Narration t_start {t_start} >= 30s clip duration")
+        if narration:
+            self.assertEqual(narration[0]["t_start"], 0,
+                             "First (hook) narration line must be at t=0")
+
+    def test_square_shot_prompts_are_clean_for_comfyui_paste(self):
+        """Square-format (1:1) shot_prompts must be non-empty strings with no
+        consecutive blank lines and must include the [SQUARE FRAMING] section."""
+        t = self.db.create_trailer(self.work_id)
+        result = _run_offline(self.db, self.work_id, t["id"], fmt="square")
+        self.assertEqual(result["status"], "ready",
+                         f"Error: {result.get('error')}")
+        pkg = result["_pkg"]
+
+        shot_prompts: dict = pkg.get("shot_prompts", {})
+        self.assertTrue(shot_prompts,
+                        "Square package must contain at least one shot_prompt entry")
+
+        for key, text in shot_prompts.items():
+            self.assertIsInstance(text, str,
+                                  f"square shot_prompts[{key!r}] must be a string")
+            self.assertTrue(text.strip(),
+                            f"square shot_prompts[{key!r}] must not be empty")
+            self.assertNotIn("] None", text,
+                             f"square shot_prompts[{key!r}] contains a bare 'None'")
+            self.assertNotIn("\n\n\n", text,
+                             f"square shot_prompts[{key!r}] contains consecutive blank lines")
+            self.assertIn("[SQUARE FRAMING]", text,
+                          f"square shot_prompts[{key!r}] missing [SQUARE FRAMING] section")
+
+    def test_square_assembly_has_crop_rule(self):
+        """Square package assembly must include the crop_rule describing the centre-third crop."""
+        t = self.db.create_trailer(self.work_id)
+        result = _run_offline(self.db, self.work_id, t["id"], fmt="square")
+        pkg = result["_pkg"]
+        self.assertIn("crop_rule", pkg,
+                      "Square package must have a top-level crop_rule field")
+        self.assertIn("centre", pkg["crop_rule"].lower(),
+                      "crop_rule must mention centre-crop")
+        self.assertIn("platform_targets", pkg,
+                      "Square package must list platform_targets")
+        targets = pkg["platform_targets"]
+        self.assertTrue(
+            any("Instagram" in t for t in targets),
+            f"platform_targets must include Instagram Feed, got {targets}",
+        )
+
+    # ── format=all (three sub-packages) ────────────────────────────────────
+
+    def test_offline_all_pipeline_completes_with_three_subpackages(self):
+        """format='all' must reach status='ready' and return full, short, and square."""
+        t = self.db.create_trailer(self.work_id)
+        result = _run_offline(self.db, self.work_id, t["id"], fmt="all")
+        self.assertEqual(result["status"], "ready",
+                         f"Error: {result.get('error')}")
+        pkg = result["_pkg"]
+
+        self.assertEqual(pkg.get("format"), "all",
+                         "Top-level 'format' key must be 'all'")
+        self.assertIn("full",   pkg, "Combined 'all' package must have 'full' sub-package")
+        self.assertIn("short",  pkg, "Combined 'all' package must have 'short' sub-package")
+        self.assertIn("square", pkg, "Combined 'all' package must have 'square' sub-package")
+
+        # Each sub-package must carry the right format + aspect_ratio
+        self.assertEqual(pkg["full"].get("aspect_ratio"),   "16:9")
+        self.assertEqual(pkg["short"].get("aspect_ratio"),  "9:16")
+        self.assertEqual(pkg["square"].get("aspect_ratio"), "1:1")
+
+        # Legacy keys promoted to top level
+        for key in ("brief", "concept", "docs", "plan", "validation", "shot_prompts"):
+            self.assertIn(key, pkg, f"Top-level key '{key}' must be promoted from full sub-package")
+
+    def test_all_pipeline_status_badge_covers_three_formats(self):
+        """'all' format status_badge must indicate readiness for all three aspects."""
+        t = self.db.create_trailer(self.work_id)
+        result = _run_offline(self.db, self.work_id, t["id"], fmt="all")
+        pkg = result["_pkg"]
+        badge = pkg.get("status_badge", "")
+        # Either READY (all pass) or BLOCKED with all three indicators
+        if "BLOCKED" in badge:
+            for indicator in ("16:9", "9:16", "1:1"):
+                self.assertIn(indicator, badge,
+                              f"BLOCKED status_badge must mention '{indicator}', got: {badge!r}")
 
     # ── failure path ───────────────────────────────────────────────────────
 
