@@ -1476,6 +1476,10 @@ function useStreamingTTS() {
   const [segCurrent, setSegCurrent] = useState(0);  // 1-based index currently playing
   const [segTotal,   setSegTotal]   = useState(0);  // 0 = unknown yet
   const [errorMsg,   setErrorMsg]   = useState('');
+  // Serve URL of the full audio (concat if multi-segment, single seg otherwise).
+  // Set from the 'done' SSE event's concat_path; falls back to the last segment.
+  // Available when phase === 'done' so the share button can offer the whole reading.
+  const [fullAudioUri, setFullAudioUri] = useState<string | null>(null);
 
   // All mutable playback state lives in refs so closure captures stay fresh.
   const playerRef       = useRef<AudioPlayer | null>(null);
@@ -1571,7 +1575,12 @@ function useStreamingTTS() {
     setPhase('loading');
     setSegCurrent(0);
     setSegTotal(0);
+    setFullAudioUri(null);
     setErrorMsg('');
+
+    // Local variable tracks last successful segment path as a share fallback.
+    // Updated on each 'segment' event; overridden by concat_path in 'done'.
+    let lastSegPath: string | null = null;
 
     const controller = new AbortController();
     abortRef.current = controller;
@@ -1638,6 +1647,7 @@ function useStreamingTTS() {
               // receives a well-formed URL with no bare slashes in the query string
               _enqueueSegment(serveUrl(evt.path), evt.total ?? 0);
               segTotalRef.current = evt.total ?? segTotalRef.current;
+              lastSegPath = evt.path as string; // track for fallback
 
             } else if (evt.type === 'segment_error') {
               segErrorRef.current += 1;
@@ -1651,6 +1661,14 @@ function useStreamingTTS() {
               const okCount  = evt.ok_count  ?? (total - segErrorRef.current);
               const errCount = evt.error_count ?? segErrorRef.current;
               if (mountedRef.current) setSegTotal(total);
+
+              // Resolve the share URI: prefer the server-concatenated file
+              // (present when there are ≥1 successful segments); fall back to
+              // the last individual segment so single-segment TTS always works.
+              const sharePath = (evt.concat_path as string | undefined) ?? lastSegPath;
+              if (sharePath && mountedRef.current) {
+                setFullAudioUri(serveUrl(sharePath));
+              }
 
               if (total > 0 && okCount === 0) {
                 // Every segment failed — report error immediately
@@ -1725,6 +1743,7 @@ function useStreamingTTS() {
       setPhase('idle');
       setSegCurrent(0);
       setSegTotal(0);
+      setFullAudioUri(null);
       setErrorMsg('');
     }
   }
@@ -1734,6 +1753,7 @@ function useStreamingTTS() {
     segCurrent,
     segTotal,
     errorMsg,
+    fullAudioUri,
     startStream,
     stop,
     isActive: phase === 'loading' || phase === 'playing',
@@ -2008,6 +2028,14 @@ function TTSPanel({
               </>
             )}
           </View>
+
+          {/* Share / download button — appears once synthesis is done */}
+          {tts.phase === 'done' && tts.fullAudioUri && (
+            <ShareAudioButton
+              uri={tts.fullAudioUri}
+              name={`tts_${(voices.find(v => v.id === voice)?.name ?? 'audio').toLowerCase()}_${Date.now()}.mp3`}
+            />
+          )}
         </View>
       )}
 

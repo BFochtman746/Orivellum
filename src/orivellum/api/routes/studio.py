@@ -2164,6 +2164,8 @@ async def _stream_tts_events(body: "TTSRequest"):
     total     = len(segments)
     ok_count  = 0
     err_count = 0
+    # Accumulate successful segment paths for the post-loop concat step
+    ok_paths: list[Path] = []
 
     for idx, seg_text in enumerate(segments):
         try:
@@ -2188,6 +2190,7 @@ async def _stream_tts_events(body: "TTSRequest"):
                     "path": str(rel_path), "ok": True,
                 }
                 ok_count += 1
+                ok_paths.append(mp3_path)
             else:
                 event = {
                     "type": "segment_error", "idx": idx, "total": total,
@@ -2203,9 +2206,62 @@ async def _stream_tts_events(body: "TTSRequest"):
             err_count += 1
         yield f"data: {_json.dumps(event)}\n\n"
 
+    # ── Post-loop: concatenate all segments into one shareable MP3 ────────────
+    # When there is only one successful segment the segment path IS the full
+    # audio; when there are two or more, ffmpeg concat merges them seamlessly.
+    # The concat file is registered and linked the same way individual segments
+    # are.  Failure is non-fatal — the client falls back to the last segment.
+    concat_rel: str = ""
+    if ok_paths:
+        if len(ok_paths) == 1:
+            # Single segment — reuse it directly; no ffmpeg needed
+            concat_rel = str(ok_paths[0].relative_to(out_dir))
+        else:
+            try:
+                import tempfile as _tmpmod
+                concat_mp3 = out_dir / f"tts_full_{uuid.uuid4().hex[:8]}.mp3"
+                list_file  = _tmpmod.NamedTemporaryFile(
+                    mode="w", suffix=".txt", delete=False
+                )
+                list_file.write(
+                    "\n".join(f"file '{p}'" for p in ok_paths)
+                )
+                list_file.close()
+                ff = await asyncio.to_thread(
+                    subprocess.run,
+                    ["ffmpeg", "-y", "-f", "concat", "-safe", "0",
+                     "-i", list_file.name,
+                     "-codec:a", "libmp3lame", "-q:a", "2", str(concat_mp3)],
+                    capture_output=True, timeout=180,
+                )
+                Path(list_file.name).unlink(missing_ok=True)
+                if ff.returncode == 0:
+                    # Hard-link before rotation
+                    concat_lib_rel = _link_output_sync(concat_mp3)
+                    full_title = f"TTS narration: {body.text[:60]}"
+                    _gex().submit(
+                        _register_output_bg, concat_mp3,
+                        body.text[:4000], "mp3", full_title,
+                        prelinked_rel=concat_lib_rel,
+                    )
+                    concat_rel = str(concat_mp3.relative_to(out_dir))
+                else:
+                    logger.warning(
+                        "TTS concat ffmpeg failed: %s",
+                        ff.stderr.decode()[:300],
+                    )
+            except Exception as exc:
+                logger.warning("TTS concat failed (non-fatal): %s", exc)
+
     # Rotate after all links are written
     await asyncio.to_thread(_rotate_outputs, out_dir)
-    yield f"data: {_json.dumps({'type': 'done', 'total': total, 'ok_count': ok_count, 'error_count': err_count})}\n\n"
+    done_evt: dict = {
+        "type": "done", "total": total,
+        "ok_count": ok_count, "error_count": err_count,
+    }
+    if concat_rel:
+        done_evt["concat_path"] = concat_rel
+    yield f"data: {_json.dumps(done_evt)}\n\n"
 
 
 # ── Document-to-Audiobook ─────────────────────────────────────────────────────
