@@ -639,6 +639,19 @@ function KnowledgeTabContent({
   );
 }
 
+// ── Processing progress via SSE ───────────────────────────────────────────────
+
+const _PROCESSING_STATES = new Set(["imported", "transcribing"]);
+const _TERMINAL_STATES   = new Set(["ready", "error", "no_text"]);
+
+type ProgressInfo = {
+  stage: string;
+  pct: number;
+  items_found: number;
+  readiness: string;
+  chunk_count: number;
+};
+
 // ── Reprocess helper ──────────────────────────────────────────────────────────
 
 async function reprocessDoc(docId: string): Promise<void> {
@@ -701,13 +714,21 @@ export default function DocumentDetail() {
   }, [ttsAudioUrl]);
   const queryClient = useQueryClient();
 
+  // SSE mode tracks whether the EventSource is active so polling is suppressed
+  // while SSE is delivering live events.  Falls back to 4 s polling when SSE
+  // is unavailable or the connection drops.
+  const [sseMode, setSseMode] = useState<"active" | "fallback" | "off">("off");
+  const [processingProgress, setProcessingProgress] = useState<ProgressInfo | null>(null);
+
   const { data, isLoading, error, refetch } = useGetDocument(docId ?? "", {
     query: {
       queryKey: getGetDocumentQueryKey(docId ?? ""),
-      // Auto-poll every 3 s while the document is still being processed
+      // Poll at 4 s only when SSE is unavailable (fallback mode).
+      // While SSE is active we suppress polling to save bandwidth.
       refetchInterval: (query) => {
         const r = (query.state.data?.document as any)?.readiness;
-        return r === "imported" ? 3_000 : false;
+        if (!r || !_PROCESSING_STATES.has(r)) return false;
+        return sseMode === "fallback" ? 4_000 : false;
       },
     },
   });
@@ -715,6 +736,55 @@ export default function DocumentDetail() {
 
   const doc = data?.document as any;
   const workId = doc?.work_id as string | undefined;
+
+  // ── SSE live-progress connection ─────────────────────────────────────────────
+  // Opens an EventSource when the document is in a processing state.  Emits
+  // live progress events every 500 ms; closes when the document reaches a
+  // terminal state or the 5-minute server-side deadline fires.  Falls back
+  // to 4-second polling (sseMode="fallback") if EventSource is unavailable
+  // or the connection drops — the existing refetchInterval picks this up.
+  useEffect(() => {
+    const readiness = doc?.readiness as string | undefined;
+    if (!docId || !readiness || !_PROCESSING_STATES.has(readiness)) {
+      setProcessingProgress(null);
+      setSseMode("off");
+      return;
+    }
+
+    let es: EventSource | null = null;
+
+    try {
+      if (typeof EventSource === "undefined") throw new Error("No EventSource");
+      es = new EventSource(`${BASE}/library/${docId}/progress`, { withCredentials: true });
+      setSseMode("active");
+
+      es.onmessage = (event) => {
+        try {
+          const evt: ProgressInfo = JSON.parse(event.data);
+          setProcessingProgress(evt);
+          if (_TERMINAL_STATES.has(evt.readiness)) {
+            es?.close();
+            setSseMode("off");
+            refetch();
+          }
+        } catch {
+          // malformed event — ignore
+        }
+      };
+
+      es.onerror = () => {
+        es?.close();
+        setSseMode("fallback");  // activates the 4 s polling refetchInterval
+      };
+    } catch {
+      setSseMode("fallback");
+    }
+
+    return () => {
+      es?.close();
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [docId, doc?.readiness]);
 
   // Resolve work title when this document is linked to a work
   const { data: workData } = useGetWork(workId ?? "", {
@@ -1264,6 +1334,28 @@ export default function DocumentDetail() {
                 </span>
               )}
             </div>
+
+            {/* Live processing progress bar — shown while SSE is delivering events */}
+            {_PROCESSING_STATES.has(readiness) && processingProgress && (
+              <div className="mt-3 space-y-1 max-w-sm">
+                <div className="flex items-center justify-between text-[11px] font-mono text-muted-foreground">
+                  <span className="capitalize">{processingProgress.stage.replace(/_/g, " ")}…</span>
+                  <span>{processingProgress.pct}%</span>
+                </div>
+                <div className="h-1.5 bg-muted rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-primary/70 rounded-full transition-all duration-500 ease-out"
+                    style={{ width: `${processingProgress.pct}%` }}
+                  />
+                </div>
+                {processingProgress.items_found > 0 && (
+                  <p className="text-[10px] text-muted-foreground">
+                    {processingProgress.items_found} knowledge item
+                    {processingProgress.items_found !== 1 ? "s" : ""} found so far
+                  </p>
+                )}
+              </div>
+            )}
           </div>
         </div>
 

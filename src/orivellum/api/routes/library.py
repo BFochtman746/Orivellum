@@ -474,6 +474,113 @@ def library_chunks(doc_id: str):
     return {"chunks": [dict(r) for r in rows], "count": len(rows)}
 
 
+@router.get("/library/{doc_id}/progress")
+def library_doc_progress(doc_id: str):
+    """SSE stream — pushes processing progress events until the document
+    reaches a terminal state (``ready`` / ``error`` / ``no_text``) or the
+    5-minute session timeout expires.
+
+    Event shape::
+
+        data: {"stage": "extracting|chunking|indexing|harvesting|transcribing|complete",
+               "pct": 0-100, "items_found": <knowledge_count>,
+               "readiness": "<current>", "chunk_count": <n>}
+
+    Clients that cannot use SSE or whose connection drops should fall back
+    to the existing 4-second polling on ``GET /api/library/{doc_id}``.
+    """
+    import json as _js
+    import time as _t
+    from fastapi.responses import StreamingResponse as _SR
+
+    db = get_db()
+    if not db.get_document(doc_id):
+        raise HTTPException(404, f"Document {doc_id!r} not found")
+
+    _TERMINAL = frozenset({"ready", "error", "no_text"})
+    _KEEPALIVE_INTERVAL = 10.0   # seconds between keepalive comments
+    _MAX_LIFETIME = 300.0        # 5-minute hard ceiling per stream
+
+    def _stream():
+        deadline = _t.monotonic() + _MAX_LIFETIME
+        last_payload: str | None = None
+        last_keepalive = _t.monotonic()
+
+        while _t.monotonic() < deadline:
+            try:
+                snap = db.get_document(doc_id)
+                if not snap:
+                    break
+
+                readiness: str = snap.get("readiness") or "imported"
+                word_count: int = snap.get("word_count") or 0
+
+                with db._lock:
+                    chunk_count: int = db._conn.execute(
+                        "SELECT COUNT(*) FROM chunks WHERE doc_id=?",
+                        (doc_id,),
+                    ).fetchone()[0]
+                    knowledge_count: int = db._conn.execute(
+                        "SELECT COUNT(*) FROM knowledge WHERE source_doc_id=?",
+                        (doc_id,),
+                    ).fetchone()[0]
+
+                # Map pipeline state to a human-readable stage + percentage.
+                if readiness == "transcribing":
+                    stage, pct = "transcribing", 25
+                elif readiness == "ready":
+                    stage, pct = "complete", 100
+                elif readiness in ("error", "no_text"):
+                    stage, pct = readiness, 0
+                elif word_count == 0 and chunk_count == 0:
+                    stage, pct = "extracting", 10
+                elif chunk_count == 0:
+                    stage, pct = "chunking", 45
+                elif knowledge_count == 0:
+                    stage, pct = "indexing", 70
+                else:
+                    # Knowledge items accumulating: advance 70 → 95 as they grow
+                    stage = "harvesting"
+                    pct = min(95, 70 + knowledge_count)
+
+                payload = _js.dumps({
+                    "stage": stage,
+                    "pct": pct,
+                    "items_found": knowledge_count,
+                    "readiness": readiness,
+                    "chunk_count": chunk_count,
+                })
+
+                now = _t.monotonic()
+                if payload != last_payload:
+                    yield f"data: {payload}\n\n"
+                    last_payload = payload
+                    last_keepalive = now
+                elif now - last_keepalive >= _KEEPALIVE_INTERVAL:
+                    # Keep the TCP connection alive through idle proxy timeouts
+                    yield ": keepalive\n\n"
+                    last_keepalive = now
+
+                if readiness in _TERMINAL:
+                    break
+
+            except Exception:
+                # Never crash the client connection — just stop the stream
+                break
+
+            _t.sleep(0.5)
+
+    return _SR(
+        _stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
+
+
 def _ingest_file(
     db,
     background_tasks: BackgroundTasks,

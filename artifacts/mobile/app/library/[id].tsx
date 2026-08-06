@@ -140,6 +140,9 @@ export default function LibraryDocDetail() {
   const [linkingWork, setLinkingWork] = useState(false);
   const [lifecycleUpdating, setLifecycleUpdating] = useState(false);
   const [reprocessing, setReprocessing] = useState(false);
+  const [processingProgress, setProcessingProgress] = useState<{
+    stage: string; pct: number; items_found: number; chunk_count: number;
+  } | null>(null);
 
   const handleReprocess = async () => {
     setReprocessing(true);
@@ -233,6 +236,92 @@ export default function LibraryDocDetail() {
   const doc = (docData as any)?.document;
   const knowledge = (knData as any)?.knowledge ?? [];
   const works = (worksData as any)?.works ?? [];
+
+  // ── SSE live-progress stream ────────────────────────────────────────────────
+  // Opens a streaming fetch to the /progress SSE endpoint while the document
+  // is in a processing state.  Falls back to 4 s polling when streaming body
+  // is unavailable (older React Native versions) or the connection drops.
+  useEffect(() => {
+    const _PROCESSING = new Set(['imported', 'transcribing']);
+    const _TERMINAL   = new Set(['ready', 'error', 'no_text']);
+    const readiness = doc?.readiness as string | undefined;
+
+    if (!id || !readiness || !_PROCESSING.has(readiness)) {
+      setProcessingProgress(null);
+      return;
+    }
+
+    let aborted = false;
+    let pollTimer: ReturnType<typeof setInterval> | null = null;
+    const controller = new AbortController();
+
+    const startPollingFallback = () => {
+      if (pollTimer) return;
+      pollTimer = setInterval(() => {
+        if (!aborted) refetchDoc().catch(() => {});
+      }, 4_000);
+    };
+
+    (async () => {
+      try {
+        const token = getApiToken();
+        const headers: Record<string, string> = {};
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+
+        const response = await fetch(
+          `https://${domain}/api/library/${id}/progress`,
+          { signal: controller.signal, headers },
+        );
+
+        if (!response.ok || !response.body) {
+          startPollingFallback();
+          return;
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (!aborted) {
+          const { done, value } = await reader.read();
+          if (done || aborted) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() ?? '';
+
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            try {
+              const evt = JSON.parse(line.slice(6));
+              setProcessingProgress({
+                stage:       evt.stage,
+                pct:         evt.pct,
+                items_found: evt.items_found,
+                chunk_count: evt.chunk_count,
+              });
+              if (_TERMINAL.has(evt.readiness)) {
+                reader.cancel();
+                if (!aborted) refetchDoc().catch(() => {});
+                return;
+              }
+            } catch {
+              // malformed event — ignore
+            }
+          }
+        }
+      } catch {
+        if (!aborted) startPollingFallback();
+      }
+    })();
+
+    return () => {
+      aborted = true;
+      controller.abort();
+      if (pollTimer) clearInterval(pollTimer);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, doc?.readiness]);
 
   // Inline title editing
   const [editingTitle, setEditingTitle] = useState(false);
@@ -529,6 +618,33 @@ export default function LibraryDocDetail() {
               {reprocessing ? 'Processing…' : 'Re-extract'}
             </Text>
           </Pressable>
+        )}
+
+        {/* Live processing progress bar — shown while SSE events are arriving */}
+        {(doc.readiness === 'imported' || doc.readiness === 'transcribing') && processingProgress && (
+          <View style={{ marginTop: 10, marginBottom: 2 }}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
+              <Text style={{ fontSize: 11, fontFamily: 'Inter_500Medium', color: colors.mutedForeground, textTransform: 'capitalize' }}>
+                {processingProgress.stage.replace(/_/g, ' ')}…
+              </Text>
+              <Text style={{ fontSize: 11, fontFamily: 'Inter_500Medium', color: colors.mutedForeground }}>
+                {processingProgress.pct}%
+              </Text>
+            </View>
+            <View style={{ height: 4, backgroundColor: colors.muted, borderRadius: 2, overflow: 'hidden' }}>
+              <View style={{
+                height: '100%',
+                width: `${processingProgress.pct}%`,
+                backgroundColor: colors.primary,
+                borderRadius: 2,
+              }} />
+            </View>
+            {processingProgress.items_found > 0 && (
+              <Text style={{ fontSize: 10, color: colors.mutedForeground, marginTop: 3 }}>
+                {processingProgress.items_found} knowledge item{processingProgress.items_found !== 1 ? 's' : ''} found
+              </Text>
+            )}
+          </View>
         )}
 
         {/* Lifecycle picker row */}
