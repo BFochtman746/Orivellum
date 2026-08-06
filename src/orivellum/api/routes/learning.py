@@ -112,6 +112,44 @@ def learning_reset_concept(work_id: str, concept_id: str):
     return {"reset": deleted, "concept_id": concept_id, "scope": "concept"}
 
 
+@router.get("/works/{work_id}/learning/graph")
+def learning_graph(work_id: str):
+    """Return the prerequisite dependency graph as {nodes, edges} for UI rendering.
+
+    Nodes contain mastery state, graph metadata (prereqs_met, blocking_count, prereq_ids).
+    Edges encode prerequisite relationships: source requires target to be started first.
+    """
+    db = get_db()
+    if not db.get_work(work_id):
+        raise HTTPException(404, f"Work {work_id!r} not found")
+    from orivellum.capabilities.learning import list_concepts
+    concepts = list_concepts(db, work_id)
+
+    nodes = [
+        {
+            "id":                 c["id"],
+            "subject":            c["subject"],
+            "description":        c.get("description") or "",
+            "graduated":          c["graduated"],
+            "consecutive_passes": c["consecutive_passes"],
+            "prereqs_met":        c.get("prereqs_met", True),
+            "prereq_ids":         c.get("prereq_ids", []),
+            "prereq_labels":      c.get("prereq_labels", []),
+            "blocking_count":     c.get("blocking_count", 0),
+            "is_due":             c.get("is_due", False),
+            "half_life_days":     c.get("half_life_days", 1.0),
+        }
+        for c in concepts
+    ]
+    edges = [
+        {"source": c["id"], "target": pid, "type": "requires"}
+        for c in concepts
+        for pid in c.get("prereq_ids", [])
+    ]
+    return {"nodes": nodes, "edges": edges,
+            "node_count": len(nodes), "edge_count": len(edges)}
+
+
 @router.get("/works/{work_id}/learning/due")
 def learning_due(work_id: str):
     """Return concepts with next_review_at <= now, sorted by urgency (most overdue first).
@@ -154,7 +192,35 @@ async def learning_assess(work_id: str, body: AssessBody):
     if result["route"] == "STEP_FORWARD":
         result["next_concept_id"] = next_concept_id(db, work_id)
     elif result["route"] == "STEP_BACKWARD":
-        result["next_concept_id"] = concept_row["prereq_id"] or body.concept_id
+        # Pick the weakest-mastery prerequisite using the latest mastery row per prereq.
+        # Window-function ranking by created_at matches list_concepts semantics: a reset
+        # streak (fail after high passes) is reflected correctly because we read the most
+        # recent record, not the historical maximum.
+        from orivellum.capabilities.learning import get_prereq_ids
+        prereq_ids = get_prereq_ids(db, body.concept_id)
+        if prereq_ids:
+            _ph = ",".join("?" * len(prereq_ids))
+            with db._lock:
+                _rows = db._conn.execute(
+                    f"""WITH ranked AS (
+                            SELECT concept_id,
+                                   consecutive_passes,
+                                   ROW_NUMBER() OVER (
+                                       PARTITION BY concept_id
+                                       ORDER BY created_at DESC, rowid DESC
+                                   ) AS rn
+                            FROM work_mastery
+                            WHERE concept_id IN ({_ph})
+                        )
+                        SELECT concept_id, consecutive_passes
+                        FROM ranked WHERE rn = 1""",
+                    tuple(prereq_ids),
+                ).fetchall()
+            _passes = {r["concept_id"]: r["consecutive_passes"] for r in _rows}
+            # Concepts absent from work_mastery have 0 passes — pick the weakest
+            result["next_concept_id"] = min(prereq_ids, key=lambda pid: _passes.get(pid, 0))
+        else:
+            result["next_concept_id"] = concept_row["prereq_id"] or body.concept_id
     else:
         result["next_concept_id"] = body.concept_id
     return result

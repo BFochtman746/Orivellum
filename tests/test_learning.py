@@ -53,8 +53,21 @@ def _make_db():
             score REAL NOT NULL DEFAULT 0,
             consecutive_passes INTEGER NOT NULL DEFAULT 0,
             brief_feedback TEXT, routed_to TEXT,
-            created_at TEXT NOT NULL
+            created_at TEXT NOT NULL,
+            -- v93 HLR columns
+            last_reviewed_at TEXT,
+            next_review_at TEXT,
+            half_life_days REAL NOT NULL DEFAULT 1.0,
+            review_session_count INTEGER NOT NULL DEFAULT 0
         );
+        -- v94 multi-prerequisite graph
+        CREATE TABLE IF NOT EXISTS work_concept_prereqs (
+            concept_id TEXT NOT NULL REFERENCES work_concepts(id) ON DELETE CASCADE,
+            prereq_id  TEXT NOT NULL REFERENCES work_concepts(id) ON DELETE CASCADE,
+            PRIMARY KEY (concept_id, prereq_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_wcp_concept  ON work_concept_prereqs(concept_id);
+        CREATE INDEX IF NOT EXISTS idx_wcp_prereq   ON work_concept_prereqs(prereq_id);
         -- Legacy Projects tables must coexist without conflict
         CREATE TABLE learning_concepts (
             id TEXT PRIMARY KEY, work_id TEXT,
@@ -110,6 +123,14 @@ class _FakeDB:
     def get_work(self, work_id: str):
         row = self._conn.execute("SELECT * FROM works WHERE id=?", (work_id,)).fetchone()
         return dict(row) if row else None
+
+    def _insert_prereq(self, concept_id: str, prereq_id: str) -> None:
+        """Insert a row into work_concept_prereqs to register a prerequisite edge."""
+        self._conn.execute(
+            "INSERT OR IGNORE INTO work_concept_prereqs(concept_id, prereq_id) VALUES(?,?)",
+            (concept_id, prereq_id),
+        )
+        self._conn.commit()
 
     def _insert_legacy_concept(self, name="LegacyConcept") -> str:
         """Insert a Projects-system concept — must survive all migrations."""
@@ -374,3 +395,222 @@ class TestAssessAnswerJsonRobustness:
         # Either parses correctly or falls back gracefully — both acceptable
         assert 0.0 <= result["score"] <= 1.0
         assert result["route"] in ("STEP_FORWARD", "STEP_BACKWARD", "STAY_HERE")
+
+
+# ─── Multi-prerequisite graph tests ───────────────────────────────────────────
+
+class TestPrereqGraph:
+    """Verify the v94 multi-prerequisite dependency graph helpers."""
+
+    def test_get_prereq_ids_empty_for_root_concept(self):
+        """A concept with no prerequisites must return an empty list."""
+        from orivellum.capabilities.learning import get_prereq_ids
+
+        db = _FakeDB()
+        wid = db._insert_work()
+        cid = db._insert_concept(wid, "Calculus")
+
+        assert get_prereq_ids(db, cid) == []
+
+    def test_get_prereq_ids_returns_all_linked_prereqs(self):
+        """get_prereq_ids must return all prerequisite concept IDs for a concept."""
+        from orivellum.capabilities.learning import get_prereq_ids
+
+        db = _FakeDB()
+        wid = db._insert_work()
+        algebra  = db._insert_concept(wid, "Algebra")
+        trig     = db._insert_concept(wid, "Trigonometry")
+        calculus = db._insert_concept(wid, "Calculus")
+
+        db._insert_prereq(calculus, algebra)
+        db._insert_prereq(calculus, trig)
+
+        prereqs = get_prereq_ids(db, calculus)
+        assert set(prereqs) == {algebra, trig}
+
+    def test_is_concept_eligible_true_for_root(self):
+        """A concept with no prerequisites must be eligible to study."""
+        from orivellum.capabilities.learning import is_concept_eligible
+
+        db = _FakeDB()
+        wid = db._insert_work()
+        cid = db._insert_concept(wid, "Algebra")
+
+        assert is_concept_eligible(db, cid) is True
+
+    def test_is_concept_eligible_false_when_prereq_not_started(self):
+        """A concept must be ineligible when its prerequisite has zero passes."""
+        from orivellum.capabilities.learning import is_concept_eligible
+
+        db = _FakeDB()
+        wid      = db._insert_work()
+        algebra  = db._insert_concept(wid, "Algebra")
+        calculus = db._insert_concept(wid, "Calculus")
+        db._insert_prereq(calculus, algebra)
+
+        # Algebra has zero passes — Calculus must be locked
+        assert is_concept_eligible(db, calculus) is False
+
+    def test_is_concept_eligible_true_when_all_prereqs_started(self):
+        """A concept must be eligible when all prerequisites have at least one pass."""
+        from orivellum.capabilities.learning import is_concept_eligible, _record_mastery
+
+        db = _FakeDB()
+        wid      = db._insert_work()
+        algebra  = db._insert_concept(wid, "Algebra")
+        trig     = db._insert_concept(wid, "Trigonometry")
+        calculus = db._insert_concept(wid, "Calculus")
+        db._insert_prereq(calculus, algebra)
+        db._insert_prereq(calculus, trig)
+
+        # Start both prerequisites
+        _record_mastery(db, algebra, 0.8, "STAY_HERE", "Good")
+        _record_mastery(db, trig,    0.8, "STAY_HERE", "Good")
+
+        assert is_concept_eligible(db, calculus) is True
+
+    def test_is_concept_eligible_false_when_only_one_prereq_started(self):
+        """A concept must be ineligible when at least one prerequisite has zero passes."""
+        from orivellum.capabilities.learning import is_concept_eligible, _record_mastery
+
+        db = _FakeDB()
+        wid      = db._insert_work()
+        algebra  = db._insert_concept(wid, "Algebra")
+        trig     = db._insert_concept(wid, "Trigonometry")
+        calculus = db._insert_concept(wid, "Calculus")
+        db._insert_prereq(calculus, algebra)
+        db._insert_prereq(calculus, trig)
+
+        # Only algebra started — trig still at zero
+        _record_mastery(db, algebra, 0.9, "STAY_HERE", "Good")
+
+        assert is_concept_eligible(db, calculus) is False
+
+    def test_get_blocking_concepts_returns_dependents(self):
+        """get_blocking_concepts must return the IDs of concepts that depend on a given concept."""
+        from orivellum.capabilities.learning import get_blocking_concepts
+
+        db = _FakeDB()
+        wid      = db._insert_work()
+        algebra  = db._insert_concept(wid, "Algebra")
+        calculus = db._insert_concept(wid, "Calculus")
+        diffeq   = db._insert_concept(wid, "Differential Equations")
+        db._insert_prereq(calculus, algebra)
+        db._insert_prereq(diffeq, algebra)
+
+        blockers = get_blocking_concepts(db, algebra)
+        assert set(blockers) == {calculus, diffeq}
+
+    def test_list_concepts_includes_graph_fields(self):
+        """list_concepts must annotate each concept with prereq_ids, prereq_labels, prereqs_met, blocking_count."""
+        from orivellum.capabilities.learning import list_concepts, _record_mastery
+
+        db = _FakeDB()
+        wid      = db._insert_work()
+        algebra  = db._insert_concept(wid, "Algebra")
+        calculus = db._insert_concept(wid, "Calculus")
+        db._insert_prereq(calculus, algebra)
+
+        # Initially calculus is locked
+        concepts = {c["id"]: c for c in list_concepts(db, wid)}
+        assert concepts[algebra]["prereq_ids"]    == []
+        assert concepts[algebra]["prereqs_met"]   is True
+        assert concepts[algebra]["blocking_count"] == 1       # calculus depends on it
+        assert concepts[calculus]["prereq_ids"]   == [algebra]
+        assert concepts[calculus]["prereq_labels"] == ["Algebra"]
+        assert concepts[calculus]["prereqs_met"]  is False
+
+        # Start algebra — calculus should become eligible
+        _record_mastery(db, algebra, 0.8, "STAY_HERE", "Good")
+        concepts2 = {c["id"]: c for c in list_concepts(db, wid)}
+        assert concepts2[calculus]["prereqs_met"] is True
+
+    def test_next_concept_id_prefers_eligible_over_locked(self):
+        """next_concept_id must pick an eligible root concept before a locked one."""
+        from orivellum.capabilities.learning import next_concept_id
+
+        db = _FakeDB()
+        wid      = db._insert_work()
+        algebra  = db._insert_concept(wid, "Algebra")
+        calculus = db._insert_concept(wid, "Calculus")
+        db._insert_prereq(calculus, algebra)
+
+        # Algebra is the only eligible concept (calculus is locked)
+        chosen = next_concept_id(db, wid)
+        assert chosen == algebra, "next_concept_id must pick the eligible root concept first"
+
+    def test_next_concept_id_fallback_when_all_locked(self):
+        """next_concept_id must still return a concept when every concept is locked (circular guard)."""
+        from orivellum.capabilities.learning import next_concept_id
+
+        db = _FakeDB()
+        wid = db._insert_work()
+        a   = db._insert_concept(wid, "A")
+        b   = db._insert_concept(wid, "B")
+        # Artificial circular / all-locked scenario
+        db._insert_prereq(a, b)
+        db._insert_prereq(b, a)
+
+        # Must not return None despite both concepts being locked
+        chosen = next_concept_id(db, wid)
+        assert chosen in (a, b), "fallback pool must always yield a concept"
+
+    def test_list_concepts_uses_bulk_queries_no_n_plus_one(self):
+        """list_concepts must load N concepts in O(1) queries, not O(N).
+
+        We verify this by wrapping the DB's _conn in a counting proxy and asserting
+        that the total number of work_mastery / prereq-table reads is bounded by a
+        small constant (3) regardless of the number of concepts.
+        """
+        from orivellum.capabilities.learning import list_concepts
+        import sqlite3
+
+        db = _FakeDB()
+        wid = db._insert_work()
+        for i in range(10):
+            db._insert_concept(wid, f"Concept {i}")
+
+        query_count = 0
+
+        class _CountingConn:
+            """Thin proxy that counts hot-path execute() calls."""
+            def __init__(self, conn: sqlite3.Connection):
+                object.__setattr__(self, "_conn", conn)
+
+            def __getattr__(self, name):
+                return getattr(object.__getattribute__(self, "_conn"), name)
+
+            def execute(self, sql, params=()):
+                nonlocal query_count
+                if "work_mastery" in sql or "work_concept_prereqs" in sql:
+                    query_count += 1
+                return object.__getattribute__(self, "_conn").execute(sql, params)
+
+        # Swap in the proxy for the duration of this test
+        real_conn = db._conn
+        db._conn = _CountingConn(real_conn)
+        try:
+            list_concepts(db, wid)
+        finally:
+            db._conn = real_conn  # restore
+
+        # Expect at most 3 queries regardless of N (mastery CTE + prereqs + blocking)
+        assert query_count <= 3, (
+            f"list_concepts must be O(1) queries; got {query_count} queries for 10 concepts"
+        )
+
+    def test_compute_route_step_backward_picks_weakest_prereq(self):
+        """_compute_route must suggest STEP_BACKWARD when any prerequisite is unmastered."""
+        from orivellum.capabilities.learning import _compute_route, _record_mastery
+
+        db = _FakeDB()
+        wid      = db._insert_work()
+        algebra  = db._insert_concept(wid, "Algebra")
+        calculus = db._insert_concept(wid, "Calculus")
+        db._insert_prereq(calculus, algebra)
+
+        # Calculus fails — algebra not mastered yet (0 passes)
+        route = _compute_route(db, calculus, score=0.2)
+        assert route == "STEP_BACKWARD", (
+            "failing a concept with an unmastered prerequisite must route backward"
+        )

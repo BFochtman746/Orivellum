@@ -2662,14 +2662,15 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
             </Text>
             {concepts.map((c: any) => {
               // Mastery tier
-              const passes = c.consecutive_passes ?? 0;
-              const isDue  = c.is_due && c.graduated; // overdue spaced-repetition review
+              const passes   = c.consecutive_passes ?? 0;
+              const isDue    = c.is_due && c.graduated; // overdue spaced-repetition review
+              const isLocked = !c.prereqs_met && !c.graduated; // prerequisites not yet started
               const tier: 'graduated' | 'in_progress' | 'not_started' =
                 c.graduated ? 'graduated' : passes > 0 ? 'in_progress' : 'not_started';
-              const tierLabel = isDue ? 'Due' : tier === 'graduated' ? 'Graduated' : tier === 'in_progress' ? 'In progress' : 'Not started';
-              const tierCol   = isDue ? '#d97706' : tier === 'graduated' ? '#16a34a' : tier === 'in_progress' ? colors.primary : colors.mutedForeground;
-              const tierBg    = isDue ? '#fef3c7' : tier === 'graduated' ? '#16a34a18' : tier === 'in_progress' ? colors.primary + '18' : colors.muted;
-              const borderCol = isDue ? '#fbbf2455' : tier === 'graduated' ? '#16a34a44' : tier === 'in_progress' ? colors.primary + '33' : colors.border;
+              const tierLabel = isDue ? 'Due' : isLocked ? 'Locked' : tier === 'graduated' ? 'Graduated' : tier === 'in_progress' ? 'In progress' : 'Not started';
+              const tierCol   = isDue ? '#d97706' : isLocked ? colors.mutedForeground : tier === 'graduated' ? '#16a34a' : tier === 'in_progress' ? colors.primary : colors.mutedForeground;
+              const tierBg    = isDue ? '#fef3c7' : isLocked ? colors.muted : tier === 'graduated' ? '#16a34a18' : tier === 'in_progress' ? colors.primary + '18' : colors.muted;
+              const borderCol = isDue ? '#fbbf2455' : isLocked ? colors.border : tier === 'graduated' ? '#16a34a44' : tier === 'in_progress' ? colors.primary + '33' : colors.border;
               const barPct    = tier === 'graduated' ? 100 : Math.min(99, Math.round((passes / 3) * 100));
 
               // Last-practised label
@@ -2687,7 +2688,28 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
               return (
                 <Pressable
                   key={c.id}
-                  onPress={() => focusOnConcept(c.id)}
+                  onPress={() => {
+                    if (isLocked) {
+                      // Show which prerequisites need to be completed first
+                      const labels: string[] = c.prereq_labels ?? [];
+                      Alert.alert(
+                        '🔒 Prerequisites needed',
+                        labels.length > 0
+                          ? `Complete these first to unlock "${c.subject}":\n\n${labels.map((l: string) => `• ${l}`).join('\n')}`
+                          : `Complete your prerequisites before studying "${c.subject}".`,
+                        [
+                          { text: 'OK', style: 'default' },
+                          {
+                            text: 'Study anyway',
+                            style: 'destructive',
+                            onPress: () => focusOnConcept(c.id),
+                          },
+                        ],
+                      );
+                      return;
+                    }
+                    focusOnConcept(c.id);
+                  }}
                   onLongPress={() => {
                     const hasProgress = (c.consecutive_passes ?? 0) > 0 || c.graduated;
                     if (!hasProgress) return;
@@ -2707,11 +2729,11 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
                   {/* Header row: icon + subject + tier badge + chevron */}
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                     <Feather
-                      name={isDue ? 'clock' : tier === 'graduated' ? 'award' : tier === 'in_progress' ? 'trending-up' : 'circle'}
+                      name={isDue ? 'clock' : isLocked ? 'lock' : tier === 'graduated' ? 'award' : tier === 'in_progress' ? 'trending-up' : 'circle'}
                       size={14}
                       color={tierCol}
                     />
-                    <Text style={{ flex: 1, fontSize: 14, fontFamily: 'Inter_600SemiBold', color: colors.foreground }} numberOfLines={1}>
+                    <Text style={{ flex: 1, fontSize: 14, fontFamily: 'Inter_600SemiBold', color: isLocked ? colors.mutedForeground : colors.foreground }} numberOfLines={1}>
                       {c.subject}
                     </Text>
                     <View style={{ paddingHorizontal: 7, paddingVertical: 2, borderRadius: 8, backgroundColor: tierBg }}>
@@ -2722,8 +2744,12 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
                     <Feather name="chevron-right" size={13} color={colors.mutedForeground} />
                   </View>
 
-                  {/* Description */}
-                  {c.description ? (
+                  {/* Description or locked-prereq notice */}
+                  {isLocked && (c.prereq_labels ?? []).length > 0 ? (
+                    <Text style={{ fontSize: 11, color: colors.mutedForeground, marginLeft: 22, marginTop: 4, fontStyle: 'italic' }} numberOfLines={2}>
+                      Requires: {(c.prereq_labels as string[]).join(', ')}
+                    </Text>
+                  ) : c.description ? (
                     <Text style={{ fontSize: 12, color: colors.mutedForeground, marginLeft: 22, marginTop: 4 }} numberOfLines={2}>
                       {c.description}
                     </Text>

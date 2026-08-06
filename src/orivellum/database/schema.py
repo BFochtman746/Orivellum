@@ -1568,4 +1568,24 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         UPDATE work_mastery SET last_reviewed_at = created_at WHERE last_reviewed_at IS NULL;
         CREATE INDEX IF NOT EXISTS work_mastery_next_review ON work_mastery(next_review_at);
     """),
+
+    # v94 — Many-to-many prerequisite graph for learning concepts.
+    # Replaces the single work_concepts.prereq_id with a join table so a concept
+    # can require multiple prerequisites.  The old column is preserved for
+    # backward-compatibility but the new table is the authoritative source.
+    # Backfill uses a same-Work JOIN so cross-Work prereq_id values are excluded.
+    (94, "Add work_concept_prereqs join table for multi-prerequisite graph", """
+        CREATE TABLE IF NOT EXISTS work_concept_prereqs (
+            concept_id TEXT NOT NULL REFERENCES work_concepts(id) ON DELETE CASCADE,
+            prereq_id  TEXT NOT NULL REFERENCES work_concepts(id) ON DELETE CASCADE,
+            PRIMARY KEY (concept_id, prereq_id)
+        );
+        CREATE INDEX IF NOT EXISTS wcp_concept ON work_concept_prereqs(concept_id);
+        CREATE INDEX IF NOT EXISTS wcp_prereq  ON work_concept_prereqs(prereq_id);
+        INSERT OR IGNORE INTO work_concept_prereqs(concept_id, prereq_id)
+            SELECT c.id, c.prereq_id
+            FROM work_concepts c
+            JOIN work_concepts p ON p.id = c.prereq_id AND p.work_id = c.work_id
+            WHERE c.prereq_id IS NOT NULL;
+    """),
 ]

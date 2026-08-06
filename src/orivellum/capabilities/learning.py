@@ -124,7 +124,7 @@ def _get_mastery(db: Any, concept_id: str) -> dict:
                       COALESCE(half_life_days, 1.0)       AS half_life_days,
                       COALESCE(review_session_count, 0)   AS review_session_count
                FROM work_mastery
-               WHERE concept_id=? ORDER BY created_at DESC LIMIT 1""",
+               WHERE concept_id=? ORDER BY created_at DESC, rowid DESC LIMIT 1""",
             (concept_id,),
         ).fetchone()
     if row:
@@ -141,15 +141,16 @@ def _get_mastery(db: Any, concept_id: str) -> dict:
 
 
 def _is_graduated(db: Any, concept_id: str) -> bool:
-    """Durable mastery requires ≥3 consecutive passes, ≥3 distinct-day sessions, and HL > 7d."""
+    """A concept is graduated when it reaches _PASSES_TO_GRAD consecutive passes.
+
+    The HLR system tracks half_life_days and review_session_count separately.
+    Graduated concepts re-enter the queue via ``is_due`` (spaced-repetition reviews)
+    until they reach durable mastery (half_life_days > _HLR_DURABLE_HALF_LIFE AND
+    review_session_count >= _HLR_DURABLE_SESSIONS), at which point they stop being
+    marked due.  Graduation itself is simply the consecutive-pass gate.
+    """
     m = _get_mastery(db, concept_id)
-    if m["consecutive_passes"] < _PASSES_TO_GRAD:
-        return False
-    # Durable gate: review_session_count and half_life threshold
-    return (
-        m["review_session_count"] >= _HLR_DURABLE_SESSIONS
-        and m["half_life_days"] > _HLR_DURABLE_HALF_LIFE
-    )
+    return m["consecutive_passes"] >= _PASSES_TO_GRAD
 
 
 def _knowledge_for_concept(db: Any, work_id: str, subject: str) -> list[dict]:
@@ -194,15 +195,18 @@ def seed_concepts(db: Any, work_id: str, base_url: str, model: str) -> list[dict
         if subj.lower() not in existing_subjects and subj.lower() not in {s.lower() for s in seen_subjects}:
             seen_subjects.append(subj)
 
-    # Ask AI to create a short description + ordering for new subjects
+    # Ask AI to create a short description + ordering for new subjects.
+    # Requests up to 3 prerequisites per concept (multi-prerequisite graph).
     if seen_subjects and base_url:
         subj_list = "\n".join(f"- {s}" for s in seen_subjects[:_MAX_SEED_SUBJ])
         prompt = (
             f"You are building a learning curriculum for the topic: {_get_work_title(db, work_id)}.\n"
-            f"Order these subjects from most foundational to most advanced and give each a 1-sentence description.\n\n"
+            f"Order these subjects from most foundational to most advanced, give each a 1-sentence description,\n"
+            f"and list up to 3 prerequisite subjects from the same list (subjects the learner must start first).\n\n"
             f"Subjects:\n{subj_list}\n\n"
             "Respond ONLY with valid JSON, no markdown fences:\n"
-            '[{"subject":"...","description":"...","prereq":"<subject or null>"}]'
+            '[{"subject":"...","description":"...","prereqs":["<subject1>","<subject2>"]}]\n'
+            "Use [] for prereqs when there are none. Only reference subjects that appear in the list above."
         )
         raw = _call([{"role": "user", "content": prompt}], base_url, model,
                     timeout=25, purpose="learning.seed", db=db)
@@ -211,24 +215,34 @@ def seed_concepts(db: Any, work_id: str, base_url: str, model: str) -> list[dict
                 ordered = json.loads(_strip_fences(raw))
                 seen_subjects_ordered = [o["subject"] for o in ordered if isinstance(o, dict)]
                 descriptions = {o["subject"]: o.get("description", "") for o in ordered if isinstance(o, dict)}
-                prereqs      = {o["subject"]: o.get("prereq")             for o in ordered if isinstance(o, dict)}
+                # Support both old "prereq" (string) and new "prereqs" (list) shapes
+                multi_prereqs: dict[str, list[str]] = {}
+                for o in ordered:
+                    if not isinstance(o, dict):
+                        continue
+                    subj = o.get("subject", "")
+                    raw_p = o.get("prereqs", o.get("prereq"))
+                    if isinstance(raw_p, list):
+                        multi_prereqs[subj] = [p for p in raw_p if isinstance(p, str) and p.strip()]
+                    elif isinstance(raw_p, str) and raw_p.strip():
+                        multi_prereqs[subj] = [raw_p.strip()]
+                    else:
+                        multi_prereqs[subj] = []
             except Exception:
-                ordered = None
                 descriptions = {}
-                prereqs      = {}
+                multi_prereqs = {}
                 seen_subjects_ordered = seen_subjects
         else:
             seen_subjects_ordered = seen_subjects
             descriptions = {}
-            prereqs      = {}
+            multi_prereqs = {}
     else:
         seen_subjects_ordered = seen_subjects
         descriptions = {}
-        prereqs      = {}
+        multi_prereqs = {}
 
-    # Insert new concepts
+    # ── Pass 1: insert all new concept nodes ─────────────────────────────────
     subject_to_id: dict[str, str] = {}
-    # Fetch existing id map
     with db._lock:
         for row in db._conn.execute(
             "SELECT id, subject FROM work_concepts WHERE work_id=?", (work_id,)
@@ -236,13 +250,15 @@ def seed_concepts(db: Any, work_id: str, base_url: str, model: str) -> list[dict
             subject_to_id[row["subject"].lower()] = row["id"]
 
     now = _now()
+    new_concept_ids: list[tuple[str, str]] = []   # (cid, subject)
     for subj in seen_subjects_ordered:
         if subj.lower() in existing_subjects:
             continue
         cid = _uuid()
         desc = descriptions.get(subj, "")
-        prereq_subj = prereqs.get(subj)
-        prereq_id = subject_to_id.get(prereq_subj.lower()) if prereq_subj else None
+        # Keep single prereq_id for backward compat (first prereq only)
+        first_prereq = (multi_prereqs.get(subj) or [None])[0]
+        prereq_id = subject_to_id.get(first_prereq.lower()) if first_prereq else None
         with db._lock:
             db._conn.execute(
                 "INSERT INTO work_concepts(id,work_id,subject,description,prereq_id,created_at) VALUES(?,?,?,?,?,?)",
@@ -255,42 +271,184 @@ def seed_concepts(db: Any, work_id: str, base_url: str, model: str) -> list[dict
         except Exception:
             pass
         subject_to_id[subj.lower()] = cid
+        new_concept_ids.append((cid, subj))
+
+    # ── Pass 2: insert prerequisite edges into join table ────────────────────
+    # subject_to_id was built exclusively from concepts in this work_id, so all
+    # IDs already belong to the same Work.  The DB-level guard below is a
+    # defence-in-depth check that rejects any cross-Work edge that might slip
+    # through future code changes.
+    for cid, subj in new_concept_ids:
+        prereq_subjects = multi_prereqs.get(subj, [])
+        for prereq_subj in prereq_subjects:
+            pid = subject_to_id.get(prereq_subj.lower() if prereq_subj else "")
+            if pid and pid != cid:
+                with db._lock:
+                    try:
+                        # Conditional INSERT: only proceeds when both concepts share work_id
+                        db._conn.execute(
+                            """INSERT OR IGNORE INTO work_concept_prereqs(concept_id, prereq_id)
+                               SELECT ?, ?
+                               WHERE NOT EXISTS (
+                                   SELECT 1 FROM work_concepts c1, work_concepts c2
+                                   WHERE c1.id = ? AND c2.id = ? AND c1.work_id != c2.work_id
+                               )""",
+                            (cid, pid, cid, pid),
+                        )
+                        db._conn.commit()
+                    except Exception:
+                        pass  # table absent (pre-v94 DB) — migration handles it
 
     return list_concepts(db, work_id)
 
 
 def list_concepts(db: Any, work_id: str) -> list[dict]:
-    """Return all concepts for the work, each annotated with mastery state and HLR fields."""
+    """Return all concepts for the work, annotated with mastery state, HLR fields, and graph info.
+
+    Uses exactly 4 bulk SQL queries for the entire work — no per-concept DB reads.
+    """
     with db._lock:
         rows = db._conn.execute(
             "SELECT * FROM work_concepts WHERE work_id=? ORDER BY created_at ASC",
             (work_id,),
         ).fetchall()
+    concepts = [dict(r) for r in rows]
+    if not concepts:
+        return []
+
+    concept_ids = tuple(c["id"] for c in concepts)
+    ph = ",".join("?" * len(concept_ids))
+    now = _now()
+
+    import sqlite3 as _sqlite3
+
+    with db._lock:
+        # 1. Bulk-load the latest mastery record per concept via window function.
+        #    Narrow fallback: if the v93 HLR columns haven't been added yet (pre-v93
+        #    schema), re-query with only the base columns.  Any other OperationalError
+        #    (table missing, syntax error, etc.) is re-raised so schema faults are
+        #    visible rather than silently swallowed.
+        try:
+            mastery_rows = db._conn.execute(
+                f"""WITH ranked AS (
+                        SELECT concept_id, score, consecutive_passes,
+                               created_at                         AS last_practised,
+                               COALESCE(last_reviewed_at, created_at) AS last_reviewed_at,
+                               next_review_at,
+                               COALESCE(half_life_days, 1.0)     AS half_life_days,
+                               COALESCE(review_session_count, 0) AS review_session_count,
+                               ROW_NUMBER() OVER (
+                                   PARTITION BY concept_id
+                                   ORDER BY created_at DESC, rowid DESC
+                               ) AS rn
+                        FROM work_mastery
+                        WHERE concept_id IN ({ph})
+                    )
+                    SELECT * FROM ranked WHERE rn = 1""",
+                concept_ids,
+            ).fetchall()
+        except _sqlite3.OperationalError as exc:
+            if "no such column" in str(exc).lower():
+                # Pre-v93 DB: HLR columns absent — fall back to base mastery columns
+                mastery_rows = db._conn.execute(
+                    f"""WITH ranked AS (
+                            SELECT concept_id, score, consecutive_passes,
+                                   created_at AS last_practised, NULL AS last_reviewed_at,
+                                   NULL AS next_review_at, 1.0 AS half_life_days,
+                                   0 AS review_session_count,
+                                   ROW_NUMBER() OVER (
+                                       PARTITION BY concept_id ORDER BY created_at DESC, rowid DESC
+                                   ) AS rn
+                            FROM work_mastery
+                            WHERE concept_id IN ({ph})
+                        )
+                        SELECT * FROM ranked WHERE rn = 1""",
+                    concept_ids,
+                ).fetchall()
+            else:
+                raise  # table missing or other schema error — fail visibly
+
+        # 2. Bulk-load prerequisite edges (concept → its prereqs), scoped to this Work.
+        #    The JOIN on wc.work_id=? ensures cross-Work edges are excluded: a foreign
+        #    concept can never appear as a prereq for a concept in this Work.
+        #    No silent fallback: if work_concept_prereqs is absent the application cannot
+        #    reliably determine prerequisite gates, so we fail loudly.
+        prereq_rows = db._conn.execute(
+            f"""SELECT cp.concept_id, cp.prereq_id, wc.subject AS prereq_subject
+                FROM work_concept_prereqs cp
+                JOIN work_concepts wc ON wc.id = cp.prereq_id AND wc.work_id = ?
+                WHERE cp.concept_id IN ({ph})""",
+            (work_id, *concept_ids),
+        ).fetchall()
+
+        # 3. Bulk-load reverse edges (prereq → concepts that depend on it), same Work only.
+        blocking_rows = db._conn.execute(
+            f"""SELECT cp.prereq_id, cp.concept_id
+                FROM work_concept_prereqs cp
+                JOIN work_concepts wc ON wc.id = cp.concept_id AND wc.work_id = ?
+                WHERE cp.prereq_id IN ({ph})""",
+            (work_id, *concept_ids),
+        ).fetchall()
+
+    # Build in-memory maps — all annotations computed from these; zero extra DB calls
+    mastery_map: dict[str, dict] = {dict(r)["concept_id"]: dict(r) for r in mastery_rows}
+
+    prereq_map: dict[str, list[dict]] = {}
+    for r in prereq_rows:
+        prereq_map.setdefault(r["concept_id"], []).append(
+            {"id": r["prereq_id"], "subject": r["prereq_subject"]}
+        )
+
+    blocking_count_map: dict[str, int] = {}
+    for r in blocking_rows:
+        blocking_count_map[r["prereq_id"]] = blocking_count_map.get(r["prereq_id"], 0) + 1
+
     result = []
-    for row in rows:
-        c = dict(row)
-        m = _get_mastery(db, c["id"])
-        c["score"]                = m["score"]
-        c["consecutive_passes"]   = m["consecutive_passes"]
-        c["graduated"]            = _is_graduated(db, c["id"])
-        c["last_practised"]       = m.get("last_practised")      # ISO-8601 or None
-        # HLR fields
-        c["half_life_days"]       = m.get("half_life_days", 1.0)
-        c["next_review_at"]       = m.get("next_review_at")
-        c["review_session_count"] = m.get("review_session_count", 0)
-        c["is_due"]               = m.get("is_due", False)
+    for c in concepts:
+        m   = mastery_map.get(c["id"]) or {}
+        cons       = int(m.get("consecutive_passes") or 0)
+        half_life  = float(m.get("half_life_days")   or 1.0)
+        nxt_review = m.get("next_review_at")
+        graduated  = cons >= _PASSES_TO_GRAD
+        is_due     = bool(nxt_review and nxt_review <= now)
+
+        prereqs = prereq_map.get(c["id"], [])
+        # prereqs_met: True when every prerequisite has at least one pass recorded
+        # (computed inline from the bulk-loaded mastery_map — no DB queries)
+        if not prereqs:
+            prereqs_met = True
+        else:
+            prereqs_met = all(
+                int((mastery_map.get(p["id"]) or {}).get("consecutive_passes") or 0) > 0
+                for p in prereqs
+            )
+
+        c["score"]                = float(m.get("score") or 0.0)
+        c["consecutive_passes"]   = cons
+        c["graduated"]            = graduated
+        c["last_practised"]       = m.get("last_practised")
+        c["half_life_days"]       = half_life
+        c["next_review_at"]       = nxt_review
+        c["review_session_count"] = int(m.get("review_session_count") or 0)
+        c["is_due"]               = is_due
+        c["prereq_ids"]           = [p["id"]      for p in prereqs]
+        c["prereq_labels"]        = [p["subject"] for p in prereqs]
+        c["blocking_count"]       = blocking_count_map.get(c["id"], 0)
+        c["prereqs_met"]          = prereqs_met
         result.append(c)
     return result
 
 
 def next_concept_id(db: Any, work_id: str) -> str | None:
-    """Pick the next concept to study using HLR priority.
+    """Pick the next concept to study using HLR + graph-traversal priority.
 
     Priority order:
     1. Overdue graduated concepts (next_review_at <= now), most overdue first —
        these have been mastered but are predicted to be forgotten soon.
-    2. Ungraduated concepts with prerequisites met, fewest consecutive passes first.
-    3. Any remaining ungraduated concepts.
+    2. Eligible ungraduated concepts (all prerequisites started/graduated),
+       fewest consecutive passes first — advance the learning frontier.
+    3. Any remaining ungraduated concepts (ignore prereq gate as a last resort
+       so the queue never completely empties).
     """
     concepts = list_concepts(db, work_id)
     if not concepts:
@@ -303,18 +461,16 @@ def next_concept_id(db: Any, work_id: str) -> str | None:
         if c.get("is_due") and c.get("next_review_at", "") <= now
     ]
     if overdue:
-        # Most overdue first (smallest next_review_at = waited longest)
         overdue.sort(key=lambda c: (c.get("next_review_at") or ""))
         return overdue[0]["id"]
 
-    # 2. Ungraduated concepts
+    # 2. Eligible ungraduated concepts (graph traversal)
     ungrad = [c for c in concepts if not c["graduated"]]
     if not ungrad:
         return None
 
-    graduated_ids = {c["id"] for c in concepts if c["graduated"]}
-    ready = [c for c in ungrad if c.get("prereq_id") in graduated_ids or c.get("prereq_id") is None]
-    pool = ready if ready else ungrad
+    eligible = [c for c in ungrad if c.get("prereqs_met", True)]
+    pool = eligible if eligible else ungrad   # fallback: ignore gate
     pool.sort(key=lambda c: (c["consecutive_passes"], c["created_at"]))
     return pool[0]["id"]
 
@@ -461,22 +617,78 @@ def list_due_concepts(db: Any, work_id: str) -> list[dict]:
     return due
 
 
+# ─── Prerequisite graph helpers ────────────────────────────────────────────────
+
+def get_prereq_ids(db: Any, concept_id: str) -> list[str]:
+    """Return prerequisite concept IDs, restricted to the same Work as concept_id.
+
+    Cross-Work edges are silently excluded so that foreign concept IDs can never
+    influence routing or eligibility for a different Work's concepts.
+    """
+    with db._lock:
+        rows = db._conn.execute(
+            """SELECT cp.prereq_id
+               FROM work_concept_prereqs cp
+               JOIN work_concepts wc ON wc.id = cp.prereq_id
+               WHERE cp.concept_id = ?
+                 AND wc.work_id = (SELECT work_id FROM work_concepts WHERE id = ?)""",
+            (concept_id, concept_id),
+        ).fetchall()
+    return [r["prereq_id"] for r in rows]
+
+
+def is_concept_eligible(db: Any, concept_id: str) -> bool:
+    """True when ALL same-Work prerequisites have been started (consecutive_passes > 0).
+
+    Root concepts (no prerequisites in the join table for this Work) are always eligible.
+    A prerequisite counts as "started" as soon as the learner has answered any question
+    for it — this prevents blocking on full graduation and avoids infinite lock chains.
+    Cross-Work prerequisites are never considered (see get_prereq_ids).
+    """
+    prereq_ids = get_prereq_ids(db, concept_id)
+    if not prereq_ids:
+        return True
+    for pid in prereq_ids:
+        m = _get_mastery(db, pid)
+        if m["consecutive_passes"] == 0:
+            return False   # prerequisite not yet touched
+    return True
+
+
+def get_blocking_concepts(db: Any, concept_id: str) -> list[str]:
+    """Return IDs of same-Work concepts whose prerequisite set includes this concept."""
+    with db._lock:
+        rows = db._conn.execute(
+            """SELECT cp.concept_id
+               FROM work_concept_prereqs cp
+               JOIN work_concepts wc ON wc.id = cp.concept_id
+               WHERE cp.prereq_id = ?
+                 AND wc.work_id = (SELECT work_id FROM work_concepts WHERE id = ?)""",
+            (concept_id, concept_id),
+        ).fetchall()
+    return [r["concept_id"] for r in rows]
+
+
 # ─── Private helpers ──────────────────────────────────────────────────────────
 
 def _compute_route(db: Any, concept_id: str, score: float) -> str:
-    """Determine routing: STEP_FORWARD / STEP_BACKWARD / STAY_HERE."""
+    """Determine routing: STEP_FORWARD / STEP_BACKWARD / STAY_HERE.
+
+    Uses the multi-prerequisite graph (work_concept_prereqs) to determine whether
+    to route backward.  If the student failed AND any prerequisite is not yet
+    graduated, we suggest revisiting the least-mastered prerequisite first.
+    """
     if score < _GRAD_THRESHOLD:
-        # Check if concept has a prereq that may need revisiting
-        concept = _get_concept(db, concept_id)
-        if concept and concept.get("prereq_id"):
-            prereq_m = _get_mastery(db, concept["prereq_id"])
+        # Check multi-prereq graph for unmastered prerequisites
+        prereq_ids = get_prereq_ids(db, concept_id)
+        for pid in prereq_ids:
+            prereq_m = _get_mastery(db, pid)
             if prereq_m["consecutive_passes"] < _PASSES_TO_GRAD:
                 return "STEP_BACKWARD"
         return "STAY_HERE"
 
-    # Score is a pass — are we now graduated?
+    # Score is a pass — are we now graduated (durable)?
     mastery = _get_mastery(db, concept_id)
-    # We haven't written the new record yet; check current streak + 1
     if mastery["consecutive_passes"] + 1 >= _PASSES_TO_GRAD:
         return "STEP_FORWARD"
     return "STAY_HERE"

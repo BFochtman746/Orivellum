@@ -88,6 +88,7 @@ import {
   RotateCcw,
   Film,
   Scroll,
+  Lock,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -3088,30 +3089,55 @@ function LearnTab({ workId }: { workId: string }) {
           {showConcepts && (
             <div className="divide-y divide-border/30">
               {concepts.map((c: any) => {
-                const hasProgress = c.consecutive_passes > 0 || c.graduated;
-                const isResetting = resettingConcept === c.id;
-                const isDue = c.is_due && c.graduated;
+                const hasProgress    = c.consecutive_passes > 0 || c.graduated;
+                const isResetting    = resettingConcept === c.id;
+                const isDue          = c.is_due && c.graduated;
+                const isLocked       = !c.prereqs_met && !c.graduated;
+                const prereqLabels: string[] = c.prereq_labels ?? [];
                 return (
-                  <div key={c.id} className="flex items-center justify-between px-4 py-2.5 text-sm group">
-                    <div className="flex items-center gap-2">
-                      {isDue
-                        ? <Clock className="w-3.5 h-3.5 text-amber-500" />
+                  <div
+                    key={c.id}
+                    className={`flex items-center justify-between px-4 py-2.5 text-sm group transition-opacity ${isLocked ? "opacity-50" : ""}`}
+                  >
+                    <div className="flex-1 min-w-0 flex items-start gap-2">
+                      {/* Status icon */}
+                      {isLocked
+                        ? <Lock className="w-3.5 h-3.5 text-muted-foreground/60 shrink-0 mt-0.5" />
+                        : isDue
+                        ? <Clock className="w-3.5 h-3.5 text-amber-500 shrink-0 mt-0.5" />
                         : c.graduated
-                        ? <Check className="w-3.5 h-3.5 text-emerald-500" />
+                        ? <Check className="w-3.5 h-3.5 text-emerald-500 shrink-0 mt-0.5" />
                         : c.consecutive_passes > 0
-                        ? <div className="w-3.5 h-3.5 rounded-full border-2 border-amber-400" />
-                        : <div className="w-3.5 h-3.5 rounded-full border border-muted-foreground/40" />}
-                      <span className={
-                        isDue ? "text-amber-700 dark:text-amber-300 font-medium"
-                        : c.graduated ? "text-emerald-700 dark:text-emerald-400 font-medium"
-                        : ""
-                      }>{c.subject}</span>
+                        ? <div className="w-3.5 h-3.5 rounded-full border-2 border-amber-400 shrink-0 mt-0.5" />
+                        : <div className="w-3.5 h-3.5 rounded-full border border-muted-foreground/40 shrink-0 mt-0.5" />}
+                      <div className="min-w-0">
+                        <span className={
+                          isDue ? "text-amber-700 dark:text-amber-300 font-medium"
+                          : c.graduated ? "text-emerald-700 dark:text-emerald-400 font-medium"
+                          : isLocked ? "text-muted-foreground"
+                          : ""
+                        }>{c.subject}</span>
+                        {/* Prerequisite chip labels */}
+                        {isLocked && prereqLabels.length > 0 && (
+                          <p className="text-[10px] font-mono text-muted-foreground/70 mt-0.5 truncate">
+                            Requires: {prereqLabels.join(", ")}
+                          </p>
+                        )}
+                      </div>
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 shrink-0 ml-2">
                       {isDue ? (
                         <span className="text-xs font-mono font-semibold text-amber-600 bg-amber-50 dark:bg-amber-900/30 border border-amber-300/50 px-1.5 py-0.5 rounded">
                           Due
                         </span>
+                      ) : isLocked ? (
+                        <button
+                          onClick={() => startOrContinue(c.id)}
+                          title="Study anyway — prerequisites recommended but not required"
+                          className="text-[10px] font-mono text-muted-foreground/60 hover:text-primary transition-colors"
+                        >
+                          study anyway
+                        </button>
                       ) : (
                         <span className="text-xs font-mono text-muted-foreground">
                           {c.graduated
