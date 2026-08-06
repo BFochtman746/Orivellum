@@ -58,3 +58,4 @@
 - [System diagnostic tool](orivellum-diagnostics.md) — full health check CLI + API endpoint + web UI card; run with `uv run python scripts/run_diagnostics.py [--vacuum]`.
 - [Phase 2-4 hardening decisions](orivellum-phase2-hardening.md) — access log, security headers, MIME validation, SSRF blocklist, executor job tracking, MCP server, audio transcription, folder watch, mobile offline cache.
 - [Document Workshop system](orivellum-workshop.md) — self-prompting AI doc gen; plan/execute endpoints; clarify→code-gen→sandbox→critique loop; Studio page panel.
+- [Chapter-first novel architecture](orivellum-chapter-arch.md) — schema v84 chapter_id on knowledge; llm_harvest_by_chapters() fiction prompt; two-line heading detection; scene_count in meta; chat chapter scoping; caps raised to 2M.

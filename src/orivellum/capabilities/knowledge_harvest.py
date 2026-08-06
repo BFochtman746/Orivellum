@@ -136,8 +136,8 @@ def harvest(result: "ExtractionResult", doc_id: str,
                 created += 1
 
     # 4. Capitalised proper-noun phrases → entity mentions
-    # Sample from the full text to avoid O(N) on huge docs
-    sample_text = result.full_text[:50_000]
+    # Full text — novels are stored without truncation (see pipeline.py)
+    sample_text = result.full_text
     entities_saved = 0
     for phrase in _cap_phrases(sample_text):
         if entities_saved >= _MAX_ENTITIES:
@@ -451,3 +451,264 @@ def llm_harvest(result: "ExtractionResult", doc_id: str,
         created, doc_id, work_id, len(segments),
     )
     return created
+
+
+# ── Fiction / novel chapter-level extraction ──────────────────────────────────
+
+# Maximum characters of chapter text sent to the LLM per chapter.
+# A 6 k char window captures ~900–1 200 words — enough for a full scene
+# intro, character beats, and setting without blowing the context budget.
+_MAX_CHAPTER_CHARS = 6_000
+
+_FICTION_CHAPTER_PROMPT = """\
+You are a literary analyst. Extract structured knowledge from this chapter of a novel.
+Return ONLY valid JSON with this exact structure and absolutely no other text:
+
+{{
+  "characters": [{{"name": "...", "role": "protagonist|antagonist|supporting|mentioned", "description": "..."}}],
+  "events": [{{"text": "...", "significance": "major|minor"}}],
+  "settings": [{{"name": "...", "description": "..."}}],
+  "relationships": [{{"subject": "...", "predicate": "...", "object": "..."}}],
+  "themes": [{{"text": "..."}}],
+  "foreshadowing": [{{"text": "..."}}]
+}}
+
+Rules:
+- Up to 8 characters. Keep descriptions to 20 words or fewer. Use "role": "mentioned" for characters only named in passing.
+- Up to 6 events. Mark the 2-3 most pivotal as "major"; the rest are "minor".
+- Up to 4 settings or locations that appear in this chapter.
+- Up to 5 relationships between named characters (subject + predicate + object).
+- Up to 3 themes (one sentence each, drawn from this chapter's content).
+- Up to 3 foreshadowing hints, symbols, or unresolved questions introduced here.
+- Extract ONLY what appears in the chapter text. Do not invent or interpolate.
+- Output ONLY the JSON object. No markdown, no commentary, no explanation.
+
+Novel title: {title}
+Chapter: {chapter_title}
+
+Chapter text (excerpt):
+{chunk}
+"""
+
+
+def llm_harvest_by_chapters(
+    doc_id: str,
+    work_id: str | None,
+    doc_title: str,
+    db: "OrivellumDB",
+) -> int:
+    """Fiction-aware LLM knowledge extraction for chapter-structured documents.
+
+    Queries ``book_chapters`` for *doc_id*, then runs a fiction-optimised
+    prompt on each chapter independently, storing knowledge items tagged
+    with ``chapter_id`` so they can be searched per-chapter and surfaced
+    in chapter health dashboards.
+
+    Characters → *character* kind + entity graph
+    Events     → *event* kind (major/minor annotated in meta)
+    Settings   → *setting* kind
+    Relationships → *relationship* kind + entity edge
+    Themes     → *theme* kind
+    Foreshadowing → *foreshadowing* kind
+
+    All items get ``review_status='ai_auto'`` so the user can approve or
+    reject them in the review queue before they influence searches.
+
+    Returns total knowledge items created.  Silently skips on LLM failure
+    so the document is never left in a broken state.
+    """
+    from orivellum.api._deps import get_config  # local import to avoid cycles
+
+    try:
+        cfg = get_config()
+    except Exception:
+        logger.warning("llm_harvest_by_chapters: could not load config — skipping")
+        return 0
+
+    base_url = cfg.serving.base_url
+    model    = getattr(cfg.serving, "workhorse_model", None) or cfg.serving.model
+    timeout  = getattr(cfg.serving, "extraction_timeout_sec", _EXTRACTION_TIMEOUT_SEC)
+
+    # ── Fetch chapters ────────────────────────────────────────────────────────
+    try:
+        with db._lock:
+            chapter_rows = db._conn.execute(
+                """SELECT id, seq, title, text
+                   FROM book_chapters
+                   WHERE source_doc_id = ?
+                   ORDER BY seq""",
+                (doc_id,),
+            ).fetchall()
+    except Exception as exc:
+        logger.warning("llm_harvest_by_chapters: chapter query failed: %s", exc)
+        return 0
+
+    if not chapter_rows:
+        logger.debug("llm_harvest_by_chapters: no chapters for doc %s", doc_id)
+        return 0
+
+    _llm_meta = {"source": "llm", "extraction": "chapter"}
+    total_created = 0
+
+    for ch_row in chapter_rows:
+        chapter_id    = ch_row["id"]
+        chapter_seq   = ch_row["seq"]
+        chapter_title = ch_row["title"] or f"Chapter {chapter_seq + 1}"
+        chapter_text  = (ch_row["text"] or "")[:_MAX_CHAPTER_CHARS].strip()
+
+        if not chapter_text:
+            continue
+
+        try:
+            prompt = _FICTION_CHAPTER_PROMPT.format(
+                title=doc_title,
+                chapter_title=chapter_title,
+                chunk=chapter_text,
+            )
+        except Exception as exc:
+            logger.debug("llm_harvest_by_chapters: prompt format error ch%d: %s",
+                         chapter_seq, exc)
+            continue
+
+        raw = _call_llm_sync(prompt, base_url, model, timeout, db=db)
+        if not raw:
+            continue
+
+        extraction = _parse_extraction(raw)
+        if not extraction:
+            continue
+
+        created = 0
+
+        # ── Characters ───────────────────────────────────────────────────────
+        for char in (extraction.get("characters") or [])[:8]:
+            if not isinstance(char, dict):
+                continue
+            name = (char.get("name") or "").strip()
+            desc = (char.get("description") or "").strip()
+            role = (char.get("role") or "supporting").strip()
+            if not name:
+                continue
+            text = f"{name} ({role}): {desc}" if desc else f"{name} ({role})"
+            kid = db.create_knowledge_item(
+                work_id=work_id, kind="character", text=text,
+                subject=name, predicate="is", obj=role,
+                confidence=0.90, source_doc_id=doc_id,
+                review_status="ai_auto", meta=_llm_meta,
+                chapter_id=chapter_id,
+            )
+            created += 1
+            try:
+                eid = db.upsert_entity(
+                    name, "character",
+                    meta={"role": role, "description": desc} if desc else {"role": role},
+                )
+                db.create_entity_mention(eid, doc_id, work_id, knowledge_id=kid)
+            except Exception:
+                pass
+
+        # ── Events ───────────────────────────────────────────────────────────
+        for evt in (extraction.get("events") or [])[:6]:
+            if not isinstance(evt, dict):
+                continue
+            text = (evt.get("text") or "").strip()
+            significance = (evt.get("significance") or "minor").strip()
+            if not text:
+                continue
+            db.create_knowledge_item(
+                work_id=work_id, kind="event", text=text,
+                subject=chapter_title, predicate="contains", obj=significance,
+                confidence=0.85 if significance == "major" else 0.75,
+                source_doc_id=doc_id, review_status="ai_auto",
+                meta={**_llm_meta, "significance": significance},
+                chapter_id=chapter_id,
+            )
+            created += 1
+
+        # ── Settings ─────────────────────────────────────────────────────────
+        for setting in (extraction.get("settings") or [])[:4]:
+            if not isinstance(setting, dict):
+                continue
+            name = (setting.get("name") or "").strip()
+            desc = (setting.get("description") or "").strip()
+            if not name:
+                continue
+            text = f"{name}: {desc}" if desc else name
+            db.create_knowledge_item(
+                work_id=work_id, kind="setting", text=text,
+                subject=name, predicate="is_setting_in", obj=chapter_title,
+                confidence=0.80, source_doc_id=doc_id,
+                review_status="ai_auto", meta=_llm_meta,
+                chapter_id=chapter_id,
+            )
+            created += 1
+
+        # ── Relationships ─────────────────────────────────────────────────────
+        for rel in (extraction.get("relationships") or [])[:5]:
+            if not isinstance(rel, dict):
+                continue
+            subj = (rel.get("subject") or "").strip()
+            pred = (rel.get("predicate") or "").strip()
+            obj  = (rel.get("object") or "").strip()
+            if not (subj and pred and obj):
+                continue
+            text = f"{subj} {pred} {obj}"
+            db.create_knowledge_item(
+                work_id=work_id, kind="relationship", text=text,
+                subject=subj, predicate=pred, obj=obj,
+                confidence=0.80, source_doc_id=doc_id,
+                review_status="ai_auto", meta=_llm_meta,
+                chapter_id=chapter_id,
+            )
+            created += 1
+            try:
+                sid = db.upsert_entity(subj, "character")
+                oid = db.upsert_entity(obj, "character")
+                db.create_entity_edge(sid, oid, pred)
+            except Exception:
+                pass
+
+        # ── Themes ───────────────────────────────────────────────────────────
+        for theme in (extraction.get("themes") or [])[:3]:
+            if not isinstance(theme, dict):
+                continue
+            text = (theme.get("text") or "").strip()
+            if not text:
+                continue
+            db.create_knowledge_item(
+                work_id=work_id, kind="theme", text=text,
+                subject=chapter_title, predicate="explores_theme", obj=None,
+                confidence=0.75, source_doc_id=doc_id,
+                review_status="ai_auto", meta=_llm_meta,
+                chapter_id=chapter_id,
+            )
+            created += 1
+
+        # ── Foreshadowing ─────────────────────────────────────────────────────
+        for fsh in (extraction.get("foreshadowing") or [])[:3]:
+            if not isinstance(fsh, dict):
+                continue
+            text = (fsh.get("text") or "").strip()
+            if not text:
+                continue
+            db.create_knowledge_item(
+                work_id=work_id, kind="foreshadowing", text=text,
+                subject=chapter_title, predicate="foreshadows", obj=None,
+                confidence=0.70, source_doc_id=doc_id,
+                review_status="ai_auto", meta=_llm_meta,
+                chapter_id=chapter_id,
+            )
+            created += 1
+
+        if created:
+            logger.info(
+                "llm_harvest_by_chapters: %d items, doc %s ch%d (%s)",
+                created, doc_id[:8], chapter_seq, chapter_title[:40],
+            )
+        total_created += created
+
+    logger.info(
+        "llm_harvest_by_chapters: %d total items, %d chapters, doc %s",
+        total_created, len(chapter_rows), doc_id,
+    )
+    return total_created

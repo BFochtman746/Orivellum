@@ -78,4 +78,7 @@ attached_assets/
 data/api_key.txt
 data/.session_secret
 data/outputs/
+data/nightshift/
+data/backups/
+data/remediation_archive/
 PROGRESS.json

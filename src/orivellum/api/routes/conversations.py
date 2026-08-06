@@ -545,6 +545,119 @@ async def send_message(conv_id: str, body: MessageSend):
     return {"message": msg}
 
 
+class PredictBody(BaseModel):
+    draft: str
+
+
+@router.post("/conversations/{conv_id}/predict")
+async def predict_completion(conv_id: str, body: PredictBody):
+    """Ghost-text completion + up to 3 source chips for the predictive composer.
+
+    Fast path (≤ 5 s budget, called after 800 ms debounce on each draft change):
+      1. Hybrid-search knowledge items by draft text → top 3 source chips
+      2. LLM call with tight instruction + knowledge context, max_tokens=80
+      3. Returns ``{"ghost": str, "sources": [{id, title, kind, work_id, ...}]}``
+
+    Returns ``{"ghost":"","sources":[]}`` when the draft is too short (< 8 chars),
+    the AI server is unreachable, or no relevant knowledge is found.
+    """
+    import asyncio as _aio
+    db = get_db()
+    cfg = get_config()
+
+    conv = db.get_conversation(conv_id)
+    if not conv:
+        raise HTTPException(404, f"Conversation {conv_id!r} not found")
+
+    draft = body.draft.strip()
+    if len(draft) < 8:
+        return {"ghost": "", "sources": []}
+
+    work_id: str | None = conv.get("work_id")
+
+    # ── Knowledge retrieval ────────────────────────────────────────────────────
+    k_hits: list[dict] = []
+    try:
+        from orivellum.capabilities.embeddings import hybrid_search_knowledge
+        k_hits = hybrid_search_knowledge(draft, db, limit=8, work_id=work_id)
+    except Exception:
+        try:
+            k_hits = db.search_knowledge(draft, work_id=work_id, limit=8)
+        except Exception:
+            pass
+
+    # Build sources list — top 3, deduplicated by id
+    sources: list[dict] = []
+    seen_ids: set[str] = set()
+    for hit in k_hits:
+        hit_id = str(hit.get("id") or "")
+        if not hit_id or hit_id in seen_ids:
+            continue
+        seen_ids.add(hit_id)
+        content = hit.get("content") or hit.get("text") or ""
+        sources.append({
+            "id":            hit_id,
+            "title":         hit.get("title") or hit.get("doc_title") or "Knowledge",
+            "kind":          "knowledge",
+            "work_id":       hit.get("work_id"),
+            "work_title":    hit.get("work_title"),
+            "source_doc_id": hit.get("source_doc_id") or hit.get("doc_id"),
+            "passage":       content[:150] if content else None,
+        })
+        if len(sources) == 3:
+            break
+
+    # ── LLM ghost-text generation ──────────────────────────────────────────────
+    context_lines = [
+        (hit.get("content") or hit.get("text") or "").strip()
+        for hit in k_hits[:5]
+    ]
+    context_str = "\n".join(
+        f"• {c[:300]}" for c in context_lines if c
+    ) or "(no relevant context)"
+
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are a concise writing assistant. Complete the user's in-progress "
+                "message naturally. Rules:\n"
+                "- Output ONLY the completion — not what they already typed.\n"
+                "- Maximum 15 words. Stop at a natural phrase boundary.\n"
+                "- Prefer grounding in the CONTEXT when relevant.\n"
+                "- No quotes, explanation, or preamble.\n\n"
+                f"CONTEXT FROM KNOWLEDGE BASE:\n{context_str}"
+            ),
+        },
+        {
+            "role": "user",
+            "content": f"Complete this message: {draft}",
+        },
+    ]
+
+    ghost = ""
+    try:
+        from orivellum.capabilities.llm import llm_call
+        result = await _aio.to_thread(
+            llm_call, messages,
+            cfg=cfg, db=db,
+            purpose="predict",
+            timeout=5.0,
+            temperature=0.35,
+            max_tokens=80,
+        )
+        if result.ok and result.text:
+            raw = result.text.strip()
+            # Strip accidental re-echo of the last few typed chars
+            if len(draft) >= 5 and raw.lower().startswith(draft[-5:].lower()):
+                raw = raw[5:].lstrip()
+            ghost = raw
+    except Exception:
+        pass
+
+    return {"ghost": ghost, "sources": sources}
+
+
 @router.post("/conversations/{conv_id}/continue")
 async def continue_message(conv_id: str, body: ContinueBody):
     """Continue a cut-short assistant reply instead of regenerating from scratch.
@@ -1069,6 +1182,71 @@ def _build_system_prompt(db: Any, conv: dict, scope: str = "work",
 
     _TRUSTED = {"auto", "approved"}
     work_id = conv.get("work_id")
+
+    # ── Chapter-scoped context injection ───────────────────────────────────────
+    # Detects "chapter N / chapter five / chapter one" in the query and injects
+    # that chapter's text + its chapter-tagged knowledge items before the main
+    # knowledge search so the model has precise, chapter-level grounding.
+    _chapter_block = ""
+    if user_query and work_id:
+        try:
+            import re as _re
+            _CH_RE = _re.compile(
+                r"\bchapter\s+(\d+|one|two|three|four|five|six|seven|eight|nine|ten"
+                r"|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen"
+                r"|nineteen|twenty)\b",
+                _re.IGNORECASE,
+            )
+            _ORD = {
+                "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+                "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+                "eleven": 11, "twelve": 12, "thirteen": 13, "fourteen": 14,
+                "fifteen": 15, "sixteen": 16, "seventeen": 17, "eighteen": 18,
+                "nineteen": 19, "twenty": 20,
+            }
+            _cm = _CH_RE.search(user_query)
+            if _cm:
+                _raw = _cm.group(1)
+                _ch_num = int(_raw) if _raw.isdigit() else _ORD.get(_raw.lower(), 0)
+                if _ch_num > 0:
+                    # Chapters stored 0-indexed (seq=0 is chapter 1)
+                    with db._lock:
+                        _ch_row = db._conn.execute(
+                            """SELECT bc.id, bc.title, bc.text
+                               FROM book_chapters bc
+                               JOIN documents d ON d.id = bc.source_doc_id
+                               WHERE d.work_id = ? AND bc.seq = ?
+                               ORDER BY bc.created_at LIMIT 1""",
+                            (work_id, _ch_num - 1),
+                        ).fetchone()
+                    if _ch_row:
+                        _ch_title  = _ch_row["title"] or f"Chapter {_ch_num}"
+                        _ch_text   = (_ch_row["text"] or "")[:3_000]
+                        _ch_id     = _ch_row["id"]
+                        # Chapter-tagged knowledge items
+                        with db._lock:
+                            _ch_k = db._conn.execute(
+                                """SELECT text FROM knowledge
+                                   WHERE chapter_id = ?
+                                     AND review_status IN ('auto','approved','ai_auto')
+                                   ORDER BY confidence DESC LIMIT 12""",
+                                (_ch_id,),
+                            ).fetchall()
+                        _k_lines = [f"  • {r['text']}" for r in _ch_k]
+                        _chapter_block = (
+                            f"CHAPTER CONTEXT — {_ch_title}:\n{_ch_text}"
+                        )
+                        if _k_lines:
+                            _chapter_block += (
+                                "\n\nKNOWLEDGE FROM THIS CHAPTER:\n"
+                                + "\n".join(_k_lines)
+                            )
+                        _chapter_block = _chapter_block.strip()
+        except Exception:
+            _chapter_block = ""
+
+    if _chapter_block:
+        base = base + "\n\n" + _chapter_block
 
     # ── 1. Query-matched global search (primary path) ──────────────────────────
     if user_query and user_query.strip():

@@ -1114,6 +1114,11 @@ export default function Chat() {
   // Track the last message the user sent so the re-send button can restore it
   const lastSentRef = useRef<string>("");
 
+  // ── Predictive composer state ───────────────────────────────────────────────
+  const [prediction, setPrediction] = useState<{ghost: string; sources: KnowledgeSource[]} | null>(null);
+  const predictDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const predictAbortRef = useRef<AbortController | null>(null);
+
   const { data: convsResp, isLoading: loadingList } = useListConversations(
     { archived: showArchived || undefined },
     { query: { queryKey: getListConversationsQueryKey({ archived: showArchived || undefined }), refetchInterval: 15_000, staleTime: 10_000 } }
@@ -1351,6 +1356,45 @@ export default function Chat() {
     });
   };
 
+  // ── Predictive composer — debounced ghost-text fetch ─────────────────────
+  useEffect(() => {
+    if (predictDebounceRef.current) clearTimeout(predictDebounceRef.current);
+    predictAbortRef.current?.abort();
+
+    if (!draft.trim() || draft.length < 8 || sending || !activeId || !aiOnline) {
+      setPrediction(null);
+      return;
+    }
+
+    predictDebounceRef.current = setTimeout(async () => {
+      const ctrl = new AbortController();
+      predictAbortRef.current = ctrl;
+      try {
+        const resp = await apiFetch(`${API_BASE}/conversations/${activeId}/predict`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ draft }),
+          signal: ctrl.signal,
+        });
+        if (ctrl.signal.aborted) return;
+        if (!resp.ok) { setPrediction(null); return; }
+        const data = await resp.json() as { ghost: string; sources: KnowledgeSource[] };
+        if (!ctrl.signal.aborted && data.ghost) {
+          setPrediction({ ghost: data.ghost, sources: data.sources ?? [] });
+        } else {
+          setPrediction(null);
+        }
+      } catch {
+        setPrediction(null);
+      }
+    }, 800);
+
+    return () => {
+      if (predictDebounceRef.current) clearTimeout(predictDebounceRef.current);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft, sending, activeId, aiOnline]);
+
   // ── Core send logic (called by handleSend and the Re-send button) ────────
   const sendText = useCallback(
     async (text: string) => {
@@ -1578,6 +1622,8 @@ export default function Chat() {
       const text = draft.trim();
       if (!text && !pendingImage) return;
       setDraft("");
+      setPrediction(null);
+      predictAbortRef.current?.abort();
       sendText(text);
     },
     [draft, pendingImage, sendText]
@@ -2244,6 +2290,19 @@ export default function Chat() {
                     flex box anchors to THIS row only, not to the whole form
                     (which grows when the pending-image preview strip is shown). */}
                 <div className="relative">
+                  {/* ── Ghost text overlay ─────────────────────────────────────
+                      Positioned absolutely over the textarea; pointer-events:none
+                      so all input events still reach the textarea below.
+                      Draft is rendered invisible (color:transparent) to position
+                      the ghost text at the correct cursor offset. */}
+                  {prediction?.ghost && (
+                    <div aria-hidden className="predict-ghost-overlay">
+                      <span style={{ color: "transparent" }}>{draft}</span>
+                      <span className="ghost-text-completion" style={{ color: "hsl(var(--muted-foreground))", opacity: 0.35 }}>
+                        {prediction.ghost}
+                      </span>
+                    </div>
+                  )}
                   <Textarea
                     value={draft}
                     onChange={(e) => setDraft(e.target.value)}
@@ -2251,7 +2310,20 @@ export default function Chat() {
                     className="pr-40 resize-none py-3 text-base"
                     rows={2}
                     disabled={sending || importing}
-                    onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(e); } }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Tab" && prediction?.ghost) {
+                        e.preventDefault();
+                        setDraft(d => d + prediction.ghost);
+                        setPrediction(null);
+                        return;
+                      }
+                      if (e.key === "Escape" && prediction) {
+                        e.preventDefault();
+                        setPrediction(null);
+                        return;
+                      }
+                      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(e); }
+                    }}
                     onPaste={(e) => {
                       const files = Array.from(e.clipboardData.files).filter(f => f.type.startsWith("image/"));
                       if (files.length > 0) { e.preventDefault(); handleImageSelect(files[0]); }
@@ -2336,6 +2408,41 @@ export default function Chat() {
                   )}
                 </div>
                 </div>{/* end textarea-row relative wrapper */}
+
+                {/* ── Source chips — materialize below textarea when prediction arrives */}
+                {prediction && prediction.sources.length > 0 && (
+                  <div className="flex items-center gap-1.5 px-0.5 pt-1.5 pb-0.5 overflow-x-auto" style={{ scrollbarWidth: "none" }}>
+                    {prediction.sources.map((src, i) => {
+                      const norm = normalizeSource(src);
+                      const Icon = norm.isWeb ? Globe : BookOpen;
+                      const href = norm.docId
+                        ? `${import.meta.env.BASE_URL}library/${norm.docId}`.replace(/\/+/g, "/")
+                        : norm.workId
+                        ? `${import.meta.env.BASE_URL}works/${norm.workId}`.replace(/\/+/g, "/")
+                        : null;
+                      return (
+                        <a
+                          key={norm.id ?? i}
+                          href={href ?? undefined}
+                          onClick={!href ? (e) => e.preventDefault() : undefined}
+                          title={norm.passage ?? norm.title}
+                          className="predict-chip chat-icon-btn shrink-0 flex items-center gap-1.5 rounded-full bg-muted/60 border border-border/40 px-2.5 py-1 text-[11px] font-mono text-muted-foreground/60 hover:text-muted-foreground hover:bg-muted/80 transition-colors max-w-[200px] no-underline"
+                          style={{ animationDelay: `${i * 80}ms` }}
+                        >
+                          <Icon className="w-3 h-3 shrink-0 text-primary/50" />
+                          <span className="truncate">
+                            {norm.workTitle && norm.workTitle !== "Web" && norm.workTitle !== "General"
+                              ? norm.workTitle
+                              : norm.title}
+                          </span>
+                        </a>
+                      );
+                    })}
+                    <span className="text-[10px] font-mono text-muted-foreground/30 shrink-0 ml-auto hidden sm:block select-none">
+                      Tab to accept · Esc to dismiss
+                    </span>
+                  </div>
+                )}
               </form>
             </div>
           </>

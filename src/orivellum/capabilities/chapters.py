@@ -5,6 +5,13 @@ to produce an ordered list of chapter/section objects that map the
 document's hierarchy.  Results are stored in the book_chapters table
 so downstream features (completeness scoring, gap detection, research
 mapping) can operate on structured objects rather than flat text.
+
+Two-line chapter pattern:
+  Many novels use the form:
+      Chapter 1
+      The Storm Begins
+  where the number is on one line and the title is on the next.
+  The ``_CHAPTER_LINE`` + ``_peek_next_line`` logic handles this.
 """
 from __future__ import annotations
 
@@ -31,11 +38,60 @@ _CAPS_HEADING = re.compile(
 )
 
 # "Chapter N" / "Part N" lines (case-insensitive)
+# Captures: group(1)=label, group(2)=number, group(3)=inline-title (optional)
 _CHAPTER_LINE = re.compile(
     r"^(chapter|part|section|appendix)\s+([\divxlc]+|[a-z]+)(?:\s*[:\-–—]\s*(.+))?$",
     re.IGNORECASE | re.MULTILINE,
 )
 
+# Scene-break markers (longest-first so overlapping patterns aren't counted twice).
+_SCENE_BREAKS = ("\n* * *\n", "\n# # #\n", "\n***\n", "\n---\n", "\n###\n")
+
+
+# ── Scene counting ────────────────────────────────────────────────────────────
+
+def _count_scenes(text: str) -> int:
+    """Count scene breaks within chapter text. Returns at least 1.
+
+    Each matched marker is removed from a working copy of the text before
+    the next pattern runs, preventing overlapping matches from inflating
+    the count.
+    """
+    working = text
+    count = 0
+    for pat in _SCENE_BREAKS:
+        n = working.count(pat)
+        if n:
+            count += n
+            working = working.replace(pat, "\n")
+    return max(1, count + 1)
+
+
+# ── Two-line title peek ────────────────────────────────────────────────────────
+
+def _peek_next_line(text: str, pos: int) -> str | None:
+    """Return the next non-empty line after *pos* as a candidate chapter title.
+
+    Returns None if the next line looks like another structural heading
+    (starts with #, matches _CHAPTER_LINE, or is ALL-CAPS > 4 chars), is
+    longer than 100 chars, or is empty.
+    """
+    rest = text[pos:].lstrip("\r\n")
+    nl = rest.find("\n")
+    first_line = (rest[:nl] if nl != -1 else rest).strip()
+    if not first_line or len(first_line) > 100:
+        return None
+    if first_line.startswith("#"):
+        return None
+    if _CHAPTER_LINE.match(first_line):
+        return None
+    # ALL-CAPS line longer than 4 chars is likely another structural heading
+    if first_line == first_line.upper() and len(first_line) > 4 and first_line.isalpha():
+        return None
+    return first_line
+
+
+# ── Data model ────────────────────────────────────────────────────────────────
 
 @dataclass
 class ExtractedChapter:
@@ -44,9 +100,11 @@ class ExtractedChapter:
     title: str
     text: str
     word_count: int = field(init=False)
+    scene_count: int = field(init=False)
 
     def __post_init__(self) -> None:
         self.word_count = len(self.text.split())
+        self.scene_count = _count_scenes(self.text)
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
@@ -56,7 +114,7 @@ def extract_chapters(text: str, min_section_words: int = 20) -> list[ExtractedCh
 
     Strategy (in priority order):
     1. Markdown headings (#, ##, ###)
-    2. "Chapter N" / "Part N" lines
+    2. "Chapter N" / "Part N" lines — with two-line title look-ahead
     3. ALL-CAPS lines that look like titles (DOCX fallback)
 
     Returns an ordered list of ExtractedChapter.  Sections with fewer
@@ -95,7 +153,13 @@ def _find_headings(text: str) -> list[tuple[int, int, str]]:
             label = m.group(1).capitalize()
             num = m.group(2)
             name = m.group(3)
-            title = f"{label} {num}" + (f": {name.strip()}" if name else "")
+            if name:
+                title = f"{label} {num}: {name.strip()}"
+            else:
+                # No inline title — look at the very next non-empty line
+                # for the two-line pattern: "Chapter 1\nThe Beginning"
+                next_title = _peek_next_line(text, m.end())
+                title = f"{label} {num}" + (f": {next_title}" if next_title else "")
             found[m.start()] = (m.start(), 1, title)
 
     if not found:

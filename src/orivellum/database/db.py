@@ -934,7 +934,8 @@ class OrivellumDB:
         return [dict(r) for r in rows]
 
     def resolve_near_duplicate(self, dupe_id: str, action: str,
-                               canonical_doc_id: str | None = None) -> dict | None:
+                               canonical_doc_id: str | None = None,
+                               actor: str = "user") -> dict | None:
         """Mark a near-duplicate pair as resolved.
 
         action options:
@@ -972,7 +973,7 @@ class OrivellumDB:
                 event_type="document.dupe_resolved",
                 object_id=dupe_id,
                 object_type="doc_dupe",
-                actor="user",
+                actor=actor,
                 detail=f"action={action}",
             ):
                 cur = self._conn.execute(
@@ -997,7 +998,7 @@ class OrivellumDB:
                     event_type="document.version_linked",
                     object_id=dupe["doc_a_id"],
                     object_type="document",
-                    actor="user",
+                    actor=actor,
                     detail=f"DERIVED_FROM {dupe['doc_b_id'][:8]}",
                 ):
                     self._conn.execute(
@@ -2952,13 +2953,15 @@ class OrivellumDB:
                        VALUES(?,?,1,'active','{}','{}',?,?,'system')""",
                     (cid, "chapter", now, now),
                 )
+                _ch_meta = ch.get("meta")
+                _ch_meta_json = _jdump(_ch_meta) if _ch_meta else "{}"
                 self._conn.execute(
                     """INSERT INTO book_chapters(id,pipeline_id,work_id,seq,level,title,
                        text,source_doc_id,citations,status,meta,created_at,updated_at,
                        citation_count,extraction_method)
-                       VALUES(?,NULL,?,?,?,?,?,?,'[]','extracted','{}',?,?,0,'heading_parser')""",
+                       VALUES(?,NULL,?,?,?,?,?,?,'[]','extracted',?,?,?,0,'heading_parser')""",
                     (cid, work_id, ch["seq"], ch.get("level", 1), ch["title"],
-                     ch.get("text", ""), doc_id, now, now),
+                     ch.get("text", ""), doc_id, _ch_meta_json, now, now),
                 )
         return n
 
@@ -3195,7 +3198,8 @@ class OrivellumDB:
                               source_doc_id: str | None = None,
                               source_chunk_id: str | None = None,
                               review_status: str = "auto",
-                              meta: dict | None = None) -> str:
+                              meta: dict | None = None,
+                              chapter_id: str | None = None) -> str:
         """Insert a knowledge item and update FTS. Returns item id.
 
         review_status:
@@ -3240,10 +3244,11 @@ class OrivellumDB:
             self._conn.execute(
                 """INSERT INTO knowledge(id,work_id,kind,text,subject,predicate,object,
                    confidence,source_doc_id,source_chunk_id,review_status,meta,
-                   created_at,text_hash)
-                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                   created_at,text_hash,chapter_id)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (kid, work_id, kind, text, subject, predicate, obj, confidence,
-                 source_doc_id, source_chunk_id, review_status, meta_json, now, text_hash),
+                 source_doc_id, source_chunk_id, review_status, meta_json, now,
+                 text_hash, chapter_id),
             )
             self._conn.execute(
                 "INSERT INTO knowledge_fts(knowledge_id,work_id,text,subject,object) VALUES(?,?,?,?,?)",

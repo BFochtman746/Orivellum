@@ -11,7 +11,7 @@ import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 from orivellum.api._deps import get_db, get_config
@@ -150,6 +150,26 @@ _ESPEAK_VOICE_MAP: dict[str, str] = {
     "bf_isabella": "en+f1", "bf_lily": "en+f2",
     "bm_george": "en+m3", "bm_daniel": "en+m2", "bm_fable": "en+m4",
     "bm_lewis": "en+m5",
+}
+
+# OpenAI-compatible voice map — groups all 28 catalog IDs by tonal similarity
+# to the six OpenAI voice names.  Used when routing to an /audio/speech endpoint.
+_OPENAI_VOICE_MAP: dict[str, str] = {
+    # American Female
+    "af_heart": "nova",    "af_bella": "nova",    "af_nova": "nova",
+    "af_alloy": "alloy",   "af_sarah": "nova",    "af_sky": "shimmer",
+    "af_jessica": "alloy", "af_kore": "shimmer",  "af_nicole": "nova",
+    "af_aoede": "shimmer", "af_river": "alloy",
+    # American Male
+    "am_adam": "onyx",   "am_echo": "echo",   "am_eric": "echo",
+    "am_fenrir": "onyx", "am_liam": "fable",  "am_michael": "echo",
+    "am_onyx": "onyx",   "am_puck": "fable",  "am_santa": "echo",
+    # British Female
+    "bf_emma": "shimmer", "bf_alice": "shimmer",
+    "bf_isabella": "nova", "bf_lily": "shimmer",
+    # British Male
+    "bm_george": "fable", "bm_daniel": "fable",
+    "bm_fable": "fable",  "bm_lewis": "fable",
 }
 
 # Standard sample sentence — tests prosody, pacing, and emotional register
@@ -1293,50 +1313,52 @@ class TTSRequest(BaseModel):
     text: str
     voice: str = "af_heart"
     speed: float = 1.0   # 0.5 – 2.0
+    stream: bool = False  # True → SSE per-segment streaming; False → full-file (legacy)
 
 
 @router.post("/studio/tts")
 async def synthesize_speech(body: TTSRequest):
     """Synthesize *text* to speech.
 
-    Strategy:
-    1. Try the local AI server's /audio/speech endpoint (OpenAI-compatible).
-    2. Fall back to espeak-ng (always available, no model download needed).
+    When ``body.stream`` is ``True`` the response is ``text/event-stream`` (SSE).
+    The text is split into ~150-word segments; each segment is synthesised in
+    sequence and an event is emitted as soon as its MP3 is ready so the client
+    can start playing before all synthesis is done.  Event shapes::
 
-    Returns audio/wav.
+        {"type":"segment","idx":0,"total":3,"uri":"/api/studio/outputs/serve?path=…"}
+        {"type":"segment_error","idx":1,"total":3,"message":"…"}
+        {"type":"done","total":3}
+
+    When ``body.stream`` is ``False`` (default) the full MP3 is returned as
+    ``audio/mpeg`` — the original behaviour.
+
+    Strategies tried in order for both paths:
+    1. Local AI server /audio/speech (OpenAI-compatible)
+    2. Kokoro ONNX (local neural TTS, CPU-only)
+    3. espeak-ng (always-available robotic fallback)
     """
     if not body.text.strip():
         raise HTTPException(400, "text must not be empty")
     if len(body.text) > 10_000:
         raise HTTPException(400, "text too long (max 10 000 chars)")
 
+    # ── Streaming path ────────────────────────────────────────────────────────
+    if body.stream:
+        return StreamingResponse(
+            _stream_tts_events(body),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
+    # ── Non-streaming path (original — returns full MP3 file) ─────────────────
     cfg = get_config()
 
     # --- Strategy 1: AI server /audio/speech ---
     try:
         import httpx
-        # Map all 28 catalog IDs to the closest OpenAI-compatible voice name.
-        # OpenAI voices: alloy (neutral-F), echo (warm-M), fable (brit-M),
-        # onyx (deep-M), nova (warm-F), shimmer (bright-F).
-        # For servers that accept Kokoro IDs directly we try the raw voice ID
-        # first; if the server rejects it (non-200) we fall through to Kokoro.
-        _OPENAI_VOICE_MAP: dict[str, str] = {
-            # American Female
-            "af_heart": "nova",    "af_bella": "nova",    "af_nova": "nova",
-            "af_alloy": "alloy",   "af_sarah": "nova",    "af_sky": "shimmer",
-            "af_jessica": "alloy", "af_kore": "shimmer",  "af_nicole": "nova",
-            "af_aoede": "shimmer", "af_river": "alloy",
-            # American Male
-            "am_adam": "onyx",   "am_echo": "echo",   "am_eric": "echo",
-            "am_fenrir": "onyx", "am_liam": "fable",  "am_michael": "echo",
-            "am_onyx": "onyx",   "am_puck": "fable",  "am_santa": "echo",
-            # British Female
-            "bf_emma": "shimmer", "bf_alice": "shimmer",
-            "bf_isabella": "nova", "bf_lily": "shimmer",
-            # British Male
-            "bm_george": "fable", "bm_daniel": "fable",
-            "bm_fable": "fable",  "bm_lewis": "fable",
-        }
         openai_voice = _OPENAI_VOICE_MAP.get(body.voice, "alloy")
 
         async with httpx.AsyncClient(timeout=30) as client:
@@ -1530,29 +1552,275 @@ async def synthesize_speech(body: TTSRequest):
 
 # ── Text segmentation helper ──────────────────────────────────────────────────
 
+def _hard_split_at_words(text: str, max_chars: int) -> list[str]:
+    """Force-split *text* at word boundaries — and at character boundaries for
+    individual tokens that exceed *max_chars* — when no sentence break is
+    available.
+
+    All returned chunks are guaranteed to be at most *max_chars* characters.
+    Used as a last resort so the streaming TTS latency cap holds regardless of
+    punctuation density or token length.
+    """
+    def _chop(token: str) -> list[str]:
+        """Split a single token that is longer than max_chars at char boundaries."""
+        return [token[i : i + max_chars] for i in range(0, len(token), max_chars)]
+
+    words = text.split()
+    chunks: list[str] = []
+    current = ""
+    for word in words:
+        if len(word) > max_chars:
+            # Flush the current accumulator first, then chop the oversized word
+            if current:
+                chunks.append(current)
+                current = ""
+            chunks.extend(_chop(word))
+            continue
+        candidate = (current + " " + word) if current else word
+        if len(candidate) <= max_chars:
+            current = candidate
+        else:
+            chunks.append(current)
+            current = word
+    if current:
+        chunks.append(current)
+    return chunks or ([text[:max_chars]] if text else [])
+
+
 def _split_text_into_segments(text: str, max_chars: int = 1500) -> list[str]:
-    """Split text at paragraph/sentence boundaries, targeting max_chars per segment."""
+    """Split text at paragraph/sentence/word boundaries, capping at *max_chars*.
+
+    Three-tier strategy:
+    1. Paragraph boundaries (``\\n\\n``) — prefer keeping paragraphs together.
+    2. Sentence boundaries (``[.!?]`` followed by whitespace) — used when a
+       paragraph alone exceeds *max_chars*.
+    3. Word boundaries — used when a single sentence exceeds *max_chars*
+       (e.g. unpunctuated or very long input) so the latency cap is always met.
+    """
     text = re.sub(r'\n{3,}', '\n\n', text.strip())
     paragraphs = [p.strip() for p in text.split('\n\n') if p.strip()]
     segments: list[str] = []
     current = ""
+
+    def _flush() -> None:
+        nonlocal current
+        if current.strip():
+            segments.append(current.strip())
+        current = ""
+
     for para in paragraphs:
         if len(para) > max_chars:
-            # Split long paragraph at sentence boundaries
+            # Tier 2: split at sentence boundaries
             sentences = re.split(r'(?<=[.!?])\s+', para)
             for sent in sentences:
+                if len(sent) > max_chars:
+                    # Tier 3: force-split at word boundaries
+                    if current:
+                        _flush()
+                    for chunk in _hard_split_at_words(sent, max_chars):
+                        if chunk:
+                            segments.append(chunk)
+                    continue
                 if current and len(current) + len(sent) + 1 > max_chars:
-                    segments.append(current.strip())
-                    current = ""
+                    _flush()
                 current += (" " if current else "") + sent
         else:
             if current and len(current) + len(para) + 2 > max_chars:
-                segments.append(current.strip())
-                current = ""
+                _flush()
             current += ("\n\n" if current else "") + para
-    if current.strip():
-        segments.append(current.strip())
+
+    _flush()
     return [s for s in segments if s]
+
+
+# ── Per-segment synthesis helper (streaming TTS) ─────────────────────────────
+
+async def _synthesize_text_to_mp3(
+    text: str,
+    voice: str,
+    speed: float,
+    out_dir: Path,
+    cfg: object,
+) -> "Path | None":
+    """Synthesize *text* → MP3 using the same 3-strategy cascade as
+    ``synthesize_speech``.  Returns the saved ``Path`` on success or ``None``
+    when all backends fail.  Does **not** call ``_link_output_sync``,
+    ``_rotate_outputs``, or ``_register_output_bg`` — the streaming caller
+    handles those after all segments are done.
+    """
+    kokoro_voice = _resolve_kokoro_voice(voice)
+    espeak_v     = _ESPEAK_VOICE_MAP.get(voice, "en+f4")
+    wpm          = max(80, min(400, int(175 * speed)))
+
+    # Strategy 1: AI-server /audio/speech ---------------------------------
+    try:
+        import httpx
+        openai_voice = _OPENAI_VOICE_MAP.get(voice, "alloy")
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                f"{cfg.serving.base_url}/audio/speech",  # type: ignore[union-attr]
+                json={
+                    "model": cfg.serving.tts_model,  # type: ignore[union-attr]
+                    "input": text,
+                    "voice": openai_voice,
+                    "response_format": "mp3",
+                    "speed": speed,
+                },
+            )
+            if resp.status_code == 200:
+                tmp = tempfile.NamedTemporaryFile(
+                    delete=False, dir=out_dir, suffix=".mp3"
+                )
+                tmp.write(resp.content)
+                tmp.close()
+                return Path(tmp.name)
+    except Exception:
+        pass
+
+    # Strategy 2: Kokoro ONNX -------------------------------------------------
+    try:
+        kokoro = _get_kokoro()
+        if kokoro is not None:
+            import soundfile as sf  # type: ignore[import]
+            samples, sample_rate = await asyncio.to_thread(
+                kokoro.create, text,
+                voice=kokoro_voice, speed=speed, lang="en-us",
+            )
+            wav_tmp = tempfile.NamedTemporaryFile(
+                delete=False, dir=out_dir, suffix=".wav"
+            )
+            await asyncio.to_thread(sf.write, wav_tmp.name, samples, sample_rate)
+            wav_tmp.close()
+            mp3_tmp = tempfile.NamedTemporaryFile(
+                delete=False, dir=out_dir, suffix=".mp3"
+            )
+            mp3_path = mp3_tmp.name
+            mp3_tmp.close()
+            ff = await asyncio.to_thread(
+                subprocess.run,
+                ["ffmpeg", "-y", "-i", wav_tmp.name,
+                 "-codec:a", "libmp3lame", "-q:a", "2", mp3_path],
+                capture_output=True, timeout=60,
+            )
+            Path(wav_tmp.name).unlink(missing_ok=True)
+            if ff.returncode == 0:
+                return Path(mp3_path)
+            Path(mp3_path).unlink(missing_ok=True)
+    except Exception:
+        pass
+
+    # Strategy 3: espeak-ng -----------------------------------------------
+    try:
+        wav_tmp = tempfile.NamedTemporaryFile(
+            delete=False, dir=out_dir, suffix=".wav"
+        )
+        wav_path = wav_tmp.name
+        wav_tmp.close()
+        result = await asyncio.to_thread(
+            subprocess.run,
+            ["espeak-ng", "-v", espeak_v, "-s", str(wpm), "-w", wav_path, text],
+            capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode == 0:
+            mp3_tmp = tempfile.NamedTemporaryFile(
+                delete=False, dir=out_dir, suffix=".mp3"
+            )
+            mp3_path = mp3_tmp.name
+            mp3_tmp.close()
+            ff = await asyncio.to_thread(
+                subprocess.run,
+                ["ffmpeg", "-y", "-i", wav_path,
+                 "-codec:a", "libmp3lame", "-q:a", "4", mp3_path],
+                capture_output=True, timeout=30,
+            )
+            Path(wav_path).unlink(missing_ok=True)
+            if ff.returncode == 0:
+                return Path(mp3_path)
+            Path(mp3_path).unlink(missing_ok=True)
+        else:
+            Path(wav_path).unlink(missing_ok=True)
+    except Exception:
+        pass
+
+    return None
+
+
+async def _stream_tts_events(body: "TTSRequest"):
+    """Async generator: synthesise ``body.text`` in ~150-word segments and
+    yield SSE lines for each completed segment.
+
+    **Output lifecycle** — each successful segment follows the same durable
+    path as non-streaming TTS: ``_link_output_sync`` is called synchronously
+    *before* the event is yielded (so the hard-link survives any subsequent
+    rotation), and ``_register_output_bg`` is submitted to the background
+    executor so the clip appears in the library.  ``_rotate_outputs`` runs
+    once after the final segment.
+
+    Yields ``data: <json>\\n\\n`` lines in three event shapes::
+
+        {"type":"segment","idx":N,"total":T,"path":"/abs/path/to/file.mp3","ok":true}
+        {"type":"segment_error","idx":N,"total":T,"message":"…","ok":false}
+        {"type":"done","total":T,"ok_count":N,"error_count":M}
+
+    The ``path`` field in ``segment`` events is the raw output filesystem path.
+    Clients MUST percent-encode it before appending to the
+    ``/api/studio/outputs/serve?path=`` query — use ``serveUrl(evt.path)``
+    on the mobile client or ``encodeURIComponent`` elsewhere.
+    """
+    import json as _json
+    from orivellum.api.executor import get_executor as _gex
+
+    cfg = get_config()
+    out_dir = Path(cfg.data_dir) / "outputs"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # ~150-word segments keep synthesis latency below ~2 s for the first chunk
+    segments = _split_text_into_segments(body.text, max_chars=900)
+    total     = len(segments)
+    ok_count  = 0
+    err_count = 0
+
+    for idx, seg_text in enumerate(segments):
+        try:
+            mp3_path = await _synthesize_text_to_mp3(
+                seg_text, body.voice, body.speed, out_dir, cfg
+            )
+            if mp3_path:
+                # Hard-link BEFORE rotation so the library inode is durable
+                seg_rel = _link_output_sync(mp3_path)
+                # Register as a searchable Studio clip (best-effort background)
+                seg_title = f"TTS clip ({idx + 1}/{total}): {body.text[:50]}"
+                _gex().submit(
+                    _register_output_bg, mp3_path, seg_text, "mp3",
+                    seg_title, prelinked_rel=seg_rel,
+                )
+                # Emit the output-relative path (e.g. "tmpXXXX.mp3") so the
+                # /studio/outputs/serve endpoint can safely resolve it within
+                # out_dir — the same format as list_outputs uses.
+                rel_path = mp3_path.relative_to(out_dir)
+                event: dict = {
+                    "type": "segment", "idx": idx, "total": total,
+                    "path": str(rel_path), "ok": True,
+                }
+                ok_count += 1
+            else:
+                event = {
+                    "type": "segment_error", "idx": idx, "total": total,
+                    "message": "All TTS backends failed for this segment",
+                    "ok": False,
+                }
+                err_count += 1
+        except Exception as exc:
+            event = {
+                "type": "segment_error", "idx": idx, "total": total,
+                "message": str(exc)[:200], "ok": False,
+            }
+            err_count += 1
+        yield f"data: {_json.dumps(event)}\n\n"
+
+    # Rotate after all links are written
+    await asyncio.to_thread(_rotate_outputs, out_dir)
+    yield f"data: {_json.dumps({'type': 'done', 'total': total, 'ok_count': ok_count, 'error_count': err_count})}\n\n"
 
 
 # ── Document-to-Audiobook ─────────────────────────────────────────────────────

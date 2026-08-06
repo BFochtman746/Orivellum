@@ -438,7 +438,7 @@ def process_document(doc_id: str, file_path: str, kind: str,
         # the document is usable even if the AI service is slow or unavailable.
         db.update_document_extracted(
             doc_id,
-            extracted_text=result.full_text[:100_000],  # cap stored text
+            extracted_text=result.full_text,  # full text stored — no cap
             word_count=result.word_count,
             readiness="ready",
         )
@@ -483,6 +483,9 @@ def process_document(doc_id: str, file_path: str, kind: str,
         # Step 4.5: chapter/section extraction — runs after readiness so it
         # never delays the document appearing as usable.  Non-fatal: failure
         # is logged but does not change readiness.
+        # scene_count is computed per chapter and stored in meta so the
+        # chapter health endpoint can surface it without loading chapter text.
+        _has_chapters = False
         try:
             from orivellum.capabilities.chapters import extract_chapters
             _text_for_chapters = result.full_text
@@ -491,10 +494,12 @@ def process_document(doc_id: str, file_path: str, kind: str,
                 if _chapters:
                     _chapter_dicts = [
                         {"seq": c.seq, "level": c.level,
-                         "title": c.title, "text": c.text}
+                         "title": c.title, "text": c.text,
+                         "meta": {"scene_count": c.scene_count}}
                         for c in _chapters
                     ]
                     _n = db.upsert_book_chapters(doc_id, work_id, _chapter_dicts)
+                    _has_chapters = _n >= 2  # meaningful chapter structure
                     logger.info("Doc %s: %d chapter(s) extracted", doc_id, _n)
         except Exception as _ch_exc:
             logger.debug("Chapter extraction non-fatal for %s: %s", doc_id, _ch_exc)
@@ -503,6 +508,8 @@ def process_document(doc_id: str, file_path: str, kind: str,
         # Completely non-fatal; results land in doc_dupes for the UI to surface.
         # likely_revision pairs (0.60–0.85) are also promoted to version_relationship
         # suggestions in the Review Queue so users can declare DERIVED_FROM links.
+        # When auto_dedup_enabled=true the system resolves detected pairs immediately
+        # without requiring manual action in the Review Queue.
         try:
             from orivellum.capabilities.dedup import compute_and_store, find_and_record_near_duplicates
             _text_for_dedup = result.full_text
@@ -513,6 +520,18 @@ def process_document(doc_id: str, file_path: str, kind: str,
                     if _hits:
                         logger.info("Doc %s: %d near-duplicate(s) found", doc_id, len(_hits))
                         _suggest_version_relationships(doc_id, _hits, db)
+                        # Inline auto-resolution — only when the user has opted in.
+                        if db.get_setting("auto_dedup_enabled", "false").lower() == "true":
+                            try:
+                                from orivellum.capabilities.auto_dedup import auto_resolve_import_hits
+                                _ar = auto_resolve_import_hits(doc_id, _hits, db)
+                                if _ar["superseded"] or _ar["versioned"]:
+                                    logger.info(
+                                        "auto_dedup (import): %d superseded, %d versioned for doc %s",
+                                        _ar["superseded"], _ar["versioned"], doc_id,
+                                    )
+                            except Exception as _ar_exc:
+                                logger.debug("auto_dedup inline non-fatal: %s", _ar_exc)
         except Exception as _dd_exc:
             logger.debug("Dedup step non-fatal for %s: %s", doc_id, _dd_exc)
 
@@ -550,16 +569,36 @@ def process_document(doc_id: str, file_path: str, kind: str,
 
         # Step 5 (optional): LLM-powered harvest — runs after readiness is set so
         # latency here never blocks the document from appearing as ready.
+        # Chapter-structured documents (novels, books with ≥2 extracted chapters)
+        # use the fiction-aware per-chapter harvest; unstructured documents fall
+        # back to the original page/segment based extraction.
         if db.get_setting("ai_extraction_enabled", "false").lower() == "true":
-            logger.info("AI extraction enabled — running llm_harvest for doc %s", doc_id)
-            try:
-                llm_harvest(result, doc_id=doc_id, work_id=work_id,
-                            doc_title=title, db=db, kind=kind)
-            except Exception as llm_exc:
-                # Never let an LLM failure touch the ready document
-                logger.warning(
-                    "llm_harvest failed for doc %s (non-fatal): %s", doc_id, llm_exc
+            if _has_chapters:
+                logger.info(
+                    "AI extraction enabled — chapter-aware harvest for doc %s "
+                    "(%d chapters)", doc_id, len(_chapter_dicts),
                 )
+                try:
+                    from orivellum.capabilities.knowledge_harvest import llm_harvest_by_chapters
+                    llm_harvest_by_chapters(
+                        doc_id=doc_id, work_id=work_id,
+                        doc_title=title, db=db,
+                    )
+                except Exception as llm_exc:
+                    logger.warning(
+                        "llm_harvest_by_chapters failed for doc %s (non-fatal): %s",
+                        doc_id, llm_exc,
+                    )
+            else:
+                logger.info("AI extraction enabled — running llm_harvest for doc %s", doc_id)
+                try:
+                    llm_harvest(result, doc_id=doc_id, work_id=work_id,
+                                doc_title=title, db=db, kind=kind)
+                except Exception as llm_exc:
+                    # Never let an LLM failure touch the ready document
+                    logger.warning(
+                        "llm_harvest failed for doc %s (non-fatal): %s", doc_id, llm_exc
+                    )
 
     except Exception as exc:
         msg = f"{type(exc).__name__}: {exc}"

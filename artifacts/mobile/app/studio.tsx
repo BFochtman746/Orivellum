@@ -1271,6 +1271,292 @@ function VoiceRecommenderCard({
 
 // ── TTS panel ───────────────────────────────────────────────────────────────────
 
+// ── Streaming TTS hook ────────────────────────────────────────────────────────
+
+type StreamPhase = 'idle' | 'loading' | 'playing' | 'done' | 'error';
+
+/**
+ * Manages per-segment synthesis + sequential playback.
+ *
+ * The server streams SSE events as each ~150-word segment is synthesised.
+ * The hook starts playing the first segment as soon as it arrives (< 2 s),
+ * then chains subsequent segments seamlessly.
+ *
+ * Falls back to the existing full-file flow when:
+ *  - The server returns a non-SSE response (older deployment)
+ *  - The platform does not support `response.body.getReader()`
+ */
+function useStreamingTTS() {
+  const [phase,      setPhase]      = useState<StreamPhase>('idle');
+  const [segCurrent, setSegCurrent] = useState(0);  // 1-based index currently playing
+  const [segTotal,   setSegTotal]   = useState(0);  // 0 = unknown yet
+  const [errorMsg,   setErrorMsg]   = useState('');
+
+  // All mutable playback state lives in refs so closure captures stay fresh.
+  const playerRef       = useRef<AudioPlayer | null>(null);
+  const queueRef        = useRef<string[]>([]);   // segment URIs waiting to play
+  const playedRef       = useRef(0);              // segments that started playing
+  const streamDoneRef   = useRef(false);          // _playNext: finalize when queue drains
+  const serverDoneRef   = useRef(false);          // server's 'done' SSE event received
+  const segErrorRef     = useRef(0);              // count of segment_error events
+  const segTotalRef     = useRef(0);              // mirrors segTotal for done-handler
+  const pollRef         = useRef<ReturnType<typeof setInterval> | null>(null);
+  const abortRef        = useRef<AbortController | null>(null);
+  const mountedRef      = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      _cleanupPlayer();
+      abortRef.current?.abort();
+    };
+  }, []);
+
+  function _cleanupPlayer() {
+    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+    try { playerRef.current?.pause(); playerRef.current?.remove(); } catch {}
+    playerRef.current = null;
+  }
+
+  function _playNext() {
+    _cleanupPlayer();
+
+    const uri = queueRef.current.shift();
+    if (!uri) {
+      // Queue empty — finalize only when the stream has signalled it is done
+      if (streamDoneRef.current && mountedRef.current) setPhase('done');
+      return;
+    }
+
+    const token = getApiToken();
+    try {
+      const player = createAudioPlayer({
+        uri,
+        headers: token ? { authorization: `Bearer ${token}` } : undefined,
+      });
+      playerRef.current = player;
+      player.play();
+      playedRef.current += 1;
+      if (mountedRef.current) setSegCurrent(playedRef.current);
+
+      pollRef.current = setInterval(() => {
+        if (!mountedRef.current) return;
+        const st = player.currentStatus;
+        const ended =
+          st?.didJustFinish ||
+          (st?.isLoaded && !st.playing &&
+           (st.currentTime ?? 0) > 0 && (st.duration ?? 0) > 0 &&
+           (st.currentTime ?? 0) >= (st.duration ?? 0) - 0.3);
+        if (ended) {
+          clearInterval(pollRef.current!); pollRef.current = null;
+          _playNext();
+        } else if (st?.error) {
+          clearInterval(pollRef.current!); pollRef.current = null;
+          _playNext(); // skip errored segment
+        }
+      }, 400);
+    } catch {
+      _playNext(); // skip if player creation failed
+    }
+  }
+
+  function _enqueueSegment(uri: string, total: number) {
+    if (!mountedRef.current) return;
+    setSegTotal(total);
+    queueRef.current.push(uri);
+    // Start playback immediately on the first segment — this is the < 2 s path
+    if (!playerRef.current && pollRef.current === null) {
+      setPhase('playing');
+      _playNext();
+    }
+  }
+
+  async function startStream(text: string, voice: string, speed: number) {
+    abortRef.current?.abort();
+    _cleanupPlayer();
+    queueRef.current    = [];
+    streamDoneRef.current = false;
+    serverDoneRef.current = false;
+    playedRef.current   = 0;
+    segErrorRef.current = 0;
+    segTotalRef.current = 0;
+
+    if (!mountedRef.current) return;
+    setPhase('loading');
+    setSegCurrent(0);
+    setSegTotal(0);
+    setErrorMsg('');
+
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    try {
+      const resp = await mobileFetch(`${API}/studio/tts`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, voice, speed, stream: true }),
+        signal: controller.signal,
+      });
+
+      if (!resp.ok) {
+        const errData = await resp.json().catch(() => ({})) as any;
+        throw new Error(errData.detail ?? `HTTP ${resp.status}`);
+      }
+
+      // Streaming TTS requires SSE (text/event-stream).  If the server returns
+      // anything else (e.g. an older deployment that ignores the stream field),
+      // we surface an explicit error rather than playing an unrelated cached
+      // audio file — callers should toggle stream:false or upgrade the server.
+      const ct = resp.headers.get('content-type') ?? '';
+      if (!ct.includes('text/event-stream') || !resp.body) {
+        if (mountedRef.current) {
+          setErrorMsg(
+            'Streaming not available — the server returned an unexpected response type. ' +
+            'Please try again; if the problem persists, use the standard synthesis path.'
+          );
+          setPhase('error');
+        }
+        return;
+      }
+
+      // ── Parse SSE stream ────────────────────────────────────────────────────
+      const reader  = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer    = '';
+      let readError = false;
+
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        let chunk: { done: boolean; value?: Uint8Array };
+        try {
+          chunk = await reader.read();
+        } catch {
+          readError = true;
+          break;
+        }
+        if (chunk.done || controller.signal.aborted) break;
+
+        buffer += decoder.decode(chunk.value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const raw = line.slice(6).trim();
+          if (!raw) continue;
+          try {
+            const evt = JSON.parse(raw) as Record<string, any>;
+
+            if (evt.type === 'segment' && evt.path) {
+              // serveUrl() percent-encodes the raw path so createAudioPlayer
+              // receives a well-formed URL with no bare slashes in the query string
+              _enqueueSegment(serveUrl(evt.path), evt.total ?? 0);
+              segTotalRef.current = evt.total ?? segTotalRef.current;
+
+            } else if (evt.type === 'segment_error') {
+              segErrorRef.current += 1;
+              segTotalRef.current = evt.total ?? segTotalRef.current;
+              if (mountedRef.current) setSegTotal(evt.total ?? 0);
+
+            } else if (evt.type === 'done') {
+              // ── Server confirmed completion ─────────────────────────────
+              serverDoneRef.current = true;
+              const total    = evt.total ?? segTotalRef.current;
+              const okCount  = evt.ok_count  ?? (total - segErrorRef.current);
+              const errCount = evt.error_count ?? segErrorRef.current;
+              if (mountedRef.current) setSegTotal(total);
+
+              if (total > 0 && okCount === 0) {
+                // Every segment failed — report error immediately
+                if (mountedRef.current) {
+                  setErrorMsg(
+                    `All ${errCount} segment${errCount !== 1 ? 's' : ''} failed to synthesize. ` +
+                    'Check that at least one TTS backend (Kokoro / espeak-ng) is available.'
+                  );
+                  setPhase('error');
+                }
+                return;
+              }
+
+              // Allow the playback chain to drain; _playNext will call
+              // setPhase('done') when the queue empties (streamDoneRef must be
+              // set first so _playNext knows it's safe to finalize).
+              streamDoneRef.current = true;
+              if (!playerRef.current && queueRef.current.length === 0) {
+                if (mountedRef.current) setPhase('done');
+              }
+            }
+          } catch {} // malformed SSE line — skip
+        }
+      }
+
+      // ── Post-loop: connection closed ──────────────────────────────────────
+      if (controller.signal.aborted) return; // user pressed Stop
+
+      if (!serverDoneRef.current) {
+        // Stream ended WITHOUT the server's 'done' event — connection truncated.
+        if (playedRef.current === 0 && queueRef.current.length === 0) {
+          // Nothing arrived — full failure
+          if (mountedRef.current) {
+            setErrorMsg(
+              readError
+                ? 'Connection dropped before any audio was received. Please try again.'
+                : 'No audio was received from the server. Please try again.'
+            );
+            setPhase('error');
+          }
+        } else {
+          // Some segments already playing or queued — let playback finish.
+          // Mark stream done so _playNext will finalize once the queue drains.
+          streamDoneRef.current = true;
+          if (!playerRef.current && queueRef.current.length === 0 && mountedRef.current) {
+            setPhase('done');
+          }
+          // (The user heard the audio that arrived before the disconnect.)
+        }
+      }
+
+    } catch (err: any) {
+      if (err?.name === 'AbortError' || controller.signal.aborted) return;
+      if (mountedRef.current) {
+        setErrorMsg(err?.message ?? 'TTS request failed. Please try again.');
+        setPhase('error');
+      }
+    }
+  }
+
+  function stop() {
+    abortRef.current?.abort();
+    abortRef.current = null;
+    _cleanupPlayer();
+    queueRef.current      = [];
+    streamDoneRef.current  = false;
+    serverDoneRef.current  = false;
+    playedRef.current     = 0;
+    segErrorRef.current   = 0;
+    segTotalRef.current   = 0;
+    if (mountedRef.current) {
+      setPhase('idle');
+      setSegCurrent(0);
+      setSegTotal(0);
+      setErrorMsg('');
+    }
+  }
+
+  return {
+    phase,
+    segCurrent,
+    segTotal,
+    errorMsg,
+    startStream,
+    stop,
+    isActive: phase === 'loading' || phase === 'playing',
+  };
+}
+
+// ── TTS Panel ─────────────────────────────────────────────────────────────────
+
 function TTSPanel({
   voices,
   onGenerated,
@@ -1284,9 +1570,9 @@ function TTSPanel({
   const [text, setText] = useState('');
   const [voice, setVoice] = useState(voices[0]?.id ?? 'af_heart');
   const [speed, setSpeed] = useState(1.0);
-  const [loading, setLoading] = useState(false);
-  const [resultUri, setResultUri] = useState<string | null>(null);
   const overLimit = text.length > 10_000;
+
+  const tts = useStreamingTTS();
 
   // Optional Work context for AI narrator recommendations
   const [works, setWorks] = useState<{ id: string; title: string }[]>([]);
@@ -1303,42 +1589,21 @@ function TTSPanel({
       .catch(() => {});
   }, []);
 
-  const handleSynthesize = async () => {
-    if (!text.trim() || overLimit) return;
-    setLoading(true);
-    audio.stop();
-    setResultUri(null);
-    try {
-      const resp = await mobileFetch(`${API}/studio/tts`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: text.trim(), voice, speed }),
-      });
-      if (!resp.ok) {
-        const err = await resp.json().catch(() => ({} as any));
-        throw new Error((err as any).detail ?? `HTTP ${resp.status}`);
-      }
-      // The endpoint returns a saved output; refresh the list and play the newest.
-      await new Promise((r) => setTimeout(r, 300));
-      onGenerated();
-      // Fetch newest audio output path for direct playback.
-      const listResp = await mobileFetch(`${API}/studio/outputs`);
-      const list = await listResp.json().catch(() => ({ outputs: [] }));
-      const newestAudio = (list.outputs ?? []).find((o: any) => o.kind === 'audio');
-      if (newestAudio) setResultUri(serveUrl(newestAudio.path));
-    } catch (e: any) {
-      Alert.alert('TTS failed', e?.message ?? 'Synthesis failed');
-    } finally {
-      setLoading(false);
-    }
-  };
+  // Notify parent when synthesis finishes (triggers output list refresh)
+  useEffect(() => {
+    if (tts.phase === 'done') onGenerated();
+  }, [tts.phase]);  // eslint-disable-line react-hooks/exhaustive-deps
+
+  const progressPct = tts.segTotal > 0
+    ? Math.round((tts.segCurrent / tts.segTotal) * 100)
+    : 0;
 
   return (
     <SectionCard title="Text to Speech" icon="volume-2">
       <View style={styles.field}>
         <View style={styles.rowBetween}>
           <FieldLabel>Text</FieldLabel>
-          <Text style={{ fontSize: 11, color: overLimit ? colors.destructive : colors.mutedForeground, fontFamily: 'Inter_400Regular' }}>
+          <Text style={{ fontSize: 11, color: overLimit ? '#ef4444' : colors.mutedForeground, fontFamily: 'Inter_400Regular' }}>
             {text.length.toLocaleString()} / 10,000
           </Text>
         </View>
@@ -1349,6 +1614,7 @@ function TTSPanel({
           value={text}
           onChangeText={setText}
           multiline
+          editable={!tts.isActive}
         />
       </View>
 
@@ -1429,38 +1695,113 @@ function TTSPanel({
         />
       </View>
 
+      {/* Synthesize / Stop button */}
       <Pressable
-        onPress={handleSynthesize}
-        disabled={!text.trim() || loading || overLimit}
+        onPress={tts.isActive ? tts.stop : () => { if (text.trim() && !overLimit) tts.startStream(text.trim(), voice, speed); }}
+        disabled={(!text.trim() || overLimit) && !tts.isActive}
         style={({ pressed }) => [
           styles.primaryButton,
-          { backgroundColor: colors.primary, opacity: !text.trim() || loading || overLimit ? 0.5 : pressed ? 0.85 : 1 },
+          {
+            backgroundColor: tts.isActive ? '#ef4444' : colors.primary,
+            opacity: (!text.trim() || overLimit) && !tts.isActive ? 0.5 : pressed ? 0.85 : 1,
+          },
         ]}
       >
-        {loading ? (
-          <ActivityIndicator color={colors.primaryForeground} size="small" />
+        {tts.phase === 'loading' ? (
+          <ActivityIndicator color="#fff" size="small" />
+        ) : tts.isActive ? (
+          <Feather name="square" size={14} color="#fff" />
         ) : (
           <Feather name="mic" size={15} color={colors.primaryForeground} />
         )}
-        <Text style={[styles.primaryButtonText, { color: colors.primaryForeground }]}>
-          {loading ? 'Synthesizing…' : 'Synthesize'}
+        <Text style={[styles.primaryButtonText, { color: tts.isActive ? '#fff' : colors.primaryForeground }]}>
+          {tts.phase === 'loading' ? 'Preparing…' : tts.isActive ? 'Stop' : 'Synthesize'}
         </Text>
       </Pressable>
 
-      {resultUri && (
-        <Pressable
-          onPress={() => audio.toggle('tts-result', resultUri)}
-          style={[styles.playRow, { borderColor: colors.border, backgroundColor: colors.muted }]}
-        >
-          <Feather name={audio.playingKey === 'tts-result' ? 'pause' : 'play'} size={16} color={colors.primary} />
-          <Text style={{ color: colors.foreground, fontSize: 13, fontFamily: 'Inter_500Medium' }}>
-            {audio.playingKey === 'tts-result' ? 'Playing…' : 'Play result'}
+      {/* Streaming progress */}
+      {(tts.phase === 'loading' || tts.phase === 'playing' || tts.phase === 'done') && (
+        <View style={ttsStreamStyles.container}>
+          {/* Progress track */}
+          <View style={[ttsStreamStyles.track, { backgroundColor: colors.muted }]}>
+            <View
+              style={[
+                ttsStreamStyles.fill,
+                {
+                  backgroundColor: tts.phase === 'done' ? '#22c55e' : colors.primary,
+                  width: tts.phase === 'loading' ? '3%'
+                       : tts.phase === 'done'    ? '100%'
+                       : `${Math.max(3, progressPct)}%`,
+                },
+              ]}
+            />
+          </View>
+
+          {/* Status label */}
+          <View style={ttsStreamStyles.statusRow}>
+            {tts.phase === 'loading' && (
+              <>
+                <ActivityIndicator size="small" color={colors.primary}
+                  style={{ transform: [{ scale: 0.75 }] }} />
+                <Text style={[ttsStreamStyles.statusText, { color: colors.mutedForeground }]}>
+                  Preparing audio…
+                </Text>
+              </>
+            )}
+            {tts.phase === 'playing' && (
+              <>
+                <Feather name="volume-2" size={13} color={colors.primary} />
+                <Text style={[ttsStreamStyles.statusText, { color: colors.foreground }]}>
+                  {tts.segTotal > 0
+                    ? `Playing segment ${tts.segCurrent} of ${tts.segTotal}`
+                    : `Playing segment ${tts.segCurrent}`}
+                </Text>
+              </>
+            )}
+            {tts.phase === 'done' && (
+              <>
+                <Feather name="check-circle" size={13} color="#22c55e" />
+                <Text style={[ttsStreamStyles.statusText, { color: '#22c55e' }]}>
+                  Done{tts.segTotal > 1 ? ` — ${tts.segTotal} segments` : ''}
+                </Text>
+                <Pressable
+                  onPress={tts.stop}
+                  hitSlop={10}
+                  style={{ marginLeft: 'auto' }}
+                >
+                  <Feather name="x" size={13} color={colors.mutedForeground} />
+                </Pressable>
+              </>
+            )}
+          </View>
+        </View>
+      )}
+
+      {/* Error state */}
+      {tts.phase === 'error' && !!tts.errorMsg && (
+        <View style={[ttsStreamStyles.errorBox, { borderColor: '#ef444433', backgroundColor: '#ef444410' }]}>
+          <Feather name="alert-circle" size={13} color="#ef4444" />
+          <Text style={[ttsStreamStyles.errorText, { color: '#ef4444' }]} numberOfLines={3}>
+            {tts.errorMsg}
           </Text>
-        </Pressable>
+        </View>
       )}
     </SectionCard>
   );
 }
+
+const ttsStreamStyles = StyleSheet.create({
+  container: { gap: 8 },
+  track:     { height: 4, borderRadius: 2, overflow: 'hidden' },
+  fill:      { height: 4, borderRadius: 2 },
+  statusRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  statusText: { fontSize: 12, fontFamily: 'Inter_400Regular' },
+  errorBox: {
+    flexDirection: 'row', alignItems: 'flex-start', gap: 8,
+    padding: 10, borderRadius: 8, borderWidth: 1,
+  },
+  errorText: { fontSize: 12, fontFamily: 'Inter_400Regular', flex: 1, lineHeight: 17 },
+});
 
 // ── Image generation panel ───────────────────────────────────────────────────────
 

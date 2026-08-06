@@ -18,12 +18,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Canonical cap matching pipeline.py's update_document_extracted call:
-#   extracted_text = result.full_text[:_EXTRACTED_TEXT_CAP]
-# Chunk char offsets (Unicode code-points) are only stored when they fall
-# within this window; chunks beyond it receive NULL offsets and are handled
-# by the standard per-chunk embedding fallback.
-_EXTRACTED_TEXT_CAP = 100_000
+# Cap for char offset validity.  Full novel text is now stored without
+# truncation (pipeline.py stores result.full_text directly).  This constant
+# governs when offsets are stored as NULL vs real values; 2 M code-points
+# covers novels up to ~300 000 words without NULL-offset fallback.
+_EXTRACTED_TEXT_CAP = 2_000_000
 
 # Max characters of the document's opening text sent as context to the LLM
 # when generating per-chunk context prefixes.  Large enough to give meaningful

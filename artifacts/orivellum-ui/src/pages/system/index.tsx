@@ -3,7 +3,7 @@ import { apiFetch } from "@/lib/auth";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
-import { Activity, Database, Cpu, CheckCircle2, XCircle, AlertCircle, AlertTriangle, Terminal, Sparkles, Moon, Brain, Trash2, ScrollText, User, Settings, Image as ImageIcon, Eye, Loader2, FileSearch, ClipboardCopy, ChevronDown, ChevronRight, Zap, Download, RotateCcw, FolderOpen, FolderPlus, Plus, X } from "lucide-react";
+import { Activity, Database, Cpu, CheckCircle2, XCircle, AlertCircle, AlertTriangle, Terminal, Sparkles, Moon, Brain, Trash2, ScrollText, User, Settings, Image as ImageIcon, Eye, Loader2, FileSearch, ClipboardCopy, ChevronDown, ChevronRight, Zap, Download, RotateCcw, FolderOpen, FolderPlus, Plus, X, GitMerge, Archive } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -512,6 +512,163 @@ type WatchDirsResponse = {
   dirs: WatchDir[];
   scanned_at: string | null;
 };
+
+// ─── Auto Dedup Card ──────────────────────────────────────────────────────────
+
+type AutoDedupStats = {
+  pending: number; superseded: number; versioned: number; dismissed: number; total: number;
+};
+type AutoDedupResult = {
+  processed: number; superseded: number; versioned: number; skipped: number; errors: number;
+};
+
+function AutoDedupCard() {
+  const API = `${API_BASE}/api`;
+  const [enabled, setEnabled] = useState<boolean | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [running, setRunning] = useState(false);
+  const [lastResult, setLastResult] = useState<AutoDedupResult | null>(null);
+
+  const { data: stats, refetch: refetchStats } = useQuery<AutoDedupStats>({
+    queryKey: ["auto-dedup-stats"],
+    queryFn: async () => {
+      const r = await apiFetch(`${API}/system/auto-dedup/stats`);
+      if (!r.ok) throw new Error("stats fetch failed");
+      return r.json();
+    },
+    refetchInterval: 30_000,
+  });
+
+  // Load current setting
+  useEffect(() => {
+    apiFetch(`${API}/system/settings/auto_dedup_enabled`)
+      .then(r => r.ok ? r.json() : { value: "false" })
+      .then(d => setEnabled((d?.value ?? "false").toString().toLowerCase() === "true"))
+      .catch(() => setEnabled(false));
+  }, [API]);
+
+  const toggleEnabled = async (val: boolean) => {
+    setSaving(true);
+    try {
+      await apiFetch(`${API}/system/settings/auto_dedup_enabled`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ value: val ? "true" : "false" }),
+      });
+      setEnabled(val);
+      toast.success(val ? "Auto-dedup enabled" : "Auto-dedup disabled");
+    } catch {
+      toast.error("Could not save setting");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const runNow = async () => {
+    setRunning(true);
+    setLastResult(null);
+    try {
+      const r = await apiFetch(`${API}/system/auto-dedup/run-now`, { method: "POST" });
+      if (!r.ok) throw new Error(await r.text());
+      const result: AutoDedupResult = await r.json();
+      setLastResult(result);
+      refetchStats();
+      toast.success(
+        result.processed === 0
+          ? "No pending pairs to process"
+          : `Processed ${result.processed} pair(s) — ${result.superseded} superseded, ${result.versioned} versioned`,
+      );
+    } catch (err) {
+      toast.error(`Auto-dedup failed: ${err}`);
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  const pending = stats?.pending ?? 0;
+
+  return (
+    <Card>
+      <CardContent className="p-6 space-y-5">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <GitMerge className="w-5 h-5 text-primary/70" />
+            <div>
+              <h3 className="font-mono text-sm uppercase tracking-wider">Automatic Deduplication</h3>
+              <p className="text-xs text-muted-foreground mt-0.5 max-w-lg">
+                Automatically resolve near-duplicate documents at import time and each night —
+                newer/richer documents survive; older copies are archived as superseded or linked
+                as version history.
+              </p>
+            </div>
+          </div>
+          {pending > 0 && (
+            <Badge variant="secondary" className="shrink-0 font-mono">
+              {pending} pending
+            </Badge>
+          )}
+        </div>
+
+        {/* Stats row */}
+        {stats && (
+          <div className="grid grid-cols-4 gap-3">
+            {[
+              { label: "Pending",    value: stats.pending,    cls: pending > 0 ? "text-amber-600" : "text-muted-foreground" },
+              { label: "Superseded", value: stats.superseded, cls: "text-muted-foreground" },
+              { label: "Versioned",  value: stats.versioned,  cls: "text-muted-foreground" },
+              { label: "Dismissed",  value: stats.dismissed,  cls: "text-muted-foreground" },
+            ].map(({ label, value, cls }) => (
+              <div key={label} className="rounded-md bg-muted/40 px-3 py-2 text-center">
+                <p className={`text-xl font-mono font-semibold ${cls}`}>{value}</p>
+                <p className="text-[10px] uppercase tracking-wider text-muted-foreground mt-0.5">{label}</p>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* How it works */}
+        <div className="rounded-md bg-muted/30 border border-border/40 px-4 py-3 space-y-1.5 text-xs text-muted-foreground">
+          <p className="font-medium text-foreground/70 font-mono uppercase text-[10px] tracking-wider mb-1">Resolution rules</p>
+          <div className="flex items-start gap-2"><Archive className="w-3 h-3 mt-0.5 shrink-0 text-amber-500" /><span><strong>Near-duplicate (≥ 85% similar):</strong> the canonical/newer/richer document survives; the other is marked <em>superseded</em>.</span></div>
+          <div className="flex items-start gap-2"><GitMerge className="w-3 h-3 mt-0.5 shrink-0 text-primary/60" /><span><strong>Likely revision (60–85% similar):</strong> a DERIVED_FROM version chain is created; both documents are kept.</span></div>
+          <div className="flex items-start gap-2"><AlertTriangle className="w-3 h-3 mt-0.5 shrink-0 text-muted-foreground" /><span>If both documents are already set to <em>canonical</em> the pair is left in the Review Queue for you to decide.</span></div>
+        </div>
+
+        {/* Last result */}
+        {lastResult && (
+          <div className="rounded-md bg-muted/30 px-3 py-2 text-xs font-mono text-muted-foreground">
+            Last run — processed: {lastResult.processed} · superseded: {lastResult.superseded} ·
+            versioned: {lastResult.versioned} · skipped: {lastResult.skipped} · errors: {lastResult.errors}
+          </div>
+        )}
+
+        {/* Controls */}
+        <div className="flex items-center justify-between pt-1">
+          <div className="flex items-center gap-3">
+            <Switch
+              checked={enabled ?? false}
+              onCheckedChange={toggleEnabled}
+              disabled={saving || enabled === null}
+            />
+            <span className="text-sm">
+              {enabled === null ? "Loading…" : enabled ? "Runs automatically at import and each night" : "Manual only — use Run now to process pending pairs"}
+            </span>
+          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={runNow}
+            disabled={running}
+            className="gap-2 font-mono text-xs"
+          >
+            {running ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5" />}
+            {running ? "Running…" : "Run now"}
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
 
 function WatchedFoldersCard() {
   const qc = useQueryClient();
@@ -1770,6 +1927,9 @@ $env:ORIVELLUM_AI_URL="http://127.0.0.1:11434/v1"`}
           </CardContent>
         </Card>
       )}
+
+      {/* Auto Deduplication */}
+      <AutoDedupCard />
 
       {/* Watched Folders */}
       <WatchedFoldersCard />

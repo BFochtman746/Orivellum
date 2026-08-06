@@ -344,3 +344,47 @@ body {
     animation: mobile-page-enter 200ms cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
   }
 }
+
+/* ── Predictive composer — ghost text overlay + source chip materialization ─── */
+@keyframes ghost-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes chip-materialize {
+  from { opacity: 0; transform: translateY(3px); }
+  to   { opacity: 1; transform: translateY(0);   }
+}
+
+/* Ghost div sits absolutely over the textarea (pointer-events:none so the
+   textarea below still receives all input events).  Font/padding must exactly
+   mirror the Textarea component so the ghost cursor aligns correctly.        */
+.predict-ghost-overlay {
+  position: absolute;
+  inset: 0;
+  /* py-3 (0.75rem) + px-3 (0.75rem) + pr-40 (10rem) — mirrors Textarea classes */
+  padding: 0.75rem 10rem 0.75rem 0.75rem;
+  font-size: 1rem;   /* text-base */
+  line-height: 1.5;  /* browser textarea default */
+  font-family: var(--app-font-sans);
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 1;
+  /* 1px transparent border aligns text with the textarea's 1px visible border */
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .ghost-text-completion {
+    animation: ghost-fade-in 150ms ease-out forwards;
+  }
+  .predict-chip {
+    animation: chip-materialize 220ms ease-out both;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ghost-text-completion { opacity: 0.35; }
+  .predict-chip           { opacity: 1;   }
+}

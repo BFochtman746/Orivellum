@@ -404,6 +404,56 @@ def nightshift_run_now():
     return {"started": True}
 
 
+@router.post("/system/auto-dedup/run-now")
+def auto_dedup_run_now():
+    """Immediately resolve pending unresolved near-duplicate pairs.
+
+    Processes up to ``auto_dedup_max_pairs`` (default 50) unresolved rows from
+    ``doc_dupes`` applying the same rules as the nightly pass:
+      * near_duplicate  (≥ 0.85) → mark_superseded (lifecycle win / date / words)
+      * likely_revision (0.60–0.84) → mark_versions  (DERIVED_FROM relationship)
+      * Both canonical or truly tied → left for human review queue
+
+    Returns a summary: ``{processed, superseded, versioned, skipped, errors}``.
+    Does NOT require ``auto_dedup_enabled`` to be true — the manual trigger
+    always runs so administrators can drain the queue on demand.
+    """
+    db = get_db()
+    try:
+        from orivellum.capabilities.auto_dedup import auto_resolve_duplicates
+        result = auto_resolve_duplicates(db)
+        return result
+    except Exception as exc:
+        logger.error("auto_dedup_run_now failed: %s", exc, exc_info=True)
+        raise HTTPException(500, f"Auto-dedup failed: {exc}") from exc
+
+
+@router.get("/system/auto-dedup/stats")
+def auto_dedup_stats():
+    """Return counts of unresolved and resolved near-duplicate pairs."""
+    db = get_db()
+    try:
+        with db._lock:
+            row = db._conn.execute(
+                """SELECT
+                     SUM(CASE WHEN resolved=0 THEN 1 ELSE 0 END) AS pending,
+                     SUM(CASE WHEN resolved=1 AND resolution='mark_superseded' THEN 1 ELSE 0 END) AS superseded,
+                     SUM(CASE WHEN resolved=1 AND resolution='mark_versions'   THEN 1 ELSE 0 END) AS versioned,
+                     SUM(CASE WHEN resolved=1 AND resolution='keep_both'       THEN 1 ELSE 0 END) AS dismissed,
+                     COUNT(*) AS total
+                   FROM doc_dupes"""
+            ).fetchone()
+        return {
+            "pending":    row[0] or 0,
+            "superseded": row[1] or 0,
+            "versioned":  row[2] or 0,
+            "dismissed":  row[3] or 0,
+            "total":      row[4] or 0,
+        }
+    except Exception as exc:
+        raise HTTPException(500, str(exc)) from exc
+
+
 @router.get("/system/nightshift/status")
 def nightshift_status():
     """Return the current run state plus a summary of the last recorded run."""

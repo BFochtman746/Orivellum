@@ -1400,4 +1400,13 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         CREATE INDEX IF NOT EXISTS idx_conv_events_type
             ON conversation_events(event_type, created_at DESC)
     """),
+
+    # v84 — chapter-scoped knowledge extraction for novels.
+    # knowledge.chapter_id links every AI-extracted item to the specific
+    # book chapter it was harvested from, enabling chapter-level search,
+    # health dashboards, and chat scoping ("what happens in chapter 5?").
+    (84, "Add chapter_id to knowledge for chapter-scoped novel extraction", """
+        ALTER TABLE knowledge ADD COLUMN chapter_id TEXT REFERENCES book_chapters(id) ON DELETE SET NULL;
+        CREATE INDEX IF NOT EXISTS idx_knowledge_chapter ON knowledge(chapter_id);
+    """),
 ]

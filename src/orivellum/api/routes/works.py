@@ -477,12 +477,14 @@ def works_chapters(work_id: str):
     if not db.get_work(work_id):
         raise HTTPException(404, f"Work {work_id!r} not found")
 
+    import json as _json
     with db._lock:
         rows = db._conn.execute(
             """SELECT bc.id, bc.seq, COALESCE(bc.level, 1) as level, bc.title,
                       (length(coalesce(bc.text,'')) - length(replace(coalesce(bc.text,''), ' ', '')) + 1) as word_count,
                       bc.status, bc.extraction_method, bc.created_at,
-                      bc.source_doc_id,
+                      bc.source_doc_id, bc.meta,
+                      (SELECT COUNT(*) FROM knowledge k WHERE k.chapter_id = bc.id) as knowledge_count,
                       d.title as doc_title
                FROM book_chapters bc
                JOIN documents d ON d.id = bc.source_doc_id
@@ -498,6 +500,13 @@ def works_chapters(work_id: str):
             by_doc[doc_id] = {"doc_id": doc_id, "doc_title": r["doc_title"] or "Untitled", "chapters": []}
         ch = dict(r)
         ch.pop("doc_title", None)
+        # Parse scene_count from meta JSON stored during extraction
+        try:
+            _meta = _json.loads(ch.pop("meta") or "{}")
+            ch["scene_count"] = _meta.get("scene_count", 1)
+        except Exception:
+            ch.pop("meta", None)
+            ch["scene_count"] = 1
         by_doc[doc_id]["chapters"].append(ch)
 
     return {

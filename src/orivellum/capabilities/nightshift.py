@@ -1136,7 +1136,7 @@ def _run_nightshift_passes(db: "OrivellumDB", cfg: "OrivellumConfig") -> None:
     _pass_clustering(db, report)
 
     # 16 — Proactive custodian: staleness nudges
-    logger.info("Nightshift pass 16/16: proactive custodian nudges")
+    logger.info("Nightshift pass 16/19: proactive custodian nudges")
     try:
         from orivellum.capabilities.custodian import run_custodian
         custodian_result = run_custodian(db)
@@ -1148,6 +1148,30 @@ def _run_nightshift_passes(db: "OrivellumDB", cfg: "OrivellumConfig") -> None:
     except Exception as _cex:
         logger.warning("Custodian pass failed (non-fatal): %s", _cex)
         report.append(f"Custodian: skipped ({_cex})")
+
+    # 17 — Automatic near-duplicate resolution
+    # Gated by auto_dedup_enabled=true; silently skips when disabled so the
+    # nightshift run time is not affected for users who prefer manual review.
+    logger.info("Nightshift pass 17/19: auto near-duplicate resolution")
+    try:
+        _auto_dedup_enabled = db.get_setting("auto_dedup_enabled", "false").lower() == "true"
+        if _auto_dedup_enabled:
+            from orivellum.capabilities.auto_dedup import auto_resolve_duplicates
+            _ad = auto_resolve_duplicates(db)
+            report.append(
+                f"Auto-dedup: {_ad['processed']} pair(s) examined — "
+                f"{_ad['superseded']} superseded, {_ad['versioned']} versioned, "
+                f"{_ad['skipped']} skipped, {_ad['errors']} error(s)"
+            )
+            logger.info(
+                "Auto-dedup pass: %d processed, %d superseded, %d versioned",
+                _ad["processed"], _ad["superseded"], _ad["versioned"],
+            )
+        else:
+            report.append("Auto-dedup: disabled (auto_dedup_enabled=false)")
+    except Exception as _adex:
+        logger.warning("Auto-dedup pass failed (non-fatal): %s", _adex)
+        report.append(f"Auto-dedup: failed — {_adex}")
 
     elapsed = time.time() - start_ts
     report.append(f"Completed in {elapsed:.0f}s")
