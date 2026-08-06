@@ -736,7 +736,6 @@ function useRouteTitle(): string {
   if (path === "/works") return "Works";
   if (path.match(/^\/library\/[^/]+/)) return "Document";
   if (path === "/library") return "Library";
-  if (path === "/files") return "Files";
   if (path === "/projects") return "Projects";
   if (path.match(/^\/projects\/[^/]+/)) return "Project";
   if (path === "/studio") return "Studio";
@@ -756,7 +755,6 @@ const NAV_ITEMS = [
   { label: "Chat",       href: "/chat",        icon: MessageSquare },
   { label: "Works",      href: "/works",       icon: BookOpen      },
   { label: "Library",    href: "/library",     icon: Library       },
-  { label: "Files",      href: "/files",       icon: FolderOpen    },
   { label: "Studio",     href: "/studio",      icon: Mic           },
   { label: "Write",      href: "/write",       icon: Feather       },
   { label: "Actions",    href: "/actions",     icon: Zap           },

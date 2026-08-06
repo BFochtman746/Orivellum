@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Toaster } from '@/components/ui/toaster';
 import { TooltipProvider } from '@/components/ui/tooltip';
-import { Route, Switch, Router as WouterRouter } from 'wouter';
+import { Route, Switch, Router as WouterRouter, Redirect } from 'wouter';
 import { AppLayout } from '@/components/layout';
 import { ErrorBoundary, RouteErrorFallback } from '@/components/error-boundary';
 import { checkAuth, login } from '@/lib/auth';
@@ -17,7 +17,6 @@ import { useParams, useLocation } from 'wouter';
 import Chat from '@/pages/chat/index';
 import Library from '@/pages/library/index';
 import DocumentDetail from '@/pages/library/detail';
-import Files from '@/pages/files/index';
 import Projects from '@/pages/projects/index';
 import ProjectDetail from '@/pages/projects/detail';
 import Studio from '@/pages/studio/index';
@@ -76,7 +75,7 @@ function Router() {
         <Route path="/chat">{() => <RouteWithBoundary component={Chat} />}</Route>
         <Route path="/library">{() => <RouteWithBoundary component={Library} />}</Route>
         <Route path="/library/:docId">{() => <RouteWithBoundary component={DocumentDetail} />}</Route>
-        <Route path="/files">{() => <RouteWithBoundary component={Files} />}</Route>
+        <Route path="/files">{() => <Redirect to="/library" />}</Route>
         <Route path="/projects">{() => <RouteWithBoundary component={Projects} />}</Route>
         <Route path="/projects/:projectId">{() => <RouteWithBoundary component={ProjectDetail} />}</Route>
         <Route path="/studio">{() => <RouteWithBoundary component={Studio} />}</Route>
