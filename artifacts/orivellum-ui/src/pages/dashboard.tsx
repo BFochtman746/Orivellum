@@ -126,7 +126,8 @@ function SuggestionsWidget() {
 
   async function fetchSuggestions() {
     setFetchError(false);
-    try {
+    setLoading(true);           // show "Analysing…" during the silent auto-fetch so
+    try {                       // the "Generate Suggestions" CTA never flashes while we wait
       const resp = await apiFetch(`${BASE}/suggestions?limit=6`);
       if (resp.ok) {
         const data = await resp.json();
@@ -136,6 +137,7 @@ function SuggestionsWidget() {
         setFetchError(true);
       }
     } catch { setFetchError(true); }
+    finally { setLoading(false); }
   }
 
   async function handleGenerate() {
