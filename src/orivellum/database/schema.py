@@ -1409,4 +1409,11 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         ALTER TABLE knowledge ADD COLUMN chapter_id TEXT REFERENCES book_chapters(id) ON DELETE SET NULL;
         CREATE INDEX IF NOT EXISTS idx_knowledge_chapter ON knowledge(chapter_id);
     """),
+
+    # v85 — Persist suggested_queries in the gap cache so cached responses
+    # have the same shape as fresh detection runs.  Default empty JSON array
+    # keeps existing rows valid without a data migration.
+    (85, "Add suggested_queries_json to work_gap_cache", """
+        ALTER TABLE work_gap_cache ADD COLUMN suggested_queries_json TEXT NOT NULL DEFAULT '[]'
+    """),
 ]

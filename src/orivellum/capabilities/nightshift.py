@@ -497,7 +497,8 @@ def _pass_gap_analysis(db: "OrivellumDB", report: list[str]) -> None:
                          "severity": g.severity, "metadata": g.metadata}
                         for g in gr.gaps
                     ]
-                    db.cache_work_gaps(work["id"], gap_dicts, gr.coverage_pct)
+                    db.cache_work_gaps(work["id"], gap_dicts, gr.coverage_pct,
+                                       suggested_queries=gr.suggested_queries)
                 except Exception:
                     pass
                 for g in gr.gaps:

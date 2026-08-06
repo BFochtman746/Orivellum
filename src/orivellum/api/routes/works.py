@@ -673,7 +673,8 @@ def workspace_top_gaps(limit: int = 3, refresh: bool = False):
                 }
                 for g in report.gaps
             ]
-            db.cache_work_gaps(work["id"], gap_dicts, report.coverage_pct)
+            db.cache_work_gaps(work["id"], gap_dicts, report.coverage_pct,
+                               suggested_queries=report.suggested_queries)
             for g in gap_dicts:
                 all_gaps.append({"work_id": work["id"], "work_title": work.get("title", ""), **g})
         except Exception as exc:
@@ -706,13 +707,13 @@ def works_gaps(work_id: str, refresh: bool = False):
         cached = db.get_cached_gaps(work_id, max_age_seconds=3600)
         if cached is not None:
             return {
-                "work_id":         work_id,
-                "coverage_pct":    cached["coverage_pct"],
-                "total_chapters":  None,
-                "suggested_queries": [],
-                "evaluated_at":    cached["evaluated_at"],
-                "gaps":            cached["gaps"],
-                "from_cache":      True,
+                "work_id":           work_id,
+                "coverage_pct":      cached["coverage_pct"],
+                "total_chapters":    None,
+                "suggested_queries": cached["suggested_queries"],
+                "evaluated_at":      cached["evaluated_at"],
+                "gaps":              cached["gaps"],
+                "from_cache":        True,
             }
 
     report = detect_gaps(work_id, db)
@@ -723,9 +724,11 @@ def works_gaps(work_id: str, refresh: bool = False):
         }
         for g in report.gaps
     ]
-    # Write back to cache
+    # Write back to cache — persist suggested_queries so future cached
+    # responses return them without re-running detection.
     try:
-        db.cache_work_gaps(work_id, gap_dicts, report.coverage_pct)
+        db.cache_work_gaps(work_id, gap_dicts, report.coverage_pct,
+                           suggested_queries=report.suggested_queries)
     except Exception as exc:
         logger.debug("Gap cache write failed: %s", exc)
 
@@ -976,7 +979,8 @@ def _check_stage_gate(
                 ]
                 # Write result back to cache for subsequent requests.
                 try:
-                    db.cache_work_gaps(work_id, gaps, report.coverage_pct)
+                    db.cache_work_gaps(work_id, gaps, report.coverage_pct,
+                                       suggested_queries=report.suggested_queries)
                 except Exception:
                     pass
                 evaluated = True
