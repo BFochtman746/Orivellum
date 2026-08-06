@@ -1888,10 +1888,12 @@ function BookIntelTab({
   bookIntel,
   loading,
   colors,
+  onDiscuss,
 }: {
   bookIntel: any;
   loading: boolean;
   colors: ReturnType<typeof useColors>;
+  onDiscuss: (seed: string) => void;
 }) {
   if (loading && !bookIntel) {
     return (
@@ -1952,6 +1954,23 @@ function BookIntelTab({
             <Text style={{ fontSize: 14, fontFamily: 'Inter_500Medium', color: colors.foreground, lineHeight: 21 }}>
               {bookIntel.next_action}
             </Text>
+            <Pressable
+              onPress={() => onDiscuss(bookIntel.next_action)}
+              hitSlop={8}
+              style={({ pressed }) => ({
+                marginTop: 10, alignSelf: 'flex-start',
+                flexDirection: 'row', alignItems: 'center', gap: 5,
+                paddingHorizontal: 12, paddingVertical: 6,
+                borderRadius: 8, borderWidth: 1,
+                borderColor: colors.primary + '55',
+                backgroundColor: pressed ? colors.primary + '18' : colors.primary + '0c',
+              })}
+            >
+              <Feather name="message-circle" size={13} color={colors.primary} />
+              <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: colors.primary }}>
+                Discuss →
+              </Text>
+            </Pressable>
           </View>
         </View>
       ) : null}
@@ -2039,12 +2058,28 @@ function BookIntelTab({
             {topGaps.map((gap: any, i: number) => {
               const sevColor = SEV_COLOR[gap.severity] ?? colors.mutedForeground;
               return (
-                <View key={i} style={{
-                  flexDirection: 'row', alignItems: 'flex-start', gap: 10,
-                  paddingHorizontal: 14, paddingVertical: 10,
-                  borderBottomWidth: i < topGaps.length - 1 ? StyleSheet.hairlineWidth : 0,
-                  borderBottomColor: colors.border,
-                }}>
+                <Pressable
+                  key={i}
+                  delayLongPress={450}
+                  onLongPress={() => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                    Alert.alert(
+                      gap.title ?? 'Gap',
+                      'Open a work-scoped chat about this gap?',
+                      [
+                        { text: 'Cancel', style: 'cancel' },
+                        { text: 'Discuss →', onPress: () => onDiscuss(gap.title ?? '') },
+                      ]
+                    );
+                  }}
+                  style={({ pressed }) => ({
+                    flexDirection: 'row', alignItems: 'flex-start', gap: 10,
+                    paddingHorizontal: 14, paddingVertical: 10,
+                    borderBottomWidth: i < topGaps.length - 1 ? StyleSheet.hairlineWidth : 0,
+                    borderBottomColor: colors.border,
+                    backgroundColor: pressed ? colors.muted + '55' : 'transparent',
+                  })}
+                >
                   <View style={{
                     width: 6, height: 6, borderRadius: 3,
                     backgroundColor: sevColor, marginTop: 5,
@@ -2058,6 +2093,9 @@ function BookIntelTab({
                         {gap.description}
                       </Text>
                     ) : null}
+                    <Text style={{ fontSize: 10, fontFamily: 'Inter_400Regular', color: colors.mutedForeground, marginTop: 2 }}>
+                      Hold to discuss →
+                    </Text>
                   </View>
                   <View style={{
                     paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4,
@@ -2067,7 +2105,7 @@ function BookIntelTab({
                       {gap.severity}
                     </Text>
                   </View>
-                </View>
+                </Pressable>
               );
             })}
           </View>
@@ -2097,13 +2135,30 @@ function BookIntelTab({
               const statusColor = CHAPTER_STATUS_COLOR[status] ?? colors.mutedForeground;
               const kc: number = ch.knowledge_count ?? 0;
               const indent = Math.max(0, ((ch.level ?? 1) - 1)) * 14;
+              const chTitle = ch.title ?? `Chapter ${i + 1}`;
               return (
-                <View key={ch.id ?? i} style={{
-                  flexDirection: 'row', alignItems: 'center', gap: 8,
-                  paddingLeft: 14 + indent, paddingRight: 14, paddingVertical: 9,
-                  borderBottomWidth: i < outline.length - 1 ? StyleSheet.hairlineWidth : 0,
-                  borderBottomColor: colors.border,
-                }}>
+                <Pressable
+                  key={ch.id ?? i}
+                  delayLongPress={450}
+                  onLongPress={() => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                    Alert.alert(
+                      chTitle,
+                      'Open a work-scoped chat about this chapter?',
+                      [
+                        { text: 'Cancel', style: 'cancel' },
+                        { text: 'Discuss →', onPress: () => onDiscuss(chTitle) },
+                      ]
+                    );
+                  }}
+                  style={({ pressed }) => ({
+                    flexDirection: 'row', alignItems: 'center', gap: 8,
+                    paddingLeft: 14 + indent, paddingRight: 14, paddingVertical: 9,
+                    borderBottomWidth: i < outline.length - 1 ? StyleSheet.hairlineWidth : 0,
+                    borderBottomColor: colors.border,
+                    backgroundColor: pressed ? colors.muted + '55' : 'transparent',
+                  })}
+                >
                   {/* Status dot */}
                   <View style={{
                     width: 7, height: 7, borderRadius: 4,
@@ -2115,7 +2170,7 @@ function BookIntelTab({
                     style={{ flex: 1, fontSize: 13, fontFamily: 'Inter_400Regular', color: colors.foreground, lineHeight: 18 }}
                     numberOfLines={2}
                   >
-                    {ch.title ?? `Chapter ${i + 1}`}
+                    {chTitle}
                   </Text>
 
                   {/* Research chip */}
@@ -2131,7 +2186,7 @@ function BookIntelTab({
                       {kc}
                     </Text>
                   </View>
-                </View>
+                </Pressable>
               );
             })}
           </View>
@@ -2767,6 +2822,7 @@ export default function WorkDetailScreen() {
               bookIntel={bookIntel}
               loading={bookIntelLoading}
               colors={colors}
+              onDiscuss={handleResearchGap}
             />
 
             {/* ── Pipeline section (collapsible footer) ─────────── */}
