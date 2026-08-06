@@ -195,7 +195,7 @@ function ProfileCard({
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ text: groundedPrompt, stream: false }),
           });
-          router.push(`/conversations/${id}`);
+          router.push(`/chat/${id}`);
         } catch (e: any) {
           Alert.alert('Error', e.message ?? 'Could not open chat');
         } finally {
@@ -246,7 +246,7 @@ function ProfileCard({
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ text: groundedPrompt, stream: false }),
           });
-          router.push(`/conversations/${id}`);
+          router.push(`/chat/${id}`);
         } catch (e: any) {
           Alert.alert('Error', e.message ?? 'Could not open chat');
         } finally {

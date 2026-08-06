@@ -16,7 +16,6 @@ import { IntakeProfileCard, IntakeProfileSkeleton, type IntakeProfile } from "@/
 import { apiFetch } from "@/lib/auth";
 import { toast } from "sonner";
 import { Link } from "wouter";
-import { useCreateConversation, useListWorks } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 
 const BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
@@ -29,10 +28,6 @@ export default function IntakePage() {
   const [profile, setProfile] = useState<IntakeProfile | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  const createConv = useCreateConversation();
-  const { data: worksData } = useListWorks();
-  const queryClient = useQueryClient();
 
   const fetchIntake = (id: string) => {
     setLoading(true);
@@ -58,18 +53,6 @@ export default function IntakePage() {
     if (!docId) return;
     fetchIntake(docId);
   }, [docId]);
-
-  const handleChat = async (dId: string) => {
-    try {
-      const conv = await createConv.mutateAsync({
-        title: profile?.what_it_is ?? "Document chat",
-        work_id: profile?.filed_to_id ?? undefined,
-      } as any);
-      setLocation(`/chat/${(conv as any).id ?? ""}`);
-    } catch {
-      toast.error("Could not create conversation");
-    }
-  };
 
   const handleLinkWork = (dId: string) => {
     setLocation(`/library/${dId}?tab=overview`);
