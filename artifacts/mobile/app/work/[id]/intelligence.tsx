@@ -91,9 +91,11 @@ function ActionButton({
 // ─── pipeline banner ──────────────────────────────────────────────────────────
 
 function PipelineBanner({
-  pipeline, colors,
+  pipeline, colors, onAdvance, advancing,
 }: {
   pipeline: any; colors: any;
+  onAdvance: () => void;
+  advancing: boolean;
 }) {
   const pipelineStage = pipeline?.status ?? null;
   const stageLabel = pipeline?.stage_label ?? pipelineStage ?? 'Unknown';
@@ -105,10 +107,11 @@ function PipelineBanner({
   const hasBlockers = findings.length > 0;
   const readyToAdvance = pipeline && !isWorkerStage && !hasBlockers;
   const readyWorker = pipeline && isWorkerStage && artifactDone && !hasBlockers;
+  const canAdvance = readyToAdvance || readyWorker;
 
   const bannerColor = hasBlockers
     ? { bg: '#fef2f2', border: '#fca5a5', text: '#991b1b' }
-    : (readyToAdvance || readyWorker)
+    : canAdvance
     ? { bg: '#f0fdf4', border: '#86efac', text: '#166534' }
     : { bg: '#eff6ff', border: '#93c5fd', text: '#1d4ed8' };
 
@@ -116,7 +119,7 @@ function PipelineBanner({
     <View style={[s.pipelineBanner, { backgroundColor: bannerColor.bg, borderColor: bannerColor.border }]}>
       <View style={s.pipelineRow}>
         <Feather
-          name={hasBlockers ? 'alert-triangle' : (readyToAdvance || readyWorker) ? 'check-circle' : 'layers'}
+          name={hasBlockers ? 'alert-triangle' : canAdvance ? 'check-circle' : 'layers'}
           size={14}
           color={bannerColor.text}
         />
@@ -141,10 +144,27 @@ function PipelineBanner({
           ))}
         </>
       )}
-      {(readyToAdvance || readyWorker) && (
-        <Text style={[s.pipelineSub, { color: bannerColor.text }]}>
-          Ready to advance to the next stage.
-        </Text>
+      {canAdvance && (
+        <View style={s.pipelineAdvanceRow}>
+          <Text style={[s.pipelineSub, { color: bannerColor.text, flex: 1 }]}>
+            Ready to advance to the next stage.
+          </Text>
+          <Pressable
+            onPress={onAdvance}
+            disabled={advancing}
+            style={({ pressed }) => [
+              s.advanceBtn,
+              { opacity: advancing || pressed ? 0.6 : 1 },
+            ]}
+          >
+            {advancing
+              ? <ActivityIndicator size={11} color="#fff" />
+              : <Feather name="chevrons-right" size={12} color="#fff" />}
+            <Text style={s.advanceBtnLabel}>
+              {advancing ? 'Advancing…' : 'Advance'}
+            </Text>
+          </Pressable>
+        </View>
       )}
     </View>
   );
@@ -176,6 +196,9 @@ export default function WorkIntelligenceScreen() {
   // Rescore state
   const [rescoring,    setRescoring]    = useState(false);
   const [lastRescored, setLastRescored] = useState<string | null>(null);
+
+  // Pipeline advance state
+  const [advancing, setAdvancing] = useState(false);
 
   const fetchAll = useCallback(async () => {
     setLoading(true);
@@ -242,6 +265,33 @@ export default function WorkIntelligenceScreen() {
       Alert.alert('Rescore failed', 'Check your connection and try again.');
     } finally {
       setRescoring(false);
+    }
+  };
+
+  // ── Pipeline advance ───────────────────────────────────────────────────────
+  const handleAdvance = async () => {
+    if (advancing) return;
+    setAdvancing(true);
+    // Optimistic stage label update while the request is in flight
+    try {
+      const res = await mobileFetch(`${base}/works/${id}/pipeline/advance`, { method: 'POST' });
+      const data = await res.json();
+      if (res.ok) {
+        // Refresh pipeline state from server response
+        if (data?.pipeline) setPipeline(data.pipeline);
+        else fetchAll();                       // fallback: re-fetch all
+      } else {
+        // 409 = gate failure or blockers
+        const reason: string =
+          data?.detail ??
+          (data?.blockers as any[])?.map((b: any) => b.description ?? String(b)).join('\n') ??
+          'Advance blocked — check the pipeline findings.';
+        Alert.alert('Cannot advance', reason);
+      }
+    } catch {
+      Alert.alert('Advance failed', 'Check your connection and try again.');
+    } finally {
+      setAdvancing(false);
     }
   };
 
@@ -333,7 +383,7 @@ export default function WorkIntelligenceScreen() {
       {/* ── Pipeline banner ───────────────────────────────────────────────── */}
       {pipeline !== undefined && (
         pipeline ? (
-          <PipelineBanner pipeline={pipeline} colors={colors} />
+          <PipelineBanner pipeline={pipeline} colors={colors} onAdvance={handleAdvance} advancing={advancing} />
         ) : (
           <View style={[s.pipelineBanner, { backgroundColor: colors.muted + '30', borderColor: colors.border }]}>
             <Text style={[s.pipelineSub, { color: colors.mutedForeground }]}>
@@ -551,6 +601,15 @@ const s = StyleSheet.create({
   pipelineStage:  { fontSize: 13, fontFamily: 'Inter_600SemiBold' },
   pipelineSub:    { fontSize: 12, fontFamily: 'Inter_400Regular', marginLeft: 20 },
   pipelineFinding:{ fontSize: 11, fontFamily: 'Inter_400Regular', marginLeft: 20, marginTop: 2 },
+  pipelineAdvanceRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4, marginLeft: 20,
+  },
+  advanceBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    backgroundColor: '#16a34a', borderRadius: 6,
+    paddingHorizontal: 10, paddingVertical: 5, minWidth: 80, justifyContent: 'center',
+  },
+  advanceBtnLabel: { fontSize: 12, fontFamily: 'Inter_600SemiBold', color: '#fff' },
 
   // Research banner
   researchBanner: {
