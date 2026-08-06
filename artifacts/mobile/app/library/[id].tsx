@@ -1,4 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
+// expo-file-system v19 ships the v18-compatible API under /legacy (same
+// pattern used by backups.tsx, studio.tsx, and work/[id].tsx).
+import * as FileSystem from 'expo-file-system/legacy';
+import * as MediaLibrary from 'expo-media-library';
 import { mobileFetch } from '@/lib/api';
 import { getApiToken } from '@/lib/token';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -415,6 +419,12 @@ export default function LibraryDocDetail() {
     stage: string; pct: number; items_found: number; chunk_count: number;
   } | null>(null);
 
+  // ── Audiobook download ────────────────────────────────────────────────────
+  type DlState = 'idle' | 'generating' | 'downloading' | 'done' | 'error';
+  const [dlState, setDlState] = useState<DlState>('idle');
+  const [dlProgress, setDlProgress] = useState<{ done: number; total: number } | null>(null);
+  const dlJobRef = useRef<string | null>(null);
+
   const handleReprocess = async () => {
     setReprocessing(true);
     try {
@@ -430,6 +440,126 @@ export default function LibraryDocDetail() {
     } catch {
       Alert.alert('Error', 'Could not queue reprocess');
       setReprocessing(false);
+    }
+  };
+
+  const handleDownloadAudiobook = async () => {
+    if (dlState === 'generating' || dlState === 'downloading') return;
+
+    setDlState('generating');
+    setDlProgress(null);
+    dlJobRef.current = null;
+
+    try {
+      // ── 1. Start async generation job ──────────────────────────────────────
+      const startRes = await mobileFetch(`https://${domain}/api/studio/tts/document`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ doc_id: id, voice: ttsVoice, speed: ttsSpeed }),
+      });
+
+      if (!startRes.ok) {
+        let detail = `Server error (${startRes.status})`;
+        try { detail = (await startRes.json()).detail ?? detail; } catch { /* ignore */ }
+        Alert.alert(
+          startRes.status === 422 ? 'Document not ready' : 'Could not start',
+          detail,
+        );
+        setDlState('error');
+        setTimeout(() => setDlState('idle'), 3_000);
+        return;
+      }
+
+      const { job_id, total_segments } = (await startRes.json()) as {
+        job_id: string; total_segments: number;
+      };
+      dlJobRef.current = job_id;
+      setDlProgress({ done: 0, total: total_segments });
+
+      // ── 2. Poll until done (max ~6 min; 2 s interval × 180 attempts) ───────
+      let mp3Path: string | null = null;
+      let filename = 'audiobook.mp3';
+
+      for (let attempt = 0; attempt < 180; attempt++) {
+        await new Promise<void>((r) => setTimeout(r, 2_000));
+
+        const statusRes = await mobileFetch(
+          `https://${domain}/api/studio/tts/document/${job_id}/status`,
+        );
+        if (!statusRes.ok) continue;
+
+        const status = (await statusRes.json()) as {
+          state: string; segments_done: number; total_segments: number;
+          mp3_path: string | null; filename: string | null; error: string | null;
+        };
+
+        setDlProgress({
+          done:  status.segments_done  ?? 0,
+          total: status.total_segments ?? total_segments,
+        });
+
+        if (status.state === 'done') {
+          mp3Path  = status.mp3_path;
+          filename = status.filename ?? 'audiobook.mp3';
+          break;
+        }
+
+        if (status.state === 'error' || status.state === 'cancelled') {
+          Alert.alert(
+            'Generation failed',
+            status.error ?? 'Audiobook generation failed. Please try again.',
+          );
+          setDlState('error');
+          setTimeout(() => setDlState('idle'), 3_000);
+          return;
+        }
+      }
+
+      if (!mp3Path) {
+        Alert.alert('Timed out', 'Audiobook generation is taking too long. Try again — long documents can take several minutes.');
+        setDlState('error');
+        setTimeout(() => setDlState('idle'), 3_000);
+        return;
+      }
+
+      // ── 3. Download MP3 to device ───────────────────────────────────────────
+      setDlState('downloading');
+
+      const token = getApiToken();
+      const downloadUrl =
+        `https://${domain}/api/studio/outputs/serve?path=${encodeURIComponent(mp3Path)}`;
+      const localUri = (FileSystem.documentDirectory ?? '') + filename;
+
+      const dlResult = await FileSystem.downloadAsync(downloadUrl, localUri, {
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      });
+
+      if (dlResult.status !== 200) {
+        Alert.alert('Download failed', `Server returned ${dlResult.status}`);
+        setDlState('error');
+        setTimeout(() => setDlState('idle'), 3_000);
+        return;
+      }
+
+      // ── 4. Offer to save to device media library ────────────────────────────
+      try {
+        const { status: perm } = await MediaLibrary.requestPermissionsAsync();
+        if (perm === 'granted') {
+          await MediaLibrary.saveToLibraryAsync(dlResult.uri);
+          Alert.alert('Saved to Music Library', `"${filename}" is ready in your music library.`);
+        } else {
+          Alert.alert('Downloaded', `Audiobook saved to app storage as "${filename}".`);
+        }
+      } catch {
+        Alert.alert('Downloaded', `Audiobook saved as "${filename}".`);
+      }
+
+      setDlState('done');
+      setTimeout(() => setDlState('idle'), 5_000);
+    } catch (e: any) {
+      Alert.alert('Error', e?.message ?? 'Could not download audiobook');
+      setDlState('error');
+      setTimeout(() => setDlState('idle'), 3_000);
     }
   };
 
@@ -1060,54 +1190,84 @@ export default function LibraryDocDetail() {
         )}
 
         {doc.readiness === 'ready' && (
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 10 }}>
-            <Pressable
-              onPress={handleListen}
-              disabled={localTtsState === 'loading' || localTtsState === 'error'}
-              style={[styles.listenBtn, { borderColor: colors.primary + '55', backgroundColor: colors.primary + '0f', marginTop: 0 }]}
-            >
-              {localTtsState === 'loading' ? (
-                <ActivityIndicator size="small" color={colors.primary} />
-              ) : (
-                <Feather
-                  name={localTtsState === 'playing' ? 'pause' : localTtsState === 'paused' ? 'play' : 'headphones'}
-                  size={14}
-                  color={colors.primary}
-                />
-              )}
-              <Text style={[styles.listenBtnText, { color: colors.primary }]}>
-                {localTtsState === 'loading' ? 'Generating…'
-                  : localTtsState === 'playing' ? 'Pause'
-                  : localTtsState === 'paused' ? 'Resume'
-                  : 'Listen'}
-              </Text>
-              {localTtsChunks.length > 1 && (localTtsState === 'playing' || localTtsState === 'paused' || localTtsState === 'loading') && (
-                <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: colors.primary + 'bb' }}>
-                  {localTtsIndex + 1}/{localTtsChunks.length}
-                </Text>
-              )}
-            </Pressable>
-            {(localTtsState === 'playing' || localTtsState === 'paused') && (
+          <>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 10 }}>
               <Pressable
-                onPress={() => tts.stop()}
-                style={[styles.listenBtn, { borderColor: '#dc262655', backgroundColor: '#dc26260f', marginTop: 0 }]}
-                hitSlop={6}
+                onPress={handleListen}
+                disabled={localTtsState === 'loading' || localTtsState === 'error'}
+                style={[styles.listenBtn, { borderColor: colors.primary + '55', backgroundColor: colors.primary + '0f', marginTop: 0 }]}
               >
-                <Feather name="square" size={13} color="#dc2626" />
-                <Text style={[styles.listenBtnText, { color: '#dc2626' }]}>Stop</Text>
+                {localTtsState === 'loading' ? (
+                  <ActivityIndicator size="small" color={colors.primary} />
+                ) : (
+                  <Feather
+                    name={localTtsState === 'playing' ? 'pause' : localTtsState === 'paused' ? 'play' : 'headphones'}
+                    size={14}
+                    color={colors.primary}
+                  />
+                )}
+                <Text style={[styles.listenBtnText, { color: colors.primary }]}>
+                  {localTtsState === 'loading' ? 'Generating…'
+                    : localTtsState === 'playing' ? 'Pause'
+                    : localTtsState === 'paused' ? 'Resume'
+                    : 'Listen'}
+                </Text>
+                {localTtsChunks.length > 1 && (localTtsState === 'playing' || localTtsState === 'paused' || localTtsState === 'loading') && (
+                  <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: colors.primary + 'bb' }}>
+                    {localTtsIndex + 1}/{localTtsChunks.length}
+                  </Text>
+                )}
               </Pressable>
-            )}
-            {/* Settings gear — opens voice/speed picker */}
+              {(localTtsState === 'playing' || localTtsState === 'paused') && (
+                <Pressable
+                  onPress={() => tts.stop()}
+                  style={[styles.listenBtn, { borderColor: '#dc262655', backgroundColor: '#dc26260f', marginTop: 0 }]}
+                  hitSlop={6}
+                >
+                  <Feather name="square" size={13} color="#dc2626" />
+                  <Text style={[styles.listenBtnText, { color: '#dc2626' }]}>Stop</Text>
+                </Pressable>
+              )}
+              {/* Settings gear — opens voice/speed picker */}
+              <Pressable
+                onPress={() => setTtsSettingsOpen(true)}
+                style={[styles.ttsSettingsBtn, { borderColor: colors.border, backgroundColor: colors.muted + '55' }]}
+                hitSlop={6}
+                accessibilityLabel="Read Aloud settings"
+                accessibilityRole="button"
+              >
+                <Feather name="settings" size={14} color={colors.mutedForeground} />
+              </Pressable>
+            </View>
+
+            {/* Download Audiobook MP3 button */}
             <Pressable
-              onPress={() => setTtsSettingsOpen(true)}
-              style={[styles.ttsSettingsBtn, { borderColor: colors.border, backgroundColor: colors.muted + '55' }]}
-              hitSlop={6}
-              accessibilityLabel="Read Aloud settings"
-              accessibilityRole="button"
+              onPress={handleDownloadAudiobook}
+              disabled={dlState === 'generating' || dlState === 'downloading'}
+              style={[styles.listenBtn, {
+                borderColor: dlState === 'done' ? '#05966955' : '#05966955',
+                backgroundColor: dlState === 'done' ? '#05966915' : '#05966910',
+                opacity: (dlState === 'generating' || dlState === 'downloading') ? 0.8 : 1,
+              }]}
             >
-              <Feather name="settings" size={14} color={colors.mutedForeground} />
+              {dlState === 'generating' || dlState === 'downloading' ? (
+                <ActivityIndicator size="small" color="#059669" />
+              ) : dlState === 'done' ? (
+                <Feather name="check-circle" size={14} color="#059669" />
+              ) : (
+                <Feather name="download" size={14} color="#059669" />
+              )}
+              <Text style={[styles.listenBtnText, { color: '#059669' }]}>
+                {dlState === 'generating'
+                  ? (dlProgress ? `Synthesising ${dlProgress.done}/${dlProgress.total}…` : 'Synthesising…')
+                  : dlState === 'downloading'
+                  ? 'Saving…'
+                  : dlState === 'done'
+                  ? 'Saved!'
+                  : 'Download MP3'}
+              </Text>
             </Pressable>
-          </View>
+          </>
         )}
       </View>
 
