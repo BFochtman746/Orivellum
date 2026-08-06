@@ -1,6 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { mobileFetch } from '@/lib/api';
 import { getApiToken } from '@/lib/token';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { VOICES } from '@/lib/voices';
 import { createAudioPlayer, setAudioModeAsync, type AudioPlayer } from 'expo-audio';
 import {
   ActivityIndicator,
@@ -213,6 +215,167 @@ function ExtractedTextSection({ text, colors }: { text: string; colors: ReturnTy
   );
 }
 
+// ── TTS settings ─────────────────────────────────────────────────────────────
+
+const SPEED_OPTIONS = [0.75, 1.0, 1.25, 1.5] as const;
+type TtsSpeed = typeof SPEED_OPTIONS[number];
+
+const SPEED_LABELS: Record<number, string> = {
+  0.75: '0.75×', 1.0: '1×', 1.25: '1.25×', 1.5: '1.5×',
+};
+
+const _TTS_VOICE_KEY = 'tts:voice';
+const _TTS_SPEED_KEY = 'tts:speed';
+
+function TtsSettingsSheet({
+  visible,
+  onClose,
+  voice,
+  onVoiceChange,
+  speed,
+  onSpeedChange,
+}: {
+  visible: boolean;
+  onClose: () => void;
+  voice: string;
+  onVoiceChange: (v: string) => void;
+  speed: TtsSpeed;
+  onSpeedChange: (s: TtsSpeed) => void;
+}) {
+  const colors = useColors();
+  const insets = useSafeAreaInsets();
+
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="slide"
+      onRequestClose={onClose}
+    >
+      <View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.45)' }}>
+        {/* Tap backdrop to close */}
+        <Pressable style={{ flex: 1 }} onPress={onClose} />
+
+        <View
+          style={{
+            backgroundColor: colors.card,
+            borderTopLeftRadius: 22,
+            borderTopRightRadius: 22,
+            borderWidth: 1,
+            borderColor: colors.border,
+            padding: 16,
+            paddingBottom: insets.bottom + 20,
+          }}
+        >
+          {/* Drag handle */}
+          <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: colors.border, alignSelf: 'center', marginBottom: 14 }} />
+
+          {/* Header */}
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 18 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}>
+              <Feather name="headphones" size={16} color={colors.primary} />
+              <Text style={{ fontSize: 17, fontFamily: 'Inter_700Bold', color: colors.foreground }}>
+                Read Aloud Settings
+              </Text>
+            </View>
+            <Pressable onPress={onClose} hitSlop={10}>
+              <Feather name="x" size={20} color={colors.mutedForeground} />
+            </Pressable>
+          </View>
+
+          {/* Speed picker */}
+          <Text style={{ fontSize: 11, fontFamily: 'Inter_600SemiBold', color: colors.mutedForeground, letterSpacing: 0.6, marginBottom: 8 }}>
+            SPEED
+          </Text>
+          <View style={{ flexDirection: 'row', gap: 8, marginBottom: 22 }}>
+            {SPEED_OPTIONS.map(s => {
+              const active = s === speed;
+              return (
+                <Pressable
+                  key={s}
+                  onPress={() => onSpeedChange(s)}
+                  style={{
+                    flex: 1,
+                    paddingVertical: 10,
+                    borderRadius: 8,
+                    borderWidth: 1,
+                    alignItems: 'center',
+                    borderColor: active ? colors.primary : colors.border,
+                    backgroundColor: active ? colors.primary + '18' : 'transparent',
+                  }}
+                >
+                  <Text
+                    style={{
+                      fontSize: 13,
+                      fontFamily: active ? 'Inter_700Bold' : 'Inter_400Regular',
+                      color: active ? colors.primary : colors.foreground,
+                    }}
+                  >
+                    {SPEED_LABELS[s]}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+
+          {/* Voice picker */}
+          <Text style={{ fontSize: 11, fontFamily: 'Inter_600SemiBold', color: colors.mutedForeground, letterSpacing: 0.6, marginBottom: 8 }}>
+            VOICE
+          </Text>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={{ gap: 8, paddingBottom: 4 }}
+          >
+            {VOICES.map(v => {
+              const active = v.id === voice;
+              const accentColor = v.accent === 'british' ? '#3b82f6' : '#f59e0b';
+              const genderSym = v.gender === 'feminine' ? '♀' : v.gender === 'masculine' ? '♂' : '';
+              return (
+                <Pressable
+                  key={v.id}
+                  onPress={() => onVoiceChange(v.id)}
+                  style={{
+                    width: 84,
+                    padding: 10,
+                    borderRadius: 10,
+                    borderWidth: 1,
+                    borderColor: active ? colors.primary : colors.border,
+                    backgroundColor: active ? colors.primary + '15' : colors.background,
+                    gap: 4,
+                  }}
+                >
+                  <Text
+                    style={{
+                      fontSize: 13,
+                      fontFamily: active ? 'Inter_700Bold' : 'Inter_600SemiBold',
+                      color: active ? colors.primary : colors.foreground,
+                    }}
+                    numberOfLines={1}
+                  >
+                    {v.name}
+                  </Text>
+                  <Text style={{ fontSize: 10, fontFamily: 'Inter_400Regular', color: accentColor }}>
+                    {v.accent === 'american' ? 'US' : v.accent === 'british' ? 'UK' : (v.accent ?? '')}
+                    {genderSym ? ` · ${genderSym}` : ''}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+
+          {/* Hint: settings take effect on next Listen */}
+          <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: colors.mutedForeground, marginTop: 14, textAlign: 'center' }}>
+            Settings apply when you tap Listen
+          </Text>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 const READINESS_COLOR: Record<string, string> = {
   ready: '#4A8C65',
   error: '#dc2626',
@@ -327,6 +490,39 @@ export default function LibraryDocDetail() {
   const ttsPathCacheRef = useRef<Map<number, string>>(new Map()); // part → serve path
   const ttsPromisesRef = useRef<Map<number, Promise<string>>>(new Map()); // in-flight
 
+  // ── Voice / speed settings (persisted to AsyncStorage) ─────────────────────
+  const [ttsVoice, setTtsVoice] = useState<string>('af_heart');
+  const [ttsSpeed, setTtsSpeed] = useState<TtsSpeed>(1.0);
+  const [ttsSettingsOpen, setTtsSettingsOpen] = useState(false);
+
+  // Load saved settings on mount
+  useEffect(() => {
+    AsyncStorage.multiGet([_TTS_VOICE_KEY, _TTS_SPEED_KEY]).then(pairs => {
+      const voiceVal = pairs.find(p => p[0] === _TTS_VOICE_KEY)?.[1];
+      const speedVal = pairs.find(p => p[0] === _TTS_SPEED_KEY)?.[1];
+      if (voiceVal) setTtsVoice(voiceVal);
+      if (speedVal) {
+        const s = parseFloat(speedVal);
+        if (SPEED_OPTIONS.includes(s as TtsSpeed)) setTtsSpeed(s as TtsSpeed);
+      }
+    }).catch(() => {});
+  }, []);
+
+  // Persist voice changes
+  const handleVoiceChange = (v: string) => {
+    setTtsVoice(v);
+    AsyncStorage.setItem(_TTS_VOICE_KEY, v).catch(() => {});
+    // Clear cache so stale audio from the previous voice isn't served next session
+    ttsPathCacheRef.current.clear();
+  };
+
+  // Persist speed changes
+  const handleSpeedChange = (s: TtsSpeed) => {
+    setTtsSpeed(s);
+    AsyncStorage.setItem(_TTS_SPEED_KEY, String(s)).catch(() => {});
+    ttsPathCacheRef.current.clear();
+  };
+
   useEffect(() => {
     return () => {
       ttsSessionRef.current++;
@@ -372,8 +568,10 @@ export default function LibraryDocDetail() {
   };
 
   /** Synthesize one part, cache its serve-path, and return it.
-   *  Single-flight per part via promise map; stale-session results discarded. */
-  const synthesizePart = (parts: string[], i: number): Promise<string> => {
+   *  Single-flight per part via promise map; stale-session results discarded.
+   *  voice/speed are passed per-session so changing settings mid-playback
+   *  doesn't affect the current session's cached paths. */
+  const synthesizePart = (parts: string[], i: number, voice: string, speed: number): Promise<string> => {
     const session = ttsSessionRef.current;
     const cached = ttsPathCacheRef.current.get(i);
     if (cached) return Promise.resolve(cached);
@@ -383,7 +581,7 @@ export default function LibraryDocDetail() {
       const res = await mobileFetch(`https://${domain}/api/studio/tts`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: parts[i], voice: 'af_heart', speed: 1.0, return_url: true }),
+        body: JSON.stringify({ text: parts[i], voice, speed, return_url: true }),
       });
       if (ttsSessionRef.current !== session) throw new Error(TTS_STALE);
       if (!res.ok) {
@@ -404,11 +602,11 @@ export default function LibraryDocDetail() {
   };
 
   /** Create a player for part `i`, start it, and wire auto-advance. */
-  const playPartAt = async (parts: string[], i: number) => {
+  const playPartAt = async (parts: string[], i: number, voice: string, speed: number) => {
     const session = ttsSessionRef.current;
     setTtsState('loading');
     try {
-      const servePath = await synthesizePart(parts, i);
+      const servePath = await synthesizePart(parts, i, voice, speed);
       if (ttsSessionRef.current !== session) return;
       const token = getApiToken();
       const uri = `https://${domain}/api/studio/outputs/serve?path=${encodeURIComponent(servePath)}`;
@@ -423,8 +621,8 @@ export default function LibraryDocDetail() {
       player.play();
       setTtsIndex(i);
       setTtsState('playing');
-      // Prefetch next part in the background
-      if (i + 1 < parts.length) synthesizePart(parts, i + 1).catch(() => {});
+      // Prefetch next part in the background (same voice/speed for the whole session)
+      if (i + 1 < parts.length) synthesizePart(parts, i + 1, voice, speed).catch(() => {});
       // Auto-advance on natural end-of-part
       player.addListener('playbackStatusUpdate', (status) => {
         if (!status.playing && status.currentTime > 0 && status.duration > 0
@@ -432,7 +630,7 @@ export default function LibraryDocDetail() {
           if (ttsSessionRef.current !== session) return;
           const next = i + 1;
           if (next < parts.length) {
-            playPartAt(parts, next);
+            playPartAt(parts, next, voice, speed);
           } else {
             // All parts finished
             setTtsState('idle');
@@ -631,7 +829,9 @@ export default function LibraryDocDetail() {
       }
       const parts = splitTextForTts(text);
       setTtsChunks(parts);
-      await playPartAt(parts, 0);
+      // Capture voice/speed at session start so changing settings mid-listen
+      // doesn't affect the running session (consistent audio within a session).
+      await playPartAt(parts, 0, ttsVoice, ttsSpeed);
     } catch (e: any) {
       if (ttsSessionRef.current === session) {
         setTtsState('error');
@@ -987,6 +1187,16 @@ export default function LibraryDocDetail() {
                 <Text style={[styles.listenBtnText, { color: '#dc2626' }]}>Stop</Text>
               </Pressable>
             )}
+            {/* Settings gear — opens voice/speed picker */}
+            <Pressable
+              onPress={() => setTtsSettingsOpen(true)}
+              style={[styles.ttsSettingsBtn, { borderColor: colors.border, backgroundColor: colors.muted + '55' }]}
+              hitSlop={6}
+              accessibilityLabel="Read Aloud settings"
+              accessibilityRole="button"
+            >
+              <Feather name="settings" size={14} color={colors.mutedForeground} />
+            </Pressable>
           </View>
         )}
       </View>
@@ -1239,6 +1449,16 @@ export default function LibraryDocDetail() {
           </View>
         </View>
       </Modal>
+
+      {/* Read Aloud voice/speed settings sheet */}
+      <TtsSettingsSheet
+        visible={ttsSettingsOpen}
+        onClose={() => setTtsSettingsOpen(false)}
+        voice={ttsVoice}
+        onVoiceChange={handleVoiceChange}
+        speed={ttsSpeed}
+        onSpeedChange={handleSpeedChange}
+      />
     </View>
   );
 }
@@ -1260,6 +1480,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20, borderWidth: 1,
   },
   listenBtnText: { fontSize: 13, fontFamily: 'Inter_500Medium' },
+  ttsSettingsBtn: {
+    width: 32, height: 32, borderRadius: 16,
+    alignItems: 'center', justifyContent: 'center',
+    borderWidth: 1,
+  },
   section: { borderWidth: 1, borderRadius: 10, padding: 14, marginBottom: 14 },
   sectionTitle: { fontSize: 10, fontFamily: 'Inter_700Bold', letterSpacing: 1, marginBottom: 10 },
   row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
