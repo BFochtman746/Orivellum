@@ -441,6 +441,7 @@ export default function ReviewScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [fetchError, setFetchError] = useState(false); // distinct from an empty queue
   const [filter, setFilter] = useState<ItemFilter>('all');
+  const [workFilter, setWorkFilter] = useState<string | null>(null);
 
   const fetchQueue = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
@@ -473,8 +474,31 @@ export default function ReviewScreen() {
     setTotalCount(prev => Math.max(0, prev - 1));
   }, []);
 
+  // Unique Works that appear in the queue — used to render the Work filter chips.
+  const worksInQueue = Array.from(
+    new Map(
+      items
+        .filter(i => i.work_id && i.work_title)
+        .map(i => [i.work_id!, { id: i.work_id!, title: i.work_title! }])
+    ).values()
+  );
+
+  // Auto-clear the work filter when the selected Work no longer has any items
+  // (last item resolved, or background refresh removed it). Without this the
+  // queue is stuck on an empty state with no visible way to escape.
+  useEffect(() => {
+    if (workFilter === null) return;
+    const presentIds = new Set(items.map(i => i.work_id).filter(Boolean));
+    if (!presentIds.has(workFilter)) setWorkFilter(null);
+  }, [items, workFilter]);
+
+  // Apply work filter first so the type filter operates on the narrowed set.
+  const workFiltered = workFilter === null
+    ? items
+    : items.filter(i => i.work_id === workFilter);
+
   const filtered =
-    filter === 'all' ? items : items.filter(i => i.item_type === filter);
+    filter === 'all' ? workFiltered : workFiltered.filter(i => i.item_type === filter);
 
   const topPad = isWeb ? 67 : 0;
 
@@ -539,7 +563,7 @@ export default function ReviewScreen() {
         </Pressable>
       </View>
 
-      {/* Filter pills */}
+      {/* Type filter pills */}
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
@@ -550,14 +574,14 @@ export default function ReviewScreen() {
           paddingVertical: 10,
         }}
         style={{
-          borderBottomWidth: StyleSheet.hairlineWidth,
+          borderBottomWidth: worksInQueue.length > 0 ? 0 : StyleSheet.hairlineWidth,
           borderBottomColor: colors.border,
           flexShrink: 0,
         }}
       >
         {FILTERS.map(f => {
           const n =
-            f.key === 'all' ? totalCount : (counts[f.key] ?? 0);
+            f.key === 'all' ? workFiltered.length : (workFiltered.filter(i => i.item_type === f.key).length);
           const active = f.key === filter;
           return (
             <Pressable
@@ -602,6 +626,80 @@ export default function ReviewScreen() {
           );
         })}
       </ScrollView>
+
+      {/* Work filter chips — only shown when the queue has items from at least one Work */}
+      {worksInQueue.length > 0 && (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={{
+            flexDirection: 'row',
+            gap: 6,
+            paddingHorizontal: 12,
+            paddingVertical: 8,
+            alignItems: 'center',
+          }}
+          style={{
+            borderBottomWidth: StyleSheet.hairlineWidth,
+            borderBottomColor: colors.border,
+            flexShrink: 0,
+          }}
+        >
+          <Text style={{ fontSize: 10, fontFamily: 'Inter_500Medium', color: colors.mutedForeground, marginRight: 2 }}>
+            WORK
+          </Text>
+          {/* "All Works" chip */}
+          <Pressable
+            onPress={() => setWorkFilter(null)}
+            style={{
+              paddingHorizontal: 10,
+              paddingVertical: 5,
+              borderRadius: 8,
+              borderWidth: 1,
+              borderColor: workFilter === null ? colors.primary : colors.border,
+              backgroundColor: workFilter === null ? colors.primary + '18' : 'transparent',
+            }}
+          >
+            <Text style={{
+              fontSize: 12,
+              fontFamily: workFilter === null ? 'Inter_600SemiBold' : 'Inter_400Regular',
+              color: workFilter === null ? colors.primary : colors.mutedForeground,
+            }}>
+              All
+            </Text>
+          </Pressable>
+
+          {worksInQueue.map(w => {
+            const active = workFilter === w.id;
+            return (
+              <Pressable
+                key={w.id}
+                onPress={() => setWorkFilter(w.id)}
+                style={{
+                  paddingHorizontal: 10,
+                  paddingVertical: 5,
+                  borderRadius: 8,
+                  borderWidth: 1,
+                  borderColor: active ? colors.primary : colors.border,
+                  backgroundColor: active ? colors.primary + '18' : 'transparent',
+                  maxWidth: 160,
+                }}
+              >
+                <Text
+                  numberOfLines={1}
+                  style={{
+                    fontSize: 12,
+                    fontFamily: active ? 'Inter_600SemiBold' : 'Inter_400Regular',
+                    color: active ? colors.primary : colors.mutedForeground,
+                  }}
+                >
+                  {w.title}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
+      )}
 
       {/* Content */}
       {loading && items.length === 0 ? (
@@ -660,7 +758,9 @@ export default function ReviewScreen() {
               lineHeight: 20,
             }}
           >
-            {filter === 'all'
+            {workFilter !== null
+              ? 'No items for this Work need review.'
+              : filter === 'all'
               ? 'Nothing needs your review right now.'
               : 'No items of this type need review.'}
           </Text>

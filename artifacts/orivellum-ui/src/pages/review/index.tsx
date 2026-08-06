@@ -11,7 +11,7 @@
  * Items are sorted most-uncertain first (confidence ascending). Each card
  * offers Approve / Reject / Defer (defer snoozes for 7 days).
  */
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { apiFetch } from "@/lib/auth";
@@ -275,6 +275,7 @@ const FILTERS: { key: TypeFilter; label: string }[] = [
 export default function ReviewPage() {
   const qc = useQueryClient();
   const [filter, setFilter] = useState<TypeFilter>("all");
+  const [workFilter, setWorkFilter] = useState<string | null>(null);
 
   const { data, isLoading, isFetching, refetch } = useQuery<QueueResponse>({
     queryKey: ["review-queue"],
@@ -286,8 +287,40 @@ export default function ReviewPage() {
     refetchInterval: 60_000,
   });
 
-  const items = (data?.items ?? []).filter(i => filter === "all" || i.item_type === filter);
-  const counts = data?.counts_by_type ?? {};
+  const allItems = data?.items ?? [];
+
+  // Unique Works that appear in the queue — used to render the Work filter chips.
+  const worksInQueue = Array.from(
+    new Map(
+      allItems
+        .filter(i => i.work_id && i.work_title)
+        .map(i => [i.work_id!, { id: i.work_id!, title: i.work_title! }])
+    ).values()
+  );
+
+  // Auto-clear the work filter if the selected Work no longer has any items
+  // (e.g. after resolving the last item, or after a background refresh removes it).
+  // Without this, the queue shows an empty state with no visible way to escape.
+  useEffect(() => {
+    if (workFilter === null) return;
+    const presentIds = new Set(allItems.map(i => i.work_id).filter(Boolean));
+    if (!presentIds.has(workFilter)) setWorkFilter(null);
+  }, [data, workFilter]);
+
+  // Apply work filter first so type counts reflect the active Work selection.
+  const workFiltered = workFilter === null
+    ? allItems
+    : allItems.filter(i => i.work_id === workFilter);
+
+  const items = workFiltered.filter(i => filter === "all" || i.item_type === filter);
+
+  // Counts for the type pills — reflect the active Work filter when one is set.
+  const counts: Record<string, number> = workFilter === null
+    ? (data?.counts_by_type ?? {})
+    : workFiltered.reduce<Record<string, number>>((acc, i) => {
+        acc[i.item_type] = (acc[i.item_type] ?? 0) + 1;
+        return acc;
+      }, {});
 
   const onResolved = () => {
     refetch();
@@ -316,9 +349,10 @@ export default function ReviewPage() {
         Deferring snoozes an item for 7 days.
       </p>
 
+      {/* Type filter pills */}
       <div className="flex items-center gap-1 p-1 bg-muted/40 rounded-lg w-fit flex-wrap">
         {FILTERS.map(f => {
-          const n = f.key === "all" ? (data?.count ?? 0) : (counts[f.key] ?? 0);
+          const n = f.key === "all" ? workFiltered.length : (counts[f.key] ?? 0);
           return (
             <button key={f.key} onClick={() => setFilter(f.key)}
                     className={`px-2.5 py-1 rounded-md text-xs transition-colors ${
@@ -333,6 +367,38 @@ export default function ReviewPage() {
         })}
       </div>
 
+      {/* Work filter chips — only shown when the queue contains items from multiple Works */}
+      {worksInQueue.length > 0 && (
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground shrink-0">Work</span>
+          <button
+            onClick={() => setWorkFilter(null)}
+            className={`px-2.5 py-1 rounded-md text-xs border transition-colors ${
+              workFilter === null
+                ? "bg-primary/10 border-primary/40 text-primary font-medium"
+                : "border-border text-muted-foreground hover:text-foreground"
+            }`}
+            data-testid="work-filter-all"
+          >
+            All Works
+          </button>
+          {worksInQueue.map(w => (
+            <button
+              key={w.id}
+              onClick={() => setWorkFilter(w.id)}
+              className={`px-2.5 py-1 rounded-md text-xs border transition-colors truncate max-w-[180px] ${
+                workFilter === w.id
+                  ? "bg-primary/10 border-primary/40 text-primary font-medium"
+                  : "border-border text-muted-foreground hover:text-foreground"
+              }`}
+              data-testid={`work-filter-${w.id}`}
+            >
+              {w.title}
+            </button>
+          ))}
+        </div>
+      )}
+
       {isLoading ? (
         <div className="space-y-3">
           {[...Array(4)].map((_, i) => <Skeleton key={i} className="h-28 rounded-lg" />)}
@@ -342,7 +408,9 @@ export default function ReviewPage() {
           <CheckCircle2 className="w-10 h-10 text-emerald-400" />
           <p className="text-sm font-medium">All clear</p>
           <p className="text-xs text-muted-foreground">
-            {filter === "all"
+            {workFilter !== null
+              ? "No items for this Work need review."
+              : filter === "all"
               ? "Nothing needs your review right now."
               : "No items of this type need review."}
           </p>
