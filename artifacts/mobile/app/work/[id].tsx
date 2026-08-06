@@ -42,7 +42,7 @@ import type { Document, KnowledgeItem, Task } from '@workspace/api-client-react'
 import { OfflineBanner, ErrorScreen } from '@/components/OfflineBanner';
 import { readCache, writeCache } from '@/lib/cache';
 
-type Tab = 'overview' | 'docs' | 'knowledge' | 'tasks' | 'conversations' | 'learn' | 'gaps' | 'book' | 'brainstorm' | 'intelligence';
+type Tab = 'overview' | 'docs' | 'knowledge' | 'tasks' | 'conversations' | 'learn' | 'gaps' | 'book' | 'brainstorm' | 'intelligence' | 'trailer';
 
 // Primary tabs always visible in the bar; secondary tabs disclosed via "More"
 const PRIMARY_TABS: { key: Tab; label: string }[] = [
@@ -54,10 +54,11 @@ const PRIMARY_TABS: { key: Tab; label: string }[] = [
 ];
 const SECONDARY_TABS: { key: Tab; label: string }[] = [
   { key: 'intelligence', label: 'Intelligence' },
-  { key: 'gaps',         label: 'Gaps'  },
-  { key: 'learn',        label: 'Learn' },
-  { key: 'book',         label: 'Book'  },
-  { key: 'brainstorm',   label: 'Ideas' },
+  { key: 'gaps',         label: 'Gaps'    },
+  { key: 'learn',        label: 'Learn'   },
+  { key: 'book',         label: 'Book'    },
+  { key: 'brainstorm',   label: 'Ideas'   },
+  { key: 'trailer',      label: 'Trailer' },
 ];
 
 function TabBar({ active, onSelect, colors, badges = {}, onNavigateGraph }: {
@@ -1136,6 +1137,449 @@ function GapsTab({
             </Pressable>
           ))}
         </View>
+      )}
+    </ScrollView>
+  );
+}
+
+// ─── Trailer Architect (mobile) ───────────────────────────────────────────────
+
+const PHASE_LABELS_MOBILE: Record<string, string> = {
+  loading:  'Loading book content…',
+  analyze:  'Analysing book…',
+  concept:  'Generating concepts…',
+  method:   'Selecting production method…',
+  plan:     'Building shotlist + narration…',
+  validate: 'Validating package…',
+  package:  'Assembling package…',
+  done:     'Complete',
+  error:    'Failed',
+};
+
+interface TrailerListItemMobile {
+  id: string;
+  status: string;
+  phase: string;
+  created_at: string;
+  error?: string;
+}
+
+interface TrailerFindingMobile {
+  severity: string;
+  code: string;
+  msg: string;
+}
+
+interface TrailerPkgMobile {
+  status: string;
+  status_badge: string;
+  generated: string;
+  brief: Record<string, unknown>;
+  concept: Record<string, unknown>;
+  plan: Record<string, unknown>;
+  docs: Record<string, string>;
+  validation: { findings: TrailerFindingMobile[] };
+}
+
+interface TrailerPackageMobile {
+  id: string;
+  status: string;
+  phase: string;
+  error?: string;
+  package?: TrailerPkgMobile;
+}
+
+function TrailerStatusBadgeMobile({ status, phase, colors }: { status: string; phase: string; colors: any }) {
+  if (status === 'running') {
+    return (
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+        <ActivityIndicator size="small" color={colors.primary} style={{ transform: [{ scale: 0.65 }] }} />
+        <Text style={{ fontSize: 10, fontFamily: 'Inter_500Medium', color: colors.primary }} numberOfLines={1}>
+          {PHASE_LABELS_MOBILE[phase] ?? phase}
+        </Text>
+      </View>
+    );
+  }
+  if (status === 'ready') {
+    return (
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+        <Feather name="check-circle" size={11} color="#16a34a" />
+        <Text style={{ fontSize: 10, fontFamily: 'Inter_600SemiBold', color: '#16a34a' }}>READY</Text>
+      </View>
+    );
+  }
+  if (status === 'blocked') {
+    return (
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+        <Feather name="alert-circle" size={11} color="#d97706" />
+        <Text style={{ fontSize: 10, fontFamily: 'Inter_600SemiBold', color: '#d97706' }}>BLOCKED</Text>
+      </View>
+    );
+  }
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+      <Feather name="x-circle" size={11} color="#dc2626" />
+      <Text style={{ fontSize: 10, fontFamily: 'Inter_600SemiBold', color: '#dc2626' }}>FAILED</Text>
+    </View>
+  );
+}
+
+function TrailerPackageViewMobile({ pkg, colors }: { pkg: TrailerPkgMobile; colors: any }) {
+  const [activeDoc, setActiveDoc] = useState<string | null>(null);
+
+  const statusReady      = pkg.status === 'READY';
+  const criticalFindings = (pkg.validation.findings ?? []).filter(f => f.severity === 'critical');
+  const docKeys          = Object.keys(pkg.docs ?? {});
+  const activeDocText    = activeDoc ? (pkg.docs[activeDoc] ?? '') : '';
+
+  const logline      = typeof pkg.brief.logline   === 'string' ? pkg.brief.logline   : '';
+  const genre        = typeof pkg.brief.genre     === 'string' ? pkg.brief.genre     : '';
+  const tone         = Array.isArray(pkg.brief.tone) ? (pkg.brief.tone as string[]).slice(0, 3) : [];
+  const conceptName  = typeof pkg.concept.name    === 'string' ? pkg.concept.name    : '';
+  const conceptAngle = typeof pkg.concept.angle   === 'string' ? pkg.concept.angle   : '';
+  const conceptBeats = Array.isArray(pkg.concept.beats) ? (pkg.concept.beats as string[]) : [];
+  const planRaw      = pkg.plan as Record<string, unknown>;
+  const shotCount    = Array.isArray(planRaw?.shots) ? (planRaw.shots as unknown[]).length : 0;
+  const duration     = typeof planRaw?.duration === 'number' ? String(planRaw.duration) : '?';
+
+  return (
+    <View style={{ gap: 12, paddingTop: 8 }}>
+      {/* Status row */}
+      <View style={{
+        flexDirection: 'row', alignItems: 'center', gap: 8,
+        paddingHorizontal: 10, paddingVertical: 8, borderRadius: 8, borderWidth: 1,
+        borderColor: statusReady ? '#86efac' : '#fcd34d',
+        backgroundColor: statusReady ? '#f0fdf4' : '#fffbeb',
+      }}>
+        <Feather name={statusReady ? 'check-circle' : 'alert-circle'} size={13} color={statusReady ? '#16a34a' : '#d97706'} />
+        <Text style={{ fontSize: 11, fontFamily: 'Inter_600SemiBold', color: statusReady ? '#15803d' : '#92400e', flex: 1 }}>
+          {pkg.status_badge}
+        </Text>
+        <Text style={{ fontSize: 10, fontFamily: 'Inter_400Regular', color: statusReady ? '#15803d' : '#92400e', opacity: 0.7 }}>
+          {pkg.generated}
+        </Text>
+      </View>
+
+      {/* Critical findings */}
+      {criticalFindings.map((f, i) => (
+        <View key={i} style={{
+          flexDirection: 'row', alignItems: 'flex-start', gap: 6,
+          paddingHorizontal: 10, paddingVertical: 8, borderRadius: 8,
+          borderWidth: 1, borderColor: '#fca5a520', backgroundColor: '#fef2f2',
+        }}>
+          <Feather name="x-circle" size={12} color="#dc2626" style={{ marginTop: 1 }} />
+          <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: '#dc2626', flex: 1 }}>
+            <Text style={{ fontFamily: 'Inter_600SemiBold' }}>{f.code}</Text> — {f.msg}
+          </Text>
+        </View>
+      ))}
+
+      {/* Book brief */}
+      <View style={{
+        padding: 10, borderRadius: 8, borderWidth: 1, borderColor: colors.border,
+        backgroundColor: colors.muted + '22', gap: 6,
+      }}>
+        <Text style={{ fontSize: 9, fontFamily: 'Inter_700Bold', color: colors.mutedForeground, letterSpacing: 1, textTransform: 'uppercase' }}>
+          Book Brief
+        </Text>
+        {logline ? (
+          <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: colors.foreground, lineHeight: 17, fontStyle: 'italic' }}>
+            "{logline}"
+          </Text>
+        ) : null}
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 4 }}>
+          {genre ? (
+            <View style={{ paddingHorizontal: 7, paddingVertical: 2, borderRadius: 10, backgroundColor: colors.muted, borderWidth: 1, borderColor: colors.border }}>
+              <Text style={{ fontSize: 9, fontFamily: 'Inter_500Medium', color: colors.mutedForeground }}>{genre}</Text>
+            </View>
+          ) : null}
+          {tone.map((t, i) => (
+            <View key={i} style={{ paddingHorizontal: 7, paddingVertical: 2, borderRadius: 10, borderWidth: 1, borderColor: colors.border }}>
+              <Text style={{ fontSize: 9, fontFamily: 'Inter_400Regular', color: colors.mutedForeground }}>{t}</Text>
+            </View>
+          ))}
+        </View>
+      </View>
+
+      {/* Chosen concept */}
+      {conceptName ? (
+        <View style={{
+          padding: 10, borderRadius: 8, borderWidth: 1,
+          borderColor: colors.primary + '33', backgroundColor: colors.primary + '08', gap: 4,
+        }}>
+          <Text style={{ fontSize: 9, fontFamily: 'Inter_700Bold', color: colors.primary + 'aa', letterSpacing: 1, textTransform: 'uppercase' }}>
+            Chosen Concept
+          </Text>
+          <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: colors.foreground }}>{conceptName}</Text>
+          {conceptAngle ? (
+            <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: colors.mutedForeground }}>{conceptAngle}</Text>
+          ) : null}
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 2 }}>
+            {conceptBeats.map((b, i) => (
+              <View key={i} style={{ paddingHorizontal: 7, paddingVertical: 2, borderRadius: 10, backgroundColor: colors.muted + '44', borderWidth: 1, borderColor: colors.border }}>
+                <Text style={{ fontSize: 9, fontFamily: 'Inter_400Regular', color: colors.mutedForeground }}>{b}</Text>
+              </View>
+            ))}
+          </View>
+        </View>
+      ) : null}
+
+      {/* Shot count */}
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+        <Feather name="film" size={12} color={colors.mutedForeground} />
+        <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: colors.mutedForeground }}>
+          {shotCount} shot{shotCount !== 1 ? 's' : ''} planned · {duration}s runtime
+        </Text>
+      </View>
+
+      {/* Production doc tabs */}
+      {docKeys.length > 0 ? (
+        <View style={{ gap: 6 }}>
+          <Text style={{ fontSize: 9, fontFamily: 'Inter_700Bold', color: colors.mutedForeground, letterSpacing: 1, textTransform: 'uppercase' }}>
+            Production Documents
+          </Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, flexDirection: 'row' }}>
+            {docKeys.map(key => (
+              <Pressable
+                key={key}
+                onPress={() => setActiveDoc(activeDoc === key ? null : key)}
+                style={({ pressed }) => ({
+                  paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8, borderWidth: 1,
+                  borderColor: activeDoc === key ? colors.primary : colors.border,
+                  backgroundColor: activeDoc === key
+                    ? colors.primary
+                    : pressed ? colors.muted + '88' : colors.muted + '33',
+                })}
+              >
+                <Text style={{ fontSize: 10, fontFamily: 'Inter_500Medium', color: activeDoc === key ? '#fff' : colors.mutedForeground }}>
+                  {key.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase())}
+                </Text>
+              </Pressable>
+            ))}
+          </ScrollView>
+          {activeDoc && activeDocText ? (
+            <View style={{
+              borderRadius: 8, borderWidth: 1, borderColor: colors.border,
+              backgroundColor: colors.muted + '22', padding: 10, maxHeight: 260,
+            }}>
+              <ScrollView nestedScrollEnabled>
+                <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: colors.foreground, lineHeight: 17 }}>
+                  {activeDocText}
+                </Text>
+              </ScrollView>
+            </View>
+          ) : null}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+function TrailerItemMobile({ trailer, workId, colors }: { trailer: TrailerListItemMobile; workId: string; colors: any }) {
+  const domain = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
+  const [expanded, setExpanded]           = useState(false);
+  const [fullTrailer, setFullTrailer]     = useState<TrailerPackageMobile | null>(null);
+  const [loadingFull, setLoadingFull]     = useState(false);
+  const liveStatus = fullTrailer?.status ?? trailer.status;
+  const livePhase  = fullTrailer?.phase  ?? trailer.phase;
+
+  const fetchFull = useCallback(async () => {
+    if (loadingFull) return;
+    setLoadingFull(true);
+    try {
+      const r = await mobileFetch(`https://${domain}/api/works/${workId}/trailers/${trailer.id}`);
+      if (r.ok) setFullTrailer(await r.json());
+    } catch { /* non-fatal */ }
+    finally { setLoadingFull(false); }
+  }, [domain, workId, trailer.id, loadingFull]);
+
+  // Poll while running
+  useEffect(() => {
+    if (liveStatus !== 'running') return;
+    const iv = setInterval(fetchFull, 3000);
+    return () => clearInterval(iv);
+  }, [liveStatus, fetchFull]);
+
+  // Load detail on expand
+  useEffect(() => {
+    if (expanded && !fullTrailer && !loadingFull) fetchFull();
+  }, [expanded, fullTrailer, loadingFull, fetchFull]);
+
+  return (
+    <View style={{
+      borderRadius: 10, borderWidth: 1, borderColor: colors.border,
+      backgroundColor: colors.card, overflow: 'hidden', marginBottom: 8,
+    }}>
+      <Pressable
+        onPress={() => setExpanded(e => !e)}
+        style={({ pressed }) => ({
+          flexDirection: 'row', alignItems: 'center', gap: 10,
+          paddingHorizontal: 12, paddingVertical: 11,
+          backgroundColor: pressed ? colors.muted + '55' : 'transparent',
+        })}
+      >
+        <Feather name="film" size={15} color={colors.mutedForeground} />
+        <View style={{ flex: 1 }}>
+          <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: colors.mutedForeground }}>
+            {new Date(trailer.created_at).toLocaleString()}
+          </Text>
+        </View>
+        <TrailerStatusBadgeMobile status={liveStatus} phase={livePhase} colors={colors} />
+        <Feather name={expanded ? 'chevron-down' : 'chevron-right'} size={14} color={colors.mutedForeground} />
+      </Pressable>
+
+      {expanded && (
+        <View style={{ borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border, padding: 12 }}>
+          {(liveStatus === 'running' || (loadingFull && !fullTrailer)) ? (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 12 }}>
+              <ActivityIndicator size="small" color={colors.primary} />
+              <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: colors.mutedForeground }}>
+                {PHASE_LABELS_MOBILE[livePhase] ?? livePhase}
+              </Text>
+            </View>
+          ) : liveStatus === 'failed' ? (
+            <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: '#dc2626', paddingVertical: 8 }}>
+              {fullTrailer?.error ?? 'Pipeline failed — check server logs.'}
+            </Text>
+          ) : (liveStatus === 'ready' || liveStatus === 'blocked') && fullTrailer?.package ? (
+            <TrailerPackageViewMobile pkg={fullTrailer.package} colors={colors} />
+          ) : (
+            <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: colors.mutedForeground, fontStyle: 'italic', paddingVertical: 8 }}>
+              Package not yet available.
+            </Text>
+          )}
+        </View>
+      )}
+    </View>
+  );
+}
+
+function TrailerTab({ workId, colors }: { workId: string; colors: any }) {
+  const domain = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
+  const [trailers, setTrailers]     = useState<TrailerListItemMobile[]>([]);
+  const [loading, setLoading]       = useState(true);
+  const [generating, setGenerating] = useState(false);
+  const [fetchError, setFetchError] = useState(false);
+
+  const fetchTrailers = useCallback(async () => {
+    try {
+      const r = await mobileFetch(`https://${domain}/api/works/${workId}/trailers`);
+      if (r.ok) {
+        const data = await r.json();
+        setTrailers(data.trailers ?? []);
+        setFetchError(false);
+      } else {
+        setFetchError(true);
+      }
+    } catch {
+      setFetchError(true);
+    } finally {
+      setLoading(false);
+    }
+  }, [domain, workId]);
+
+  useEffect(() => { fetchTrailers(); }, [fetchTrailers]);
+
+  // Poll while any trailer is running
+  useEffect(() => {
+    const anyRunning = trailers.some(t => t.status === 'running');
+    if (!anyRunning) return;
+    const iv = setInterval(fetchTrailers, 5000);
+    return () => clearInterval(iv);
+  }, [trailers, fetchTrailers]);
+
+  const handleGenerate = async () => {
+    setGenerating(true);
+    try {
+      const r = await mobileFetch(`https://${domain}/api/works/${workId}/trailer`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}));
+        throw new Error((body as any).detail ?? `HTTP ${r.status}`);
+      }
+      await fetchTrailers();
+    } catch (err: any) {
+      Alert.alert('Could not start trailer', err?.message ?? 'Unknown error. Try again.');
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const hasRunning = trailers.some(t => t.status === 'running');
+
+  return (
+    <ScrollView
+      contentContainerStyle={{ padding: 16, paddingBottom: 80 }}
+      refreshControl={
+        <RefreshControl refreshing={loading} onRefresh={fetchTrailers} tintColor={colors.primary} />
+      }
+    >
+      {/* Header row */}
+      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 }}>
+          <Feather name="film" size={15} color={colors.mutedForeground} />
+          <Text style={{ fontSize: 11, fontFamily: 'Inter_600SemiBold', color: colors.mutedForeground, textTransform: 'uppercase', letterSpacing: 0.8 }}>
+            Trailer Architect
+          </Text>
+          {trailers.length > 0 && (
+            <View style={{ paddingHorizontal: 6, paddingVertical: 2, borderRadius: 10, backgroundColor: colors.muted }}>
+              <Text style={{ fontSize: 9, fontFamily: 'Inter_600SemiBold', color: colors.mutedForeground }}>{trailers.length}</Text>
+            </View>
+          )}
+        </View>
+
+        <Pressable
+          onPress={handleGenerate}
+          disabled={generating || hasRunning}
+          style={({ pressed }) => ({
+            flexDirection: 'row', alignItems: 'center', gap: 6,
+            paddingHorizontal: 12, paddingVertical: 7, borderRadius: 8,
+            borderWidth: 1, borderColor: colors.primary + '55',
+            backgroundColor: pressed || generating || hasRunning
+              ? colors.primary + '14' : colors.primary + '0a',
+            opacity: generating || hasRunning ? 0.7 : 1,
+          })}
+        >
+          {generating || hasRunning
+            ? <ActivityIndicator size="small" color={colors.primary} style={{ transform: [{ scale: 0.7 }] }} />
+            : <Feather name="zap" size={13} color={colors.primary} />}
+          <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: colors.primary }}>
+            {hasRunning ? 'Generating…' : 'Generate Trailer'}
+          </Text>
+        </Pressable>
+      </View>
+
+      {/* Content */}
+      {fetchError ? (
+        <View style={{ alignItems: 'center', paddingVertical: 32, gap: 8 }}>
+          <Feather name="wifi-off" size={28} color={colors.mutedForeground} />
+          <Text style={{ fontSize: 13, fontFamily: 'Inter_400Regular', color: colors.mutedForeground, textAlign: 'center' }}>
+            Could not load trailers. Check your connection.
+          </Text>
+          <Pressable
+            onPress={fetchTrailers}
+            style={{ paddingHorizontal: 16, paddingVertical: 8, borderRadius: 8, borderWidth: 1, borderColor: colors.border, marginTop: 4 }}
+          >
+            <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: colors.foreground }}>Retry</Text>
+          </Pressable>
+        </View>
+      ) : trailers.length === 0 ? (
+        <View style={{
+          alignItems: 'center', paddingVertical: 40,
+          borderWidth: 1, borderColor: colors.border, borderRadius: 12,
+          borderStyle: 'dashed',
+        }}>
+          <Feather name="film" size={28} color={colors.mutedForeground} />
+          <Text style={{ fontSize: 13, fontFamily: 'Inter_400Regular', color: colors.mutedForeground, textAlign: 'center', marginTop: 10, paddingHorizontal: 24 }}>
+            No trailers yet. Add at least one processed document, then tap Generate Trailer.
+          </Text>
+        </View>
+      ) : (
+        trailers.map(t => (
+          <TrailerItemMobile key={t.id} trailer={t} workId={workId} colors={colors} />
+        ))
       )}
     </ScrollView>
   );
@@ -3747,6 +4191,8 @@ export default function WorkDetailScreen() {
         return <IntelligenceTab workId={id} onHighGapCount={setIntelHighGaps} />;
       case 'brainstorm':
         return <BrainstormTab key={brainstormSeed} workId={id} colors={colors} initialSeed={brainstormSeed || qParam} initialContext={brainstormContext} />;
+      case 'trailer':
+        return <TrailerTab workId={id} colors={colors} />;
     }
   };
 
