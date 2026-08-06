@@ -507,10 +507,10 @@ function IdeaCard({
   );
 }
 
-function BrainstormTab({ workId, colors }: { workId: string; colors: any }) {
+function BrainstormTab({ workId, colors, initialSeed }: { workId: string; colors: any; initialSeed?: string }) {
   const domain = process.env.EXPO_PUBLIC_DOMAIN ?? '';
 
-  const [seed,         setSeed]         = React.useState('');
+  const [seed,         setSeed]         = React.useState(initialSeed ?? '');
   const [contextType,  setContextType]  = React.useState<string>('general');
   const [nDomains,     setNDomains]     = React.useState<number>(5);
   const [running,      setRunning]      = React.useState(false);
@@ -2169,10 +2169,12 @@ export default function WorkDetailScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const isWeb = Platform.OS === 'web';
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, tab: tabParam, q: qParam } = useLocalSearchParams<{ id: string; tab?: string; q?: string }>();
   const navigation = useNavigation();
   const router = useRouter();
-  const [activeTab, setActiveTab] = useState<Tab>('overview');
+  const validTabs: Tab[] = ['overview','docs','knowledge','tasks','conversations','learn','gaps','book','brainstorm'];
+  const initTab: Tab = validTabs.includes(tabParam as Tab) ? (tabParam as Tab) : 'overview';
+  const [activeTab, setActiveTab] = useState<Tab>(initTab);
   const [newTaskText, setNewTaskText] = useState('');
   const [newTaskPriority, setNewTaskPriority] = useState(0);
   const [addingTask, setAddingTask] = useState(false);
@@ -2927,7 +2929,7 @@ export default function WorkDetailScreen() {
         );
       }
       case 'brainstorm':
-        return <BrainstormTab workId={id} colors={colors} />;
+        return <BrainstormTab workId={id} colors={colors} initialSeed={qParam} />;
     }
   };
 
