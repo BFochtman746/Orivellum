@@ -37,6 +37,13 @@ export interface TtsContextValue {
   /** Index of the currently playing part (0-based). */
   index: number;
   play: (parts: string[], docTitle: string, docId: string, voice: string, speed: number) => void;
+  /**
+   * Change voice and/or speed mid-listen.  Clears the path cache and
+   * re-synthesises from the current part so the change takes effect
+   * immediately rather than waiting for the next Listen invocation.
+   * No-op when playbackState is 'idle'.
+   */
+  applySettings: (voice: string, speed: number) => void;
   pause: () => void;
   resume: () => void;
   stop: () => void;
@@ -49,6 +56,7 @@ const TtsContext = createContext<TtsContextValue>({
   session: null,
   index: 0,
   play: () => {},
+  applySettings: () => {},
   pause: () => {},
   resume: () => {},
   stop: () => {},
@@ -71,6 +79,15 @@ export function TtsProvider({ children }: { children: ReactNode }) {
   const sessionCounterRef = useRef(0);
   const pathCacheRef = useRef<Map<number, string>>(new Map());
   const promisesRef = useRef<Map<number, Promise<string>>>(new Map());
+  // Mirror refs so applySettings can read the latest state synchronously
+  // without relying on state updater closures.
+  const sessionRef = useRef<TtsSession | null>(null);
+  const indexRef = useRef(0);
+
+  // Keep mirror refs in sync so applySettings can read the current values
+  // without closures over stale state.
+  sessionRef.current = session;
+  indexRef.current   = index;
 
   /** Synthesize one part and cache its serve-path. Single-flight per part. */
   const synthesizePart = useCallback(
@@ -224,6 +241,40 @@ export function TtsProvider({ children }: { children: ReactNode }) {
     [playPartAt],
   );
 
+  /**
+   * Change voice and/or speed mid-listen.
+   * Reads the current session and index from mirror refs (always current,
+   * no closure issues), bumps the session counter to cancel in-flight
+   * synthesis, clears the path/promise caches, then restarts playback from
+   * the current part with the new settings.  No-op when idle.
+   */
+  const applySettings = useCallback(
+    (voice: string, speed: number) => {
+      const currentSession = sessionRef.current;
+      if (!currentSession) return; // idle — nothing to do
+
+      const currentIndex = indexRef.current;
+
+      // Bump session counter — invalidates all outstanding synthesis
+      sessionCounterRef.current += 1;
+      const sessionId = sessionCounterRef.current;
+
+      // Tear down the active player and clear caches so every remaining
+      // part is re-synthesised from scratch with the new voice/speed.
+      playerRef.current?.remove();
+      playerRef.current = null;
+      pathCacheRef.current.clear();
+      promisesRef.current.clear();
+
+      // Update session state to reflect the new settings
+      setSession({ ...currentSession, voice, speed });
+
+      // Restart from the current part
+      playPartAt(currentSession.parts, currentIndex, voice, speed, sessionId);
+    },
+    [playPartAt],
+  );
+
   const pause = useCallback(() => {
     playerRef.current?.pause();
     setPlaybackState('paused');
@@ -246,7 +297,7 @@ export function TtsProvider({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <TtsContext.Provider value={{ playbackState, session, index, play, pause, resume, stop }}>
+    <TtsContext.Provider value={{ playbackState, session, index, play, applySettings, pause, resume, stop }}>
       {children}
     </TtsContext.Provider>
   );

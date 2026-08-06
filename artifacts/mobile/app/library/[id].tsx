@@ -225,8 +225,9 @@ const SPEED_LABELS: Record<number, string> = {
   0.75: '0.75×', 1.0: '1×', 1.25: '1.25×', 1.5: '1.5×',
 };
 
-const _TTS_VOICE_KEY = 'tts:voice';
-const _TTS_SPEED_KEY = 'tts:speed';
+// Keys match the web implementation so preferences are named consistently
+const _TTS_VOICE_KEY = 'orivellum:tts_voice';
+const _TTS_SPEED_KEY = 'orivellum:tts_speed';
 
 function TtsSettingsSheet({
   visible,
@@ -365,9 +366,10 @@ function TtsSettingsSheet({
             })}
           </ScrollView>
 
-          {/* Hint: settings take effect on next Listen */}
+          {/* Changes take effect immediately when audio is active, or on the
+              next Listen if nothing is playing. */}
           <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: colors.mutedForeground, marginTop: 14, textAlign: 'center' }}>
-            Settings apply when you tap Listen
+            Changes apply immediately — or on the next Listen
           </Text>
         </View>
       </View>
@@ -523,16 +525,24 @@ export default function LibraryDocDetail() {
     }).catch(() => {});
   }, []);
 
-  // Persist voice changes (cache is cleared inside tts.play() on next Listen)
+  // Persist voice changes.  If audio is active for this document, apply the
+  // new voice immediately — TtsContext will clear the cache and re-synthesise
+  // from the current part so the change is heard right away.
   const handleVoiceChange = (v: string) => {
     setTtsVoice(v);
     AsyncStorage.setItem(_TTS_VOICE_KEY, v).catch(() => {});
+    if (_isThisDoc && localTtsState !== 'idle') {
+      tts.applySettings(v, ttsSpeed);
+    }
   };
 
-  // Persist speed changes
+  // Persist speed changes with the same immediate-apply behaviour.
   const handleSpeedChange = (s: TtsSpeed) => {
     setTtsSpeed(s);
     AsyncStorage.setItem(_TTS_SPEED_KEY, String(s)).catch(() => {});
+    if (_isThisDoc && localTtsState !== 'idle') {
+      tts.applySettings(ttsVoice, s);
+    }
   };
 
   const domain = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
