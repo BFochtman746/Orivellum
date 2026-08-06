@@ -4,11 +4,12 @@
  * Facts are automatically captured in the background after each chat reply
  * (via _post_reply_background → _infer_memory_facts on the API server).
  * This screen surfaces them from GET /api/memory so users can see what the
- * AI knows about them and how knowledge evolves over time.
+ * AI knows about them, and lets them delete individual facts or clear all.
  */
 import React, { useCallback, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   Platform,
   Pressable,
@@ -23,6 +24,9 @@ import { mobileFetch } from '@/lib/api';
 import { useNavigation } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useEffect } from 'react';
+
+const DOMAIN = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
+const API = `https://${DOMAIN}/api`;
 
 interface MemoryFact {
   id: string;
@@ -46,6 +50,8 @@ export default function MemoryScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [clearingAll, setClearingAll] = useState(false);
 
   useEffect(() => {
     navigation.setOptions({ title: 'Memory' });
@@ -56,8 +62,7 @@ export default function MemoryScreen() {
     else setLoading(true);
     setError(false);
     try {
-      const domain = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
-      const res = await mobileFetch(`https://${domain}/api/memory`);
+      const res = await mobileFetch(`${API}/memory`);
       if (!res.ok) throw new Error(`status ${res.status}`);
       const data = await res.json();
       setFacts(data.facts ?? []);
@@ -71,57 +76,153 @@ export default function MemoryScreen() {
 
   useEffect(() => { fetchFacts(); }, [fetchFacts]);
 
+  const handleDeleteFact = useCallback((fact: MemoryFact) => {
+    Alert.alert(
+      'Delete memory?',
+      `"${fact.key}" will be permanently removed. The AI won't remember this fact in future chats.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            setDeletingId(fact.id);
+            try {
+              const res = await mobileFetch(
+                `${API}/system/user-memory/${fact.id}`,
+                { method: 'DELETE' },
+              );
+              if (!res.ok) throw new Error(`status ${res.status}`);
+              setFacts(prev => prev.filter(f => f.id !== fact.id));
+            } catch {
+              Alert.alert('Error', 'Could not delete fact. Please try again.');
+            } finally {
+              setDeletingId(null);
+            }
+          },
+        },
+      ],
+    );
+  }, []);
+
+  const handleClearAll = useCallback(() => {
+    if (facts.length === 0) return;
+    Alert.alert(
+      'Clear all memories?',
+      `All ${facts.length} stored fact${facts.length !== 1 ? 's' : ''} will be permanently deleted. The AI will start fresh with no remembered context.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Clear All',
+          style: 'destructive',
+          onPress: async () => {
+            setClearingAll(true);
+            try {
+              const res = await mobileFetch(
+                `${API}/system/user-memory`,
+                { method: 'DELETE' },
+              );
+              if (!res.ok) throw new Error(`status ${res.status}`);
+              setFacts([]);
+            } catch {
+              Alert.alert('Error', 'Could not clear memories. Please try again.');
+            } finally {
+              setClearingAll(false);
+            }
+          },
+        },
+      ],
+    );
+  }, [facts.length]);
+
   const formatDate = (iso: string | null | undefined) => {
     if (!iso) return '';
     try {
-      return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+      return new Date(iso).toLocaleDateString(undefined, {
+        month: 'short', day: 'numeric', year: 'numeric',
+      });
     } catch {
       return '';
     }
   };
 
-  const renderFact = ({ item }: { item: MemoryFact }) => (
-    <View
-      style={[
-        styles.factCard,
-        { backgroundColor: colors.card, borderColor: colors.border },
-      ]}
-    >
-      {/* Key */}
-      <Text style={[styles.factKey, { color: colors.primary }]} numberOfLines={1}>
-        {item.key}
-      </Text>
-      {/* Current value */}
-      <Text style={[styles.factValue, { color: colors.foreground }]}>
-        {item.value}
-      </Text>
-      {/* Previous value — struck through to show the superseded fact */}
-      {!!item.prev_value && (
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 4 }}>
-          <Feather name="clock" size={10} color={colors.mutedForeground} />
-          <Text
-            style={[styles.factPrev, { color: colors.mutedForeground }]}
-            numberOfLines={1}
+  const renderFact = ({ item }: { item: MemoryFact }) => {
+    const isDeleting = deletingId === item.id;
+    return (
+      <Pressable
+        onLongPress={() => handleDeleteFact(item)}
+        delayLongPress={400}
+        style={({ pressed }) => [
+          styles.factCard,
+          {
+            backgroundColor: colors.card,
+            borderColor: colors.border,
+            opacity: isDeleting || pressed ? 0.5 : 1,
+          },
+        ]}
+        accessibilityLabel={`${item.key}: ${item.value}. Long press to delete.`}
+        accessibilityHint="Long press to delete this memory"
+      >
+        <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
+          <View style={{ flex: 1 }}>
+            {/* Key */}
+            <Text style={[styles.factKey, { color: colors.primary }]} numberOfLines={1}>
+              {item.key}
+            </Text>
+            {/* Current value */}
+            <Text style={[styles.factValue, { color: colors.foreground }]}>
+              {item.value}
+            </Text>
+            {/* Previous value — struck through to show the superseded fact */}
+            {!!item.prev_value && (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 4 }}>
+                <Feather name="clock" size={10} color={colors.mutedForeground} />
+                <Text
+                  style={[styles.factPrev, { color: colors.mutedForeground }]}
+                  numberOfLines={1}
+                >
+                  Previously: {item.prev_value}
+                </Text>
+              </View>
+            )}
+            {/* Footer: source + date */}
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 6 }}>
+              {item.source ? (
+                <Text style={[styles.factMeta, { color: colors.mutedForeground }]} numberOfLines={1}>
+                  {item.source}
+                </Text>
+              ) : <View />}
+              {(item.updated_at ?? item.created_at) && (
+                <Text style={[styles.factMeta, { color: colors.mutedForeground }]}>
+                  {formatDate(item.updated_at ?? item.created_at)}
+                </Text>
+              )}
+            </View>
+          </View>
+
+          {/* Delete button */}
+          <Pressable
+            onPress={() => handleDeleteFact(item)}
+            hitSlop={12}
+            disabled={isDeleting}
+            style={({ pressed }) => ({
+              padding: 6,
+              marginLeft: 8,
+              borderRadius: 6,
+              backgroundColor: pressed ? '#ef444418' : 'transparent',
+              opacity: isDeleting ? 0.4 : 1,
+            })}
+            accessibilityLabel="Delete this memory"
+            accessibilityRole="button"
           >
-            Previously: {item.prev_value}
-          </Text>
+            {isDeleting
+              ? <ActivityIndicator size="small" color={colors.mutedForeground} />
+              : <Feather name="trash-2" size={15} color={colors.mutedForeground} />}
+          </Pressable>
         </View>
-      )}
-      {/* Footer: source + date */}
-      <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 6 }}>
-        {item.source ? (
-          <Text style={[styles.factMeta, { color: colors.mutedForeground }]} numberOfLines={1}>
-            {item.source}
-          </Text>
-        ) : <View />}
-        {(item.updated_at ?? item.created_at) && (
-          <Text style={[styles.factMeta, { color: colors.mutedForeground }]}>
-            {formatDate(item.updated_at ?? item.created_at)}
-          </Text>
-        )}
-      </View>
-    </View>
-  );
+      </Pressable>
+    );
+  };
 
   return (
     <View style={[styles.screen, { backgroundColor: colors.background, paddingTop: topPad }]}>
@@ -131,19 +232,52 @@ export default function MemoryScreen() {
           <Text style={{ fontSize: 20 }}>✨</Text>
           <Text style={[styles.title, { color: colors.foreground }]}>Memory</Text>
         </View>
-        <Pressable onPress={() => fetchFacts(true)} hitSlop={12} disabled={refreshing}>
-          <Feather
-            name="refresh-cw"
-            size={16}
-            color={colors.mutedForeground}
-            style={{ opacity: refreshing ? 0.4 : 1 }}
-          />
-        </Pressable>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+          {/* Clear all */}
+          {facts.length > 0 && (
+            <Pressable
+              onPress={handleClearAll}
+              hitSlop={12}
+              disabled={clearingAll}
+              style={({ pressed }) => ({
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 4,
+                paddingHorizontal: 10,
+                paddingVertical: 5,
+                borderRadius: 8,
+                borderWidth: 1,
+                borderColor: '#ef444444',
+                backgroundColor: pressed ? '#ef444412' : 'transparent',
+                opacity: clearingAll ? 0.5 : 1,
+              })}
+              accessibilityLabel="Clear all memories"
+              accessibilityRole="button"
+            >
+              {clearingAll
+                ? <ActivityIndicator size="small" color="#ef4444" />
+                : <Feather name="trash-2" size={13} color="#ef4444" />}
+              <Text style={{ fontSize: 12, fontFamily: 'Inter_500Medium', color: '#ef4444' }}>
+                Clear all
+              </Text>
+            </Pressable>
+          )}
+          {/* Refresh */}
+          <Pressable onPress={() => fetchFacts(true)} hitSlop={12} disabled={refreshing}>
+            <Feather
+              name="refresh-cw"
+              size={16}
+              color={colors.mutedForeground}
+              style={{ opacity: refreshing ? 0.4 : 1 }}
+            />
+          </Pressable>
+        </View>
       </View>
 
       {/* Caption */}
       <Text style={[styles.caption, { color: colors.mutedForeground }]}>
-        Facts captured automatically as you chat — ask "where are we on X" to recall them in conversation.
+        Facts captured automatically as you chat. Long-press or tap{' '}
+        <Feather name="trash-2" size={11} color={colors.mutedForeground} /> to delete individual facts.
       </Text>
 
       {/* Body */}

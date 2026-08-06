@@ -518,6 +518,20 @@ export default function SystemScreen() {
           </Section>
         )}
 
+        {/* Memory */}
+        <Section title="Memory" icon="cpu">
+          <Text style={[s.metaText, { color: colors.mutedForeground }]}>
+            Facts captured automatically as you chat are injected into every AI reply. View or delete them here.
+          </Text>
+          <Pressable
+            onPress={() => router.push('/memory' as any)}
+            style={({ pressed }) => [s.actionBtn, { borderColor: colors.border, backgroundColor: colors.muted, opacity: pressed ? 0.7 : 1 }]}
+          >
+            <Feather name="cpu" size={14} color={colors.primary} />
+            <Text style={[s.actionBtnText, { color: colors.primary }]}>View & Manage Memory</Text>
+          </Pressable>
+        </Section>
+
         <ProfileSection />
       </ScrollView>
     </View>

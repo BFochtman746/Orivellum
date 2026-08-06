@@ -3994,7 +3994,7 @@ class OrivellumDB:
         """Return all memory facts (one per key), newest-updated first."""
         with self._lock:
             rows = self._conn.execute(
-                """SELECT key, value, prev_value, source_conv_id, created_at
+                """SELECT id, key, value, prev_value, source_conv_id, created_at
                    FROM user_memory
                    ORDER BY created_at DESC LIMIT ?""",
                 (limit,),
