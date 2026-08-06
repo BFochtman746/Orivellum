@@ -1444,7 +1444,7 @@ export default function Studio() {
   ] as const;
 
   return (
-    <div className="flex flex-col animate-in fade-in duration-500" style={{ height: "calc(100vh - 4rem)", minHeight: 0 }}>
+    <div className="flex-1 min-h-0 flex flex-col animate-in fade-in duration-500">
       {/* Page header */}
       <div className="flex items-center justify-between px-6 py-4 border-b border-border/50 shrink-0">
         <div>

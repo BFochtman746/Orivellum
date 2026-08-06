@@ -797,7 +797,7 @@ export default function WriteDeskPage() {
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <div className="flex h-full overflow-hidden bg-background">
+    <div className="flex flex-1 min-h-0 overflow-hidden bg-background">
       {/* Sidebar */}
       {!focusMode && (
         <DocSidebar
