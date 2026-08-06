@@ -1274,6 +1274,11 @@ export default function DocumentDetail() {
 
     // If a player is currently shown, evict the cache and resynthesize from the current part
     if (ttsAudioUrl && ttsChunks.length > 0) {
+      // Bump the session counter BEFORE capturing it so that any in-flight
+      // synthesizePart calls that started under the old session (including
+      // prefetches) will detect staleness and discard their results rather
+      // than overwriting the new voice's cache entry.
+      ttsSessionRef.current++;
       const session = ttsSessionRef.current;
       // Pause current audio and clear old blobs
       ttsAudioRef.current?.pause();
