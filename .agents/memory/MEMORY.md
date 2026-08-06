@@ -59,3 +59,4 @@
 - [Phase 2-4 hardening decisions](orivellum-phase2-hardening.md) — access log, security headers, MIME validation, SSRF blocklist, executor job tracking, MCP server, audio transcription, folder watch, mobile offline cache.
 - [Document Workshop system](orivellum-workshop.md) — self-prompting AI doc gen; plan/execute endpoints; clarify→code-gen→sandbox→critique loop; Studio page panel.
 - [Chapter-first novel architecture](orivellum-chapter-arch.md) — schema v84 chapter_id on knowledge; llm_harvest_by_chapters() fiction prompt; two-line heading detection; scene_count in meta; chat chapter scoping; caps raised to 2M.
+- [GENESIS Book Origination System](orivellum-genesis.md) — schema v92; 10-gate ledger; _deps not auth import; ON CONFLICT uses excluded.updated_at; ledger_append needs UUID id.
