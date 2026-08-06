@@ -1,7 +1,8 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  AppState,
   Modal,
   Platform,
   Pressable,
@@ -25,6 +26,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useColors } from '@/hooks/useColors';
 import { mobileFetch } from '@/lib/api';
 import { getApiToken } from '@/lib/token';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const DOMAIN = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
 const API = `https://${DOMAIN}/api`;
@@ -2931,7 +2933,10 @@ function WorkshopPanel() {
 
 // ── Audiobook Builder ─────────────────────────────────────────────────────────
 
-type AudiobookPhase = 'idle' | 'generating' | 'done' | 'error';
+type AudiobookPhase = 'idle' | 'generating' | 'done' | 'error' | 'interrupted';
+
+/** AsyncStorage key for persisting an in-progress work-audiobook job across sessions. */
+const AUDIOBOOK_JOB_KEY = 'orivellum:audiobook_job_v1';
 
 function _safeTitle(title: string) {
   return title.replace(/[^\w\-]/g, '_').substring(0, 50);
@@ -2972,6 +2977,10 @@ function AudiobookPanel({
   // if the POST /start response arrives after cancel was pressed we immediately
   // delete the server job and skip setting up polling.
   const cancelledRef  = useRef(false);
+  // Stable refs used inside the polling interval so the AppState handler and
+  // mount-restoration effect can restart polling without recreating a closure.
+  const pollJobRef    = useRef<string | null>(null);
+  const totalChapsRef = useRef(0);
 
   // Load works list
   useEffect(() => {
@@ -3022,7 +3031,120 @@ function AudiobookPanel({
 
   const stopPoll = () => {
     if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+    pollJobRef.current = null;
   };
+
+  // ── Stable polling function ────────────────────────────────────────────────
+  // useCallback keeps the reference stable so AppState and mount-restoration
+  // effects can call it without stale closures or re-subscription loops.
+  const startPolling = useCallback((job_id: string, initial_total: number) => {
+    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+    pollJobRef.current    = job_id;
+    totalChapsRef.current = initial_total;
+
+    pollRef.current = setInterval(async () => {
+      const jid = pollJobRef.current;
+      if (!jid || cancelledRef.current) {
+        if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+        return;
+      }
+      try {
+        const sr = await mobileFetch(`${API}/studio/tts/work/${jid}/status`);
+
+        // 404 → server was restarted, job record is gone → show interrupted state
+        if (sr.status === 404) {
+          if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+          if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+          pollJobRef.current = null;
+          AsyncStorage.removeItem(AUDIOBOOK_JOB_KEY).catch(() => {});
+          setPhase('interrupted');
+          return;
+        }
+        if (!sr.ok) return; // other transient error; keep polling
+
+        const status = await sr.json();
+        if (cancelledRef.current) {
+          if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+          pollJobRef.current = null;
+          return;
+        }
+
+        setStatusReceived(true);
+        setChapIdx(status.chapter_idx ?? 0);
+        if (status.total_chapters) {
+          setTotalChaps(status.total_chapters);
+          totalChapsRef.current = status.total_chapters;
+        }
+        setChapTitle(status.chapter_title ?? '');
+
+        if (status.state === 'done') {
+          if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+          if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+          pollJobRef.current = null;
+          AsyncStorage.removeItem(AUDIOBOOK_JOB_KEY).catch(() => {});
+          const r = status.result;
+          setResult({ path: r.path, filename: r.filename, work_title: r.work_title });
+          setPhase('done');
+          onGenerated();
+          // The server sends a push notification via Expo's push API when the
+          // job completes — that fires on the lock screen even when the app is
+          // suspended.  No client-side notification is needed here.
+        } else if (status.state === 'failed') {
+          if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+          if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+          pollJobRef.current = null;
+          AsyncStorage.removeItem(AUDIOBOOK_JOB_KEY).catch(() => {});
+          setErrorMsg(status.error ?? 'Audiobook generation failed');
+          setPhase('error');
+        } else if (status.state === 'cancelled') {
+          if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+          if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+          pollJobRef.current = null;
+          AsyncStorage.removeItem(AUDIOBOOK_JOB_KEY).catch(() => {});
+          setPhase('idle');
+        }
+      } catch (_) {
+        // transient network error; keep polling
+      }
+    }, 2000);
+  }, [onGenerated]);
+
+  // On mount: restore any persisted job so generation survives app kill or
+  // a cold-start after the screen was locked mid-synthesis.
+  useEffect(() => {
+    AsyncStorage.getItem(AUDIOBOOK_JOB_KEY)
+      .then((raw) => {
+        if (!raw) return;
+        const saved: { job_id: string } = JSON.parse(raw);
+        if (!saved?.job_id) return;
+        setJobId(saved.job_id);
+        setPhase('generating');
+        setStatusReceived(false);
+        startPolling(saved.job_id, 0);
+      })
+      .catch(() => {});
+  }, [startPolling]);
+
+  // Explicitly pause the polling interval when the app is backgrounded or the
+  // screen locks, and restart it immediately on foreground.
+  //
+  // Why the explicit pause matters: iOS may leave pollRef.current non-null while
+  // suspending the JS timer, making a condition like (!pollRef.current) unreachable
+  // on wakeup.  By clearing pollRef ourselves on background (keeping pollJobRef so
+  // we know which job to resume), the active branch is always triggered.
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (nextState) => {
+      if ((nextState === 'background' || nextState === 'inactive') && pollRef.current) {
+        // Pause: stop the interval but preserve pollJobRef for resumption
+        clearInterval(pollRef.current);
+        pollRef.current = null;
+      } else if (nextState === 'active' && pollJobRef.current && !pollRef.current) {
+        // Foreground: restart polling immediately so progress is up to date
+        startPolling(pollJobRef.current, totalChapsRef.current);
+      }
+    });
+    return () => sub.remove();
+  }, [startPolling]);
 
   const handleGenerate = async () => {
     if (!workId) return;
@@ -3065,38 +3187,14 @@ function AudiobookPanel({
       setJobId(job_id);
       setTotalChaps(total_chapters);
 
-      // Poll for chapter-level progress every 2 s
-      pollRef.current = setInterval(async () => {
-        // Skip if cancelled while a poll tick was already in-flight
-        if (cancelledRef.current) { stopPoll(); return; }
-        try {
-          const sr = await mobileFetch(`${API}/studio/tts/work/${job_id}/status`);
-          if (!sr.ok) return; // transient; keep polling
-          const status = await sr.json();
-          if (cancelledRef.current) { stopPoll(); return; }
-          setStatusReceived(true);
-          setChapIdx(status.chapter_idx ?? 0);
-          setTotalChaps(status.total_chapters ?? total_chapters);
-          setChapTitle(status.chapter_title ?? '');
+      // Persist job_id so generation survives app kill / cold-start-after-lock
+      const workTitle = works.find(w => w.id === workId)?.title ?? 'Untitled';
+      AsyncStorage.setItem(
+        AUDIOBOOK_JOB_KEY,
+        JSON.stringify({ job_id, work_title: workTitle }),
+      ).catch(() => {});
 
-          if (status.state === 'done') {
-            stopPoll(); stopTimer();
-            const r = status.result;
-            setResult({ path: r.path, filename: r.filename, work_title: r.work_title });
-            setPhase('done');
-            onGenerated();
-          } else if (status.state === 'failed') {
-            stopPoll(); stopTimer();
-            setErrorMsg(status.error ?? 'Audiobook generation failed');
-            setPhase('error');
-          } else if (status.state === 'cancelled') {
-            stopPoll(); stopTimer();
-            setPhase('idle');
-          }
-        } catch (_) {
-          // transient network error; keep polling
-        }
-      }, 2000);
+      startPolling(job_id, total_chapters);
     } catch (e: any) {
       stopTimer();
       if (!cancelledRef.current) {
@@ -3110,10 +3208,10 @@ function AudiobookPanel({
     cancelledRef.current = true; // disarm any in-flight start/poll
     stopPoll();
     stopTimer();
+    AsyncStorage.removeItem(AUDIOBOOK_JOB_KEY).catch(() => {}); // clear persisted job
     setPhase('idle');
     // Signal the server to stop the background job; also used as a
-    // deferred DELETE if job_id arrives after cancel was pressed (see
-    // the cancelledRef guard inside handleGenerate).
+    // deferred DELETE if job_id arrives after cancel was pressed.
     if (jobId) {
       mobileFetch(`${API}/studio/tts/work/${jobId}`, { method: 'DELETE' }).catch(() => {});
     }
@@ -3315,6 +3413,35 @@ function AudiobookPanel({
               </Text>
             </Pressable>
           </View>
+        </View>
+      </SectionCard>
+    );
+  }
+
+  // ── Interrupted ──────────────────────────────────────────────────────────────
+  // Shown when the persisted job_id returns 404 (server restarted mid-synthesis).
+  if (phase === 'interrupted') {
+    return (
+      <SectionCard title="Audiobook Builder" icon="headphones">
+        <View style={{ gap: 12 }}>
+          <View style={[wsStyles.intentBadge, { borderColor: '#f9731644', backgroundColor: '#f9731610' }]}>
+            <Feather name="alert-triangle" size={12} color="#f97316" />
+            <Text style={{
+              color: '#f97316', fontSize: 12, fontFamily: 'Inter_400Regular',
+              flex: 1, lineHeight: 17,
+            }}>
+              Generation was interrupted — the server restarted while your audiobook was being built.
+            </Text>
+          </View>
+          <Pressable
+            onPress={() => setPhase('idle')}
+            style={({ pressed }) => [styles.primaryButton, {
+              backgroundColor: colors.muted, opacity: pressed ? 0.7 : 1,
+            }]}
+          >
+            <Feather name="refresh-cw" size={15} color={colors.foreground} />
+            <Text style={[styles.primaryButtonText, { color: colors.foreground }]}>Retry</Text>
+          </Pressable>
         </View>
       </SectionCard>
     );
