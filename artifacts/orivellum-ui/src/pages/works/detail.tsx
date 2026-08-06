@@ -1072,6 +1072,7 @@ function KnowledgeTab({ workId }: { workId: string }) {
   // API search state — hooks must be unconditional, before any early return
   const [apiSearchResults, setApiSearchResults] = useState<any[]>([]);
   const [apiSearchLoading, setApiSearchLoading] = useState(false);
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const apiSeqRef = useRef(0); // monotonic counter to discard stale responses
 
   const deleteKnowledge = useDeleteKnowledgeItem();
@@ -1082,12 +1083,19 @@ function KnowledgeTab({ workId }: { workId: string }) {
     query: { enabled: !!workId, queryKey: getGetWorkDocumentsQueryKey(workId) },
   });
 
-  // API search — when there are many items (> 50) and the user has typed 3+ chars,
-  // debounce a call to GET /api/works/{id}/search instead of filtering in memory.
+  // Debounce the search input by 300 ms (matches library document knowledge tab behaviour)
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(searchText.trim()), 300);
+    return () => clearTimeout(t);
+  }, [searchText]);
+
+  // Smart threshold search: when the Work has > KN_SEARCH_THRESHOLD items, send a
+  // debounced API request to GET /api/knowledge/ask?work_id=... instead of filtering
+  // in memory.  For ≤ threshold items, client-side filtering is fast enough.
   // Must be above any early return to satisfy React rules of hooks.
-  const API_SEARCH_THRESHOLD = 50;
+  const KN_SEARCH_THRESHOLD = 50;
   const allKnowledgeCount = knowResp?.knowledge?.length ?? 0;
-  const useApiSearch = allKnowledgeCount > API_SEARCH_THRESHOLD && searchText.trim().length >= 3;
+  const useApiSearch = allKnowledgeCount > KN_SEARCH_THRESHOLD && debouncedSearch.length > 0;
 
   useEffect(() => {
     if (!useApiSearch) {
@@ -1099,13 +1107,11 @@ function KnowledgeTab({ workId }: { workId: string }) {
     const seq = ++apiSeqRef.current;
     const controller = new AbortController();
     setApiSearchLoading(true);
-    const timer = setTimeout(async () => {
+    const doSearch = async () => {
       try {
         const base = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
-        const r = await apiFetch(
-          `${base}/works/${workId}/search?q=${encodeURIComponent(searchText)}&limit=50`,
-          { signal: controller.signal }
-        );
+        const params = new URLSearchParams({ q: debouncedSearch, work_id: workId, limit: "50" });
+        const r = await apiFetch(`${base}/knowledge/ask?${params}`, { signal: controller.signal });
         if (seq !== apiSeqRef.current) return; // a newer request has started — discard
         if (!r.ok) { setApiSearchLoading(false); return; }
         const d = await r.json();
@@ -1116,14 +1122,13 @@ function KnowledgeTab({ workId }: { workId: string }) {
       } finally {
         if (seq === apiSeqRef.current) setApiSearchLoading(false);
       }
-    }, 350);
+    };
+    doSearch();
     return () => {
-      clearTimeout(timer);
       controller.abort();
-      // Only clear spinner if we're still the current request
       if (seq === apiSeqRef.current) setApiSearchLoading(false);
     };
-  }, [useApiSearch, searchText, workId]);
+  }, [useApiSearch, debouncedSearch, workId]);
 
   // Build doc id → display name lookup
   const docNames: Record<string, string> = {};
@@ -1305,7 +1310,7 @@ function KnowledgeTab({ workId }: { workId: string }) {
                 : <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />}
               <Input
                 className="pl-8 pr-8 h-8 text-xs w-52 font-mono"
-                placeholder={allKnowledge.length > API_SEARCH_THRESHOLD ? "Search knowledge…" : "Filter knowledge…"}
+                placeholder={allKnowledge.length > KN_SEARCH_THRESHOLD ? "Search knowledge…" : "Filter knowledge…"}
                 value={searchText}
                 onChange={(e) => setSearchText(e.target.value)}
               />
