@@ -26,6 +26,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import pathlib
 import platform
 import re
 import subprocess
@@ -301,7 +302,7 @@ def _collect_linux() -> dict:
     return result
 
 
-# ── VRAM — Lemonade / Ollama API probe (platform-independent) ─────────────────
+# ── VRAM — multi-strategy probe (platform-independent) ────────────────────────
 
 _LEMONADE_PORTS = [13305, 11434, 8080, 1234]
 
@@ -316,6 +317,9 @@ _VRAM_PATHS = [
     "/api/info",
     "/api/status",
 ]
+
+# 32-bit field ceiling: Win32_VideoController.AdapterRAM saturates here on UMA.
+_ADAPTER_RAM_SATURATION_BYTES = 4_294_967_296  # 4 GiB exactly
 
 
 def _parse_vram_response(data: dict) -> tuple[int, int] | None:
@@ -338,11 +342,228 @@ def _parse_vram_response(data: dict) -> tuple[int, int] | None:
     return None
 
 
-def _probe_vram(manual_gib: float | None = None) -> dict:
-    """Probe the Lemonade/Ollama API for usable VRAM (A0 ground-truth source).
+# ── Strategy 2: AMD ROCm rocm-smi ─────────────────────────────────────────────
 
-    If manual_gib is set (from --vram-gb flag), skip the probe and record that
-    value directly as a user-supplied measurement.
+def _probe_vram_rocm() -> tuple[int, int] | None:
+    """Run rocm-smi --showmeminfo vram and parse the output.
+
+    Available in WSL2 with AMD GPU pass-through and on Linux ROCm installs.
+    Returns (total_bytes, used_bytes) or None.
+    """
+    out = _run(["rocm-smi", "--showmeminfo", "vram"], timeout=10)
+    if not out:
+        return None
+    total = 0
+    used  = 0
+    for line in out.splitlines():
+        low = line.lower()
+        m   = re.search(r":\s*(\d+)", line)
+        if not m:
+            continue
+        val = int(m.group(1))
+        if "vram total memory" in low:
+            total = val
+        elif "vram total used memory" in low:
+            used = val
+    if total > 1_000_000:
+        return total, used
+    return None
+
+
+# ── Strategy 4: Lemonade config file ──────────────────────────────────────────
+
+def _probe_vram_lemonade_config() -> int | None:
+    """Try to read the GPU memory allocation from a Lemonade config file.
+
+    Returns total_bytes (configured allocation) or None.
+    Authority A1: this is a user-configured value, not a live measurement.
+    """
+    candidates: list[pathlib.Path] = []
+
+    if platform.system() == "Windows":
+        for env_var in ("APPDATA", "LOCALAPPDATA"):
+            base = os.environ.get(env_var, "")
+            if base:
+                for sub in ("AMD\\Lemonade", "Lemonade", "lemonade"):
+                    candidates.append(pathlib.Path(base) / sub / "config.json")
+    else:
+        home = pathlib.Path.home()
+        candidates += [
+            home / ".config" / "lemonade" / "config.json",
+            home / ".local" / "share" / "lemonade" / "config.json",
+            home / ".lemonade" / "config.json",
+            pathlib.Path("/etc/lemonade/config.json"),
+        ]
+        # WSL: also check the Windows AppData tree via /mnt/c
+        release = getattr(platform.uname(), "release", "").lower()
+        if "microsoft" in release:
+            win_appdata = _run(["cmd.exe", "/c", "echo %APPDATA%"], timeout=5).strip()
+            if win_appdata and ":" in win_appdata:
+                drive, rest = win_appdata.split(":", 1)
+                wsl = pathlib.Path(f"/mnt/{drive.lower()}") / rest.lstrip("\\").replace("\\", "/")
+                candidates += [
+                    wsl / "AMD" / "Lemonade" / "config.json",
+                    wsl / "Lemonade" / "config.json",
+                ]
+
+    for cfg_path in candidates:
+        try:
+            with open(cfg_path) as f:
+                cfg = json.load(f)
+        except Exception:
+            continue
+
+        # Top-level scalar keys
+        for key in ("gpu_memory_gb", "vram_gb", "gpu_memory", "vram",
+                    "memory_gb", "gpu_allocation_gb"):
+            val = cfg.get(key)
+            if val is not None:
+                try:
+                    gib = float(val)
+                    if 1.0 <= gib <= 1024.0:
+                        return int(gib * 1_073_741_824)
+                except (TypeError, ValueError):
+                    pass
+
+        # Nested: {"gpu": {"memory_gb": 96}}
+        for section in ("gpu", "GPU", "hardware", "memory"):
+            sub = cfg.get(section)
+            if not isinstance(sub, dict):
+                continue
+            for key in ("memory_gb", "vram_gb", "gpu_memory_gb", "allocation_gb"):
+                val = sub.get(key)
+                if val is not None:
+                    try:
+                        gib = float(val)
+                        if 1.0 <= gib <= 1024.0:
+                            return int(gib * 1_073_741_824)
+                    except (TypeError, ValueError):
+                        pass
+
+    return None
+
+
+# ── Strategy 5: Win32_VideoController.AdapterRAM (LAST RESORT) ────────────────
+#
+# IMPORTANT: This is a 32-bit CIM field that saturates at exactly 4 GiB
+# (4,294,967,296 bytes) on unified-memory architecture.  On AMD Ryzen AI MAX+
+# 395 with 96 GiB configured VRAM, this ALWAYS returns 4 GiB — not 96 GiB.
+#
+# It is included here only because:
+#   (a) on discrete GPUs with <4 GiB it returns the real value, and
+#   (b) the saturation marker itself confirms a UMA system likely has more VRAM
+#       than the 4 GiB the field can represent.
+#
+# INV-REQ-001: this source MUST NOT be stored under a locator containing
+# "adapterram" for any vram_* predicate — the authority resolver blocks it.
+# We store it as a separate advisory field ("vram_hint") in the payload so the
+# adapter can use it as a last-resort lower-bound without violating the policy.
+
+def _probe_vram_cim_adapter_ram() -> dict | None:
+    """Read Win32_VideoController.AdapterRAM for the first AMD/Radeon GPU.
+
+    Returns:
+      {"bytes": <int>, "saturated": <bool>, "gpu_name": <str>} or None.
+    """
+    is_wsl = "microsoft" in getattr(platform.uname(), "release", "").lower()
+    if platform.system() not in ("Windows",) and not is_wsl:
+        return None
+
+    ps_exe = "powershell.exe" if platform.system() != "Windows" else "powershell"
+    ps_cmd = r"""
+$gpu = Get-CimInstance Win32_VideoController |
+       Where-Object { $_.Name -like '*Radeon*' -or $_.Name -like '*AMD*' } |
+       Select-Object -First 1
+if ($gpu) {
+  @{ bytes=$gpu.AdapterRAM; name=$gpu.Name } | ConvertTo-Json -Compress
+}
+"""
+    out = _run([ps_exe, "-NoProfile", "-NonInteractive", "-Command", ps_cmd], timeout=15).strip()
+    if not out:
+        return None
+    try:
+        data = json.loads(out.lstrip("\ufeff"))
+        val = int(data.get("bytes") or 0)
+        if val <= 0:
+            return None
+        return {
+            "bytes": val,
+            "saturated": val >= _ADAPTER_RAM_SATURATION_BYTES,
+            "gpu_name": (data.get("name") or "").strip(),
+        }
+    except Exception:
+        return None
+
+
+# ── CPU-based UMA detection for user guidance ─────────────────────────────────
+
+_AMD_RYZEN_AI_MAX_RE = re.compile(
+    r"ryzen\s+ai\s+max\+?\s*3[5-9]\d|ryzen\s+ai\s+max\+",
+    re.IGNORECASE,
+)
+
+
+def _detect_cpu_name() -> str:
+    """Return the CPU model string from the best available source."""
+    is_wsl = "microsoft" in getattr(platform.uname(), "release", "").lower()
+    if platform.system() == "Windows" or is_wsl:
+        ps_exe = "powershell.exe" if platform.system() != "Windows" else "powershell"
+        name = _run(
+            [ps_exe, "-NoProfile", "-NonInteractive", "-Command",
+             "(Get-CimInstance Win32_Processor | Select-Object -First 1).Name"],
+            timeout=10,
+        ).strip()
+        if name:
+            return name
+    # Linux / WSL fallback
+    try:
+        with open("/proc/cpuinfo") as f:
+            cpu_info = f.read()
+        m = re.search(r"^model name\s*:\s*(.+)$", cpu_info, re.MULTILINE)
+        if m:
+            return m.group(1).strip()
+    except Exception:
+        pass
+    return ""
+
+
+def _print_vram_fallback_hint(cpu_name: str) -> None:
+    """Print architecture-specific VRAM guidance when all probes fail."""
+    print("  VRAM: no runtime memory API or ROCm tool found on any probed path.")
+
+    if _AMD_RYZEN_AI_MAX_RE.search(cpu_name):
+        print()
+        print("  ┌─ AMD Ryzen AI MAX+ 395 detected ───────────────────────────────────────────┐")
+        print("  │ This processor uses unified LPDDR5x memory shared between CPU and GPU.     │")
+        print("  │ The usable VRAM depends on your BIOS/firmware GPU-memory allocation.       │")
+        print("  │                                                                             │")
+        print("  │ To detect this automatically: start Lemonade, then re-run the collector.  │")
+        print("  │                                                                             │")
+        print("  │ Or supply the allocation directly (common values for 128 GiB total RAM):  │")
+        print("  │   --vram-gb 96   ← most common  (4 GiB reserved for OS)                  │")
+        print("  │   --vram-gb 64   (64 GiB shared between CPU and GPU)                     │")
+        print("  │   --vram-gb 48   (80 GiB shared between CPU and GPU)                     │")
+        print("  └─────────────────────────────────────────────────────────────────────────────┘")
+    else:
+        print("  If this is a UMA system (AMD Ryzen AI MAX+, Apple Silicon),")
+        print("  ensure Lemonade is running and re-run the collector, or pass:")
+        print("  --vram-gb <N>   e.g. --vram-gb 96")
+
+
+# ── Master VRAM probe ─────────────────────────────────────────────────────────
+
+def _probe_vram(manual_gib: float | None = None) -> dict:
+    """Return a VRAM descriptor using the best available source.
+
+    Strategy order
+    --------------
+    0. Manual override (--vram-gb flag)                        → source: user_supplied
+    1. Lemonade/Ollama REST API (various memory endpoints)     → source: lemonade_api:<port>
+    2. AMD ROCm  rocm-smi --showmeminfo vram                   → source: rocm_smi
+    3. Lemonade config file (configured allocation, A1)        → source: lemonade_config
+    4. Win32_VideoController AdapterRAM — advisory console     → stored in vram_hint only,
+       note only; NO claim is ever written from this source.     never in vram.
+    5. Fallback: print architecture-specific guidance          → source: unavailable
     """
     if manual_gib is not None:
         total_bytes = int(manual_gib * 1_073_741_824)
@@ -353,6 +574,7 @@ def _probe_vram(manual_gib: float | None = None) -> dict:
             "free_bytes": 0,
         }
 
+    # ── 1. Lemonade / Ollama REST API ─────────────────────────────────────────
     for port in _LEMONADE_PORTS:
         for path in _VRAM_PATHS:
             data = _probe_api(f"http://localhost:{port}{path}", timeout=2)
@@ -361,20 +583,43 @@ def _probe_vram(manual_gib: float | None = None) -> dict:
             parsed = _parse_vram_response(data)
             if parsed:
                 total, free = parsed
-                gib = total / (1024 ** 3)
-                print(f"  VRAM: port {port}{path} → {gib:.0f} GiB (A0)")
-                return {
-                    "source": f"lemonade_api:{port}",
-                    "total_bytes": total,
-                    "free_bytes": free,
-                }
+                gib = total / 1_073_741_824
+                print(f"  VRAM: Lemonade REST {path} port {port} → {gib:.0f} GiB (A0)")
+                return {"source": f"lemonade_api:{port}", "total_bytes": total, "free_bytes": free}
 
-    # Fallback: detect UMA architecture from CPU name and suggest --vram-gb
-    print("  VRAM: no runtime memory API found on any port.")
-    print("        If this is a UMA system (AMD Ryzen AI MAX+, Apple Silicon),")
-    print("        re-run with --vram-gb <N> to record the configured allocation.")
-    print("        e.g. --vram-gb 96   (for a 128 GiB system with 96 GiB GPU allocation)")
-    return {"source": "unavailable"}
+    # ── 2. AMD ROCm rocm-smi ─────────────────────────────────────────────────
+    rocm = _probe_vram_rocm()
+    if rocm:
+        total, used = rocm
+        gib = total / 1_073_741_824
+        print(f"  VRAM: rocm-smi → {gib:.0f} GiB (A0)")
+        return {"source": "rocm_smi", "total_bytes": total, "free_bytes": max(0, total - used)}
+
+    # ── 4. Lemonade config file ───────────────────────────────────────────────
+    cfg_bytes = _probe_vram_lemonade_config()
+    if cfg_bytes:
+        gib = cfg_bytes / 1_073_741_824
+        print(f"  VRAM: Lemonade config → {gib:.0f} GiB (A1 — configured allocation)")
+        return {"source": "lemonade_config", "total_bytes": cfg_bytes, "free_bytes": 0}
+
+    # ── 5. Win32_VideoController.AdapterRAM (LAST RESORT / advisory only) ─────
+    # Stored in payload["vram_hint"], NOT in payload["vram"], so the adapter can
+    # use or discard it without violating INV-REQ-001.
+    adapter_info = _probe_vram_cim_adapter_ram()
+
+    cpu_name = _detect_cpu_name()
+    _print_vram_fallback_hint(cpu_name)
+
+    if adapter_info:
+        gib  = adapter_info["bytes"] / 1_073_741_824
+        note = "SATURATED — real value > 4 GiB" if adapter_info["saturated"] else "may be inaccurate on UMA"
+        print(f"  VRAM hint: Win32 AdapterRAM → {gib:.0f} GiB ({note})")
+
+    return {
+        "source": "unavailable",
+        # Keep advisory data for the adapter without triggering INV-REQ-001
+        **({"_adapter_ram_hint": adapter_info} if adapter_info else {}),
+    }
 
 
 def _probe_models() -> list[str]:
@@ -431,19 +676,24 @@ def build_payload(subject: str, vram_gib: float | None = None) -> dict:
     vram = _probe_vram(manual_gib=vram_gib)
     models = _probe_models()
 
-    return {
+    payload: dict = {
         "collector_version": "0.1.0",
         "collected_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "subject": subject,
         "cpu":     hw.get("cpu", {}),
         "memory":  hw.get("memory", {}),
         "gpu":     hw.get("gpu", {}),
-        "vram":    vram,
+        "vram":    {k: v for k, v in vram.items() if not k.startswith("_")},
         "os":      hw.get("os", {}),
         "bios":    hw.get("bios", {}),
         "storage": hw.get("storage", {}),
         "installed_models": models,
     }
+    # Advisory: Win32_VideoController.AdapterRAM hint (stored separately from
+    # vram to avoid triggering INV-REQ-001 in the adapter).
+    if vram.get("_adapter_ram_hint"):
+        payload["vram_hint"] = vram["_adapter_ram_hint"]
+    return payload
 
 
 def post_payload(payload: dict, api_url: str, api_key: str) -> None:

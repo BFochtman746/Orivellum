@@ -262,23 +262,97 @@ class WindowsInventoryAdapter(AdapterBase):
             )
 
         # ── VRAM — sourced from Lemonade/ROCm runtime ONLY ───────────────────
+        #
+        # Authority mapping for each collector source:
+        #   lemonade_api:*      A0 — live measurement from Lemonade REST API
+        #   lemonade_tool_call  A0 — live measurement via Lemonade completions API
+        #   rocm_smi            A0 — live measurement from AMD ROCm driver
+        #   user_supplied       A0 — user-supplied value (explicit --vram-gb flag)
+        #   lemonade_config     A1 — configured allocation (not a live reading)
+        #
+        # INV-REQ-001: Win32_VideoController.AdapterRAM is NEVER used for vram_*
+        # claims — see the note at the top of this file.  The collector places any
+        # AdapterRAM data in payload["vram_hint"] (not payload["vram"]) so it
+        # cannot accidentally slip through.
+        # Strict allowlist of recognized VRAM sources.
+        # Any source NOT in this map is REJECTED with a policy violation —
+        # fail-closed to prevent unknown or spoofed sources from writing claims.
+        # source prefix/value → (source_type, authority)
+        _VRAM_SOURCE_ALLOWLIST: dict[str, tuple[str, str]] = {
+            "lemonade_api":    ("lemonade_api",   "A0"),
+            "rocm_smi":        ("rocm_smi",        "A0"),
+            "user_supplied":   ("user_supplied",   "A0"),
+            "lemonade_config": ("lemonade_config", "A1"),
+        }
+
+        # AdapterRAM variant patterns to block proactively, in addition to the
+        # resolver's "adapterram" substring check.  These cover underscore/spaced
+        # forms that the contiguous-substring check would miss.
+        _ADAPTER_RAM_PATTERNS = (
+            "adapterram",           # CamelCase / contiguous (resolver already catches this)
+            "adapter_ram",          # underscore-separated
+            "cim_adapter",          # CIM prefix variants
+            "win32_adapter",        # Win32 prefix variants
+            "videocontroller.video", # VideoMemory field variants
+        )
+
         vram = payload.get("vram") or {}
-        vram_source = vram.get("source", "unavailable")
-        vram_bytes = vram.get("total_bytes")
+        vram_source: str = vram.get("source", "unavailable")
+        vram_bytes  = vram.get("total_bytes")
+
         if vram_source != "unavailable" and vram_bytes:
-            _write("vram_usable_bytes", [{
-                "source_type": "lemonade_api",
-                "source_locator": vram_source,
-                "authority": "A0",
-                "raw_value": str(vram_bytes),
-            }])
-            gib = vram_bytes / 1_073_741_824
-            _write("vram_gb", [{
-                "source_type": "lemonade_api",
-                "source_locator": vram_source,
-                "authority": "A0",
-                "raw_value": f"{gib:.0f} GiB",
-            }])
+            vram_src_lower = vram_source.lower()
+
+            # Explicit AdapterRAM block before allowlist lookup
+            if any(pat in vram_src_lower for pat in _ADAPTER_RAM_PATTERNS):
+                violations.append(
+                    f"INV-REQ-001: VRAM source {vram_source!r} matches an AdapterRAM "
+                    f"variant pattern — excluded from all vram_* claims"
+                )
+                claims_unavailable += 1
+            else:
+                # Strict allowlist: only recognized prefixes produce evidence
+                resolved: tuple[str, str] | None = None
+                for prefix, mapping in _VRAM_SOURCE_ALLOWLIST.items():
+                    if vram_source == prefix or vram_source.startswith(f"{prefix}:"):
+                        resolved = mapping
+                        break
+
+                if resolved is None:
+                    violations.append(
+                        f"VRAM source {vram_source!r} is not in the recognized source "
+                        f"allowlist — excluded from all vram_* claims (fail-closed policy)"
+                    )
+                    claims_unavailable += 1
+                else:
+                    st, auth = resolved
+                    gib = vram_bytes / 1_073_741_824
+
+                    # vram_usable_bytes requires A0 (live runtime measurement).
+                    # lemonade_config is a configured allocation at A1 — writing it
+                    # to vram_usable_bytes would persist as RETRIEVED without being
+                    # VERIFIED, giving a false impression of live-measurement authority.
+                    # Config-derived VRAM writes only to vram_gb (A1 minimum) instead.
+                    if auth == "A0":
+                        _write("vram_usable_bytes", [{
+                            "source_type": st,
+                            "source_locator": vram_source,
+                            "authority": auth,
+                            "raw_value": str(vram_bytes),
+                        }])
+
+                    # vram_gb accepts A1 — written for every allowlisted source.
+                    _write("vram_gb", [{
+                        "source_type": st,
+                        "source_locator": vram_source,
+                        "authority": auth,
+                        "raw_value": f"{gib:.0f} GiB",
+                    }])
+
+        # vram_hint (Win32 AdapterRAM advisory) is intentionally ignored here.
+        # INV-REQ-001 prohibits AdapterRAM for all vram_* predicates regardless
+        # of whether the value saturated.  The hint is present in the payload only
+        # for console display in the collector; no claim is written from it.
 
         # ── OS ────────────────────────────────────────────────────────────────
         os_data = payload.get("os") or {}
