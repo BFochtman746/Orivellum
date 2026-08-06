@@ -39,7 +39,7 @@ const LAST_MODEL_KEY = 'orivellum:lastModel';
 
 type LocalMessage = Message & { isError?: boolean; localImageUri?: string };
 
-function MessageBubble({ message, colors, isDark, onResend, highlighted }: { message: LocalMessage; colors: any; isDark: boolean; onResend?: () => void; highlighted?: boolean }) {
+function MessageBubble({ message, colors, isDark, onResend, onRetry, highlighted }: { message: LocalMessage; colors: any; isDark: boolean; onResend?: () => void; onRetry?: () => void; highlighted?: boolean }) {
   const isUser = message.role === 'user';
   const isErr = (message as any).isError;
   const textColor = isUser ? colors.primaryForeground : isErr ? colors.mutedForeground : colors.foreground;
@@ -211,8 +211,8 @@ function MessageBubble({ message, colors, isDark, onResend, highlighted }: { mes
             </>
           )}
         </View>
-        {/* Truncation indicator + re-send (#91) — also shown for stream-timeout messages */}
-        {!isUser && !isErr && ((message as any).meta?.cut_short || (message as any).meta?.incomplete) && (
+        {/* Context-limit truncation → Continue (calls /continue endpoint) */}
+        {!isUser && !isErr && !!(message as any).meta?.cut_short && (
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 6 }}>
             <Text style={{ fontSize: 10, fontFamily: 'Inter_400Regular', color: colors.mutedForeground, fontStyle: 'italic' }}>
               Response was cut short.
@@ -223,6 +223,34 @@ function MessageBubble({ message, colors, isDark, onResend, highlighted }: { mes
                 style={{ paddingHorizontal: 8, paddingVertical: 3, borderRadius: 4, backgroundColor: colors.primary + '22', borderWidth: 1, borderColor: colors.primary + '44' }}
               >
                 <Text style={{ fontSize: 10, fontFamily: 'Inter_500Medium', color: colors.primary }}>Continue →</Text>
+              </Pressable>
+            )}
+          </View>
+        )}
+        {/* Stream timeout / incomplete → Retry (re-sends the last user message) */}
+        {!isUser && !isErr && !!(message as any).meta?.incomplete && (
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 6 }}>
+            <Feather name="alert-triangle" size={10} color={colors.mutedForeground} style={{ opacity: 0.7 }} />
+            <Text style={{ fontSize: 10, fontFamily: 'Inter_400Regular', color: colors.mutedForeground, fontStyle: 'italic' }}>
+              Reply timed out.
+            </Text>
+            {onRetry && (
+              <Pressable
+                onPress={onRetry}
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 3,
+                  paddingHorizontal: 8,
+                  paddingVertical: 3,
+                  borderRadius: 4,
+                  backgroundColor: '#f97316' + '18',
+                  borderWidth: 1,
+                  borderColor: '#f97316' + '44',
+                }}
+              >
+                <Feather name="rotate-ccw" size={9} color="#f97316" />
+                <Text style={{ fontSize: 10, fontFamily: 'Inter_500Medium', color: '#f97316' }}>Retry</Text>
               </Pressable>
             )}
           </View>
@@ -726,6 +754,73 @@ export default function ChatScreen() {
     }
   };
 
+  // ── Retry a timed-out / incomplete reply ─────────────────────────────────
+  // Strategy: retain the timed-out exchange in history so local and server
+  // state stay consistent across reloads.  handleSend adds fresh user + AI
+  // messages below the incomplete exchange rather than mutating server state.
+  //
+  // Image turns: the original binary is not persisted after the session ends —
+  // only a lossy thumbnail is kept.  For image-only turns, retry is disabled
+  // with an explanation.  For text+image turns, the user is asked to confirm
+  // a text-only retry before we proceed.
+  const handleRetry = (incompleteMessageId: string) => {
+    if (sending) return;
+    const msgs = localMessages;
+    const idx = msgs.findIndex((m) => m.id === incompleteMessageId);
+    const searchEnd = idx === -1 ? msgs.length - 1 : idx - 1;
+    let lastUserMsg: LocalMessage | null = null;
+    for (let i = searchEnd; i >= 0; i--) {
+      if (msgs[i].role === 'user' && !(msgs[i] as any).isError) {
+        lastUserMsg = msgs[i];
+        break;
+      }
+    }
+    if (!lastUserMsg) return;
+
+    // Detect whether the original turn included an image.
+    const hadImage =
+      !!(lastUserMsg as any).meta?.image_thumbnail_b64 ||
+      !!(lastUserMsg as LocalMessage).localImageUri;
+    // Strip the "[Image] " display-prefix that handleSend prepends.
+    const rawText = (lastUserMsg.text ?? '').replace(/^\[Image\] /, '').trim();
+    const isImageOnly = hadImage && !rawText;
+
+    if (isImageOnly) {
+      // Can't retry without the binary — thumbnail is lossy and not re-sendable.
+      Alert.alert(
+        'Cannot retry image message',
+        'The original image is no longer available. Please re-attach the image and send again.',
+      );
+      return;
+    }
+
+    if (hadImage) {
+      // Text + image turn: warn that the image won't be re-sent.
+      Alert.alert(
+        'Retry without image?',
+        'The original image cannot be re-sent from history. Only your text question will be retried.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Retry text only',
+            onPress: () => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+              handleSend(rawText);
+            },
+          },
+        ],
+      );
+      return;
+    }
+
+    if (!rawText) return;
+
+    // Text-only retry: re-send immediately.  The timed-out exchange stays in
+    // history — local and server state remain in sync across reloads.
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+    handleSend(rawText);
+  };
+
   // ── Send message (with optional image) ────────────────────────────────────
   const handleSend = async (forceText?: string) => {
     const trimmed = (forceText ?? text).trim();
@@ -974,7 +1069,8 @@ export default function ChatScreen() {
           data={displayMessages}
           keyExtractor={(m) => m.id ?? ''}
           renderItem={({ item }) => {
-            const isCutShort = !!(item as any).meta?.cut_short || !!(item as any).meta?.incomplete;
+            const isCutShort = !!(item as any).meta?.cut_short;
+            const isIncomplete = !!(item as any).meta?.incomplete;
             return (
               <MessageBubble
                 message={item}
@@ -982,6 +1078,7 @@ export default function ChatScreen() {
                 isDark={isDark}
                 highlighted={item.id === highlightedMsgId}
                 onResend={isCutShort ? () => handleContinue(item.id ?? '') : undefined}
+                onRetry={isIncomplete ? () => handleRetry(item.id ?? '') : undefined}
               />
             );
           }}
