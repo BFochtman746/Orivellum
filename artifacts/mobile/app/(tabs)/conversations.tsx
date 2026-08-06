@@ -278,20 +278,35 @@ export default function ConversationsScreen() {
               </Text>
             </Pressable>
           </View>
-          <Pressable
-            onPress={handleNew}
-            style={({ pressed }) => [
-              styles.newBtn,
-              { backgroundColor: colors.primary, opacity: pressed || creating ? 0.7 : 1 },
-            ]}
-            disabled={creating}
-          >
-            {creating ? (
-              <ActivityIndicator size="small" color={colors.primaryForeground} />
-            ) : (
-              <Feather name="plus" size={20} color={colors.primaryForeground} />
-            )}
-          </Pressable>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <Pressable
+              onPress={() => router.push('/memory' as any)}
+              hitSlop={8}
+              style={({ pressed }) => ({
+                width: 36, height: 36, borderRadius: 18,
+                alignItems: 'center', justifyContent: 'center',
+                backgroundColor: colors.muted,
+                borderWidth: 1, borderColor: colors.border,
+                opacity: pressed ? 0.7 : 1,
+              })}
+            >
+              <Text style={{ fontSize: 16 }}>✨</Text>
+            </Pressable>
+            <Pressable
+              onPress={handleNew}
+              style={({ pressed }) => [
+                styles.newBtn,
+                { backgroundColor: colors.primary, opacity: pressed || creating ? 0.7 : 1 },
+              ]}
+              disabled={creating}
+            >
+              {creating ? (
+                <ActivityIndicator size="small" color={colors.primaryForeground} />
+              ) : (
+                <Feather name="plus" size={20} color={colors.primaryForeground} />
+              )}
+            </Pressable>
+          </View>
         </View>
         {/* Search bar */}
 

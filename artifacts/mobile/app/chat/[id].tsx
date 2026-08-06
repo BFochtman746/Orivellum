@@ -227,6 +227,27 @@ function MessageBubble({ message, colors, isDark, onResend, highlighted }: { mes
             )}
           </View>
         )}
+        {/* Memory recall badge — shown when the reply was generated via the recall intent */}
+        {!isUser && !isErr && (message as any).meta?.intent === 'recall' && (
+          <View style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 4,
+            marginTop: 4,
+            paddingHorizontal: 8,
+            paddingVertical: 3,
+            borderRadius: 6,
+            borderWidth: 1,
+            borderColor: '#7c3aed44',
+            backgroundColor: '#7c3aed10',
+            alignSelf: 'flex-start',
+          }}>
+            <Text style={{ fontSize: 11, color: '#7c3aed' }}>✨</Text>
+            <Text style={{ fontSize: 11, fontFamily: 'Inter_500Medium', color: '#7c3aed' }}>
+              Memory recall
+            </Text>
+          </View>
+        )}
         {/* Model attribution — always shown on assistant messages; fallback to "—" when model unknown (#82) */}
         {!isUser && !isErr && (
           <Text style={{
