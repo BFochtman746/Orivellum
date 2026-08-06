@@ -122,7 +122,10 @@ function SuggestionsWidget() {
   const [loading, setLoading]   = useState(false);
   const [fetched, setFetched]   = useState(false);
   const [fetchError, setFetchError] = useState(false);
+  const [exploringId, setExploringId] = useState<string | null>(null);
   const [, setLocation] = useLocation();
+  const queryClient = useQueryClient();
+  const createConv = useCreateConversation();
 
   async function fetchSuggestions() {
     setFetchError(false);
@@ -138,6 +141,38 @@ function SuggestionsWidget() {
       }
     } catch { setFetchError(true); }
     finally { setLoading(false); }
+  }
+
+  /** Create a work-scoped conversation pre-filled with the suggestion text,
+   *  then navigate to the chat composer with that text ready to send. */
+  async function handleExplore(s: any) {
+    if (exploringId) return; // already creating one
+    const meta = typeof s.meta === "string" ? JSON.parse(s.meta || "{}") : (s.meta ?? {});
+    const workId: string | undefined = s.work_id ?? meta.work_id ?? undefined;
+    setExploringId(s.id);
+    try {
+      const resp = await apiFetch(`${BASE.replace(/\/api$/, "")}/api/conversations`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: s.text.length > 60 ? s.text.slice(0, 57) + "…" : s.text,
+          ...(workId ? { work_id: workId } : {}),
+        }),
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        const convId = data?.conversation?.id;
+        queryClient.invalidateQueries({ queryKey: getListConversationsQueryKey() });
+        if (convId) {
+          setLocation(`/chat?id=${convId}&draft=${encodeURIComponent(s.text)}`);
+          return;
+        }
+      }
+    } catch { /* fall through to bare navigation */ } finally {
+      setExploringId(null);
+    }
+    // Fallback: navigate without pre-created conversation
+    setLocation(`/chat?draft=${encodeURIComponent(s.text)}`);
   }
 
   async function handleGenerate() {
@@ -235,9 +270,12 @@ function SuggestionsWidget() {
                   <Button
                     size="sm" variant="ghost"
                     className="gap-1 text-xs h-7 ml-auto opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity"
-                    onClick={() => setLocation("/chat")}
+                    onClick={() => handleExplore(s)}
+                    disabled={exploringId === s.id}
                   >
-                    Explore <ArrowRight className="w-3 h-3" />
+                    {exploringId === s.id
+                      ? <><Loader2Dash className="w-3 h-3 animate-spin" /> Opening…</>
+                      : <>Explore <ArrowRight className="w-3 h-3" /></>}
                   </Button>
                 </div>
               </div>

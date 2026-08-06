@@ -1093,7 +1093,13 @@ export default function Chat() {
   const [search, setSearch] = useState("");
   const [showArchived, setShowArchived] = useState(false);
   const [showMemory, setShowMemory] = useState(false);
-  const [draft, setDraft] = useState("");
+  // Seed composer from ?draft= URL param — set by the dashboard Explore button
+  // so the suggestion text arrives pre-filled and ready to send.
+  const [draft, setDraft] = useState(() => {
+    try {
+      return new URLSearchParams(window.location.search).get("draft") ?? "";
+    } catch { return ""; }
+  });
   const [sending, setSending] = useState(false);
   const [pendingImage, setPendingImage] = useState<{ data: string; type: string } | null>(null);
   const imgInputRef = useRef<HTMLInputElement>(null);
