@@ -1217,6 +1217,46 @@ export default function DocumentDetail() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [docId]);
 
+  // ── Download audiobook ────────────────────────────────────────────────────
+  const [abDownloading, setAbDownloading] = useState(false);
+
+  const handleDownloadAudiobook = async () => {
+    if (!docId || abDownloading) return;
+    setAbDownloading(true);
+    const toastId = toast.loading("Generating audiobook… this may take a minute for long documents.");
+    try {
+      const resp = await apiFetch(`${BASE}/studio/tts/document`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          doc_id: docId,
+          voice: ttsVoiceRef.current,
+          speed: ttsSpeedRef.current,
+        }),
+      });
+      if (!resp.ok) {
+        let detail = `HTTP ${resp.status}`;
+        try { detail = (await resp.json()).detail ?? detail; } catch { /* ignore */ }
+        throw new Error(detail);
+      }
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      const safeName = (doc?.title ?? "audiobook").replace(/[^a-zA-Z0-9_\-. ]/g, "_").trim() || "audiobook";
+      a.href = url;
+      a.download = `${safeName}.mp3`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      toast.success("Audiobook downloaded!", { id: toastId });
+    } catch (e: any) {
+      toast.error(`Audiobook failed: ${e?.message ?? "unknown error"}`, { id: toastId, duration: 10_000 });
+    } finally {
+      setAbDownloading(false);
+    }
+  };
+
   const handleDelete = () => {
     if (!docId || !confirm("Delete this document? This cannot be undone.")) return;
     deleteDoc.mutate(
@@ -1327,6 +1367,28 @@ export default function DocumentDetail() {
               <><BookHeadphones className="w-3.5 h-3.5 mr-1.5" /> Read Aloud</>
             )}
           </Button>
+          <TooltipProvider delayDuration={300}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleDownloadAudiobook}
+                  disabled={abDownloading || readiness !== "ready"}
+                  title={readiness !== "ready" ? "Document must be fully processed before generating an audiobook" : "Download entire document as an MP3 audiobook"}
+                >
+                  {abDownloading ? (
+                    <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Generating…</>
+                  ) : (
+                    <><Download className="w-3.5 h-3.5 mr-1.5" /> Audiobook</>
+                  )}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" className="max-w-52 text-center text-xs">
+                Download the whole document as a single MP3 — uses your current voice and speed settings
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
           <Button
             variant="outline"
             size="sm"
