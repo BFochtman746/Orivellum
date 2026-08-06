@@ -103,6 +103,28 @@ function formatBytes(b: number): string {
   return `${(b / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+/**
+ * Estimate audiobook generation time from word count.
+ *
+ * Model: narration runs at ~150 wpm; Kokoro synthesises at ~4× real-time;
+ * the TTS speed setting linearly scales the amount of audio produced.
+ *
+ *   audio_seconds  = wordCount / (150 wpm / 60)  = wordCount × 0.4 s
+ *   synth_seconds  = audio_seconds / 4 / speed
+ *
+ * Returns a human-readable string like "~30 sec" or "~4 min", or null when
+ * the word count is unknown.
+ */
+function audiobookTimeEstimate(wordCount: number, speed: number): string | null {
+  if (!wordCount || wordCount <= 0) return null;
+  const audioSecs = (wordCount / 150) * 60;
+  const synthSecs = audioSecs / 4 / Math.max(speed, 0.25);
+  if (synthSecs < 45)   return "~30 sec";
+  if (synthSecs < 90)   return "~1 min";
+  const mins = Math.ceil(synthSecs / 60);
+  return `~${mins} min`;
+}
+
 // ── Editable doc title ────────────────────────────────────────────────────────
 
 function TextSearchableContent({ text }: { text: string }) {
@@ -1557,20 +1579,45 @@ export default function DocumentDetail() {
             <TooltipProvider delayDuration={300}>
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={handleDownloadAudiobook}
-                    disabled={readiness !== "ready"}
-                    title={readiness !== "ready"
-                      ? "Document must be fully processed before generating an audiobook"
-                      : "Download entire document as an MP3 audiobook"}
-                  >
-                    <Download className="w-3.5 h-3.5 mr-1.5" /> Audiobook
-                  </Button>
+                  {/* Wrap in a div so the estimate label sits flush below the button */}
+                  <div className="flex flex-col items-center gap-0.5">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleDownloadAudiobook}
+                      disabled={readiness !== "ready"}
+                    >
+                      <Download className="w-3.5 h-3.5 mr-1.5" /> Audiobook
+                    </Button>
+                    {/* Inline time-estimate hint — visible without hovering */}
+                    {readiness === "ready" && (() => {
+                      const est = audiobookTimeEstimate(doc.word_count ?? 0, ttsSpeed);
+                      return est ? (
+                        <span className="text-[10px] font-mono text-muted-foreground/70 leading-none">
+                          {est}
+                        </span>
+                      ) : null;
+                    })()}
+                  </div>
                 </TooltipTrigger>
-                <TooltipContent side="bottom" className="max-w-52 text-center text-xs">
-                  Download the whole document as a single MP3 — uses your current voice and speed settings
+                <TooltipContent side="bottom" className="max-w-56 text-center text-xs space-y-0.5">
+                  {readiness !== "ready" ? (
+                    "Document must be fully processed before generating an audiobook"
+                  ) : (
+                    <>
+                      <p>Download the whole document as a single MP3</p>
+                      {(() => {
+                        const est = audiobookTimeEstimate(doc.word_count ?? 0, ttsSpeed);
+                        return est ? (
+                          <p className="text-muted-foreground">
+                            Estimated generation time: <span className="font-semibold text-foreground">{est}</span>
+                            {doc.word_count ? ` (${doc.word_count.toLocaleString()} words)` : ""}
+                          </p>
+                        ) : null;
+                      })()}
+                      <p className="text-muted-foreground">Uses your current voice and speed settings</p>
+                    </>
+                  )}
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>
