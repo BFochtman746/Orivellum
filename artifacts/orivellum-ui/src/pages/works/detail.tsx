@@ -26,7 +26,7 @@ import {
   useGetEmbeddingsStatus,
   getGetEmbeddingsStatusQueryKey,
 } from "@workspace/api-client-react";
-import { useQueryClient, useQuery } from "@tanstack/react-query";
+import { useQueryClient, useQuery, useMutation } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { apiFetch } from "@/lib/auth";
 import { Card, CardContent } from "@/components/ui/card";
@@ -128,6 +128,32 @@ export default function WorkDetail() {
   const updateWork = useUpdateWork();
   const deleteWork = useDeleteWork();
 
+  // Pipeline status — shared cache key with BookTab so no duplicate fetches
+  const PIPELINE_BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
+  const { data: pipelineData, refetch: refetchPipeline } = useQuery<{ pipeline: any | null }>({
+    queryKey: ["pipeline", workId],
+    queryFn: () => apiFetch(`${PIPELINE_BASE}/works/${workId}/pipeline`).then(r => r.json()),
+    enabled: !!workId,
+    staleTime: 30_000,
+  });
+  const hasPipeline = !!(pipelineData?.pipeline);
+  const pipelineStatus = pipelineData?.pipeline?.status ?? null;
+
+  const startPipeline = useMutation({
+    mutationFn: () =>
+      apiFetch(`${PIPELINE_BASE}/works/${workId}/pipeline`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: (work as any)?.title ?? "" }),
+      }).then(r => { if (!r.ok) throw new Error("failed"); return r.json(); }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["pipeline", workId] });
+      setActiveTab("book");
+      toast.success("Book pipeline started");
+    },
+    onError: () => toast.error("Could not start book pipeline"),
+  });
+
   const handleDelete = () => {
     if (!workId) return;
     if (!window.confirm("Delete this work? This cannot be undone.")) return;
@@ -201,6 +227,31 @@ export default function WorkDetail() {
         </div>
         {work && (
           <div className="flex items-center gap-2">
+            {/* Start Book Pipeline — only shown when no pipeline exists yet */}
+            {!hasPipeline && pipelineData !== undefined && (
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={startPipeline.isPending}
+                onClick={() => startPipeline.mutate()}
+                className="gap-1.5 text-xs border-amber-400/40 text-amber-700 hover:bg-amber-50 dark:text-amber-400 dark:hover:bg-amber-950/30"
+              >
+                {startPipeline.isPending
+                  ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Starting…</>
+                  : <><BookOpen className="w-3.5 h-3.5" /> Start Book Pipeline</>}
+              </Button>
+            )}
+            {/* Show current pipeline stage badge when pipeline already exists */}
+            {hasPipeline && pipelineStatus && (
+              <button
+                onClick={() => setActiveTab("book")}
+                className="flex items-center gap-1.5 text-[11px] font-mono px-2 py-1 rounded-full border border-primary/20 bg-primary/5 text-primary hover:bg-primary/10 transition-colors"
+                title="View book pipeline"
+              >
+                <BookOpen className="w-3 h-3" />
+                {pipelineStatus}
+              </button>
+            )}
             <Button
               size="sm"
               variant="outline"
