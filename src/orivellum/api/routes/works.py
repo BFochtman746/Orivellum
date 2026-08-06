@@ -1346,13 +1346,14 @@ async def evidence_rescore(work_id: str):
 
 @router.post("/works/{work_id}/trailer")
 async def create_trailer(work_id: str):
-    """Enqueue a Trailer Architect job for a CANON Work.
+    """Enqueue a Trailer Architect job for a Work.
 
     Returns immediately with the new trailer record (status='running').
     The pipeline runs in the background via the thread-pool executor.
 
-    Only Works whose lifecycle is 'canon' may generate a trailer.  This
-    guards against producing a production package for an unfinished draft.
+    The Work must have at least one document with readiness='ready' and
+    non-empty extracted_text so the pipeline has content to analyse.
+    Deleted works are also rejected.
     """
     from starlette.concurrency import run_in_threadpool
 
@@ -1361,13 +1362,24 @@ async def create_trailer(work_id: str):
     if not work:
         raise HTTPException(404, f"Work {work_id!r} not found")
 
-    # CANON-only guard
-    if work.get("lifecycle") != "canon":
+    # Eligibility guard: work must have at least one ready, text-bearing document
+    with db._lock:
+        row = db._conn.execute(
+            """SELECT COUNT(*) FROM documents d
+               JOIN objects o ON o.id = d.id
+               WHERE d.work_id = ?
+                 AND d.readiness = 'ready'
+                 AND d.extracted_text IS NOT NULL
+                 AND LENGTH(d.extracted_text) > 0
+                 AND o.lifecycle != 'deleted'""",
+            (work_id,),
+        ).fetchone()
+    eligible_docs = row[0] if row else 0
+    if eligible_docs == 0:
         raise HTTPException(
             422,
-            f"Trailers can only be generated for CANON works. "
-            f"This work has lifecycle={work.get('lifecycle')!r}. "
-            "Promote it to canon first.",
+            "Trailers require at least one processed document with extracted text. "
+            "Import and process a document for this Work first.",
         )
 
     # Create the trailer record at 'running' immediately

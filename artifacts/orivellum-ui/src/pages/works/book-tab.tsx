@@ -960,7 +960,6 @@ function TrailerPanel({ workId, lifecycle }: { workId: string; lifecycle: string
     },
   });
 
-  const isCanon = lifecycle === "canon";
   const hasRunning = data?.trailers.some(t => t.status === "running") ?? false;
 
   return (
@@ -985,8 +984,7 @@ function TrailerPanel({ workId, lifecycle }: { workId: string; lifecycle: string
             variant="outline"
             className="gap-1.5 h-7 text-xs border-primary/30 text-primary hover:bg-primary/5 disabled:opacity-50"
             onClick={() => generateMutation.mutate()}
-            disabled={!isCanon || generateMutation.isPending || hasRunning}
-            title={!isCanon ? "Only CANON works can generate trailers — promote this Work to canon first" : undefined}
+            disabled={generateMutation.isPending || hasRunning}
           >
             {generateMutation.isPending || hasRunning
               ? <Loader2 className="w-3 h-3 animate-spin" />
@@ -994,17 +992,6 @@ function TrailerPanel({ workId, lifecycle }: { workId: string; lifecycle: string
             {hasRunning ? "Generating…" : "Generate Trailer"}
           </Button>
         </div>
-
-        {/* Canon guard note */}
-        {!isCanon && (
-          <div className="flex items-start gap-2 px-3 py-2 rounded-lg border border-amber-200 bg-amber-50/60 text-xs text-amber-800">
-            <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-            <span>
-              Trailer generation is only available for <strong>CANON</strong> works.
-              Promote this Work's lifecycle to canon to unlock this feature.
-            </span>
-          </div>
-        )}
 
         {/* Trailer list */}
         {isLoading ? (
@@ -1014,10 +1001,7 @@ function TrailerPanel({ workId, lifecycle }: { workId: string; lifecycle: string
           </div>
         ) : !data || data.count === 0 ? (
           <div className="text-sm text-muted-foreground italic font-serif py-6 text-center border border-dashed border-border/60 rounded-lg">
-            No trailers generated yet.
-            {isCanon
-              ? ` Click "Generate Trailer" to create your first production package.`
-              : " Promote this Work to canon to unlock trailer generation."}
+            No trailers generated yet. Add at least one processed document, then click &ldquo;Generate Trailer&rdquo;.
           </div>
         ) : (
           <div className="space-y-2">
