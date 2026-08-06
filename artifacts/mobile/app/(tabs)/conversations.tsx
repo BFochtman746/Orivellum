@@ -121,6 +121,22 @@ export default function ConversationsScreen() {
   const [renameText, setRenameText] = useState('');
   const renameRef = useRef<TextInput>(null);
 
+  // Memory bottom sheet
+  const [memoryOpen, setMemoryOpen] = useState(false);
+  const [memoryFacts, setMemoryFacts] = useState<any[]>([]);
+  const [memoryLoading, setMemoryLoading] = useState(false);
+
+  const openMemorySheet = async () => {
+    setMemoryOpen(true);
+    setMemoryLoading(true);
+    try {
+      const domain = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
+      const r = await mobileFetch(`https://${domain}/api/memory`);
+      if (r.ok) setMemoryFacts((await r.json()).facts ?? []);
+    } catch { /* non-fatal */ }
+    finally { setMemoryLoading(false); }
+  };
+
   // Debounce the search term (~300ms) so filtering/API calls don't fire on every keystroke
   useEffect(() => {
     const t = setTimeout(() => setDebouncedSearch(search), 300);
@@ -279,6 +295,19 @@ export default function ConversationsScreen() {
             </Pressable>
           </View>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <Pressable
+              onPress={openMemorySheet}
+              hitSlop={8}
+              style={({ pressed }) => ({
+                width: 36, height: 36, borderRadius: 18,
+                alignItems: 'center', justifyContent: 'center',
+                backgroundColor: colors.muted,
+                borderWidth: 1, borderColor: colors.border,
+                opacity: pressed ? 0.7 : 1,
+              })}
+            >
+              <Text style={{ fontSize: 16 }}>✨</Text>
+            </Pressable>
             <Pressable
               onPress={handleNew}
               style={({ pressed }) => [
@@ -474,6 +503,55 @@ export default function ConversationsScreen() {
           </Pressable>
         </Pressable>
       </Modal>
+
+      {/* Memory bottom sheet */}
+      <Modal
+        visible={memoryOpen}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setMemoryOpen(false)}
+      >
+        <View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.35)' }}>
+          <Pressable style={{ flex: 1 }} onPress={() => setMemoryOpen(false)} />
+          <View style={[styles.memorySheet, { backgroundColor: colors.card, borderColor: colors.border, paddingBottom: insets.bottom + 16 }]}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
+              <Text style={{ fontSize: 18, marginRight: 8 }}>✨</Text>
+              <Text style={{ fontSize: 16, fontFamily: 'Inter_700Bold', color: colors.foreground, flex: 1 }}>Memory</Text>
+              <Pressable onPress={() => setMemoryOpen(false)} hitSlop={8}>
+                <Feather name="x" size={18} color={colors.mutedForeground} />
+              </Pressable>
+            </View>
+            <Text style={{ fontSize: 12, color: colors.mutedForeground, fontFamily: 'Inter_400Regular', marginBottom: 14 }}>
+              Facts captured automatically during your conversations.
+            </Text>
+            {memoryLoading ? (
+              <ActivityIndicator color={colors.primary} />
+            ) : memoryFacts.length === 0 ? (
+              <View style={{ alignItems: 'center', paddingVertical: 24 }}>
+                <Text style={{ fontSize: 13, color: colors.mutedForeground, fontFamily: 'Inter_400Regular', textAlign: 'center' }}>
+                  No facts yet — share preferences in chat and they'll appear here.
+                </Text>
+              </View>
+            ) : (
+              <FlatList
+                data={memoryFacts}
+                keyExtractor={f => f.id ?? f.key}
+                style={{ maxHeight: 340 }}
+                ItemSeparatorComponent={() => <View style={{ height: 1, backgroundColor: colors.border }} />}
+                renderItem={({ item }) => (
+                  <View style={{ paddingVertical: 10 }}>
+                    <Text style={{ fontSize: 11, fontFamily: 'Inter_700Bold', color: colors.mutedForeground, letterSpacing: 0.5, marginBottom: 2 }}>
+                      {(item.key ?? '').toUpperCase()}
+                    </Text>
+                    <Text style={{ fontSize: 13, fontFamily: 'Inter_400Regular', color: colors.foreground }}>{item.value}</Text>
+                    {item.source ? <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: colors.mutedForeground, marginTop: 2 }}>From: {item.source}</Text> : null}
+                  </View>
+                )}
+              />
+            )}
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -527,6 +605,13 @@ const styles = StyleSheet.create({
   itemPreview: { fontSize: 13, ...font('regular'), lineHeight: 18 },
   itemCount: { fontSize: 12, ...font('regular'), lineHeight: 16, marginTop: 2 },
   // ── Message search result row ─────────────────────────────────────────────
+  memorySheet: {
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    borderTopWidth: 1,
+    paddingHorizontal: 20,
+    paddingTop: 18,
+  },
   msgResultRow: {
     borderRadius: 10,
     borderWidth: 1,

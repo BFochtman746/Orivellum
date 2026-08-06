@@ -1216,6 +1216,34 @@ export default function DashboardScreen() {
   const hasData = recentWorks.length > 0 || activity.length > 0;
 
   const [showWorkspaceHealth, setShowWorkspaceHealth] = useState(false);
+  const [aiSettingsOpen, setAiSettingsOpen] = useState(false);
+  const [aiExtractionEnabled, setAiExtractionEnabled] = useState<boolean | null>(null);
+  const [aiRerankEnabled, setAiRerankEnabled] = useState<boolean | null>(null);
+  const [aiSettingsLoading, setAiSettingsLoading] = useState(false);
+
+  const openAiSettings = async () => {
+    setAiSettingsOpen(true);
+    try {
+      const domain = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
+      const r = await mobileFetch(`https://${domain}/api/system/settings`);
+      if (r.ok) {
+        const d = await r.json();
+        setAiExtractionEnabled(d.ai_extraction_enabled === 'true' || d.ai_extraction_enabled === true);
+        setAiRerankEnabled(d.reranking_enabled === 'true' || d.reranking_enabled === true);
+      }
+    } catch { /* non-fatal */ }
+  };
+
+  const patchSetting = async (key: string, value: boolean) => {
+    const domain = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
+    try {
+      await mobileFetch(`https://${domain}/api/system/settings`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ [key]: value }),
+      });
+    } catch { /* non-fatal */ }
+  };
 
   const topPad = isWeb ? 67 : 0;
   const botPad = isWeb ? 34 : 0;
@@ -1242,6 +1270,7 @@ export default function DashboardScreen() {
   }
 
   return (
+    <>
     <FlatList
       style={[styles.container, { backgroundColor: colors.background }]}
       contentContainerStyle={{
@@ -1264,11 +1293,24 @@ export default function DashboardScreen() {
       ListHeaderComponent={
         <>
           {/* Header */}
-          <View style={styles.header}>
-            <Text style={[styles.brand, { color: colors.foreground }]}>Orivellum</Text>
-            <Text style={[styles.subtitle, { color: colors.mutedForeground }]}>
-              {briefing?.greeting ?? 'Your research workspace'}
-            </Text>
+          <View style={[styles.header, { flexDirection: 'row', alignItems: 'flex-start' }]}>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.brand, { color: colors.foreground }]}>Orivellum</Text>
+              <Text style={[styles.subtitle, { color: colors.mutedForeground }]}>
+                {briefing?.greeting ?? 'Your research workspace'}
+              </Text>
+            </View>
+            <Pressable
+              onPress={openAiSettings}
+              hitSlop={8}
+              style={({ pressed }) => ({
+                width: 34, height: 34, borderRadius: 17,
+                alignItems: 'center', justifyContent: 'center',
+                opacity: pressed ? 0.6 : 1, marginTop: 2,
+              })}
+            >
+              <Feather name="settings" size={17} color={colors.mutedForeground} />
+            </Pressable>
           </View>
 
           {/* Server hardware summary */}
@@ -1353,6 +1395,59 @@ export default function DashboardScreen() {
         </>
       }
     />
+
+    {/* AI Settings bottom sheet */}
+    <Modal
+      visible={aiSettingsOpen}
+      transparent
+      animationType="slide"
+      onRequestClose={() => setAiSettingsOpen(false)}
+    >
+      <View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.35)' }}>
+        <Pressable style={{ flex: 1 }} onPress={() => setAiSettingsOpen(false)} />
+        <View style={{ backgroundColor: colors.card, borderTopLeftRadius: 16, borderTopRightRadius: 16, borderTopWidth: 1, borderColor: colors.border, paddingHorizontal: 20, paddingTop: 16, paddingBottom: botPad + 24 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 18 }}>
+            <Feather name="settings" size={16} color={colors.primary} style={{ marginRight: 8 }} />
+            <Text style={{ fontSize: 16, fontFamily: 'Inter_700Bold', color: colors.foreground, flex: 1 }}>AI Settings</Text>
+            <Pressable onPress={() => setAiSettingsOpen(false)} hitSlop={8}>
+              <Feather name="x" size={18} color={colors.mutedForeground} />
+            </Pressable>
+          </View>
+          {[
+            { label: 'AI Extraction', sub: 'Automatically harvest knowledge from imported documents', key: 'ai_extraction_enabled', value: aiExtractionEnabled, set: setAiExtractionEnabled },
+            { label: 'Re-ranking', sub: 'Boost semantic search accuracy using a re-ranker model', key: 'reranking_enabled', value: aiRerankEnabled, set: setAiRerankEnabled },
+          ].map((row, i) => (
+            <View key={row.key} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 14, borderTopWidth: i === 0 ? 0 : StyleSheet.hairlineWidth, borderTopColor: colors.border }}>
+              <View style={{ flex: 1, marginRight: 16 }}>
+                <Text style={{ fontSize: 14, fontFamily: 'Inter_600SemiBold', color: colors.foreground }}>{row.label}</Text>
+                <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: colors.mutedForeground, marginTop: 2 }}>{row.sub}</Text>
+              </View>
+              <TouchableOpacity
+                onPress={async () => {
+                  const next = !row.value;
+                  row.set(next);
+                  await patchSetting(row.key, next);
+                }}
+                style={{
+                  width: 46, height: 26, borderRadius: 13,
+                  backgroundColor: row.value ? colors.primary : colors.muted,
+                  borderWidth: 1, borderColor: row.value ? colors.primary : colors.border,
+                  justifyContent: 'center', paddingHorizontal: 2,
+                }}
+                activeOpacity={0.8}
+              >
+                <View style={{
+                  width: 20, height: 20, borderRadius: 10, backgroundColor: '#fff',
+                  alignSelf: row.value ? 'flex-end' : 'flex-start',
+                  shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 2, shadowOffset: { width: 0, height: 1 },
+                }} />
+              </TouchableOpacity>
+            </View>
+          ))}
+        </View>
+      </View>
+    </Modal>
+    </>
   );
 }
 

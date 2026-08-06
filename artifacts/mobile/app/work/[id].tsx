@@ -6,6 +6,7 @@ import {
   Alert,
   Animated,
   FlatList,
+  Modal,
   Platform,
   Pressable,
   RefreshControl,
@@ -39,7 +40,7 @@ import * as Haptics from 'expo-haptics';
 import type { Document, KnowledgeItem, Task } from '@workspace/api-client-react';
 import { OfflineBanner, ErrorScreen } from '@/components/OfflineBanner';
 
-type Tab = 'overview' | 'docs' | 'knowledge' | 'tasks' | 'conversations' | 'learn' | 'gaps' | 'book' | 'brainstorm';
+type Tab = 'overview' | 'docs' | 'knowledge' | 'tasks' | 'conversations' | 'learn' | 'gaps' | 'book' | 'brainstorm' | 'intelligence';
 
 // Primary tabs always visible in the bar; secondary tabs disclosed via "More"
 const PRIMARY_TABS: { key: Tab; label: string }[] = [
@@ -50,13 +51,20 @@ const PRIMARY_TABS: { key: Tab; label: string }[] = [
   { key: 'conversations',  label: 'Chats'     },
 ];
 const SECONDARY_TABS: { key: Tab; label: string }[] = [
-  { key: 'gaps',      label: 'Gaps'  },
-  { key: 'learn',     label: 'Learn' },
-  { key: 'book',      label: 'Book'  },
-  { key: 'brainstorm', label: 'Ideas' },
+  { key: 'intelligence', label: 'Intelligence' },
+  { key: 'gaps',         label: 'Gaps'  },
+  { key: 'learn',        label: 'Learn' },
+  { key: 'book',         label: 'Book'  },
+  { key: 'brainstorm',   label: 'Ideas' },
 ];
 
-function TabBar({ active, onSelect, colors, badges = {} }: { active: Tab; onSelect: (t: Tab) => void; colors: any; badges?: Partial<Record<Tab, number>> }) {
+function TabBar({ active, onSelect, colors, badges = {}, onNavigateGraph }: {
+  active: Tab;
+  onSelect: (t: Tab) => void;
+  colors: any;
+  badges?: Partial<Record<Tab, number>>;
+  onNavigateGraph?: () => void;
+}) {
   const isSecondaryActive = SECONDARY_TABS.some(t => t.key === active);
   const activeSecondaryLabel = SECONDARY_TABS.find(t => t.key === active)?.label;
 
@@ -69,6 +77,7 @@ function TabBar({ active, onSelect, colors, badges = {} }: { active: Tab; onSele
           text: t.label + (badges[t.key] && badges[t.key]! > 0 ? ` (${badges[t.key]})` : ''),
           onPress: () => onSelect(t.key),
         })),
+        { text: 'Knowledge Graph ↗', onPress: () => onNavigateGraph?.() },
         { text: 'Cancel', style: 'cancel' as const },
       ],
     );
@@ -2397,6 +2406,159 @@ function BookIntelTab({
   );
 }
 
+// ─── Intelligence Tab ────────────────────────────────────────────────────────
+function IntelligenceTab({ workId }: { workId: string }) {
+  const colors = useColors();
+  const router = useRouter();
+  const [completeness, setCompleteness] = useState<any>(null);
+  const [gaps, setGaps] = useState<any>(null);
+  const [stats, setStats] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState(false);
+
+  const fetchData = useCallback(async () => {
+    setLoading(true);
+    setFetchError(false);
+    try {
+      const [c, g, s] = await Promise.all([
+        mobileFetch(`/api/works/${workId}/completeness`).then(r => r.ok ? r.json() : null).catch(() => null),
+        mobileFetch(`/api/works/${workId}/gaps`).then(r => r.ok ? r.json() : null).catch(() => null),
+        mobileFetch(`/api/works/${workId}/stats`).then(r => r.ok ? r.json() : null).catch(() => null),
+      ]);
+      setCompleteness(c);
+      setGaps(g);
+      setStats(s);
+    } catch { setFetchError(true); }
+    finally { setLoading(false); }
+  }, [workId]);
+
+  useEffect(() => { fetchData(); }, [fetchData]);
+
+  if (loading) {
+    return (
+      <View style={{ alignItems: 'center', paddingTop: 56 }}>
+        <ActivityIndicator color={colors.primary} />
+        <Text style={{ color: colors.mutedForeground, marginTop: 10, fontSize: 13 }}>Analysing…</Text>
+      </View>
+    );
+  }
+  if (fetchError) {
+    return <ErrorScreen message="Could not load intelligence" detail="Check your connection and try again." onRetry={fetchData} />;
+  }
+
+  const dims: any[] = completeness?.dimensions ?? [];
+  const gapList: any[] = gaps?.gaps ?? [];
+  const critGaps = gapList.filter(g => g.severity === 'critical');
+  const highGaps = gapList.filter(g => g.severity === 'high');
+  const medGaps  = gapList.filter(g => g.severity === 'medium');
+  const overallScore = completeness?.overall ?? 0;
+  const coveragePct  = gaps?.coverage_pct ?? 0;
+
+  return (
+    <ScrollView
+      contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 32, paddingTop: 12 }}
+      refreshControl={<RefreshControl refreshing={false} onRefresh={fetchData} tintColor={colors.primary} />}
+    >
+      {/* Stats strip */}
+      {stats && (
+        <View style={{ flexDirection: 'row', gap: 10, marginBottom: 14 }}>
+          {[
+            { label: 'Docs',      value: stats.document_count  ?? 0 },
+            { label: 'Knowledge', value: stats.knowledge_count ?? 0 },
+            { label: 'Tasks',     value: stats.pending_task_count ?? 0 },
+          ].map(s => (
+            <View key={s.label} style={{ flex: 1, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, borderRadius: 10, padding: 10, alignItems: 'center', gap: 2 }}>
+              <Text style={{ fontSize: 17, fontFamily: 'Inter_700Bold', color: colors.foreground }}>{s.value}</Text>
+              <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: colors.mutedForeground }}>{s.label}</Text>
+            </View>
+          ))}
+        </View>
+      )}
+
+      {/* Completeness card */}
+      {completeness && (
+        <View style={{ backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, borderRadius: 10, padding: 14, marginBottom: 14 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+            <Feather name="check-circle" size={13} color={colors.primary} />
+            <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: colors.foreground }}>Completeness</Text>
+            <Text style={{ fontSize: 13, fontFamily: 'Inter_700Bold', color: colors.primary, marginLeft: 'auto' as any }}>{overallScore}%</Text>
+          </View>
+          <View style={{ height: 6, backgroundColor: colors.muted, borderRadius: 3, marginBottom: 10 }}>
+            <View style={{ height: 6, width: `${overallScore}%` as any, backgroundColor: colors.primary, borderRadius: 3 }} />
+          </View>
+          {dims.map((d: any) => (
+            <View key={d.name} style={{ marginBottom: 6 }}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 2 }}>
+                <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: colors.mutedForeground }}>{d.label ?? d.name}</Text>
+                <Text style={{ fontSize: 11, fontFamily: 'Inter_600SemiBold', color: colors.foreground }}>{d.score}%</Text>
+              </View>
+              <View style={{ height: 4, backgroundColor: colors.muted, borderRadius: 2 }}>
+                <View style={{ height: 4, width: `${d.score}%` as any, backgroundColor: colors.primary + 'aa', borderRadius: 2 }} />
+              </View>
+            </View>
+          ))}
+          {completeness.summary ? (
+            <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: colors.mutedForeground, marginTop: 8 }}>{completeness.summary}</Text>
+          ) : null}
+        </View>
+      )}
+
+      {/* Research gaps card */}
+      {gaps && (
+        <View style={{ backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, borderRadius: 10, padding: 14, marginBottom: 14 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+            <Feather name="alert-circle" size={13} color={colors.primary} />
+            <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: colors.foreground }}>Research Gaps</Text>
+            <Text style={{ fontSize: 13, fontFamily: 'Inter_700Bold', color: colors.primary, marginLeft: 'auto' as any }}>{coveragePct}% covered</Text>
+          </View>
+          {gapList.length === 0 ? (
+            <Text style={{ fontSize: 13, color: colors.mutedForeground }}>No gaps detected — great coverage!</Text>
+          ) : (
+            [{ label: 'CRITICAL', items: critGaps, color: '#ef4444' }, { label: 'HIGH', items: highGaps, color: '#f97316' }, { label: 'MEDIUM', items: medGaps, color: '#f59e0b' }]
+              .filter(grp => grp.items.length > 0)
+              .map(grp => (
+                <View key={grp.label} style={{ marginBottom: 10 }}>
+                  <Text style={{ fontSize: 10, fontFamily: 'Inter_700Bold', color: grp.color, letterSpacing: 0.5, marginBottom: 4 }}>{grp.label}</Text>
+                  {grp.items.map((gap: any, i: number) => (
+                    <View key={i} style={{ paddingVertical: 6, borderTopWidth: i > 0 ? StyleSheet.hairlineWidth : 0, borderTopColor: colors.border }}>
+                      <Text style={{ fontSize: 13, fontFamily: 'Inter_500Medium', color: colors.foreground }}>{gap.title}</Text>
+                      {gap.description ? <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: colors.mutedForeground, marginTop: 2 }}>{gap.description}</Text> : null}
+                    </View>
+                  ))}
+                </View>
+              ))
+          )}
+          {(gaps.suggested_queries ?? []).length > 0 && (
+            <View style={{ marginTop: 6 }}>
+              <Text style={{ fontSize: 11, fontFamily: 'Inter_600SemiBold', color: colors.mutedForeground, marginBottom: 6 }}>SUGGESTED RESEARCH</Text>
+              {(gaps.suggested_queries as string[]).slice(0, 3).map((q, i) => (
+                <Text key={i} style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: colors.primary, marginBottom: 3 }}>→ {q}</Text>
+              ))}
+            </View>
+          )}
+        </View>
+      )}
+
+      {/* Graph shortcut */}
+      <Pressable
+        onPress={() => router.push(`/graph?work_id=${workId}` as any)}
+        style={({ pressed }) => ({
+          flexDirection: 'row', alignItems: 'center', gap: 10, padding: 14,
+          backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border,
+          borderRadius: 10, opacity: pressed ? 0.7 : 1,
+        })}
+      >
+        <Feather name="share-2" size={15} color={colors.primary} />
+        <View style={{ flex: 1 }}>
+          <Text style={{ fontSize: 14, fontFamily: 'Inter_600SemiBold', color: colors.foreground }}>Knowledge Graph</Text>
+          <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: colors.mutedForeground }}>Explore entity relationships for this Work</Text>
+        </View>
+        <Feather name="chevron-right" size={14} color={colors.mutedForeground} />
+      </Pressable>
+    </ScrollView>
+  );
+}
+
 export default function WorkDetailScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
@@ -2404,7 +2566,7 @@ export default function WorkDetailScreen() {
   const { id, tab: tabParam, q: qParam } = useLocalSearchParams<{ id: string; tab?: string; q?: string }>();
   const navigation = useNavigation();
   const router = useRouter();
-  const validTabs: Tab[] = ['overview','docs','knowledge','tasks','conversations','learn','gaps','book','brainstorm'];
+  const validTabs: Tab[] = ['overview','docs','knowledge','tasks','conversations','learn','gaps','book','brainstorm','intelligence'];
   const initTab: Tab = validTabs.includes(tabParam as Tab) ? (tabParam as Tab) : 'overview';
   const [activeTab, setActiveTab] = useState<Tab>(initTab);
   const [newTaskText, setNewTaskText] = useState('');
@@ -2476,6 +2638,34 @@ export default function WorkDetailScreen() {
   const [bookIntel, setBookIntel] = useState<any>(null);
   const [bookIntelLoading, setBookIntelLoading] = useState(false);
 
+  // Work-scoped review items — badge on Overview tab + bottom sheet
+  const [reviewItems, setReviewItems] = useState<any[]>([]);
+  const [reviewSheetOpen, setReviewSheetOpen] = useState(false);
+  const [resolvingId, setResolvingId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!id) return;
+    mobileFetch(`/api/review/queue`)
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        if (d?.items) setReviewItems(d.items.filter((it: any) => it.work_id === id));
+      })
+      .catch(() => {});
+  }, [id]);
+
+  const resolveReviewItem = async (itemId: string, decision: 'approve' | 'reject' | 'defer') => {
+    setResolvingId(itemId);
+    try {
+      await mobileFetch(`/api/review/${itemId}/resolve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ decision, reason: '' }),
+      });
+      setReviewItems(prev => prev.filter(it => it.id !== itemId));
+    } catch { /* non-fatal */ }
+    finally { setResolvingId(null); }
+  };
+
   const fetchBookIntel = useCallback(async () => {
     if (!id) return;
     setBookIntelLoading(true);
@@ -2514,20 +2704,9 @@ export default function WorkDetailScreen() {
 
   useEffect(() => {
     if (work?.title) {
-      navigation.setOptions({
-        title: work.title,
-        headerRight: () => (
-          <Pressable
-            onPress={() => router.push(`/work/${id}/intelligence` as any)}
-            hitSlop={8}
-            style={{ paddingHorizontal: 10, paddingVertical: 6 }}
-          >
-            <Feather name="cpu" size={18} color={colors.primary} />
-          </Pressable>
-        ),
-      });
+      navigation.setOptions({ title: work.title });
     }
-  }, [work?.title, navigation, id, router, colors.primary]);
+  }, [work?.title, navigation]);
 
   // Work title inline editing
   const [editingWorkTitle, setEditingWorkTitle] = useState(false);
@@ -3172,6 +3351,8 @@ export default function WorkDetailScreen() {
           </>
         );
       }
+      case 'intelligence':
+        return <IntelligenceTab workId={id} />;
       case 'brainstorm':
         return <BrainstormTab key={brainstormSeed} workId={id} colors={colors} initialSeed={brainstormSeed || qParam} initialContext={brainstormContext} />;
     }
@@ -3225,8 +3406,33 @@ export default function WorkDetailScreen() {
         badges={{
           tasks: (tasksData?.tasks ?? []).filter((t: any) => t.status !== 'completed').length || undefined,
           conversations: (convsData?.conversations ?? []).length || undefined,
+          overview: reviewItems.length || undefined,
         }}
+        onNavigateGraph={() =>
+          router.push(`/graph?work_id=${id}&work_title=${encodeURIComponent(work?.title ?? '')}` as any)
+        }
       />
+
+      {/* Review notification chip — shown under the tab bar when Overview is active */}
+      {activeTab === 'overview' && reviewItems.length > 0 && (
+        <Pressable
+          onPress={() => setReviewSheetOpen(true)}
+          style={{
+            flexDirection: 'row', alignItems: 'center', gap: 6,
+            marginHorizontal: 16, marginTop: 10,
+            paddingHorizontal: 12, paddingVertical: 8,
+            backgroundColor: colors.primary + '14',
+            borderWidth: 1, borderColor: colors.primary + '44',
+            borderRadius: 10,
+          }}
+        >
+          <Feather name="shield" size={13} color={colors.primary} />
+          <Text style={{ flex: 1, fontSize: 13, fontFamily: 'Inter_500Medium', color: colors.primary }}>
+            {reviewItems.length} item{reviewItems.length === 1 ? '' : 's'} need{reviewItems.length === 1 ? 's' : ''} review
+          </Text>
+          <Feather name="chevron-right" size={13} color={colors.primary} />
+        </Pressable>
+      )}
 
       <View style={{ flex: 1 }}>{renderTabContent()}</View>
 
@@ -3254,6 +3460,89 @@ export default function WorkDetailScreen() {
           <Feather name="plus" size={22} color="#fff" />
         </Pressable>
       )}
+
+      {/* Review bottom sheet — work-scoped pending items */}
+      <Modal
+        visible={reviewSheetOpen}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setReviewSheetOpen(false)}
+      >
+        <View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.38)' }}>
+          <Pressable style={{ flex: 1 }} onPress={() => setReviewSheetOpen(false)} />
+          <View style={{
+            backgroundColor: colors.card,
+            borderTopLeftRadius: 16, borderTopRightRadius: 16,
+            borderTopWidth: 1, borderColor: colors.border,
+            paddingHorizontal: 18, paddingTop: 18,
+            paddingBottom: insets.bottom + 24,
+            maxHeight: '80%',
+          }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 14 }}>
+              <Feather name="shield" size={15} color={colors.primary} style={{ marginRight: 8 }} />
+              <Text style={{ fontSize: 16, fontFamily: 'Inter_700Bold', color: colors.foreground, flex: 1 }}>
+                Pending Reviews
+              </Text>
+              <Pressable onPress={() => setReviewSheetOpen(false)} hitSlop={8}>
+                <Feather name="x" size={18} color={colors.mutedForeground} />
+              </Pressable>
+            </View>
+            {reviewItems.length === 0 ? (
+              <View style={{ alignItems: 'center', paddingVertical: 24 }}>
+                <Feather name="check-circle" size={28} color={colors.mutedForeground} />
+                <Text style={{ marginTop: 10, fontSize: 14, color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }}>
+                  All caught up!
+                </Text>
+              </View>
+            ) : (
+              <FlatList
+                data={reviewItems}
+                keyExtractor={it => it.id}
+                ItemSeparatorComponent={() => <View style={{ height: 1, backgroundColor: colors.border }} />}
+                renderItem={({ item }) => {
+                  const isResolving = resolvingId === item.id;
+                  const typeColor: Record<string, string> = { knowledge: '#8b5cf6', reclassify: '#f59e0b', suggestion: '#3b82f6', duplicate: '#f43f5e' };
+                  const tc = typeColor[item.item_type] ?? colors.primary;
+                  return (
+                    <View style={{ paddingVertical: 12 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                        <View style={{ backgroundColor: tc + '18', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 }}>
+                          <Text style={{ fontSize: 10, fontFamily: 'Inter_700Bold', color: tc, letterSpacing: 0.5 }}>{item.item_type.toUpperCase()}</Text>
+                        </View>
+                      </View>
+                      <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: colors.foreground, marginBottom: 2 }}>{item.title}</Text>
+                      {item.description ? <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: colors.mutedForeground, marginBottom: 8 }}>{item.description}</Text> : null}
+                      {isResolving ? (
+                        <ActivityIndicator size="small" color={colors.primary} />
+                      ) : (
+                        <View style={{ flexDirection: 'row', gap: 8 }}>
+                          {(['approve', 'reject', 'defer'] as const).map(d => (
+                            <Pressable
+                              key={d}
+                              onPress={() => resolveReviewItem(item.id, d)}
+                              style={({ pressed }) => ({
+                                flex: 1, paddingVertical: 7, borderRadius: 8, alignItems: 'center',
+                                backgroundColor: d === 'approve' ? colors.primary + '18' : d === 'reject' ? '#ef444418' : colors.muted,
+                                borderWidth: 1,
+                                borderColor: d === 'approve' ? colors.primary + '55' : d === 'reject' ? '#ef444455' : colors.border,
+                                opacity: pressed ? 0.7 : 1,
+                              })}
+                            >
+                              <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: d === 'approve' ? colors.primary : d === 'reject' ? '#ef4444' : colors.mutedForeground }}>
+                                {d.charAt(0).toUpperCase() + d.slice(1)}
+                              </Text>
+                            </Pressable>
+                          ))}
+                        </View>
+                      )}
+                    </View>
+                  );
+                }}
+              />
+            )}
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
