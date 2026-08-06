@@ -614,6 +614,23 @@ def list_user_memory():
         return {"memories": []}
 
 
+@router.delete("/system/user-memory")
+def clear_all_user_memory():
+    """Delete every row in user_memory — full reset."""
+    db = get_db()
+    try:
+        with db._lock:
+            count = db._conn.execute("SELECT COUNT(*) FROM user_memory").fetchone()[0]
+            db._conn.execute("DELETE FROM user_memory")
+            db._conn.commit()
+        if count:
+            db.audit("user_memory.cleared", object_id=None, object_type="user_memory",
+                     actor="user", detail=f"{count} memories deleted")
+        return {"deleted": count}
+    except Exception as exc:
+        raise HTTPException(500, f"Could not clear memories: {exc}")
+
+
 @router.delete("/system/user-memory/{memory_id}")
 def delete_user_memory(memory_id: str):
     db = get_db()

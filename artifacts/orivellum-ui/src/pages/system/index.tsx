@@ -423,18 +423,56 @@ function UserMemoryCard() {
       const r = await apiFetch(`${API_BASE}/api/system/user-memory/${id}`, { method: "DELETE" });
       if (!r.ok) throw new Error("delete failed");
     },
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["system", "user-memory"] }); toast.success("Memory deleted"); },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["system", "user-memory"] });
+      toast.success("Memory deleted");
+    },
     onError: () => toast.error("Could not delete"),
   });
 
+  const clearAll = useMutation({
+    mutationFn: async () => {
+      const r = await apiFetch(`${API_BASE}/api/system/user-memory`, { method: "DELETE" });
+      if (!r.ok) throw new Error("clear failed");
+      return r.json() as Promise<{ deleted: number }>;
+    },
+    onSuccess: (result) => {
+      qc.invalidateQueries({ queryKey: ["system", "user-memory"] });
+      toast.success(`Cleared ${result.deleted} memor${result.deleted === 1 ? "y" : "ies"}`);
+    },
+    onError: () => toast.error("Could not clear memories"),
+  });
+
   const memories = data?.memories ?? [];
+  const busy = del.isPending || clearAll.isPending;
+
   return (
     <Card>
       <CardContent className="p-6">
-        <div className="flex items-center gap-3 mb-4">
-          <Brain className="w-5 h-5 text-primary" />
-          <h2 className="text-lg font-serif font-medium">My Memory</h2>
-          <span className="text-xs text-muted-foreground">— facts Orivellum remembers about you</span>
+        <div className="flex items-center justify-between gap-3 mb-4">
+          <div className="flex items-center gap-3">
+            <Brain className="w-5 h-5 text-primary" />
+            <h2 className="text-lg font-serif font-medium">My Memory</h2>
+            <span className="text-xs text-muted-foreground">— facts Orivellum remembers about you</span>
+          </div>
+          {memories.length > 0 && (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="text-xs text-destructive hover:text-destructive gap-1.5 shrink-0"
+              disabled={busy}
+              onClick={() => {
+                if (confirm(`Delete all ${memories.length} stored memories? This cannot be undone.`)) {
+                  clearAll.mutate();
+                }
+              }}
+            >
+              {clearAll.isPending
+                ? <Loader2 className="w-3 h-3 animate-spin" />
+                : <Trash2 className="w-3 h-3" />}
+              Clear all
+            </Button>
+          )}
         </div>
         {isLoading ? (
           <Skeleton className="h-12 w-full" />
@@ -447,14 +485,17 @@ function UserMemoryCard() {
             {memories.map(m => (
               <div key={m.id} className="flex items-start gap-3 p-3 rounded-lg bg-muted/20 border border-border/40 group">
                 <div className="flex-1 min-w-0">
-                  <p className="text-xs font-mono text-muted-foreground">{m.key}</p>
+                  <div className="flex items-center gap-2">
+                    <p className="text-xs font-mono text-muted-foreground">{m.key}</p>
+                    <span className="text-[10px] text-muted-foreground/60">{relativeTime(m.created_at)}</span>
+                  </div>
                   <p className="text-sm mt-0.5">{m.value}</p>
                 </div>
                 <button
                   onClick={() => del.mutate(m.id)}
-                  disabled={del.isPending}
+                  disabled={busy}
                   className="opacity-0 group-hover:opacity-60 hover:!opacity-100 p-1 text-destructive transition-opacity shrink-0"
-                  title="Delete memory"
+                  title="Delete this memory"
                 >
                   <Trash2 className="w-3.5 h-3.5" />
                 </button>
