@@ -916,6 +916,7 @@ export default function Library() {
                     return (
                       <Card
                         key={doc.id}
+                        data-doc-id={doc.id}
                         onClick={() => navigate(`/library/${doc.id}`)}
                         className={`transition-colors group cursor-pointer ${hasError ? "border-red-200/60" : "hover-elevate"}`}
                       >
@@ -979,6 +980,7 @@ export default function Library() {
               return (
                 <Card
                   key={doc.id}
+                  data-doc-id={doc.id}
                   onClick={() => navigate(`/library/${doc.id}`)}
                   className={`transition-colors group cursor-pointer ${hasError ? "border-red-200/60" : "hover-elevate"}`}
                 >

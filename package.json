@@ -8,13 +8,17 @@
     "dev:mobile": "bash scripts/dev.sh --mobile",
     "build": "pnpm run typecheck && pnpm -r --if-present run build",
     "typecheck:libs": "tsc --build",
-    "typecheck": "pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck"
+    "typecheck": "pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck",
+    "test:e2e": "PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=1 playwright test",
+    "test:e2e:headed": "PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=1 playwright test --headed"
   },
   "private": true,
   "dependencies": {
     "@replit/connectors-sdk": "^0.4.1"
   },
   "devDependencies": {
+    "@playwright/test": "1.50.1",
+    "@types/node": "catalog:",
     "prettier": "^3.9.6",
     "typescript": "~5.9.3"
   }

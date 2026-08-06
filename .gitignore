@@ -54,6 +54,19 @@ data/orivellum.db-shm
 data/orivellum.db-wal
 data/*.db
 data/*.db-shm
+
+# Library file store (user-uploaded docs — not committed)
+data/library/
+# Generated audio from TTS
+data/outputs/
+data/*.mp3
+data/*.wav
+
+# Playwright test artifacts
+test-results/
+playwright-report/
+e2e/.auth.json
+e2e/report/
 data/*.db-wal
 
 # Temporary debug files uploaded during development

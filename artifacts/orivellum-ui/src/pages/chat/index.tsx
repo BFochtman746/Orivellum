@@ -2007,7 +2007,7 @@ export default function Chat() {
                 ) : (
                   <ErrorBoundary label="message list">
                   {displayMessages.map((msg, msgIdx) => (
-                    <div key={msg.id} data-msg-id={msg.id} className={`flex gap-3 ${msg.role === "user" ? "flex-row-reverse" : ""}`}>
+                    <div key={msg.id} data-msg-id={msg.id} data-role={msg.role} className={`flex gap-3 ${msg.role === "user" ? "flex-row-reverse" : ""}`}>
                       <div className={`w-7 h-7 shrink-0 rounded-sm flex items-center justify-center
                         ${msg.isClarification
                           ? "bg-amber-500/15 text-amber-600"
