@@ -19,7 +19,7 @@ import {
   View,
 } from 'react-native';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useFocusEffect, useRouter } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { useColors } from '@/hooks/useColors';
@@ -241,8 +241,10 @@ export default function TopicsScreen() {
   const insets      = useSafeAreaInsets();
   const router      = useRouter();
   const qc          = useQueryClient();
+  const { topicId: initialTopicId } = useLocalSearchParams<{ topicId?: string }>();
   const [search,     setSearch]     = useState('');
-  const [expandedId, setExpandedId] = useState<string | null>(null);
+  // Pre-expand the topic passed via ?topicId= (e.g. from a related-doc topic badge)
+  const [expandedId, setExpandedId] = useState<string | null>(initialTopicId ?? null);
 
   const { data, isLoading, isError, refetch, isRefetching } = useQuery<{
     topics: Topic[];

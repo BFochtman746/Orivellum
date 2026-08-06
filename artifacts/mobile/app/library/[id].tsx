@@ -34,11 +34,12 @@ interface RelatedDoc {
   shared_topics: Array<{ id: string; name: string }>;
 }
 
-function RelatedSection({ docId, domain, colors, onNavigate }: {
+function RelatedSection({ docId, domain, colors, onNavigate, onTopicPress }: {
   docId: string;
   domain: string;
   colors: ReturnType<typeof import('@/hooks/useColors').useColors>;
   onNavigate: (id: string) => void;
+  onTopicPress: (topicId: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const { data, isLoading } = useQuery<{ doc_id: string; related: RelatedDoc[] }>({
@@ -48,10 +49,13 @@ function RelatedSection({ docId, domain, colors, onNavigate }: {
       if (!res.ok) throw new Error('Failed to load related');
       return res.json();
     },
-    enabled: !!docId && expanded,
+    enabled: !!docId,
     staleTime: 120_000,
   });
-  const related = data?.related ?? [];
+  const related = (data?.related ?? []).slice(0, 8);
+
+  // Hidden entirely when we know there are no relations
+  if (!isLoading && data && related.length === 0) return null;
 
   return (
     <View style={[{ borderWidth: 1, borderRadius: 8, overflow: 'hidden', marginBottom: 12 }, { borderColor: colors.border }]}>
@@ -60,18 +64,16 @@ function RelatedSection({ docId, domain, colors, onNavigate }: {
         style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 12, backgroundColor: colors.muted + '33' }}
       >
         <Text style={{ fontSize: 11, fontFamily: 'Inter_600SemiBold', color: colors.mutedForeground, letterSpacing: 0.8 }}>
-          RELATED DOCUMENTS
+          RELATED DOCUMENTS{!isLoading && related.length > 0 ? ` (${related.length})` : ''}
         </Text>
-        <Feather name={expanded ? 'chevron-up' : 'chevron-down'} size={14} color={colors.mutedForeground} />
+        {isLoading
+          ? <ActivityIndicator size="small" color={colors.mutedForeground} style={{ opacity: 0.5 }} />
+          : <Feather name={expanded ? 'chevron-up' : 'chevron-down'} size={14} color={colors.mutedForeground} />}
       </Pressable>
       {expanded && (
         <View>
           {isLoading ? (
             <ActivityIndicator color={colors.primary} style={{ margin: 16 }} />
-          ) : related.length === 0 ? (
-            <Text style={{ padding: 12, fontSize: 12, fontFamily: 'Inter_400Regular', color: colors.mutedForeground }}>
-              No related documents found yet. Run clustering to discover connections.
-            </Text>
           ) : (
             related.map((item) => (
               <Pressable
@@ -88,20 +90,26 @@ function RelatedSection({ docId, domain, colors, onNavigate }: {
                   <Text style={{ fontSize: 13, fontFamily: 'Inter_500Medium', color: colors.foreground }} numberOfLines={1}>
                     {item.title || '(untitled)'}
                   </Text>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 3 }}>
                     {item.kind ? (
                       <Text style={{ fontSize: 9, fontFamily: 'Inter_600SemiBold', color: colors.mutedForeground, textTransform: 'uppercase', letterSpacing: 0.4 }}>
                         {item.kind}
                       </Text>
                     ) : null}
                     {item.shared_topics.length > 0 && (
-                      <Text style={{ fontSize: 10, fontFamily: 'Inter_400Regular', color: colors.mutedForeground + '99' }} numberOfLines={1}>
-                        {item.shared_topics[0].name}
-                      </Text>
+                      <Pressable
+                        onPress={(e) => { e.stopPropagation(); onTopicPress(item.shared_topics[0].id); }}
+                        hitSlop={4}
+                        style={{ backgroundColor: colors.primary + '18', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}
+                      >
+                        <Text style={{ fontSize: 10, fontFamily: 'Inter_500Medium', color: colors.primary }} numberOfLines={1}>
+                          {item.shared_topics[0].name}
+                        </Text>
+                      </Pressable>
                     )}
                   </View>
                 </View>
-                {/* Similarity badge — identical to web UI percentage chip */}
+                {/* Similarity badge */}
                 {item.similarity != null && (
                   <View style={{ backgroundColor: colors.primary + '18', paddingHorizontal: 7, paddingVertical: 3, borderRadius: 5 }}>
                     <Text style={{ fontSize: 10, fontFamily: 'Inter_700Bold', color: colors.primary }}>
@@ -1170,16 +1178,18 @@ export default function LibraryDocDetail() {
               })}
             </>
           )}
-        {/* Related documents — lazy-loaded on expand */}
+        </View>
+
+        {/* Related documents — outside Knowledge section, hidden when no results */}
         {doc.readiness === 'ready' && (
           <RelatedSection
             docId={id ?? ''}
             domain={domain}
             colors={colors}
             onNavigate={(relatedId) => router.push(`/library/${relatedId}` as any)}
+            onTopicPress={(topicId) => router.push(`/topics?topicId=${topicId}` as any)}
           />
         )}
-        </View>
       </ScrollView>
 
       {/* Work Picker Modal */}
