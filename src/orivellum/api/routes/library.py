@@ -285,6 +285,58 @@ def library_search(q: str, work_id: str | None = None, limit: int = 10,
 
 # ── Duplicates (must be registered BEFORE /{doc_id} so the literal segment wins) ─
 
+@router.post("/library/scan-duplicates")
+async def library_scan_duplicates(background_tasks: BackgroundTasks):
+    """Backfill MinHash signatures for all ready documents that don't yet have one.
+
+    Runs in the background and returns immediately. The caller can poll
+    GET /api/library/duplicates to see new pairs as they are found.
+
+    Returns {"queued": N, "already_indexed": M} so the UI can give feedback
+    even when the library was already fully indexed.
+    """
+    db = get_db()
+    with db._lock:
+        rows = db._conn.execute(
+            """SELECT d.id, d.extracted_text
+               FROM documents d
+               LEFT JOIN minhash_sig ms ON ms.doc_id = d.id
+               WHERE d.readiness = 'ready'
+                 AND ms.doc_id IS NULL
+                 AND d.extracted_text IS NOT NULL
+                 AND d.extracted_text != ''"""
+        ).fetchall()
+        already_count = db._conn.execute(
+            "SELECT COUNT(*) FROM minhash_sig"
+        ).fetchone()[0]
+
+    pending = [(r["id"], r["extracted_text"]) for r in rows]
+
+    def _backfill(doc_list: list[tuple[str, str]]) -> None:
+        from orivellum.capabilities.dedup import (
+            compute_and_store,
+            find_and_record_near_duplicates,
+        )
+        for doc_id, text in doc_list:
+            try:
+                sig = compute_and_store(doc_id, text, db)
+                if sig:
+                    find_and_record_near_duplicates(doc_id, sig, db)
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("scan-duplicates: error on %s: %s", doc_id[:8], exc)
+
+    background_tasks.add_task(_backfill, pending)
+    return {
+        "queued": len(pending),
+        "already_indexed": already_count,
+        "message": (
+            f"Scanning {len(pending)} document(s) — poll /api/library/duplicates for results."
+            if pending
+            else "All documents are already indexed."
+        ),
+    }
+
+
 @router.get("/library/duplicates")
 def library_duplicates(resolved: bool = False):
     """Return all detected near-duplicate / likely-revision document pairs."""

@@ -138,8 +138,9 @@ function DuplicatePairRow({
   );
 }
 
-function DuplicatesBanner() {
+function DuplicatesBanner({ readyDocCount = 0 }: { readyDocCount?: number }) {
   const [collapsed, setCollapsed] = useState(false);
+  const [scanning, setScanning] = useState(false);
   const queryClient = useQueryClient();
   const { data, refetch } = useQuery<{ pairs: DupePair[]; count: number }>({
     queryKey: ["library", "duplicates"],
@@ -149,12 +150,85 @@ function DuplicatesBanner() {
   });
 
   const count = data?.count ?? 0;
-  if (count === 0) return null;
+
+  const handleScan = async () => {
+    setScanning(true);
+    try {
+      const r = await apiFetch(`${BASE}/library/scan-duplicates`, { method: "POST" });
+      const body = await r.json().catch(() => ({}));
+      const queued: number = body.queued ?? 0;
+
+      if (queued === 0) {
+        toast.info("All documents already indexed — no new pairs found.");
+        setScanning(false);
+        return;
+      }
+
+      toast.info(`Scanning ${queued} document${queued !== 1 ? "s" : ""}…`, { duration: 3000 });
+
+      // Poll for results; stop after ~45 s or once pairs appear
+      const started = Date.now();
+      const pairsBefore = count;
+      const poll = setInterval(async () => {
+        try {
+          const pr = await apiFetch(`${BASE}/library/duplicates`);
+          const pd = await pr.json();
+          const newCount: number = pd.count ?? 0;
+          queryClient.setQueryData(["library", "duplicates"], pd);
+          if (newCount > pairsBefore) {
+            clearInterval(poll);
+            setScanning(false);
+            const found = newCount - pairsBefore;
+            toast.success(
+              `Scan complete — ${found} near-duplicate pair${found !== 1 ? "s" : ""} found`,
+              { duration: 6000 }
+            );
+            return;
+          }
+          if (Date.now() - started > 45_000) {
+            clearInterval(poll);
+            setScanning(false);
+            toast.success("Scan complete — no duplicate pairs detected.", { duration: 4000 });
+          }
+        } catch {
+          clearInterval(poll);
+          setScanning(false);
+        }
+      }, 2_000);
+    } catch {
+      toast.error("Could not start duplicate scan");
+      setScanning(false);
+    }
+  };
 
   const handleResolved = () => {
     refetch();
     queryClient.invalidateQueries({ queryKey: ["library", "duplicates"] });
   };
+
+  // When there are no pairs yet, show a compact scan prompt (if there are ready docs)
+  if (count === 0) {
+    if (readyDocCount === 0) return null;
+    return (
+      <div className="rounded-lg border border-border/50 bg-muted/20 px-4 py-3 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <GitMerge className="w-4 h-4 shrink-0" />
+          <span>No duplicate pairs found yet.</span>
+        </div>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={scanning}
+          onClick={handleScan}
+          className="gap-1.5 text-xs shrink-0"
+        >
+          {scanning
+            ? <><RefreshCw className="w-3 h-3 animate-spin" /> Scanning…</>
+            : <><Search className="w-3 h-3" /> Scan for duplicates</>}
+        </Button>
+      </div>
+    );
+  }
 
   return (
     <div className="rounded-lg border border-amber-200 bg-amber-50/60 text-amber-900 overflow-hidden">
@@ -706,7 +780,7 @@ export default function Library() {
         </div>
 
         {/* Near-duplicates banner */}
-        <DuplicatesBanner />
+        <DuplicatesBanner readyDocCount={(listResp?.documents ?? []).filter((d: any) => d.readiness === "ready").length} />
 
         {/* Search */}
         <div className="space-y-3">
