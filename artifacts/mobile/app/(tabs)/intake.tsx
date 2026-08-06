@@ -444,16 +444,52 @@ export default function IntakeScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
 
-  const [phase, setPhase] = useState<'pick' | 'uploading' | 'profiling' | 'done' | 'error'>('pick');
+  const [phase, setPhase] = useState<'pick' | 'scanning' | 'uploading' | 'profiling' | 'done' | 'error'>('pick');
   const [fileName, setFileName] = useState('');
   const [profile, setProfile] = useState<IntakeProfile | null>(null);
   const [errorMsg, setErrorMsg] = useState('');
+  // isCapturing: true while the OS camera / image-picker UI is open.
+  // Prevents the pick buttons from appearing responsive when there is already
+  // an in-flight picker session (they go grey + spinner immediately on press).
+  const [isCapturing, setIsCapturing] = useState(false);
 
   const reset = () => {
     setPhase('pick');
     setFileName('');
     setProfile(null);
     setErrorMsg('');
+    setIsCapturing(false);
+  };
+
+  // ── OCR scan ─────────────────────────────────────────────────────────────
+  // Called after picking/capturing an image — sends base64 to the server's
+  // OCR endpoint so we can show "Scanning…" feedback while it is in flight.
+  // Returns the extracted text on success, null on non-fatal failure.
+  const scanImage = async (base64: string, name: string): Promise<string | null> => {
+    setPhase('scanning');
+    setFileName(name);
+    try {
+      const res = await mobileFetch(`${API_BASE}/api/studio/ocr`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content_b64: base64 }),
+      });
+      if (res.status === 504) {
+        // Timeout is recoverable — we still upload the image for server-side OCR
+        // during processing, but warn the user so they know a fast scan failed.
+        Alert.alert(
+          'Scan timed out',
+          'The image took too long to scan — the text will be extracted during processing instead. '
+          + 'For faster results, try a smaller or lower-resolution photo.',
+        );
+        return null;
+      }
+      if (!res.ok) return null; // non-fatal
+      const data = await res.json();
+      return data.text ?? null;
+    } catch {
+      return null; // non-fatal — upload proceeds regardless
+    }
   };
 
   const runIntake = async (docId: string) => {
@@ -503,6 +539,8 @@ export default function IntakeScreen() {
   };
 
   const pickDocument = async () => {
+    if (isCapturing) return;
+    setIsCapturing(true);
     try {
       const result = await DocumentPicker.getDocumentAsync({
         type: '*/*',
@@ -510,14 +548,24 @@ export default function IntakeScreen() {
       });
       if (result.canceled || !result.assets?.[0]) return;
       const asset = result.assets[0];
+      // Lock is intentionally kept true during upload so the document button
+      // stays disabled; it clears via reset() or the error path below.
+      setIsCapturing(false);
       await uploadFile(asset.uri, asset.name, asset.mimeType ?? 'application/octet-stream');
     } catch (e: any) {
+      setIsCapturing(false);
       setErrorMsg(e.message ?? 'Could not open document picker');
       setPhase('error');
+    } finally {
+      // Guard: ensure lock is always cleared if uploadFile threw or was skipped.
+      setIsCapturing(false);
     }
   };
 
   const pickPhoto = async () => {
+    if (isCapturing) return;
+    // Lock at entry — before permissions so the button goes inert immediately.
+    setIsCapturing(true);
     try {
       const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!perm.granted) {
@@ -528,18 +576,27 @@ export default function IntakeScreen() {
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
         quality: 0.85,
+        base64: true,
       });
       if (result.canceled || !result.assets?.[0]) return;
       const asset = result.assets[0];
       const name = asset.fileName ?? `photo_${Date.now()}.jpg`;
+      // Picker closed — release button lock before the longer OCR + upload work.
+      setIsCapturing(false);
+      if (asset.base64) await scanImage(asset.base64, name);
       await uploadFile(asset.uri, name, asset.mimeType ?? 'image/jpeg');
     } catch (e: any) {
       setErrorMsg(e.message ?? 'Could not open photo library');
       setPhase('error');
+    } finally {
+      setIsCapturing(false);
     }
   };
 
   const takePhoto = async () => {
+    if (isCapturing) return;
+    // Lock at entry — before permissions so the button goes inert immediately.
+    setIsCapturing(true);
     try {
       const perm = await ImagePicker.requestCameraPermissionsAsync();
       if (!perm.granted) {
@@ -547,14 +604,19 @@ export default function IntakeScreen() {
         setPhase('error');
         return;
       }
-      const result = await ImagePicker.launchCameraAsync({ quality: 0.85 });
+      const result = await ImagePicker.launchCameraAsync({ quality: 0.85, base64: true });
       if (result.canceled || !result.assets?.[0]) return;
       const asset = result.assets[0];
       const name = asset.fileName ?? `photo_${Date.now()}.jpg`;
+      // Camera closed — release button lock before the longer OCR + upload work.
+      setIsCapturing(false);
+      if (asset.base64) await scanImage(asset.base64, name);
       await uploadFile(asset.uri, name, asset.mimeType ?? 'image/jpeg');
     } catch (e: any) {
       setErrorMsg(e.message ?? 'Could not open camera');
       setPhase('error');
+    } finally {
+      setIsCapturing(false);
     }
   };
 
@@ -584,9 +646,14 @@ export default function IntakeScreen() {
           </Text>
           <Pressable
             onPress={pickDocument}
+            disabled={isCapturing}
             style={({ pressed }) => [
               styles.pickBtn,
-              { backgroundColor: colors.card, borderColor: colors.border, opacity: pressed ? 0.75 : 1 },
+              {
+                backgroundColor: colors.card,
+                borderColor: colors.border,
+                opacity: isCapturing ? 0.5 : pressed ? 0.75 : 1,
+              },
             ]}
           >
             <View style={[styles.pickBtnIcon, { backgroundColor: colors.primary + '18' }]}>
@@ -603,50 +670,72 @@ export default function IntakeScreen() {
 
           <Pressable
             onPress={pickPhoto}
+            disabled={isCapturing}
             style={({ pressed }) => [
               styles.pickBtn,
-              { backgroundColor: colors.card, borderColor: colors.border, opacity: pressed ? 0.75 : 1 },
+              {
+                backgroundColor: colors.card,
+                borderColor: isCapturing ? '#7c3aed44' : colors.border,
+                opacity: pressed ? 0.75 : 1,
+              },
             ]}
           >
             <View style={[styles.pickBtnIcon, { backgroundColor: '#7c3aed18' }]}>
-              <Feather name="image" size={22} color="#7c3aed" />
+              {isCapturing
+                ? <ActivityIndicator size="small" color="#7c3aed" />
+                : <Feather name="image" size={22} color="#7c3aed" />}
             </View>
             <View style={{ flex: 1 }}>
-              <Text style={[styles.pickBtnTitle, { color: colors.foreground }]}>Photo Library</Text>
+              <Text style={[styles.pickBtnTitle, { color: colors.foreground }]}>
+                {isCapturing ? 'Opening…' : 'Photo Library'}
+              </Text>
               <Text style={[styles.pickBtnSub, { color: colors.mutedForeground }]}>
                 Receipt, whiteboard, screenshot, diagram
               </Text>
             </View>
-            <Feather name="chevron-right" size={18} color={colors.mutedForeground} />
+            {!isCapturing && <Feather name="chevron-right" size={18} color={colors.mutedForeground} />}
           </Pressable>
 
           <Pressable
             onPress={takePhoto}
+            disabled={isCapturing}
             style={({ pressed }) => [
               styles.pickBtn,
-              { backgroundColor: colors.card, borderColor: colors.border, opacity: pressed ? 0.75 : 1 },
+              {
+                backgroundColor: colors.card,
+                borderColor: isCapturing ? '#05961944' : colors.border,
+                opacity: pressed ? 0.75 : 1,
+              },
             ]}
           >
             <View style={[styles.pickBtnIcon, { backgroundColor: '#0596191A' }]}>
-              <Feather name="camera" size={22} color="#059619" />
+              {isCapturing
+                ? <ActivityIndicator size="small" color="#059619" />
+                : <Feather name="camera" size={22} color="#059619" />}
             </View>
             <View style={{ flex: 1 }}>
-              <Text style={[styles.pickBtnTitle, { color: colors.foreground }]}>Take a Photo</Text>
+              <Text style={[styles.pickBtnTitle, { color: colors.foreground }]}>
+                {isCapturing ? 'Opening camera…' : 'Take a Photo'}
+              </Text>
               <Text style={[styles.pickBtnSub, { color: colors.mutedForeground }]}>
                 Capture a receipt, whiteboard, or document
               </Text>
             </View>
-            <Feather name="chevron-right" size={18} color={colors.mutedForeground} />
+            {!isCapturing && <Feather name="chevron-right" size={18} color={colors.mutedForeground} />}
           </Pressable>
         </View>
       )}
 
-      {/* Uploading / profiling */}
-      {(phase === 'uploading' || phase === 'profiling') && (
+      {/* Scanning / uploading / profiling */}
+      {(phase === 'scanning' || phase === 'uploading' || phase === 'profiling') && (
         <View style={styles.loadingBox}>
-          <ActivityIndicator size="large" color={colors.primary} />
+          <ActivityIndicator size="large" color={
+            phase === 'scanning' ? '#7c3aed' : colors.primary
+          } />
           <Text style={[styles.loadingTitle, { color: colors.foreground }]}>
-            {phase === 'uploading' ? 'Uploading…' : 'Identifying…'}
+            {phase === 'scanning' ? 'Scanning…'
+              : phase === 'uploading' ? 'Uploading…'
+              : 'Identifying…'}
           </Text>
           {fileName ? (
             <Text style={[styles.loadingFile, { color: colors.mutedForeground }]} numberOfLines={1}>
@@ -654,7 +743,9 @@ export default function IntakeScreen() {
             </Text>
           ) : null}
           <Text style={[styles.loadingHint, { color: colors.mutedForeground }]}>
-            {phase === 'uploading'
+            {phase === 'scanning'
+              ? 'Extracting text from your image — this can take up to 60 s'
+              : phase === 'uploading'
               ? 'Sending your file to the workspace'
               : 'Running the intake pipeline — classifying, extracting, embedding'}
           </Text>
