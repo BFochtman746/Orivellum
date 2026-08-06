@@ -11,6 +11,8 @@ import {
   View,
 } from 'react-native';
 import { syncToCache, flushMessageQueue } from '@/lib/offlineCache';
+import { TtsProvider } from '@/context/TtsContext';
+import { TtsMiniPlayer } from '@/components/TtsMiniPlayer';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
@@ -379,7 +381,20 @@ export default function RootLayout() {
         <QueryClientProvider client={queryClient}>
           <GestureHandlerRootView style={{ flex: 1 }}>
             <KeyboardProvider>
-              <RootLayoutNav />
+              <TtsProvider>
+                {/*
+                  Wrap navigator + mini-player in a flex column.
+                  TtsMiniPlayer returns null when idle (zero height) and renders
+                  as a bar below the navigator when TTS is active — the navigator
+                  shrinks slightly rather than being overlaid, so no content is
+                  hidden behind the bar. This also keeps the bar visible on every
+                  route (including non-tab screens like /library/[id]).
+                */}
+                <View style={{ flex: 1 }}>
+                  <RootLayoutNav />
+                  <TtsMiniPlayer />
+                </View>
+              </TtsProvider>
             </KeyboardProvider>
             {/* ── Sync indicator ─────────────────────────────────────────
                 Shown briefly while the background cache sync is running.

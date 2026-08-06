@@ -3,6 +3,7 @@ import { mobileFetch } from '@/lib/api';
 import { getApiToken } from '@/lib/token';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { VOICES } from '@/lib/voices';
+import { useTts, type TtsPlaybackState } from '@/context/TtsContext';
 import { createAudioPlayer, setAudioModeAsync, type AudioPlayer } from 'expo-audio';
 import {
   ActivityIndicator,
@@ -476,19 +477,33 @@ export default function LibraryDocDetail() {
     }
   };
 
-  // ── Read Aloud (TTS) — chunked multi-part playback ────────────────────────
-  // Long documents are split into ~4 500-char parts, synthesized on demand
-  // (current part + one prefetch ahead), and played back with auto-advance.
-  // A monotonic session id prevents stale synthesis results from a previous
-  // invocation from clobbering state owned by the current one.
-  type TtsState = 'idle' | 'loading' | 'playing' | 'paused' | 'error';
-  const [ttsState, setTtsState] = useState<TtsState>('idle');
-  const [ttsChunks, setTtsChunks] = useState<string[]>([]);
-  const [ttsIndex, setTtsIndex] = useState(0);
-  const ttsPlayerRef = useRef<AudioPlayer | null>(null);
-  const ttsSessionRef = useRef(0);
-  const ttsPathCacheRef = useRef<Map<number, string>>(new Map()); // part → serve path
-  const ttsPromisesRef = useRef<Map<number, Promise<string>>>(new Map()); // in-flight
+  // ── Read Aloud (TTS) — state lives in global TtsContext so audio persists
+  //    when the user navigates away from this document detail page ─────────────
+  const tts = useTts();
+  // Local flag for the "fetching + splitting text" phase that precedes synthesis
+  const [ttsInitLoading, setTtsInitLoading] = useState(false);
+  // Monotonic counter bumped on every fresh Listen attempt and on unmount.
+  // Prevents a delayed text-fetch from calling tts.play() after the user has
+  // navigated away or issued a newer listen request.
+  const listenGenRef = useRef(0);
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      listenGenRef.current += 1; // invalidate any in-flight text fetch
+    };
+  }, []);
+
+  // Derived state scoped to THIS document
+  const _isThisDoc = tts.session?.docId === id;
+  const localTtsState: TtsPlaybackState = ttsInitLoading
+    ? 'loading'
+    : _isThisDoc
+    ? tts.playbackState
+    : 'idle';
+  const localTtsChunks: string[] = _isThisDoc ? (tts.session?.parts ?? []) : [];
+  const localTtsIndex: number   = _isThisDoc ? tts.index : 0;
 
   // ── Voice / speed settings (persisted to AsyncStorage) ─────────────────────
   const [ttsVoice, setTtsVoice] = useState<string>('af_heart');
@@ -508,36 +523,23 @@ export default function LibraryDocDetail() {
     }).catch(() => {});
   }, []);
 
-  // Persist voice changes
+  // Persist voice changes (cache is cleared inside tts.play() on next Listen)
   const handleVoiceChange = (v: string) => {
     setTtsVoice(v);
     AsyncStorage.setItem(_TTS_VOICE_KEY, v).catch(() => {});
-    // Clear cache so stale audio from the previous voice isn't served next session
-    ttsPathCacheRef.current.clear();
   };
 
   // Persist speed changes
   const handleSpeedChange = (s: TtsSpeed) => {
     setTtsSpeed(s);
     AsyncStorage.setItem(_TTS_SPEED_KEY, String(s)).catch(() => {});
-    ttsPathCacheRef.current.clear();
   };
-
-  useEffect(() => {
-    return () => {
-      ttsSessionRef.current++;
-      ttsPlayerRef.current?.remove();
-      ttsPathCacheRef.current.clear();
-      ttsPromisesRef.current.clear();
-    };
-  }, []);
 
   const domain = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
 
-  // ── TTS helpers ─────────────────────────────────────────────────────────────
+  // ── TTS helpers (split text into parts; synthesis + playback in TtsContext) ──
 
   const TTS_PART_CHARS = 4500;
-  const TTS_STALE = 'tts-stale';
 
   /** Split extracted text into ≤4 500-char parts at paragraph / sentence
    *  boundaries.  Uses only basic string ops so it works in Hermes/JSC. */
@@ -567,99 +569,7 @@ export default function LibraryDocDetail() {
     return parts;
   };
 
-  /** Synthesize one part, cache its serve-path, and return it.
-   *  Single-flight per part via promise map; stale-session results discarded.
-   *  voice/speed are passed per-session so changing settings mid-playback
-   *  doesn't affect the current session's cached paths. */
-  const synthesizePart = (parts: string[], i: number, voice: string, speed: number): Promise<string> => {
-    const session = ttsSessionRef.current;
-    const cached = ttsPathCacheRef.current.get(i);
-    if (cached) return Promise.resolve(cached);
-    const inflight = ttsPromisesRef.current.get(i);
-    if (inflight) return inflight;
-    const p = (async () => {
-      const res = await mobileFetch(`https://${domain}/api/studio/tts`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: parts[i], voice, speed, return_url: true }),
-      });
-      if (ttsSessionRef.current !== session) throw new Error(TTS_STALE);
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error((err as any).detail ?? `HTTP ${res.status}`);
-      }
-      const json = await res.json();
-      if (ttsSessionRef.current !== session) throw new Error(TTS_STALE);
-      const path = json.path as string;
-      ttsPathCacheRef.current.set(i, path);
-      return path;
-    })();
-    p.finally(() => {
-      if (ttsPromisesRef.current.get(i) === p) ttsPromisesRef.current.delete(i);
-    }).catch(() => {});
-    ttsPromisesRef.current.set(i, p);
-    return p;
-  };
-
-  /** Create a player for part `i`, start it, and wire auto-advance. */
-  const playPartAt = async (parts: string[], i: number, voice: string, speed: number) => {
-    const session = ttsSessionRef.current;
-    setTtsState('loading');
-    try {
-      const servePath = await synthesizePart(parts, i, voice, speed);
-      if (ttsSessionRef.current !== session) return;
-      const token = getApiToken();
-      const uri = `https://${domain}/api/studio/outputs/serve?path=${encodeURIComponent(servePath)}`;
-      ttsPlayerRef.current?.remove();
-      ttsPlayerRef.current = null;
-      await setAudioModeAsync({ playsInSilentMode: true });
-      const player = createAudioPlayer({
-        uri,
-        headers: token ? { authorization: `Bearer ${token}` } : undefined,
-      });
-      ttsPlayerRef.current = player;
-      player.play();
-      setTtsIndex(i);
-      setTtsState('playing');
-      // Prefetch next part in the background (same voice/speed for the whole session)
-      if (i + 1 < parts.length) synthesizePart(parts, i + 1, voice, speed).catch(() => {});
-      // Auto-advance on natural end-of-part
-      player.addListener('playbackStatusUpdate', (status) => {
-        if (!status.playing && status.currentTime > 0 && status.duration > 0
-            && status.currentTime >= status.duration - 0.5) {
-          if (ttsSessionRef.current !== session) return;
-          const next = i + 1;
-          if (next < parts.length) {
-            playPartAt(parts, next, voice, speed);
-          } else {
-            // All parts finished
-            setTtsState('idle');
-            setTtsChunks([]);
-            setTtsIndex(0);
-            ttsPlayerRef.current?.remove();
-            ttsPlayerRef.current = null;
-          }
-        }
-      });
-    } catch (e: any) {
-      if (e?.message !== TTS_STALE && ttsSessionRef.current === session) {
-        setTtsState('error');
-        Alert.alert('Read Aloud failed', e?.message ?? 'Could not synthesize audio');
-        setTimeout(() => setTtsState('idle'), 2000);
-      }
-    }
-  };
-
-  const stopTts = () => {
-    ttsSessionRef.current++;
-    ttsPlayerRef.current?.remove();
-    ttsPlayerRef.current = null;
-    ttsPathCacheRef.current.clear();
-    ttsPromisesRef.current.clear();
-    setTtsState('idle');
-    setTtsChunks([]);
-    setTtsIndex(0);
-  };
+  // synthesizePart, playPartAt, and stop are now handled by TtsContext.
 
   const { data: docData, isLoading: docLoading, isError: docError, refetch: refetchDoc } =
     useGetDocument(id ?? '', { query: { enabled: !!id, staleTime: 15_000 } } as any);
@@ -789,54 +699,44 @@ export default function LibraryDocDetail() {
   };
 
   const handleListen = async () => {
-    if (ttsState === 'playing') {
-      ttsPlayerRef.current?.pause();
-      setTtsState('paused');
-      return;
-    }
-    if (ttsState === 'paused' && ttsPlayerRef.current) {
-      ttsPlayerRef.current.play();
-      setTtsState('playing');
-      return;
-    }
-    // Start a fresh session
-    ttsSessionRef.current++;
-    ttsPlayerRef.current?.remove();
-    ttsPlayerRef.current = null;
-    ttsPathCacheRef.current.clear();
-    ttsPromisesRef.current.clear();
-    setTtsChunks([]);
-    setTtsIndex(0);
-    setTtsState('loading');
-    const session = ttsSessionRef.current;
+    // If this document is currently playing / paused, delegate to context
+    if (localTtsState === 'playing') { tts.pause(); return; }
+    if (localTtsState === 'paused')  { tts.resume(); return; }
+
+    // Bump generation so any concurrent or stale call can self-cancel
+    const gen = ++listenGenRef.current;
+    setTtsInitLoading(true);
     try {
       // Prefer already-extracted text; fall back to joining chunks
       let text: string = (doc?.extracted_text as string) || '';
       if (!text.trim()) {
         const res = await mobileFetch(`https://${domain}/api/library/${id}/chunks`);
-        if (ttsSessionRef.current !== session) return;
+        // Bail if the user navigated away or issued a newer listen request
+        if (listenGenRef.current !== gen || !mountedRef.current) return;
         if (res.ok) {
           const data = await res.json();
-          if (ttsSessionRef.current !== session) return;
+          if (listenGenRef.current !== gen || !mountedRef.current) return;
           text = (data.chunks ?? []).map((c: any) => c.text ?? '').filter(Boolean).join('\n\n');
         }
       }
       text = text.trim();
       if (!text) {
-        setTtsState('idle');
         Alert.alert('No text', 'This document has no readable text to play.');
         return;
       }
+      // Final staleness check before handing off to the global player
+      if (listenGenRef.current !== gen || !mountedRef.current) return;
       const parts = splitTextForTts(text);
-      setTtsChunks(parts);
-      // Capture voice/speed at session start so changing settings mid-listen
-      // doesn't affect the running session (consistent audio within a session).
-      await playPartAt(parts, 0, ttsVoice, ttsSpeed);
+      const docTitle = (doc?.title as string) || 'Document';
+      // TtsContext takes ownership: audio continues even if we navigate away
+      tts.play(parts, docTitle, id ?? '', ttsVoice, ttsSpeed);
     } catch (e: any) {
-      if (ttsSessionRef.current === session) {
-        setTtsState('error');
+      if (listenGenRef.current === gen && mountedRef.current) {
         Alert.alert('Read Aloud failed', e?.message ?? 'Could not start playback');
-        setTimeout(() => setTtsState('idle'), 2000);
+      }
+    } finally {
+      if (listenGenRef.current === gen && mountedRef.current) {
+        setTtsInitLoading(false);
       }
     }
   };
@@ -1153,33 +1053,33 @@ export default function LibraryDocDetail() {
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 10 }}>
             <Pressable
               onPress={handleListen}
-              disabled={ttsState === 'loading' || ttsState === 'error'}
+              disabled={localTtsState === 'loading' || localTtsState === 'error'}
               style={[styles.listenBtn, { borderColor: colors.primary + '55', backgroundColor: colors.primary + '0f', marginTop: 0 }]}
             >
-              {ttsState === 'loading' ? (
+              {localTtsState === 'loading' ? (
                 <ActivityIndicator size="small" color={colors.primary} />
               ) : (
                 <Feather
-                  name={ttsState === 'playing' ? 'pause' : ttsState === 'paused' ? 'play' : 'headphones'}
+                  name={localTtsState === 'playing' ? 'pause' : localTtsState === 'paused' ? 'play' : 'headphones'}
                   size={14}
                   color={colors.primary}
                 />
               )}
               <Text style={[styles.listenBtnText, { color: colors.primary }]}>
-                {ttsState === 'loading' ? 'Generating…'
-                  : ttsState === 'playing' ? 'Pause'
-                  : ttsState === 'paused' ? 'Resume'
+                {localTtsState === 'loading' ? 'Generating…'
+                  : localTtsState === 'playing' ? 'Pause'
+                  : localTtsState === 'paused' ? 'Resume'
                   : 'Listen'}
               </Text>
-              {ttsChunks.length > 1 && (ttsState === 'playing' || ttsState === 'paused' || ttsState === 'loading') && (
+              {localTtsChunks.length > 1 && (localTtsState === 'playing' || localTtsState === 'paused' || localTtsState === 'loading') && (
                 <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: colors.primary + 'bb' }}>
-                  {ttsIndex + 1}/{ttsChunks.length}
+                  {localTtsIndex + 1}/{localTtsChunks.length}
                 </Text>
               )}
             </Pressable>
-            {(ttsState === 'playing' || ttsState === 'paused') && (
+            {(localTtsState === 'playing' || localTtsState === 'paused') && (
               <Pressable
-                onPress={stopTts}
+                onPress={() => tts.stop()}
                 style={[styles.listenBtn, { borderColor: '#dc262655', backgroundColor: '#dc26260f', marginTop: 0 }]}
                 hitSlop={6}
               >

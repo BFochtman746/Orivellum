@@ -1,0 +1,138 @@
+/**
+ * Sticky Read Aloud mini-player.
+ *
+ * Rendered at the root layout level (inside TtsProvider, sibling of the
+ * Stack navigator) so it stays visible on every route — including
+ * /library/[id] and any non-tab screen — not just within the tab navigator.
+ *
+ * When TTS is idle the component returns null and occupies zero height.
+ * When active it renders as a flex row at the bottom of the root view,
+ * pushing the navigator content up rather than overlaying it, so nothing
+ * is hidden behind the bar.
+ */
+
+import React from 'react';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Feather } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useColors } from '@/hooks/useColors';
+import { useTts } from '@/context/TtsContext';
+
+export function TtsMiniPlayer() {
+  const tts = useTts();
+  const colors = useColors();
+  const insets = useSafeAreaInsets();
+  const router = useRouter();
+
+  if (tts.playbackState === 'idle' || !tts.session) return null;
+
+  const { session, index, playbackState } = tts;
+  const totalParts = session.parts.length;
+
+  return (
+    <View
+      style={[
+        styles.bar,
+        {
+          backgroundColor: colors.card,
+          borderTopColor: colors.border,
+          // Respect home-indicator / gesture bar at the bottom
+          paddingBottom: insets.bottom > 0 ? insets.bottom : 10,
+        },
+      ]}
+    >
+      {/* Tap the left area to jump back to the document detail page */}
+      <Pressable
+        style={styles.info}
+        onPress={() => router.push(`/library/${session.docId}` as any)}
+        accessibilityRole="link"
+        accessibilityLabel={`Return to ${session.docTitle}`}
+      >
+        <Feather
+          name="headphones"
+          size={14}
+          color={colors.primary}
+          style={{ marginRight: 8 }}
+        />
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text
+            style={[styles.title, { color: colors.foreground }]}
+            numberOfLines={1}
+          >
+            {session.docTitle}
+          </Text>
+          {totalParts > 1 && (
+            <Text style={[styles.sub, { color: colors.mutedForeground }]}>
+              Part {index + 1} of {totalParts}
+            </Text>
+          )}
+        </View>
+      </Pressable>
+
+      {/* Playback controls */}
+      <View style={styles.controls}>
+        {playbackState === 'loading' ? (
+          <ActivityIndicator size="small" color={colors.primary} />
+        ) : playbackState === 'playing' ? (
+          <Pressable
+            onPress={tts.pause}
+            hitSlop={10}
+            accessibilityRole="button"
+            accessibilityLabel="Pause"
+          >
+            <Feather name="pause" size={22} color={colors.primary} />
+          </Pressable>
+        ) : (
+          <Pressable
+            onPress={tts.resume}
+            hitSlop={10}
+            accessibilityRole="button"
+            accessibilityLabel="Resume"
+          >
+            <Feather name="play" size={22} color={colors.primary} />
+          </Pressable>
+        )}
+        <Pressable
+          onPress={tts.stop}
+          hitSlop={10}
+          style={{ marginLeft: 14 }}
+          accessibilityRole="button"
+          accessibilityLabel="Stop Read Aloud"
+        >
+          <Feather name="x" size={20} color={colors.mutedForeground} />
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  bar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingTop: 10,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  info: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    minWidth: 0,
+    marginRight: 12,
+  },
+  title: {
+    fontSize: 13,
+    fontFamily: 'Inter_600SemiBold',
+  },
+  sub: {
+    fontSize: 11,
+    fontFamily: 'Inter_400Regular',
+    marginTop: 1,
+  },
+  controls: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+});
