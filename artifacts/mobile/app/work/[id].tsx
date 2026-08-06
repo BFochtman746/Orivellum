@@ -1060,6 +1060,63 @@ function GapsTab({
           );
         })
       )}
+
+      {/* ── Suggested searches ────────────────────────────────────────────────
+          Rendered whenever the API returns suggested_queries, regardless of
+          whether gaps are present. Each chip opens a new work-linked chat
+          with the query pre-filled so users can act on suggestions in one tap.
+      ── */}
+      {Array.isArray(data?.suggested_queries) && (data.suggested_queries as string[]).length > 0 && (
+        <View style={{ marginTop: 24 }}>
+          <Text
+            style={{
+              fontSize: 11,
+              fontFamily: 'Inter_600SemiBold',
+              color: colors.mutedForeground,
+              letterSpacing: 0.6,
+              textTransform: 'uppercase',
+              marginBottom: 8,
+            }}
+          >
+            Suggested Searches
+          </Text>
+          {(data.suggested_queries as string[]).map((q: string, i: number) => (
+            <Pressable
+              key={i}
+              onPress={() => onResearch(q)}
+              style={({ pressed }) => ({
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 10,
+                paddingHorizontal: 12,
+                paddingVertical: 11,
+                borderRadius: 8,
+                borderWidth: 1,
+                borderColor: colors.border,
+                backgroundColor: pressed ? colors.muted : colors.card,
+                marginBottom: 8,
+              })}
+              accessibilityRole="button"
+              accessibilityLabel={`Research: ${q}`}
+            >
+              <Feather name="search" size={13} color={colors.primary} />
+              <Text
+                style={{
+                  flex: 1,
+                  fontSize: 13,
+                  fontFamily: 'Inter_400Regular',
+                  color: colors.foreground,
+                  lineHeight: 18,
+                }}
+                numberOfLines={3}
+              >
+                {q}
+              </Text>
+              <Feather name="arrow-right" size={13} color={colors.mutedForeground} />
+            </Pressable>
+          ))}
+        </View>
+      )}
     </ScrollView>
   );
 }
