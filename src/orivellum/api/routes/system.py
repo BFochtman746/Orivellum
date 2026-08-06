@@ -623,6 +623,69 @@ def set_ai_reranking_setting(body: AiRerankingUpdate):
     return {"enabled": body.enabled, "ok": True}
 
 
+# ── Late-chunking setting ──────────────────────────────────────────────────────
+
+@router.get("/system/settings/late-chunking")
+def get_late_chunking_setting():
+    """Return the late-chunking enable flag and last-known probe status.
+
+    ``probe_status`` is one of:
+    - ``"supported"``  — endpoint confirmed to return per-token embeddings
+    - ``"not_supported"`` — endpoint confirmed to return flat (standard) embeddings
+    - ``"untested"`` — no probe has been run since the last server start
+    """
+    from orivellum.capabilities.embeddings import _late_chunking_probe_cache
+    db = get_db()
+    enabled = db.get_setting("use_late_chunking", "false").lower() == "true"
+    if _late_chunking_probe_cache is True:
+        probe_status = "supported"
+    elif _late_chunking_probe_cache is False:
+        probe_status = "not_supported"
+    else:
+        probe_status = "untested"
+    return {"enabled": enabled, "probe_status": probe_status}
+
+
+class LateChunkingUpdate(BaseModel):
+    enabled: bool
+
+
+@router.put("/system/settings/late-chunking")
+def set_late_chunking_setting(body: LateChunkingUpdate):
+    """Enable or disable late-chunking for new document imports.
+
+    When enabled, new documents are embedded using full-document token pooling
+    (Jina AI late chunking, 2024) instead of independent per-chunk embedding.
+    Each chunk's vector inherits its surrounding document context, improving
+    semantic similarity search for short or ambiguous passages.
+
+    Falls back silently to standard per-chunk embedding when the configured
+    embeddings endpoint does not support per-token output.
+    """
+    db = get_db()
+    db.set_setting("use_late_chunking", "true" if body.enabled else "false", actor="user")
+    return {"enabled": body.enabled, "ok": True}
+
+
+@router.post("/system/settings/late-chunking/probe")
+def probe_late_chunking():
+    """Run a live probe against the embeddings endpoint and cache the result.
+
+    Sends a small request with ``return_token_embeddings=true`` and checks
+    whether the response contains per-token (2-D) embeddings.  Use this after
+    switching to a model that supports late chunking to confirm it works.
+
+    Returns the probe result immediately; the cached value is also updated so
+    ``GET /system/settings/late-chunking`` reflects it without another probe.
+    """
+    from orivellum.capabilities.embeddings import probe_late_chunking_support
+    supported = probe_late_chunking_support(force=True)
+    return {
+        "supported": supported,
+        "probe_status": "supported" if supported else "not_supported",
+    }
+
+
 # ── Vision model settings + probe ─────────────────────────────────────────────
 
 @router.get("/system/settings/vision-model")

@@ -307,20 +307,55 @@ def backfill_embeddings(db: "OrivellumDB", max_items: int = 200) -> int:
     return embedded
 
 
+def _mark_chunk_embedding_method(db: "OrivellumDB", chunk_id: str, method: str) -> None:
+    """Mark a chunk's embedding_method column.  Non-fatal — never raises."""
+    try:
+        with db._lock:
+            db._conn.execute(
+                "UPDATE chunks SET embedding_method=? WHERE id=?", (method, chunk_id)
+            )
+            db._conn.commit()
+    except Exception:
+        pass
+
+
 def embed_chunks_for_doc(doc_id: str, db: "OrivellumDB") -> int:
     """Embed all chunks of one document that don't have vectors yet.
 
-    Called from the pipeline right after chunking so fresh documents become
-    semantically searchable without waiting for the nightly backfill.  Safe to
-    run in a daemon thread; returns the number of vectors stored (0 when the
-    embeddings endpoint is unavailable).
+    When ``use_late_chunking`` is enabled in DB settings **and** the embeddings
+    endpoint confirms per-token output support (probe), the late-chunking path
+    runs first — encoding the full document once and mean-pooling token vectors
+    within each chunk's character span.  Chunks outside the embedding window
+    (``char_start >= _MAX_TEXT_LEN``) or chunks without stored offsets are
+    **always** caught by the standard per-chunk fallback that follows.
 
-    Shutdown-safe: catches sqlite3.ProgrammingError (closed DB) and any other
-    exception so daemon threads never emit an unhandled thread exception when
-    the DB is torn down between the call site and the actual DB access.
+    The standard path marks each stored vector with
+    ``embedding_method='standard'`` so that late-chunked and standard-chunked
+    rows can be distinguished in the schema.  Pre-migration rows (NULL method)
+    represent chunks that existed before v82.
+
+    Safe to run in a daemon thread.  Shutdown-safe: catches
+    ``sqlite3.ProgrammingError`` (closed DB) so daemon threads never emit an
+    unhandled exception during app shutdown or test teardown.
     """
     import sqlite3 as _sqlite3
     try:
+        # ── Late-chunking path (gated) ─────────────────────────────────────
+        # Runs first when the setting is on and the endpoint is probed as
+        # capable.  Does NOT return early — a second standard-path pass
+        # immediately after ensures any chunks outside the encoding window
+        # (char_start ≥ _MAX_TEXT_LEN) always receive a vector.
+        use_late = db.get_setting("use_late_chunking", "false").lower() == "true"
+        late_stored = 0
+        if use_late and probe_late_chunking_support():
+            late_stored = _embed_chunks_late(doc_id, db)
+            if late_stored:
+                logger.info("Late-chunked %d chunk(s) for doc %s", late_stored, doc_id[:8])
+
+        # ── Standard per-chunk embedding ───────────────────────────────────
+        # Picks up every chunk that still has no vector: those with
+        # char_start outside the late-chunking window, those without stored
+        # offsets, and all chunks when late chunking is disabled or unsupported.
         with db._lock:
             rows = db._conn.execute(
                 """SELECT c.id, c.text, c.context_prefix FROM chunks c
@@ -340,13 +375,20 @@ def embed_chunks_for_doc(doc_id: str, db: "OrivellumDB") -> int:
             ]
             vecs = embed_texts(texts)
             if vecs is None:
-                return embedded  # endpoint down — nightly backfill will catch up
+                # Endpoint down — stop here; nightly backfill will catch up.
+                break
             for r, v in zip(batch, vecs):
                 db.store_vector(r["id"], "chunk", pack_vector(v), len(v))
+                _mark_chunk_embedding_method(db, r["id"], "standard")
                 embedded += 1
-        if embedded:
-            logger.info("Embedded %d chunk(s) for doc %s", embedded, doc_id[:8])
-        return embedded
+
+        total = late_stored + embedded
+        if total:
+            logger.info(
+                "Embedded doc %s — %d late + %d standard chunk(s)",
+                doc_id[:8], late_stored, embedded,
+            )
+        return total
     except _sqlite3.ProgrammingError:
         # DB was closed (e.g. during test teardown or app shutdown) before the
         # daemon thread reached the DB call.  Non-fatal: nightly backfill handles
@@ -356,6 +398,46 @@ def embed_chunks_for_doc(doc_id: str, db: "OrivellumDB") -> int:
     except Exception as exc:
         logger.debug("embed_chunks_for_doc: non-fatal error for %s: %s", doc_id[:8], exc)
         return 0
+
+
+def _embed_chunks_late(doc_id: str, db: "OrivellumDB") -> int:
+    """Internal: attempt the late-chunking path for one document.
+
+    Loads the document's extracted text and all unembedded chunk spans, then
+    calls :func:`embed_with_late_chunking`.  Returns 0 when the document has
+    no extractedtext yet (pipeline stores it in step 4, after chunking in
+    step 2 — the embedding step runs asynchronously so extracted_text will
+    have been committed by the time the daemon thread starts).
+    """
+    # Load the document's full extracted text.
+    with db._lock:
+        doc_row = db._conn.execute(
+            "SELECT extracted_text FROM documents WHERE id=?", (doc_id,)
+        ).fetchone()
+    if not doc_row or not doc_row["extracted_text"]:
+        return 0
+
+    full_text = doc_row["extracted_text"]
+
+    # Load unembedded chunks with valid non-NULL character spans only.
+    # Chunks with NULL offsets (beyond the 100k cap, or from pages-only docs)
+    # must be handled by the standard per-chunk fallback in embed_chunks_for_doc;
+    # including them here would produce fabricated positions and mark them 'late'.
+    with db._lock:
+        rows = db._conn.execute(
+            """SELECT c.id, c.char_start, c.char_end FROM chunks c
+               LEFT JOIN vectors v ON v.object_id = c.id AND v.object_type='chunk'
+               WHERE c.doc_id=? AND v.id IS NULL AND length(c.text) > 40
+                 AND c.char_start IS NOT NULL AND c.char_end IS NOT NULL
+               ORDER BY c.char_start, c.rowid""",
+            (doc_id,),
+        ).fetchall()
+
+    if not rows:
+        return 0
+
+    chunk_infos = [(r["id"], r["char_start"], r["char_end"]) for r in rows]
+    return embed_with_late_chunking(full_text, chunk_infos, db)
 
 
 def semantic_search(query: str, db: "OrivellumDB", object_type: str = "knowledge",
@@ -514,6 +596,204 @@ def embed_conversation_exchange(
             db.store_vector(chunk_id, "conv_chunk", pack_vector(vec), len(vec))
             logger.debug("Embedded conv_chunk %s for conv %s", chunk_id[:8], conv_id[:8])
     return chunk_id
+
+
+# ── Late chunking ─────────────────────────────────────────────────────────────
+#
+# Late chunking (Jina AI, 2024): encode the full document once, then
+# mean-pool token-level embeddings within each chunk's character span.
+# Each chunk vector inherits its surrounding context, improving similarity
+# search for short or ambiguous passages.
+#
+# Requires an embeddings endpoint that supports per-token output.  The probe
+# sends a small request with ``return_token_embeddings: true`` and checks
+# whether the response contains a 2-D ``embedding`` array (list of lists).
+# If the endpoint returns a flat 1-D array the feature is silently disabled
+# and standard per-chunk embedding is used instead.
+#
+# Probe results are cached in-process so the probe round-trip is paid only
+# once per server start (or after an explicit re-probe via the settings API).
+
+_late_chunking_probe_cache: bool | None = None
+_late_chunking_probe_lock = threading.Lock()
+
+
+def probe_late_chunking_support(*, force: bool = False) -> bool:
+    """Return True when the configured embeddings endpoint supports per-token output.
+
+    The result is cached in-process after the first successful probe.  Pass
+    ``force=True`` to invalidate the cache and re-probe (used by the settings
+    API so the user can refresh after switching models).
+
+    Never raises — returns False on any network or parse error.
+    """
+    global _late_chunking_probe_cache
+    with _late_chunking_probe_lock:
+        if not force and _late_chunking_probe_cache is not None:
+            return _late_chunking_probe_cache
+        result = _run_late_chunking_probe()
+        _late_chunking_probe_cache = result
+        logger.info(
+            "Late-chunking probe: endpoint %s per-token embeddings",
+            "supports" if result else "does NOT support",
+        )
+        return result
+
+
+def _run_late_chunking_probe() -> bool:
+    """Execute the actual probe request.  Returns True iff token-level output detected."""
+    if time.monotonic() < _unavailable_until:
+        return False
+    try:
+        base_url, model = _serving()
+        payload = json.dumps({
+            "model": model,
+            "input": "Late chunking probe.",
+            "return_token_embeddings": True,
+        }).encode()
+        req = urllib.request.Request(
+            f"{base_url}/embeddings", data=payload,
+            headers={"Content-Type": "application/json"}, method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read())
+        items = data.get("data", [])
+        if not items:
+            return False
+        emb = items[0].get("embedding")
+        # Per-token: embedding is a list of lists — shape (seq_len, dim).
+        # Standard: embedding is a flat list — shape (dim,).
+        return (
+            isinstance(emb, list)
+            and len(emb) > 0
+            and isinstance(emb[0], list)
+        )
+    except Exception as exc:
+        logger.debug("Late-chunking probe failed: %s", exc)
+        return False
+
+
+def embed_with_late_chunking(
+    full_text: str,
+    chunk_infos: list[tuple[str, int | None, int | None]],
+    db: "OrivellumDB",
+) -> int:
+    """Embed document chunks using the late-chunking technique.
+
+    Submits the full document text to the embeddings endpoint with
+    ``return_token_embeddings=True``, receives per-token vectors
+    ``(seq_len × dim)``, then mean-pools within each chunk's character span.
+    Each resulting vector reflects its surrounding document context rather
+    than the chunk text in isolation.
+
+    Args:
+        full_text: The document's full extracted text (truncated to
+            ``_MAX_TEXT_LEN`` before submission).
+        chunk_infos: List of ``(chunk_id, char_start, char_end)`` tuples.
+            ``char_start`` / ``char_end`` are byte offsets within *full_text*;
+            pass ``None`` for chunks without stored offsets — the encoder
+            estimates the span using proportional interpolation.
+        db: Database handle (used to write vectors and mark embedding_method).
+
+    Returns:
+        Number of new vectors stored.  Returns 0 if the endpoint does not
+        support per-token output (caller should then fall back to standard
+        per-chunk embedding).
+    """
+    global _late_chunking_probe_cache  # updated on flat-vector detection below
+
+    if not chunk_infos or not full_text:
+        return 0
+
+    # Truncate to what the model actually receives.
+    text = full_text[:_MAX_TEXT_LEN]
+    text_len = len(text)
+    if text_len == 0:
+        return 0
+
+    # Request per-token embeddings from the endpoint.
+    global _unavailable_until
+    if time.monotonic() < _unavailable_until:
+        return 0
+
+    base_url, model = _serving()
+    payload = json.dumps({
+        "model": model,
+        "input": text,
+        "return_token_embeddings": True,
+    }).encode()
+    req = urllib.request.Request(
+        f"{base_url}/embeddings", data=payload,
+        headers={"Content-Type": "application/json"}, method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=_EMBED_TIMEOUT) as resp:
+            data = json.loads(resp.read())
+    except Exception as exc:
+        _unavailable_until = time.monotonic() + _FAIL_COOLDOWN
+        logger.debug("Late-chunking embed request failed: %s", exc)
+        return 0
+
+    items = data.get("data", [])
+    if not items:
+        return 0
+
+    token_embs = items[0].get("embedding")
+    if not isinstance(token_embs, list) or not token_embs or not isinstance(token_embs[0], list):
+        # Endpoint returned a flat vector — not token-level; invalidate probe
+        # cache so the next call re-evaluates (e.g. after a model switch).
+        with _late_chunking_probe_lock:
+            _late_chunking_probe_cache = False  # noqa: F841 (module-level via closure)
+        logger.debug("Late-chunking: endpoint returned flat embedding, marking unsupported")
+        return 0
+
+    seq_len = len(token_embs)
+    dim = len(token_embs[0])
+    if dim == 0:
+        return 0
+
+    stored = 0
+    for chunk_id, char_start, char_end in chunk_infos:
+        # ── Derive token span ──────────────────────────────────────────────
+        # Only process chunks with valid non-NULL spans.  NULL-span chunks
+        # (beyond the 100k extracted-text cap, or from pages-only docs) must
+        # not receive fabricated positions — they are left unembedded here
+        # so the standard per-chunk path handles them.
+        if char_start is None or char_end is None:
+            continue
+        # Skip chunks not WHOLLY within the submitted text window.
+        # A chunk straddling the 6k boundary would pool only its prefix,
+        # producing a misleading vector and blocking the standard fallback.
+        # Leaving it unembedded here lets embed_chunks_for_doc pick it up.
+        if char_start >= text_len or char_end > text_len or char_start >= char_end:
+            continue
+        cs, ce = char_start, char_end
+
+        # Linear interpolation: char position → approximate token index.
+        t_start = int(cs / text_len * seq_len)
+        t_end = int(ce / text_len * seq_len)
+        t_end = max(t_start + 1, min(t_end, seq_len))  # at least 1 token
+
+        # Mean-pool the token embeddings within the span.
+        span = token_embs[t_start:t_end]
+        n_tokens = len(span)
+        pooled = [sum(span[i][j] for i in range(n_tokens)) / n_tokens
+                  for j in range(dim)]
+
+        # Store vector and mark the chunk's embedding method.
+        db.store_vector(chunk_id, "chunk", pack_vector(pooled), dim)
+        try:
+            with db._lock:
+                db._conn.execute(
+                    "UPDATE chunks SET embedding_method='late' WHERE id=?",
+                    (chunk_id,),
+                )
+                db._conn.commit()
+        except Exception:
+            pass  # non-fatal — vector is already stored
+        stored += 1
+
+    return stored
 
 
 def semantic_search_conversations(

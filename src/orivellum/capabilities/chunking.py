@@ -18,6 +18,13 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Canonical cap matching pipeline.py's update_document_extracted call:
+#   extracted_text = result.full_text[:_EXTRACTED_TEXT_CAP]
+# Chunk char offsets (Unicode code-points) are only stored when they fall
+# within this window; chunks beyond it receive NULL offsets and are handled
+# by the standard per-chunk embedding fallback.
+_EXTRACTED_TEXT_CAP = 100_000
+
 # Max characters of the document's opening text sent as context to the LLM
 # when generating per-chunk context prefixes.  Large enough to give meaningful
 # context; small enough to keep prompt tokens low.
@@ -63,23 +70,68 @@ def _words(text: str) -> list[str]:
     return text.split()
 
 
+def _word_char_offsets(text: str) -> tuple[list[str], list[int], list[int]]:
+    """Return ``(words, starts, ends)`` with byte offsets for each word in *text*.
+
+    O(n) single-pass scan; handles arbitrary whitespace (tabs, newlines,
+    multiple spaces) correctly.  ``starts[i]`` is the index of the first
+    character of ``words[i]`` in *text*; ``ends[i]`` is one past the last.
+    """
+    words: list[str] = []
+    starts: list[int] = []
+    ends: list[int] = []
+    i = 0
+    n = len(text)
+    while i < n:
+        # skip whitespace
+        while i < n and text[i].isspace():
+            i += 1
+        if i >= n:
+            break
+        s = i
+        while i < n and not text[i].isspace():
+            i += 1
+        words.append(text[s:i])
+        starts.append(s)
+        ends.append(i)
+    return words, starts, ends
+
+
 def _sliding_chunks(text: str, target: int = _TARGET_WORDS,
                     overlap: int = _OVERLAP_WORDS) -> list[str]:
-    """Split *text* into overlapping word-window chunks."""
-    words = _words(text)
+    """Split *text* into overlapping word-window chunks (text only, no spans)."""
+    return [c for c, _, _ in _sliding_chunks_with_spans(text, target, overlap)]
+
+
+def _sliding_chunks_with_spans(
+    text: str,
+    target: int = _TARGET_WORDS,
+    overlap: int = _OVERLAP_WORDS,
+) -> list[tuple[str, int, int]]:
+    """Split *text* into overlapping word-window chunks, returning char spans.
+
+    Returns a list of ``(chunk_text, char_start, char_end)`` where
+    ``char_start`` / ``char_end`` are byte offsets **within *text*** pointing
+    to the first character of the first word and one-past-last character of the
+    last word in each chunk.  Internal whitespace is preserved (the returned
+    text is a contiguous slice of the input, not a space-joined reconstruction).
+    """
+    words, word_starts, word_ends = _word_char_offsets(text)
     if not words:
         return []
     if len(words) <= target:
-        return [text]
-    chunks: list[str] = []
+        return [(text[word_starts[0]:word_ends[-1]], word_starts[0], word_ends[-1])]
+    results: list[tuple[str, int, int]] = []
     start = 0
     while start < len(words):
         end = min(start + target, len(words))
-        chunks.append(" ".join(words[start:end]))
+        c_start = word_starts[start]
+        c_end = word_ends[end - 1]
+        results.append((text[c_start:c_end], c_start, c_end))
         if end >= len(words):
             break
         start = end - overlap
-    return chunks
+    return results
 
 
 def generate_context_prefixes_for_doc(
@@ -173,27 +225,102 @@ def generate_context_prefixes_for_doc(
         return 0
 
 
+def _build_page_boundaries(pages: list) -> list[tuple[int, int, int]]:
+    """Return ``(page_num, approx_start, approx_end)`` tuples for page-number lookup.
+
+    When chunks are derived from ``result.full_text`` (not page-by-page),
+    this lets us assign an approximate page number to each chunk based on
+    cumulative page-text lengths.  The estimate is within ``n_pages`` code-points
+    of the true boundary — acceptable for the page-number display column, which
+    is metadata and not used for retrieval or embedding.
+    """
+    bounds: list[tuple[int, int, int]] = []
+    cursor = 0
+    for seg in pages:
+        text_len = len(seg.text or "")
+        if text_len:
+            bounds.append((seg.page, cursor, cursor + text_len))
+            cursor += text_len + 1  # +1 for a rough separator gap
+    return bounds
+
+
+def _find_page_for_offset(
+    char_start: int, page_boundaries: list[tuple[int, int, int]]
+) -> int:
+    """Return the estimated page number for a chunk starting at *char_start*."""
+    for page_num, start, end in page_boundaries:
+        if start <= char_start < end:
+            return page_num
+    return page_boundaries[-1][0] if page_boundaries else 0
+
+
 def chunk_and_store(result: "ExtractionResult", doc_id: str, db: "OrivellumDB") -> int:
-    """Chunk *result* and write all chunks to the DB. Returns chunk count."""
-    db.delete_chunks(doc_id)  # clear any previous extraction
+    """Chunk *result* and write all chunks to the DB. Returns chunk count.
+
+    **Offset invariant**: ``char_start`` / ``char_end`` are Unicode code-point
+    offsets within ``result.full_text``.  The pipeline stores
+    ``documents.extracted_text = result.full_text[:_EXTRACTED_TEXT_CAP]``, so
+    any non-NULL offset stored here is a valid position in ``extracted_text``.
+
+    **Design**: chunks are always derived from ``result.full_text`` when it is
+    available — never from page text searched inside ``full_text``.  This
+    eliminates fingerprint-search fragility (CRLF normalization, repeated
+    prefixes, separator-style differences between extractor and aggregator).
+    Page numbers are assigned via a cumulative length estimate; they are
+    display metadata only and do not affect retrieval or embedding.
+
+    **Cap rule**: offsets are stored only when the chunk span is *wholly*
+    contained within ``[0, _EXTRACTED_TEXT_CAP)``.  Chunks that start before
+    the cap but end after it, and chunks that start at or beyond the cap,
+    both receive ``NULL`` offsets so the late-chunking encoder skips them and
+    the standard per-chunk fallback handles them — no partial late embeddings.
+    """
+    db.delete_chunks(doc_id)
     stored = 0
     target, overlap = _resolve_chunk_params(db)
 
-    if result.pages:
+    if result.full_text:
+        # Primary path: chunk full_text directly.
+        # char offsets are always valid positions in extracted_text; no
+        # fingerprint search → immune to CRLF / separator-style differences.
+        page_boundaries = _build_page_boundaries(result.pages) if result.pages else []
+
+        for chunk_text, char_start, char_end in _sliding_chunks_with_spans(
+            result.full_text, target, overlap
+        ):
+            chunk_text = chunk_text.strip()
+            if len(chunk_text) < 20:
+                continue
+
+            page = _find_page_for_offset(char_start, page_boundaries) if page_boundaries else 0
+
+            # Store offsets only for chunks WHOLLY within extracted_text window.
+            # Straddling chunks (char_end > cap) → NULL both → standard fallback.
+            if char_start < _EXTRACTED_TEXT_CAP and char_end <= _EXTRACTED_TEXT_CAP:
+                cs: int | None = char_start
+                ce: int | None = char_end
+            else:
+                cs = ce = None
+
+            db.add_chunk(
+                doc_id=doc_id, text=chunk_text, page=page,
+                char_start=cs, char_end=ce,
+            )
+            stored += 1
+
+    elif result.pages:
+        # Fallback: no full_text — page-based chunking; offsets NULL.
+        # Late chunking is unavailable (extracted_text also absent).
         for seg in result.pages:
-            for chunk_text in _sliding_chunks(seg.text, target, overlap):
+            seg_text = seg.text or ""
+            if not seg_text.strip():
+                continue
+            for chunk_text, _, _ in _sliding_chunks_with_spans(seg_text, target, overlap):
                 chunk_text = chunk_text.strip()
                 if len(chunk_text) < 20:
                     continue
                 db.add_chunk(doc_id=doc_id, text=chunk_text, page=seg.page)
                 stored += 1
-    elif result.full_text:
-        for chunk_text in _sliding_chunks(result.full_text, target, overlap):
-            chunk_text = chunk_text.strip()
-            if len(chunk_text) < 20:
-                continue
-            db.add_chunk(doc_id=doc_id, text=chunk_text, page=0)
-            stored += 1
 
     logger.info("Stored %d chunks for doc %s", stored, doc_id)
     return stored

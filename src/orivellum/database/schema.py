@@ -1361,4 +1361,30 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         ALTER TABLE push_tokens ADD COLUMN key_hash TEXT;
         CREATE INDEX IF NOT EXISTS push_tokens_key_hash ON push_tokens(key_hash);
     """),
+
+    # v82 — Late-chunking metadata columns on the chunks table.
+    #
+    # embedding_method: "standard" (independent per-chunk embedding) or "late"
+    #   (full-document token pooling per Jina AI late chunking, 2024).  NULL
+    #   means the chunk was stored before this migration and has not been
+    #   re-embedded yet; the nightly backfill does not change the method for
+    #   existing vectors.
+    #
+    # char_start / char_end: Unicode code-point offsets of this chunk within
+    #   documents.extracted_text.  Python string indices and slices always
+    #   count code-points (not UTF-8 bytes), so these are code-point offsets.
+    #
+    #   Offsets are bounded by the extracted_text persistence cap
+    #   (_EXTRACTED_TEXT_CAP = 100_000 code-points) set in pipeline.py.
+    #   Chunks beyond the cap have char_start = char_end = NULL so the
+    #   late-chunking encoder skips them and the standard per-chunk path
+    #   handles them instead.  This guarantees that non-NULL offsets always
+    #   refer to valid positions within documents.extracted_text.
+    #
+    #   NULL for chunks created before this migration.
+    (82, "Add embedding_method and char offsets to chunks", """
+        ALTER TABLE chunks ADD COLUMN embedding_method TEXT;
+        ALTER TABLE chunks ADD COLUMN char_start INTEGER;
+        ALTER TABLE chunks ADD COLUMN char_end INTEGER;
+    """),
 ]

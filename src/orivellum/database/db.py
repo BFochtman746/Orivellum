@@ -2686,8 +2686,15 @@ class OrivellumDB:
     # Chunks (extracted text segments, FTS-indexed)
     # -------------------------------------------------------------------------
 
-    def add_chunk(self, doc_id: str, text: str, page: int = 0,
-                  context_prefix: str | None = None) -> str:
+    def add_chunk(
+        self,
+        doc_id: str,
+        text: str,
+        page: int = 0,
+        context_prefix: str | None = None,
+        char_start: int | None = None,
+        char_end: int | None = None,
+    ) -> str:
         """Insert a text chunk and update the FTS index. Returns chunk id.
 
         chunks.id is a FK to objects(id), so we must register it there first.
@@ -2697,6 +2704,14 @@ class OrivellumDB:
         stored in the chunks row and prepended to the raw text before embedding
         so retrieval quality improves.  NULL means "not yet generated"; the
         nightshift backfill fills these in for existing chunks.
+
+        ``char_start`` / ``char_end`` are Unicode code-point offsets of this
+        chunk within ``documents.extracted_text`` (Python string slicing is
+        code-point based, not byte-based).  Values are bounded by the
+        ``_EXTRACTED_TEXT_CAP`` (100 000 code-points) applied when persisting
+        ``extracted_text``; chunks beyond the cap are stored with NULL offsets
+        and fall back to standard per-chunk embedding.  NULL is accepted for
+        backward-compatibility (pre-v82 call sites).
         """
         cid = _uuid()
         now = _now()
@@ -2714,8 +2729,10 @@ class OrivellumDB:
                 (cid, "chunk", now, now),
             )
             self._conn.execute(
-                "INSERT INTO chunks(id,doc_id,page,text,context_prefix,created_at) VALUES(?,?,?,?,?,?)",
-                (cid, doc_id, page, text, context_prefix, now),
+                """INSERT INTO chunks
+                       (id, doc_id, page, text, context_prefix, char_start, char_end, created_at)
+                   VALUES (?,?,?,?,?,?,?,?)""",
+                (cid, doc_id, page, text, context_prefix, char_start, char_end, now),
             )
             self._conn.execute(
                 "INSERT INTO chunks_fts(chunk_id,doc_id,text) VALUES(?,?,?)",
