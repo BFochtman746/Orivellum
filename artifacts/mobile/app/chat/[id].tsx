@@ -3,6 +3,7 @@ import { mobileFetch } from '@/lib/api';
 import {
   ActionSheetIOS,
   ActivityIndicator,
+  Animated,
   Alert,
   FlatList,
   Image,
@@ -44,6 +45,31 @@ function MessageBubble({ message, colors, isDark, onResend, onRetry, highlighted
   const isErr = (message as any).isError;
   const textColor = isUser ? colors.primaryForeground : isErr ? colors.mutedForeground : colors.foreground;
   const [copied, setCopied] = useState(false);
+
+  // ── Highlight fade-out animation ────────────────────────────────────────────
+  // When `highlighted` becomes true the opacity is immediately set to 1.
+  // After a 1 400 ms hold (scroll completes + a comfortable read window) it
+  // tweens to 0 over 600 ms so the transition feels smooth instead of abrupt.
+  // The Animated.View is always in the tree; opacity = 0 when not highlighted.
+  const highlightAnim = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (!highlighted) {
+      // Snap to invisible without animating (covers the case where state is
+      // cleared after the animation has already finished).
+      highlightAnim.stopAnimation();
+      highlightAnim.setValue(0);
+      return;
+    }
+    highlightAnim.setValue(1);
+    const fadeTimer = setTimeout(() => {
+      Animated.timing(highlightAnim, {
+        toValue: 0,
+        duration: 600,
+        useNativeDriver: false, // backgroundColor requires JS driver
+      }).start();
+    }, 1400);
+    return () => clearTimeout(fadeTimer);
+  }, [highlighted]);
 
   const handleLongPress = async () => {
     if (!message.text) return;
@@ -133,14 +159,27 @@ function MessageBubble({ message, colors, isDark, onResend, onRetry, highlighted
       style={[
         styles.bubbleRow,
         isUser ? styles.bubbleRight : styles.bubbleLeft,
+        // Keep the layout expansion when highlighted so the background fills
+        // the right area; the colour itself comes from the Animated.View below.
         highlighted && {
-          backgroundColor: colors.primary + '18',
           borderRadius: 12,
           marginHorizontal: -4,
           paddingHorizontal: 4,
         },
       ]}
     >
+      {/* Animated highlight background — always rendered, opacity tweens 1→0 */}
+      <Animated.View
+        pointerEvents="none"
+        style={[
+          StyleSheet.absoluteFillObject,
+          {
+            borderRadius: 12,
+            backgroundColor: colors.primary + '18',
+            opacity: highlightAnim,
+          },
+        ]}
+      />
       {!isUser && (
         <View
           style={[
@@ -612,7 +651,10 @@ export default function ChatScreen() {
     const scrollTimer = setTimeout(() => {
       flatListRef.current?.scrollToIndex({ index: displayIndex, animated: true, viewPosition: 0.5 });
       setHighlightedMsgId(msgId);
-      highlightTimer = setTimeout(() => setHighlightedMsgId(null), 2000);
+      // 1 400 ms hold + 600 ms fade + 200 ms buffer = 2 200 ms before clearing.
+      // The Animated.View is already at opacity 0 by the time this fires so
+      // setting highlightedMsgId to null causes no visible jump.
+      highlightTimer = setTimeout(() => setHighlightedMsgId(null), 2200);
     }, 400);
 
     return () => {
