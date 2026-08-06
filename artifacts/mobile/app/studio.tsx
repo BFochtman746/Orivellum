@@ -197,6 +197,15 @@ function SavePhotoButton({ uri, name, compact }: { uri: string; name?: string; c
 /**
  * Download an authenticated audio URL and open the native share sheet.
  * On web, falls back to a browser download (same as saveImageToPhotos).
+ *
+ * Hardening notes:
+ * - Sanitizes the filename so spaces/special chars don't break the iOS cache
+ *   path (e.g. "My Novel Audiobook.mp3" → "My_Novel_Audiobook.mp3").
+ * - Deletes any stale cached file BEFORE downloading so an incomplete
+ *   previous download can never be served to the share sheet.
+ * - Verifies the downloaded file exists and has size > 0 before sharing,
+ *   catching silent flush failures that leave a zero-byte file.
+ * - Cleans up the cache file after the share sheet closes (best-effort).
  */
 async function shareAudioFile(uri: string, name = `orivellum_${Date.now()}.mp3`) {
   if (Platform.OS === 'web') {
@@ -215,23 +224,43 @@ async function shareAudioFile(uri: string, name = `orivellum_${Date.now()}.mp3`)
   const Sharing    = await import('expo-sharing');
 
   const token = getApiToken();
-  const dest  = `${FileSystem.cacheDirectory}${name}`;
+  // Replace spaces and any character that can break a file-system path on
+  // iOS with underscores. The share sheet uses `dialogTitle` for display,
+  // so the sanitized name is only ever seen as the cache filename.
+  const safeName = name.replace(/[^a-zA-Z0-9._-]/g, '_');
+  const dest = `${FileSystem.cacheDirectory}${safeName}`;
+
+  // Remove any stale / incomplete file from a previous attempt before
+  // downloading so the share sheet never receives corrupt data.
+  await FileSystem.deleteAsync(dest, { idempotent: true });
+
   const dl = await FileSystem.downloadAsync(uri, dest, {
     headers: token ? { authorization: `Bearer ${token}` } : undefined,
   });
   if (dl.status !== 200) throw new Error(`Download failed (HTTP ${dl.status})`);
 
+  // Verify the file actually landed on disk with content.
+  const info = await FileSystem.getInfoAsync(dl.uri);
+  if (!info.exists) {
+    throw new Error('Audio file not found after download — please try again');
+  }
+  // `size` is present on the FileInfo shape when exists=true
+  const size = (info as { size?: number }).size ?? -1;
+  if (size === 0) {
+    throw new Error('Downloaded audio file is empty — the server may not have finished exporting');
+  }
+
   const canShare = await Sharing.isAvailableAsync();
   if (canShare) {
     await Sharing.shareAsync(dl.uri, {
       mimeType: 'audio/mpeg',
-      dialogTitle: name,
+      dialogTitle: name,   // show the original human-readable name in the dialog
       UTI: 'public.mp3',
     });
   } else {
     Alert.alert('Share unavailable', 'Sharing is not supported on this platform.');
   }
-  // Clean up cache after sharing dialog closes (best-effort)
+  // Clean up cache after the sharing dialog closes (best-effort).
   FileSystem.deleteAsync(dest, { idempotent: true }).catch(() => {});
 }
 
@@ -3031,27 +3060,12 @@ function AudiobookPanel({
     if (!result || sharing) return;
     setSharing(true);
     try {
-      const FileSystem = await import('expo-file-system/legacy');
-      const Sharing = await import('expo-sharing');
-      const token = getApiToken();
-      const uri = serveUrl(result.path);
-      const dest = `${FileSystem.cacheDirectory}${result.filename}`;
-      const dl = await FileSystem.downloadAsync(uri, dest, {
-        headers: token ? { authorization: `Bearer ${token}` } : undefined,
-      });
-      if (dl.status !== 200) throw new Error(`Download failed (HTTP ${dl.status})`);
-      const canShare = await Sharing.isAvailableAsync();
-      if (canShare) {
-        await Sharing.shareAsync(dl.uri, {
-          mimeType: 'audio/mpeg',
-          dialogTitle: result.filename,
-          UTI: 'public.mp3',
-        });
-      } else {
-        Alert.alert('Share unavailable', 'Sharing is not supported on this platform.');
-      }
+      // Delegate to the shared utility which handles filename sanitization,
+      // stale-cache cleanup, post-download size verification, and cleanup
+      // after the share sheet closes — all in one tested path.
+      await shareAudioFile(serveUrl(result.path), result.filename);
     } catch (e: any) {
-      Alert.alert('Share failed', e?.message ?? 'Could not share file');
+      Alert.alert('Share failed', e?.message ?? 'Could not share audiobook');
     } finally {
       setSharing(false);
     }
