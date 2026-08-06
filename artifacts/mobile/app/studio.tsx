@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -1916,6 +1917,12 @@ function ImagePanel({ onGenerated }: { onGenerated: () => void }) {
   const [resultUri, setResultUri] = useState<string | null>(null);
   const [status, setStatus] = useState<{ any_online: boolean; backends: any[] } | null>(null);
 
+  // ── Backend settings modal ───────────────────────────────────────────────────
+  const [settingsVisible, setSettingsVisible] = useState(false);
+  const [urlInput, setUrlInput] = useState('');
+  const [loadingUrl, setLoadingUrl] = useState(false);
+  const [saving, setSaving] = useState(false);
+
   const loadStatus = async () => {
     try {
       const r = await mobileFetch(`${API}/studio/image-status`);
@@ -1928,6 +1935,38 @@ function ImagePanel({ onGenerated }: { onGenerated: () => void }) {
     const t = setInterval(loadStatus, 30_000);
     return () => clearInterval(t);
   }, []);
+
+  const openSettings = async () => {
+    setSettingsVisible(true);
+    setLoadingUrl(true);
+    try {
+      const r = await mobileFetch(`${API}/system/settings/image-gen`);
+      if (r.ok) {
+        const d = await r.json();
+        setUrlInput(d.url ?? '');
+      }
+    } catch {}
+    setLoadingUrl(false);
+  };
+
+  const saveSettings = async () => {
+    setSaving(true);
+    try {
+      const r = await mobileFetch(`${API}/system/settings/image-gen`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: urlInput.trim() }),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      setSettingsVisible(false);
+      // Re-probe immediately so the pill updates
+      loadStatus();
+    } catch (e: any) {
+      Alert.alert('Could not save', e?.message ?? 'Settings save failed');
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const handleGenerate = async () => {
     if (!prompt.trim()) return;
@@ -1965,74 +2004,243 @@ function ImagePanel({ onGenerated }: { onGenerated: () => void }) {
   const anyOnline = status?.any_online ?? false;
 
   return (
-    <SectionCard
-      title="Image Generation"
-      icon="image"
-      right={
-        <View style={[styles.statusPill, { borderColor: anyOnline ? '#22c55e55' : colors.border, backgroundColor: anyOnline ? '#22c55e18' : 'transparent' }]}>
-          <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: anyOnline ? '#22c55e' : colors.mutedForeground }} />
-          <Text style={{ fontSize: 10, fontFamily: 'Inter_500Medium', color: anyOnline ? '#22c55e' : colors.mutedForeground }}>
-            {anyOnline ? 'Backend online' : 'No backend'}
-          </Text>
-        </View>
-      }
-    >
-      <View style={styles.field}>
-        <FieldLabel>Prompt</FieldLabel>
-        <TextInput
-          style={[styles.textArea, { color: colors.foreground, borderColor: colors.border, backgroundColor: colors.background, minHeight: 70 }]}
-          placeholder="Describe the image to generate…"
-          placeholderTextColor={colors.mutedForeground}
-          value={prompt}
-          onChangeText={setPrompt}
-          multiline
-        />
-      </View>
-
-      <View style={styles.field}>
-        <FieldLabel>Negative prompt (optional)</FieldLabel>
-        <TextInput
-          style={[styles.textArea, { color: colors.foreground, borderColor: colors.border, backgroundColor: colors.background, minHeight: 44 }]}
-          placeholder="What to avoid…"
-          placeholderTextColor={colors.mutedForeground}
-          value={negPrompt}
-          onChangeText={setNegPrompt}
-          multiline
-        />
-      </View>
-
-      <View style={styles.field}>
-        <FieldLabel>Size</FieldLabel>
-        <PillPicker options={SIZES} value={size} onChange={setSize} render={(s) => `${s}px`} />
-      </View>
-
-      <Pressable
-        onPress={handleGenerate}
-        disabled={!prompt.trim() || loading}
-        style={({ pressed }) => [
-          styles.primaryButton,
-          { backgroundColor: colors.primary, opacity: !prompt.trim() || loading ? 0.5 : pressed ? 0.85 : 1 },
-        ]}
+    <>
+      {/* ── Backend settings modal ─────────────────────────────────────────────── */}
+      <Modal
+        visible={settingsVisible}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setSettingsVisible(false)}
       >
-        {loading ? (
-          <ActivityIndicator color={colors.primaryForeground} size="small" />
-        ) : (
-          <Feather name="image" size={15} color={colors.primaryForeground} />
-        )}
-        <Text style={[styles.primaryButtonText, { color: colors.primaryForeground }]}>
-          {loading ? 'Generating…' : 'Generate Image'}
-        </Text>
-      </Pressable>
+        <Pressable
+          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' }}
+          onPress={() => setSettingsVisible(false)}
+        >
+          <Pressable
+            onPress={() => {/* swallow taps inside the sheet */}}
+            style={[imgSettingsStyles.sheet, { backgroundColor: colors.card, borderColor: colors.border }]}
+          >
+            <View style={imgSettingsStyles.handle} />
 
-      {resultUri && (
-        <View style={[styles.imageResult, { borderColor: colors.border }]}>
-          <Image source={authSource(resultUri)} style={styles.resultImage} contentFit="contain" />
-          <SavePhotoButton uri={resultUri} />
+            <Text style={[imgSettingsStyles.title, { color: colors.foreground }]}>
+              Image Backend Settings
+            </Text>
+            <Text style={[imgSettingsStyles.subtitle, { color: colors.mutedForeground }]}>
+              Enter a custom URL (Automatic1111, ComfyUI, or compatible). Leave blank to auto-detect.
+            </Text>
+
+            {/* Custom URL input */}
+            <View style={{ marginTop: 16 }}>
+              <Text style={[imgSettingsStyles.label, { color: colors.mutedForeground }]}>Custom backend URL</Text>
+              {loadingUrl ? (
+                <ActivityIndicator color={colors.primary} style={{ marginVertical: 12 }} />
+              ) : (
+                <TextInput
+                  style={[imgSettingsStyles.input, { color: colors.foreground, borderColor: colors.border, backgroundColor: colors.background }]}
+                  placeholder="http://192.168.1.x:7860"
+                  placeholderTextColor={colors.mutedForeground}
+                  value={urlInput}
+                  onChangeText={setUrlInput}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  keyboardType="url"
+                />
+              )}
+            </View>
+
+            {/* Backend status list */}
+            {(status?.backends ?? []).length > 0 && (
+              <View style={{ marginTop: 16, gap: 6 }}>
+                <Text style={[imgSettingsStyles.label, { color: colors.mutedForeground }]}>Detected backends</Text>
+                {(status?.backends ?? []).map((b: any, i: number) => (
+                  <View key={i} style={[imgSettingsStyles.backendRow, { borderColor: colors.border }]}>
+                    <View style={{
+                      width: 7, height: 7, borderRadius: 4,
+                      backgroundColor: b.online ? '#22c55e' : colors.mutedForeground,
+                    }} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontSize: 13, fontFamily: 'Inter_500Medium', color: colors.foreground }}>
+                        {b.name}
+                      </Text>
+                      <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: colors.mutedForeground }} numberOfLines={1}>
+                        {b.url}
+                      </Text>
+                    </View>
+                    <Text style={{ fontSize: 11, fontFamily: 'Inter_500Medium', color: b.online ? '#22c55e' : colors.mutedForeground }}>
+                      {b.online ? 'Online' : 'Offline'}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+            )}
+
+            {/* Actions */}
+            <View style={{ flexDirection: 'row', gap: 10, marginTop: 20 }}>
+              <Pressable
+                onPress={() => { setUrlInput(''); }}
+                style={[imgSettingsStyles.btnSecondary, { borderColor: colors.border }]}
+              >
+                <Text style={{ fontSize: 13, fontFamily: 'Inter_500Medium', color: colors.mutedForeground }}>Clear</Text>
+              </Pressable>
+              <Pressable
+                onPress={saveSettings}
+                disabled={saving}
+                style={({ pressed }) => [
+                  imgSettingsStyles.btnPrimary,
+                  { backgroundColor: colors.primary, opacity: saving ? 0.6 : pressed ? 0.85 : 1, flex: 1 },
+                ]}
+              >
+                {saving
+                  ? <ActivityIndicator size="small" color="#fff" />
+                  : <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: colors.primaryForeground }}>Save</Text>
+                }
+              </Pressable>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      <SectionCard
+        title="Image Generation"
+        icon="image"
+        right={
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <View style={[styles.statusPill, { borderColor: anyOnline ? '#22c55e55' : colors.border, backgroundColor: anyOnline ? '#22c55e18' : 'transparent' }]}>
+              <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: anyOnline ? '#22c55e' : colors.mutedForeground }} />
+              <Text style={{ fontSize: 10, fontFamily: 'Inter_500Medium', color: anyOnline ? '#22c55e' : colors.mutedForeground }}>
+                {anyOnline ? 'Backend online' : 'No backend'}
+              </Text>
+            </View>
+            <Pressable onPress={openSettings} hitSlop={8} style={styles.iconBtn}>
+              <Feather name="settings" size={14} color={colors.mutedForeground} />
+            </Pressable>
+          </View>
+        }
+      >
+        <View style={styles.field}>
+          <FieldLabel>Prompt</FieldLabel>
+          <TextInput
+            style={[styles.textArea, { color: colors.foreground, borderColor: colors.border, backgroundColor: colors.background, minHeight: 70 }]}
+            placeholder="Describe the image to generate…"
+            placeholderTextColor={colors.mutedForeground}
+            value={prompt}
+            onChangeText={setPrompt}
+            multiline
+          />
         </View>
-      )}
-    </SectionCard>
+
+        <View style={styles.field}>
+          <FieldLabel>Negative prompt (optional)</FieldLabel>
+          <TextInput
+            style={[styles.textArea, { color: colors.foreground, borderColor: colors.border, backgroundColor: colors.background, minHeight: 44 }]}
+            placeholder="What to avoid…"
+            placeholderTextColor={colors.mutedForeground}
+            value={negPrompt}
+            onChangeText={setNegPrompt}
+            multiline
+          />
+        </View>
+
+        <View style={styles.field}>
+          <FieldLabel>Size</FieldLabel>
+          <PillPicker options={SIZES} value={size} onChange={setSize} render={(s) => `${s}px`} />
+        </View>
+
+        <Pressable
+          onPress={handleGenerate}
+          disabled={!prompt.trim() || loading}
+          style={({ pressed }) => [
+            styles.primaryButton,
+            { backgroundColor: colors.primary, opacity: !prompt.trim() || loading ? 0.5 : pressed ? 0.85 : 1 },
+          ]}
+        >
+          {loading ? (
+            <ActivityIndicator color={colors.primaryForeground} size="small" />
+          ) : (
+            <Feather name="image" size={15} color={colors.primaryForeground} />
+          )}
+          <Text style={[styles.primaryButtonText, { color: colors.primaryForeground }]}>
+            {loading ? 'Generating…' : 'Generate Image'}
+          </Text>
+        </Pressable>
+
+        {resultUri && (
+          <View style={[styles.imageResult, { borderColor: colors.border }]}>
+            <Image source={authSource(resultUri)} style={styles.resultImage} contentFit="contain" />
+            <SavePhotoButton uri={resultUri} />
+          </View>
+        )}
+      </SectionCard>
+    </>
   );
 }
+
+const imgSettingsStyles = StyleSheet.create({
+  sheet: {
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    borderWidth: 1,
+    paddingHorizontal: 20,
+    paddingBottom: 36,
+    paddingTop: 12,
+  },
+  handle: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#88888844',
+    alignSelf: 'center',
+    marginBottom: 16,
+  },
+  title: {
+    fontSize: 17,
+    fontFamily: 'Inter_600SemiBold',
+    marginBottom: 4,
+  },
+  subtitle: {
+    fontSize: 12,
+    fontFamily: 'Inter_400Regular',
+    lineHeight: 18,
+  },
+  label: {
+    fontSize: 11,
+    fontFamily: 'Inter_500Medium',
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+    marginBottom: 6,
+  },
+  input: {
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    fontFamily: 'Inter_400Regular',
+  },
+  backendRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderWidth: 1,
+    borderRadius: 8,
+  },
+  btnSecondary: {
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  btnPrimary: {
+    borderRadius: 10,
+    paddingVertical: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+});
 
 // ── Recent outputs ────────────────────────────────────────────────────────────────
 
