@@ -1050,9 +1050,9 @@ function GapsTab({
                       backgroundColor: colors.primary, opacity: pressed ? 0.7 : 1,
                     })}
                   >
-                    <Feather name="search" size={12} color={colors.primaryForeground} />
+                    <Feather name="message-circle" size={12} color={colors.primaryForeground} />
                     <Text style={{ fontSize: 12, color: colors.primaryForeground, fontFamily: 'Inter_600SemiBold' }}>
-                      Research →
+                      Discuss →
                     </Text>
                   </Pressable>
                   <Pressable
