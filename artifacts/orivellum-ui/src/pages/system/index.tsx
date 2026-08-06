@@ -1965,9 +1965,14 @@ function VisionModelCard() {
 }
 
 
+type ImageBackend = { name: string; url: string; online: boolean };
+type ImageStatusResponse = { backends: ImageBackend[]; any_online: boolean };
+
 function ImageGenUrlCard() {
   const qc = useQueryClient();
-  const { data } = useQuery({
+
+  // ── URL setting ─────────────────────────────────────────────────────────────
+  const { data: urlData } = useQuery({
     queryKey: ["system", "image-gen-url"],
     queryFn: async () => {
       const r = await apiFetch(`${API_BASE}/api/system/settings/image-gen`);
@@ -1976,12 +1981,32 @@ function ImageGenUrlCard() {
     },
     staleTime: 60_000,
   });
+
+  // ── Backend status ───────────────────────────────────────────────────────────
+  const {
+    data: statusData,
+    isLoading: statusLoading,
+    isFetching: statusFetching,
+    refetch: refetchStatus,
+  } = useQuery<ImageStatusResponse>({
+    queryKey: ["studio", "image-status"],
+    queryFn: async () => {
+      const r = await apiFetch(`${API_BASE}/api/studio/image-status`);
+      if (!r.ok) throw new Error();
+      return r.json();
+    },
+    staleTime: 20_000,
+    refetchInterval: 30_000,
+  });
+
   const [editing, setEditing] = useState(false);
   const [val, setVal] = useState("");
+  const [saving, setSaving] = useState(false);
 
-  function startEdit() { setVal(data?.url ?? ""); setEditing(true); }
+  function startEdit() { setVal(urlData?.url ?? ""); setEditing(true); }
 
   async function save() {
+    setSaving(true);
     try {
       const r = await apiFetch(`${API_BASE}/api/system/settings/image-gen`, {
         method: "PUT",
@@ -1990,57 +2015,149 @@ function ImageGenUrlCard() {
       });
       if (!r.ok) throw new Error();
       qc.invalidateQueries({ queryKey: ["system", "image-gen-url"] });
-      qc.invalidateQueries({ queryKey: ["studio", "image-status"] });
+      // Re-probe immediately after URL change so the status list updates
+      await refetchStatus();
       toast.success(val.trim() ? "Image generation URL saved" : "Reverted to auto-detect");
       setEditing(false);
     } catch {
       toast.error("Could not save image generation URL");
+    } finally {
+      setSaving(false);
     }
   }
 
+  const backends = statusData?.backends ?? [];
+
   return (
     <Card>
-      <CardContent className="p-6">
-        <div className="flex items-start gap-3">
-          <ImageIcon className="w-5 h-5 text-primary mt-0.5 shrink-0" />
-          <div className="flex-1 space-y-2">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="font-medium text-sm">Image Generation Backend</h3>
-                <p className="text-sm text-muted-foreground mt-0.5">
-                  Orivellum auto-detects Automatic1111 (port 7860) and ComfyUI (port 8188).
-                  Set a custom URL here to override — e.g. a remote SD server or any
-                  OpenAI-compatible <code className="bg-muted px-1 rounded">/images/generations</code> endpoint.
-                  Leave blank to use auto-detection.
-                </p>
-              </div>
-              {!editing && (
-                <Button size="sm" variant="outline" className="ml-4 shrink-0 text-xs" onClick={startEdit}>
-                  {data?.url ? "Edit" : "Set URL"}
-                </Button>
-              )}
-            </div>
-            {!editing && data?.url && (
-              <p className="text-xs font-mono bg-muted/40 rounded px-2 py-1 truncate">{data.url}</p>
-            )}
-            {!editing && !data?.url && (
-              <p className="text-xs text-muted-foreground/60 font-mono">Auto-detect (Automatic1111 · ComfyUI)</p>
-            )}
-            {editing && (
-              <div className="flex gap-2">
-                <input
-                  autoFocus
-                  value={val}
-                  onChange={e => setVal(e.target.value)}
-                  placeholder="http://localhost:7860 or leave blank for auto-detect"
-                  className="flex-1 text-sm font-mono border border-border rounded px-2 py-1 bg-background focus:outline-none focus:ring-1 focus:ring-primary"
-                  onKeyDown={e => { if (e.key === "Enter") save(); if (e.key === "Escape") setEditing(false); }}
-                />
-                <Button size="sm" onClick={save}>Save</Button>
-                <Button size="sm" variant="ghost" onClick={() => setEditing(false)}>Cancel</Button>
-              </div>
+      <CardContent className="p-6 space-y-5">
+        {/* ── Header ──────────────────────────────────────────────────────────── */}
+        <div className="flex items-center gap-3">
+          <ImageIcon className="w-5 h-5 text-primary shrink-0" />
+          <div className="flex-1 min-w-0">
+            <h3 className="font-mono text-sm uppercase tracking-wider">Image Generation Backend</h3>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Orivellum auto-detects Automatic1111 (port 7860) and ComfyUI (port 8188).
+              Set a custom URL to override — e.g. a remote SD server or any OpenAI-compatible{" "}
+              <code className="bg-muted px-1 rounded text-[10px]">/images/generations</code>{" "}
+              endpoint. Leave blank for auto-detection.
+            </p>
+          </div>
+        </div>
+
+        {/* ── Custom URL editor ────────────────────────────────────────────────── */}
+        <div className="space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-[10px] font-mono uppercase tracking-widest text-muted-foreground">Custom URL</p>
+            {!editing && (
+              <Button size="sm" variant="outline" className="h-7 text-xs px-2.5" onClick={startEdit}>
+                {urlData?.url ? "Edit" : "Set URL"}
+              </Button>
             )}
           </div>
+
+          {!editing && urlData?.url && (
+            <p className="text-xs font-mono bg-muted/40 rounded px-2.5 py-1.5 truncate border border-border/40">
+              {urlData.url}
+            </p>
+          )}
+          {!editing && !urlData?.url && (
+            <p className="text-xs text-muted-foreground/60 font-mono italic">
+              Auto-detect (Automatic1111 · ComfyUI)
+            </p>
+          )}
+          {editing && (
+            <div className="flex gap-2">
+              <Input
+                autoFocus
+                value={val}
+                onChange={e => setVal(e.target.value)}
+                placeholder="http://localhost:7860 or leave blank for auto-detect"
+                className="flex-1 text-xs font-mono h-8"
+                onKeyDown={e => { if (e.key === "Enter") save(); if (e.key === "Escape") setEditing(false); }}
+                disabled={saving}
+              />
+              <Button size="sm" className="h-8 px-3 text-xs gap-1.5" onClick={save} disabled={saving}>
+                {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
+                Save
+              </Button>
+              <Button size="sm" variant="ghost" className="h-8 px-3 text-xs" onClick={() => setEditing(false)} disabled={saving}>
+                Cancel
+              </Button>
+            </div>
+          )}
+        </div>
+
+        {/* ── Backend status list ──────────────────────────────────────────────── */}
+        <div className="space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-[10px] font-mono uppercase tracking-widest text-muted-foreground">
+              Backend Status
+            </p>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-6 px-2 text-xs gap-1"
+              onClick={() => refetchStatus()}
+              disabled={statusFetching}
+              title="Re-probe all backends"
+            >
+              {statusFetching
+                ? <Loader2 className="w-3 h-3 animate-spin" />
+                : <RotateCcw className="w-3 h-3" />}
+              Refresh
+            </Button>
+          </div>
+
+          {statusLoading ? (
+            <div className="space-y-1.5">
+              <Skeleton className="h-8 w-full" />
+              <Skeleton className="h-8 w-full" />
+            </div>
+          ) : backends.length === 0 ? (
+            <div className="flex items-center gap-2 text-xs text-muted-foreground px-3 py-2 rounded-lg border border-border/40 bg-muted/20">
+              <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+              No backends reachable — start Automatic1111, ComfyUI, or set a custom URL above.
+            </div>
+          ) : (
+            <div className="divide-y divide-border/30 rounded-lg border border-border/40 overflow-hidden">
+              {backends.map((b, i) => (
+                <div
+                  key={i}
+                  className={`flex items-center gap-3 px-3 py-2.5 text-xs ${
+                    b.online ? "" : "opacity-50"
+                  }`}
+                >
+                  {b.online ? (
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                  ) : (
+                    <XCircle className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                  )}
+                  <span className="font-medium min-w-[120px] shrink-0">{b.name}</span>
+                  <span className="font-mono text-muted-foreground truncate flex-1" title={b.url}>
+                    {b.url}
+                  </span>
+                  <Badge
+                    variant={b.online ? "default" : "secondary"}
+                    className={`text-[10px] shrink-0 ${
+                      b.online
+                        ? "bg-emerald-500/15 text-emerald-700 border-emerald-500/20 hover:bg-emerald-500/15"
+                        : ""
+                    }`}
+                  >
+                    {b.online ? "Online" : "Offline"}
+                  </Badge>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {statusData && !statusData.any_online && (
+            <p className="text-xs text-amber-600 flex items-center gap-1.5">
+              <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+              No image backend is reachable. Image generation will be unavailable until at least one is online.
+            </p>
+          )}
         </div>
       </CardContent>
     </Card>
