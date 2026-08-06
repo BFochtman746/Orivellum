@@ -225,6 +225,90 @@ function ServerHealthCard() {
   );
 }
 
+// ── Review Queue tile ─────────────────────────────────────────────────────────
+
+const _REVIEW_TYPE_LABELS: Record<string, string> = {
+  knowledge:  'AI knowledge',
+  reclassify: 'Reclassify',
+  suggestion: 'Suggestion',
+  duplicate:  'Duplicate',
+};
+
+const _REVIEW_QUEUE_URL = `https://${process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000'}/api/review/queue`;
+
+function ReviewQueueTile() {
+  const colors = useColors();
+  const router = useRouter();
+
+  const { data } = useQuery<{
+    count: number;
+    counts_by_type: Record<string, number>;
+  } | null>({
+    queryKey: ['review', 'queue', 'dashboard-tile'],
+    queryFn: async () => {
+      const r = await mobileFetch(_REVIEW_QUEUE_URL);
+      if (!r.ok) return null;
+      return r.json();
+    },
+    refetchInterval: 60_000,
+    staleTime: 50_000,
+  });
+
+  const count = data?.count ?? 0;
+  if (count === 0) return null;
+
+  // Pick the top two non-zero types as a compact subtitle
+  const breakdown = Object.entries(data?.counts_by_type ?? {})
+    .filter(([, n]) => n > 0)
+    .sort(([, a], [, b]) => b - a)
+    .slice(0, 2)
+    .map(([key, n]) => `${n} ${_REVIEW_TYPE_LABELS[key] ?? key}`)
+    .join(' · ');
+
+  return (
+    <Pressable
+      onPress={() => router.push('/review' as any)}
+      style={({ pressed }) => [
+        styles.reviewTile,
+        {
+          backgroundColor: colors.card,
+          borderColor: '#f59e0b44',
+          opacity: pressed ? 0.8 : 1,
+        },
+      ]}
+      accessibilityRole="button"
+      accessibilityLabel={`Review queue: ${count} item${count !== 1 ? 's' : ''} pending`}
+    >
+      {/* Icon */}
+      <View style={[styles.reviewTileIcon, { backgroundColor: '#f59e0b18' }]}>
+        <Feather name="shield" size={18} color="#f59e0b" />
+        {/* Count badge */}
+        <View style={styles.reviewTileBadge}>
+          <Text style={styles.reviewTileBadgeText}>
+            {count > 99 ? '99+' : String(count)}
+          </Text>
+        </View>
+      </View>
+
+      {/* Text */}
+      <View style={{ flex: 1 }}>
+        <Text style={[styles.reviewTileTitle, { color: colors.foreground }]}>
+          {count} item{count !== 1 ? 's' : ''} to review
+        </Text>
+        {!!breakdown && (
+          <Text style={[styles.reviewTileSub, { color: colors.mutedForeground }]}>
+            {breakdown}
+          </Text>
+        )}
+      </View>
+
+      <Feather name="chevron-right" size={16} color={colors.mutedForeground} />
+    </Pressable>
+  );
+}
+
+// ── Studio card ───────────────────────────────────────────────────────────────
+
 function StudioCard() {
   const colors = useColors();
   const router = useRouter();
@@ -1754,6 +1838,9 @@ export default function DashboardScreen() {
           {/* Studio quick action */}
           <StudioCard />
 
+          {/* Review queue nudge — disappears when queue is empty */}
+          <ReviewQueueTile />
+
           {/* Offline banner — shown when we have cached data but server is unreachable */}
           {isError && hasData && (
             <OfflineBanner
@@ -1892,6 +1979,52 @@ const styles = StyleSheet.create({
   brand: { fontSize: 28, ...font('bold'), letterSpacing: -0.5 },
   subtitle: { fontSize: 15, ...font('regular'), lineHeight: 20, marginTop: 2 },
   loader: { marginVertical: 24 },
+  // Review queue tile
+  reviewTile: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 10,
+    borderWidth: 1,
+    padding: 14,
+    gap: 12,
+    marginBottom: 14,
+  },
+  reviewTileIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
+  },
+  reviewTileBadge: {
+    position: 'absolute',
+    top: -4,
+    right: -4,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: '#ef4444',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 3,
+  },
+  reviewTileBadgeText: {
+    fontSize: 9,
+    fontFamily: 'Inter_700Bold',
+    color: '#fff',
+    lineHeight: 11,
+  },
+  reviewTileTitle: {
+    fontSize: 14,
+    fontFamily: 'Inter_600SemiBold',
+  },
+  reviewTileSub: {
+    fontSize: 12,
+    fontFamily: 'Inter_400Regular',
+    marginTop: 2,
+  },
+
   studioCard: {
     flexDirection: 'row',
     alignItems: 'center',
