@@ -179,7 +179,7 @@ function ChunksSection({ docId, domain, colors }: {
                     <Text style={{ fontSize: 10, fontFamily: 'Inter_600SemiBold', color: colors.primary }}>p.{chunk.page}</Text>
                   </View>
                 )}
-                <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: colors.foreground, lineHeight: 18 }} numberOfLines={4}>
+                <Text style={{ fontSize: 17, fontFamily: 'Inter_400Regular', color: colors.foreground, lineHeight: 24 }} numberOfLines={4}>
                   {chunk.text}
                 </Text>
               </View>
@@ -208,12 +208,12 @@ function ExtractedTextSection({ text, colors }: { text: string; colors: ReturnTy
       </Pressable>
       {expanded ? (
         <ScrollView style={{ maxHeight: 320, padding: 12 }} nestedScrollEnabled>
-          <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: colors.foreground, lineHeight: 18 }}>{text}</Text>
+          <Text style={{ fontSize: 17, fontFamily: 'Inter_400Regular', color: colors.foreground, lineHeight: 24 }}>{text}</Text>
         </ScrollView>
       ) : (
         <View style={{ padding: 12 }}>
-          <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: colors.foreground + 'bb', lineHeight: 18 }}>{preview}</Text>
-          {hasMore && <Text style={{ fontSize: 11, color: colors.primary, marginTop: 4 }}>Tap to expand…</Text>}
+          <Text style={{ fontSize: 17, fontFamily: 'Inter_400Regular', color: colors.foreground + 'bb', lineHeight: 24 }}>{preview}</Text>
+          {hasMore && <Text style={{ fontSize: 13, color: colors.primary, marginTop: 4 }}>Tap to expand…</Text>}
         </View>
       )}
     </View>
@@ -1543,7 +1543,7 @@ const styles = StyleSheet.create({
   metaRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
   badge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 5 },
   badgeText: { fontSize: 11, fontFamily: 'Inter_600SemiBold', letterSpacing: 0.3 },
-  metaText: { fontSize: 12, fontFamily: 'Inter_400Regular' },
+  metaText: { fontSize: 13, fontFamily: 'Inter_400Regular' },
   listenBtn: {
     flexDirection: 'row', alignItems: 'center', gap: 6,
     alignSelf: 'flex-start', marginTop: 10,
@@ -1572,9 +1572,9 @@ const styles = StyleSheet.create({
   errorText: { fontSize: 13, fontFamily: 'Inter_400Regular', flex: 1 },
   reviewHeader: { fontSize: 12, fontFamily: 'Inter_600SemiBold', marginBottom: 8 },
   knowledgeItem: { padding: 10, borderRadius: 8, borderWidth: 1, marginBottom: 8 },
-  knText: { fontSize: 13, fontFamily: 'Inter_400Regular', lineHeight: 18 },
-  knFooter: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 4 },
-  knMeta: { fontSize: 11, fontFamily: 'Inter_400Regular', flex: 1 },
+  knText: { fontSize: 17, fontFamily: 'Inter_400Regular', lineHeight: 24 },
+  knFooter: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 6 },
+  knMeta: { fontSize: 13, fontFamily: 'Inter_400Regular', flex: 1 },
   reviewButtons: { flexDirection: 'row', gap: 6 },
   reviewBtn: { padding: 6, borderRadius: 6, minWidth: 28, alignItems: 'center' },
   emptyText: { fontSize: 13, fontFamily: 'Inter_400Regular', textAlign: 'center', marginVertical: 12 },
