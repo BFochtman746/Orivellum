@@ -1257,7 +1257,7 @@ function GenerateSection({ workId, colors }: { workId: string; colors: any }) {
   );
 }
 
-function OverviewTab({ workId, onStartDiscussion, starting, onNavigateToTab, bookIntel, onOpenBook, onTargetsSaved }: {
+function OverviewTab({ workId, onStartDiscussion, starting, onNavigateToTab, bookIntel, onOpenBook, onTargetsSaved, pipeline, pipelineLoading, onStartPipeline }: {
   workId: string;
   onStartDiscussion: () => void;
   starting: boolean;
@@ -1265,6 +1265,9 @@ function OverviewTab({ workId, onStartDiscussion, starting, onNavigateToTab, boo
   bookIntel?: any;
   onOpenBook?: () => void;
   onTargetsSaved?: () => void;
+  pipeline?: any;
+  pipelineLoading?: boolean;
+  onStartPipeline?: () => void;
 }) {
   const colors = useColors();
   const { data: workData, isLoading, isError, refetch } = useGetWork(workId);
@@ -1524,6 +1527,48 @@ function OverviewTab({ workId, onStartDiscussion, starting, onNavigateToTab, boo
           </View>
         );
       })()}
+
+      {/* ── Start Book Pipeline CTA — shown when no pipeline exists yet ── */}
+      {!pipeline && !pipelineLoading && onStartPipeline && (
+        <View style={{
+          marginTop: 16, borderWidth: 1, borderRadius: 10,
+          borderColor: '#d97706' + '55', overflow: 'hidden',
+          backgroundColor: '#fef3c7' + '22',
+        }}>
+          <View style={{
+            flexDirection: 'row', alignItems: 'center', gap: 8,
+            paddingHorizontal: 14, paddingVertical: 10,
+            backgroundColor: '#d97706' + '18',
+            borderBottomWidth: StyleSheet.hairlineWidth,
+            borderBottomColor: '#d97706' + '44',
+          }}>
+            <Feather name="book-open" size={14} color="#d97706" />
+            <Text style={{ fontSize: 12, fontWeight: '600', color: '#92400e', flex: 1, fontFamily: 'Inter_600SemiBold' }}>
+              Book Pipeline
+            </Text>
+          </View>
+          <View style={{ paddingHorizontal: 14, paddingVertical: 12, gap: 10 }}>
+            <Text style={{ fontSize: 13, color: '#78350f', lineHeight: 18, fontFamily: 'Inter_400Regular' }}>
+              Promote this Work to a book and track it through the full B0–B17 publication pipeline.
+            </Text>
+            <Pressable
+              onPress={onStartPipeline}
+              style={({ pressed }) => ({
+                flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+                gap: 6, paddingVertical: 10, borderRadius: 8,
+                backgroundColor: pressed ? '#b45309' : '#d97706',
+              })}
+              accessibilityRole="button"
+              accessibilityLabel="Start Book Pipeline"
+            >
+              <Feather name="book" size={14} color="#fff" />
+              <Text style={{ fontSize: 13, fontWeight: '600', color: '#fff', fontFamily: 'Inter_600SemiBold' }}>
+                Start Book Pipeline
+              </Text>
+            </Pressable>
+          </View>
+        </View>
+      )}
 
       {/* ── Completeness targets card ─────────────────────────────────── */}
       <View style={{
@@ -2881,6 +2926,7 @@ export default function WorkDetailScreen() {
   const [pipeline, setPipeline] = useState<any>(null);
   const [pipelineLoading, setPipelineLoading] = useState(false);
   const [advancingPipeline, setAdvancingPipeline] = useState(false);
+  const [pipelineToast, setPipelineToast] = useState(false);
   const [chapters, setChapters] = useState<any[]>([]);
   const [chaptersLoading, setChaptersLoading] = useState(false);
 
@@ -2898,7 +2944,15 @@ export default function WorkDetailScreen() {
   const startPipeline = async () => {
     try {
       const res = await mobileFetch(`https://${domain}/api/works/${id}/pipeline`, { method: 'POST' });
-      if (res.ok) fetchPipeline();
+      if (res.ok) {
+        await fetchPipeline();
+        setActiveTab('book');
+        setPipelineToast(true);
+        setTimeout(() => setPipelineToast(false), 3000);
+      } else {
+        const json = await res.json().catch(() => ({}));
+        Alert.alert('Error', json.detail ?? 'Could not start pipeline');
+      }
     } catch { Alert.alert('Error', 'Could not start pipeline'); }
   };
 
@@ -2997,6 +3051,9 @@ export default function WorkDetailScreen() {
   useEffect(() => {
     fetchBookIntel();
   }, [fetchBookIntel]);
+
+  // Eagerly fetch pipeline on mount so the Overview CTA knows whether one exists.
+  useEffect(() => { if (id) fetchPipeline(); }, [id, fetchPipeline]);
 
   useEffect(() => {
     if (activeTab === 'book') { fetchPipeline(); fetchChapters(); fetchBookIntel(); }
@@ -3265,6 +3322,9 @@ export default function WorkDetailScreen() {
             bookIntel={bookIntel}
             onOpenBook={() => setActiveTab('book')}
             onTargetsSaved={fetchBookIntel}
+            pipeline={pipeline}
+            pipelineLoading={pipelineLoading}
+            onStartPipeline={startPipeline}
           />
         );
       case 'docs':
@@ -3768,6 +3828,23 @@ export default function WorkDetailScreen() {
       )}
 
       <View style={{ flex: 1 }}>{renderTabContent()}</View>
+
+      {/* Book pipeline started toast */}
+      {pipelineToast && (
+        <View style={{
+          position: 'absolute', bottom: insets.bottom + 24, left: 16, right: 16,
+          flexDirection: 'row', alignItems: 'center', gap: 8,
+          backgroundColor: '#92400e', borderRadius: 12,
+          paddingVertical: 12, paddingHorizontal: 16,
+          shadowColor: '#000', shadowOffset: { width: 0, height: 4 },
+          shadowOpacity: 0.25, shadowRadius: 8, elevation: 8,
+        }}>
+          <Feather name="book-open" size={15} color="#fef3c7" />
+          <Text style={{ flex: 1, fontSize: 13, fontFamily: 'Inter_500Medium', color: '#fef3c7' }}>
+            Book pipeline started — tracking begins at B0
+          </Text>
+        </View>
+      )}
 
       {/* Floating quick-add task button — visible from all tabs except Tasks */}
       {activeTab !== 'tasks' && (
