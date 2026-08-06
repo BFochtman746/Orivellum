@@ -58,7 +58,10 @@ def _make_db():
             last_reviewed_at TEXT,
             next_review_at TEXT,
             half_life_days REAL NOT NULL DEFAULT 1.0,
-            review_session_count INTEGER NOT NULL DEFAULT 0
+            review_session_count INTEGER NOT NULL DEFAULT 0,
+            -- v95 error classification columns
+            error_type TEXT,
+            remediation_hint TEXT
         );
         -- v94 multi-prerequisite graph
         CREATE TABLE IF NOT EXISTS work_concept_prereqs (

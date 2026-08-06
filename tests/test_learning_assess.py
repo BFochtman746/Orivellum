@@ -207,6 +207,197 @@ class TestAssessAnswer:
         assert row["consecutive_passes"] == 1, "streak must restart from 1 after a failure"
 
 
+# ── L2b: Error classification ──────────────────────────────────────────────────
+
+class TestErrorClassification:
+    """assess_answer must classify wrong answers and return targeted remediation."""
+
+    def _assess_raw(self, db, cid: str, json_str: str):
+        """Call assess_answer with a mocked LLM that returns json_str."""
+        from orivellum.capabilities.learning import assess_answer
+        with patch("orivellum.capabilities.learning._call", return_value=json_str):
+            return assess_answer(db, cid, "Q?", "A", base_url="http://x", model="t")
+
+    def test_correct_answer_has_null_error_type(self):
+        """error_type must be None when score >= 0.75 (correct answer)."""
+        db = _make_db()
+        _, cid = _seed(db)
+        result = self._assess_raw(
+            db, cid,
+            '{"score":0.9,"feedback":"Great.","error_type":"null","remediation_hint":"n/a"}',
+        )
+        assert result["error_type"] is None, "correct answer must have error_type=None"
+        assert result["deep_review_needed"] is False
+
+    def test_careless_slip_is_returned_and_persisted(self):
+        """error_type='careless_slip' must be returned and written to work_mastery."""
+        db = _make_db()
+        _, cid = _seed(db)
+        result = self._assess_raw(
+            db, cid,
+            '{"score":0.6,"feedback":"Small slip.","error_type":"careless_slip",'
+            '"remediation_hint":"Double-check your arithmetic."}',
+        )
+        assert result["error_type"] == "careless_slip"
+        assert result["remediation_hint"] == "Double-check your arithmetic."
+
+        # Verify persistence in work_mastery
+        with db._lock:
+            row = db._conn.execute(
+                "SELECT error_type, remediation_hint FROM work_mastery"
+                " WHERE concept_id=? ORDER BY created_at DESC, rowid DESC LIMIT 1",
+                (cid,),
+            ).fetchone()
+        assert row["error_type"] == "careless_slip"
+        assert row["remediation_hint"] == "Double-check your arithmetic."
+
+    def test_procedural_gap_is_returned(self):
+        db = _make_db()
+        _, cid = _seed(db)
+        result = self._assess_raw(
+            db, cid,
+            '{"score":0.4,"feedback":"You know the concept but missed a step.",'
+            '"error_type":"procedural_gap","remediation_hint":"Re-derive step 2."}',
+        )
+        assert result["error_type"] == "procedural_gap"
+        assert "Re-derive" in (result["remediation_hint"] or "")
+
+    def test_knowledge_gap_is_returned(self):
+        db = _make_db()
+        _, cid = _seed(db)
+        result = self._assess_raw(
+            db, cid,
+            '{"score":0.1,"feedback":"No knowledge shown.","error_type":"knowledge_gap",'
+            '"remediation_hint":"Review the prerequisites first."}',
+        )
+        assert result["error_type"] == "knowledge_gap"
+        assert result["score"] == pytest.approx(0.1)
+
+    def test_unknown_error_type_falls_back_to_none(self):
+        """LLM-invented error types must be silently discarded."""
+        db = _make_db()
+        _, cid = _seed(db)
+        result = self._assess_raw(
+            db, cid,
+            '{"score":0.3,"feedback":"Bad.","error_type":"totally_invented","remediation_hint":"..."}',
+        )
+        assert result["error_type"] is None, "unrecognised error_type must be None"
+
+    def test_correct_answer_overrides_llm_error_type(self):
+        """Even if the LLM says 'careless_slip', a score >= 0.75 must zero out error_type."""
+        db = _make_db()
+        _, cid = _seed(db)
+        result = self._assess_raw(
+            db, cid,
+            '{"score":0.8,"feedback":"Good.","error_type":"careless_slip","remediation_hint":"fix it"}',
+        )
+        assert result["error_type"] is None, "score >= 0.75 must clear error_type regardless of LLM output"
+
+    def test_deep_review_needed_after_two_misconceptions(self):
+        """deep_review_needed must be True after ≥ 2 conceptual_misconception records."""
+        db = _make_db()
+        _, cid = _seed(db)
+        misconception_json = (
+            '{"score":0.3,"feedback":"False belief.","error_type":"conceptual_misconception",'
+            '"remediation_hint":"Re-examine your model."}'
+        )
+        # First occurrence: deep_review_needed must be False (count=1, threshold=2)
+        r1 = self._assess_raw(db, cid, misconception_json)
+        assert r1["deep_review_needed"] is False, "single misconception must not trigger deep review"
+
+        # Second occurrence: threshold reached → deep_review_needed must be True
+        r2 = self._assess_raw(db, cid, misconception_json)
+        assert r2["deep_review_needed"] is True, "≥2 misconceptions must set deep_review_needed=True"
+
+    def test_v95_schema_columns_exist(self):
+        """A fresh OrivellumDB must have error_type and remediation_hint on work_mastery (v95)."""
+        db = _make_db()
+        with db._lock:
+            cols = {
+                row[1]
+                for row in db._conn.execute("PRAGMA table_info(work_mastery)").fetchall()
+            }
+        assert "error_type"       in cols, "v95: error_type column must exist on work_mastery"
+        assert "remediation_hint" in cols, "v95: remediation_hint column must exist on work_mastery"
+
+    def test_result_includes_all_classification_fields(self):
+        """assess_answer must always return all v95 classification fields."""
+        db = _make_db()
+        _, cid = _seed(db)
+        result = self._assess_raw(
+            db, cid,
+            '{"score":0.4,"feedback":"Wrong.","error_type":"procedural_gap","remediation_hint":"try again"}',
+        )
+        for field in ("error_type", "remediation_hint", "deep_review_needed", "socratic_followup"):
+            assert field in result, f"assess_answer must include '{field}' in return value"
+
+
+# ── L3b: HTTP route — error classification passthrough ───────────────────────
+
+class TestAssessRouteErrorClassification:
+    """HTTP route must pass error classification fields through to the client."""
+
+    def test_route_includes_error_type_field(self):
+        """POST /learning/assess response body must include error_type."""
+        db = _make_db()
+        work_id, cid = _seed(db)
+        client = _make_test_client(db)
+        with patch("orivellum.capabilities.learning._call",
+                   return_value='{"score":0.3,"feedback":"Wrong.","error_type":"careless_slip",'
+                                '"remediation_hint":"Check your sign."}'):
+            r = client.post(
+                f"/api/works/{work_id}/learning/assess",
+                json={"concept_id": cid, "question": "Q?", "answer": "A"},
+            )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert "error_type" in body
+        assert body["error_type"] == "careless_slip"
+        assert "remediation_hint" in body
+        assert "deep_review_needed" in body
+        assert "socratic_followup" in body
+
+    def test_route_includes_suggested_prereq_fields_for_knowledge_gap(self):
+        """When error_type='knowledge_gap' and prereqs exist, route returns prereq name."""
+        db = _make_db()
+        work = db.create_work("KG Test Work", work_type="learning")
+        wid = work["id"]
+        now = "2024-01-01T00:00:00+00:00"
+        prereq_id = str(uuid.uuid4())
+        concept_id = str(uuid.uuid4())
+        with db._lock:
+            db._conn.execute(
+                "INSERT INTO work_concepts(id,work_id,subject,description,prereq_id,created_at)"
+                " VALUES(?,?,?,?,?,?)",
+                (prereq_id, wid, "Algebra", "Foundation", None, now),
+            )
+            db._conn.execute(
+                "INSERT INTO work_concepts(id,work_id,subject,description,prereq_id,created_at)"
+                " VALUES(?,?,?,?,?,?)",
+                (concept_id, wid, "Calculus", "Requires algebra", prereq_id, now),
+            )
+            db._conn.execute(
+                "INSERT OR IGNORE INTO work_concept_prereqs(concept_id, prereq_id) VALUES(?,?)",
+                (concept_id, prereq_id),
+            )
+            db._conn.commit()
+
+        client = _make_test_client(db)
+        # knowledge_gap with an unstarted prereq → should STEP_BACKWARD to prereq
+        with patch("orivellum.capabilities.learning._call",
+                   return_value='{"score":0.1,"feedback":"No knowledge.","error_type":"knowledge_gap",'
+                                '"remediation_hint":"Study algebra first."}'):
+            r = client.post(
+                f"/api/works/{wid}/learning/assess",
+                json={"concept_id": concept_id, "question": "Q?", "answer": "I don't know"},
+            )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["route"] in ("STEP_BACKWARD", "STAY_HERE"), "knowledge_gap should route backward when prereqs unstarted"
+        assert "suggested_prereq_id" in body
+        assert "suggested_prereq_subject" in body
+
+
 # ── L3: HTTP route via FastAPI TestClient ─────────────────────────────────────
 
 class TestAssessRoute:

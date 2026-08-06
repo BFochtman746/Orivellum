@@ -32,6 +32,16 @@ _HLR_MIN_HALF_LIFE     = 0.5    # floor: 12 h (never schedule sooner than this)
 _HLR_DURABLE_HALF_LIFE = 7.0   # a concept is "durably mastered" only when HL > 7 days
 _HLR_DURABLE_SESSIONS  = 3     # …AND reviewed on ≥ 3 distinct calendar days
 
+# ── Error classification ──────────────────────────────────────────────────────
+_VALID_ERROR_TYPES = frozenset({
+    "careless_slip",          # mostly correct; minor arithmetic / wording slip
+    "procedural_gap",         # knows the concept but can't execute a step
+    "conceptual_misconception",  # holds a false belief about the concept
+    "knowledge_gap",          # no prior knowledge of a prerequisite
+})
+# Threshold for "deep review needed" flag (same misconception ≥ N times)
+_DEEP_REVIEW_THRESHOLD = 2
+
 
 # ─── Internal helpers ──────────────────────────────────────────────────────────
 
@@ -525,6 +535,44 @@ def get_question(db: Any, concept_id: str, base_url: str, model: str) -> dict:
     }
 
 
+def _generate_socratic_followup(
+    db: Any,
+    concept_id: str,
+    question: str,
+    answer: str,
+    misconception_hint: str,
+    base_url: str,
+    model: str,
+) -> str | None:
+    """Generate a Socratic follow-up question that surfaces and challenges a misconception.
+
+    Does NOT tell the student they are wrong; instead surfaces the false belief by asking
+    them to apply or extend it.  Returns the follow-up question text, or None on failure.
+    """
+    concept = _get_concept(db, concept_id)
+    if not concept or not base_url:
+        return None
+    subject = concept["subject"]
+    prompt = (
+        f"A student is studying '{subject}'.\n"
+        f"They were asked: {question}\n"
+        f"Their answer: {answer}\n"
+        f"The identified issue: {misconception_hint}\n\n"
+        "Write ONE Socratic follow-up question that:\n"
+        "- Does NOT say the student is wrong or give the correct answer\n"
+        "- Surfaces the false belief by asking them to apply or extend their reasoning\n"
+        "- Is concise (one sentence) and answerable in 2–3 sentences\n\n"
+        "Respond ONLY with the question text — no JSON, no preamble."
+    )
+    raw = _call(
+        [{"role": "user", "content": prompt}],
+        base_url, model, timeout=15, purpose="learning.socratic_followup", db=db,
+    )
+    if raw:
+        return raw.strip().strip('"').strip("'")
+    return None
+
+
 def assess_answer(
     db: Any,
     concept_id: str,
@@ -533,21 +581,36 @@ def assess_answer(
     base_url: str,
     model: str,
 ) -> dict:
-    """Score the user's answer with an Assessment Critic.
+    """Score the user's answer, classify the error type, and return targeted remediation.
 
-    Returns {"score": float 0–1, "feedback": str, "route": str, "graduated": bool}
-    Falls back to score=0.5, route=STAY_HERE when AI unavailable.
+    Returns:
+        score             — float 0–1
+        feedback          — 1–2 sentence constructive feedback
+        route             — STEP_FORWARD / STEP_BACKWARD / STAY_HERE
+        graduated         — True when consecutive_passes reached _PASSES_TO_GRAD
+        error_type        — None (correct) or one of _VALID_ERROR_TYPES
+        remediation_hint  — 1-sentence targeted suggestion, or None
+        deep_review_needed— True when same misconception appears ≥ _DEEP_REVIEW_THRESHOLD
+        socratic_followup — Socratic follow-up question for conceptual_misconception, else None
+
+    Falls back to score=0.5, route=STAY_HERE, error_type=None when AI unavailable.
     """
+    _empty = {
+        "score": 0.5, "feedback": "Could not assess.", "route": "STAY_HERE", "graduated": False,
+        "error_type": None, "remediation_hint": None,
+        "deep_review_needed": False, "socratic_followup": None,
+    }
+
     concept = _get_concept(db, concept_id)
     if not concept:
-        return {"score": 0.5, "feedback": "Could not assess — concept not found.", "route": "STAY_HERE", "graduated": False}
+        return {**_empty, "feedback": "Could not assess — concept not found."}
 
     subject = concept["subject"]
     work_id = concept["work_id"]
     items   = _knowledge_for_concept(db, work_id, subject)
     ctx     = "\n".join(f"- {it.get('text','')[:200]}" for it in items[:_MAX_KN_CONTEXT])
 
-    offline_result = {"score": 0.5, "feedback": "AI unavailable — keeping score neutral.", "route": "STAY_HERE", "graduated": False}
+    offline_result = {**_empty, "feedback": "AI unavailable — keeping score neutral."}
 
     if not base_url:
         _record_mastery(db, concept_id, 0.5, "STAY_HERE", "AI unavailable")
@@ -558,13 +621,22 @@ def assess_answer(
         f"Knowledge context:\n{ctx}\n\n"
         f"Socratic question: {question}\n"
         f"Student answer: {answer}\n\n"
-        "Evaluate strictly. Detect: circular definitions, prerequisite gaps, superficial fluency.\n"
-        "Score 0.0–1.0 where:\n"
+        "Evaluate strictly. Score 0.0–1.0:\n"
         "  ≥0.75 = genuine understanding with accurate detail\n"
         "  0.5–0.74 = partially correct; misses key nuance\n"
         "  <0.5 = incorrect, circular, or too vague\n\n"
+        "Identify WHY the answer was wrong (error_type):\n"
+        '  "null"                     — score ≥ 0.75 (correct answer)\n'
+        '  "careless_slip"            — mostly correct but a minor slip\n'
+        '                               (dropped sign, arithmetic error, misread)\n'
+        '  "procedural_gap"           — understands the concept but cannot\n'
+        '                               execute a step (derivation, calculation)\n'
+        '  "conceptual_misconception" — holds a false belief about the underlying concept\n'
+        '  "knowledge_gap"            — shows no prior knowledge; answer is blank,\n'
+        '                               "I don\'t know", or reveals missing prerequisites\n\n'
         "Respond ONLY with valid JSON, no markdown fences:\n"
-        '{"score":0.0,"feedback":"brief constructive feedback in 1-2 sentences"}'
+        '{"score":0.0,"feedback":"1-2 sentence constructive feedback",'
+        '"error_type":"null","remediation_hint":"1 sentence on what to review or do next"}'
     )
     raw = _call([{"role": "user", "content": critic_prompt}], base_url, model,
                 timeout=25, purpose="learning.assess", db=db)
@@ -573,19 +645,69 @@ def assess_answer(
         return offline_result
 
     try:
-        parsed = json.loads(_strip_fences(raw))
-        score    = float(parsed.get("score", 0.5))
-        score    = max(0.0, min(1.0, score))
-        feedback = parsed.get("feedback", "")
+        parsed           = json.loads(_strip_fences(raw))
+        score            = max(0.0, min(1.0, float(parsed.get("score", 0.5))))
+        feedback         = str(parsed.get("feedback", ""))
+        raw_et           = parsed.get("error_type") or "null"
+        error_type: str | None = raw_et if raw_et in _VALID_ERROR_TYPES else None
+        # Correct answers must have no error_type regardless of what the LLM said
+        if score >= _GRAD_THRESHOLD:
+            error_type = None
+        remediation_hint: str | None = str(parsed.get("remediation_hint", "")).strip() or None
     except Exception:
         _record_mastery(db, concept_id, 0.5, "STAY_HERE", "Could not parse assessment")
         return offline_result
 
-    route    = _compute_route(db, concept_id, score)
-    _record_mastery(db, concept_id, score, route, feedback)
+    route = _compute_route(db, concept_id, score)
+
+    # Knowledge-gap consistency guard: if the critic identified a knowledge gap
+    # but _compute_route chose STAY_HERE, check if there are unstarted prereqs
+    # and promote to STEP_BACKWARD so routing is consistent.
+    if error_type == "knowledge_gap" and route == "STAY_HERE":
+        prereq_ids = get_prereq_ids(db, concept_id)
+        if any(
+            _get_mastery(db, pid)["consecutive_passes"] == 0
+            for pid in prereq_ids
+        ):
+            route = "STEP_BACKWARD"
+
+    _record_mastery(db, concept_id, score, route, feedback,
+                    error_type=error_type, remediation_hint=remediation_hint)
 
     graduated = _is_graduated(db, concept_id)
-    return {"score": score, "feedback": feedback, "route": route, "graduated": graduated}
+
+    # ── Deep review flag ─────────────────────────────────────────────────────
+    # Flag when the same misconception has appeared ≥ _DEEP_REVIEW_THRESHOLD times
+    # (counted across all mastery records for this concept).
+    deep_review_needed = False
+    if error_type == "conceptual_misconception":
+        with db._lock:
+            cnt = db._conn.execute(
+                "SELECT COUNT(*) FROM work_mastery "
+                "WHERE concept_id=? AND error_type='conceptual_misconception'",
+                (concept_id,),
+            ).fetchone()[0]
+        deep_review_needed = int(cnt) >= _DEEP_REVIEW_THRESHOLD
+
+    # ── Socratic follow-up (second LLM call, only for misconceptions) ────────
+    socratic_followup: str | None = None
+    if error_type == "conceptual_misconception":
+        socratic_followup = _generate_socratic_followup(
+            db, concept_id, question, answer,
+            remediation_hint or feedback,
+            base_url, model,
+        )
+
+    return {
+        "score":              score,
+        "feedback":           feedback,
+        "route":              route,
+        "graduated":          graduated,
+        "error_type":         error_type,
+        "remediation_hint":   remediation_hint,
+        "deep_review_needed": deep_review_needed,
+        "socratic_followup":  socratic_followup,
+    }
 
 
 def get_mastery_summary(db: Any, work_id: str) -> dict:
@@ -694,7 +816,16 @@ def _compute_route(db: Any, concept_id: str, score: float) -> str:
     return "STAY_HERE"
 
 
-def _record_mastery(db: Any, concept_id: str, score: float, route: str, feedback: str) -> None:
+def _record_mastery(
+    db: Any,
+    concept_id: str,
+    score: float,
+    route: str,
+    feedback: str,
+    *,
+    error_type: str | None = None,
+    remediation_hint: str | None = None,
+) -> None:
     """Insert a mastery record, update the consecutive-pass streak, and apply HLR update.
 
     HLR formula (Duolingo 2016):
@@ -706,6 +837,9 @@ def _record_mastery(db: Any, concept_id: str, score: float, route: str, feedback
 
     review_session_count is incremented only when the new session falls on a different
     UTC calendar date from the previous one (preventing gaming by rapid repetition).
+
+    error_type: one of _VALID_ERROR_TYPES or None (correct / AI unavailable).
+    remediation_hint: 1-sentence targeted hint from the LLM critic, or None.
     """
     now = _now()
     mid = _uuid()
@@ -744,18 +878,21 @@ def _record_mastery(db: Any, concept_id: str, score: float, route: str, feedback
                    id, concept_id, score, consecutive_passes,
                    brief_feedback, routed_to, created_at,
                    last_reviewed_at, next_review_at,
-                   half_life_days, review_session_count)
-               VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                   half_life_days, review_session_count,
+                   error_type, remediation_hint)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (mid, concept_id, score, cons,
              feedback, route, now,
              now, next_review_at,
-             new_hl, new_session_count),
+             new_hl, new_session_count,
+             error_type, remediation_hint),
         )
         db._conn.commit()
     try:
         db.audit("learning.mastery_recorded", object_id=concept_id,
                  object_type="learning_concept", actor="system",
-                 detail=f"score={score:.2f} hl={new_hl:.2f}d next={next_review_at[:10]}")
+                 detail=f"score={score:.2f} hl={new_hl:.2f}d next={next_review_at[:10]}"
+                        + (f" err={error_type}" if error_type else ""))
     except Exception:
         pass
 

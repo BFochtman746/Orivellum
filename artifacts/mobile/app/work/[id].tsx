@@ -2290,6 +2290,66 @@ function OverviewTab({ workId, onStartDiscussion, starting, onNavigateToTab, boo
   );
 }
 
+// ─── Mobile Learn tab helper sub-components ───────────────────────────────────
+
+/** Expandable worked-example card for procedural_gap errors.
+ *  Must be a standalone component so React hooks rules are satisfied. */
+function MobileProceduralGapCard({
+  feedback,
+  remediationHint,
+  colors,
+}: {
+  feedback: string;
+  remediationHint: string | null;
+  colors: any;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <View style={{ gap: 8 }}>
+      <View style={{
+        borderWidth: 1, borderColor: '#93c5fd', borderRadius: 10,
+        backgroundColor: '#eff6ff', padding: 12,
+        flexDirection: 'row', alignItems: 'flex-start', gap: 10,
+      }}>
+        <View style={{
+          width: 28, height: 28, borderRadius: 14,
+          backgroundColor: '#dbeafe', alignItems: 'center', justifyContent: 'center',
+        }}>
+          <Feather name="tool" size={13} color="#2563eb" />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: '#1e40af', marginBottom: 2 }}>
+            Procedural gap
+          </Text>
+          <Text style={{ fontSize: 13, color: '#1d4ed8', lineHeight: 19 }}>{feedback}</Text>
+        </View>
+      </View>
+      {remediationHint && (
+        <Pressable
+          onPress={() => setExpanded(e => !e)}
+          style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}
+        >
+          <Feather name={expanded ? 'chevron-down' : 'chevron-right'} size={13} color="#2563eb" />
+          <Text style={{ fontSize: 12, color: '#2563eb', fontFamily: 'Inter_500Medium' }}>
+            {expanded ? 'Hide' : 'Show'} worked example
+          </Text>
+        </Pressable>
+      )}
+      {expanded && remediationHint && (
+        <View style={{
+          borderWidth: 1, borderColor: colors.border, borderRadius: 8,
+          backgroundColor: colors.muted, padding: 12,
+        }}>
+          <Text style={{ fontSize: 11, color: colors.mutedForeground, fontFamily: 'Inter_600SemiBold', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+            Step-by-step hint
+          </Text>
+          <Text style={{ fontSize: 13, color: colors.foreground, lineHeight: 20 }}>{remediationHint}</Text>
+        </View>
+      )}
+    </View>
+  );
+}
+
 // ─── Mobile Learn tab ─────────────────────────────────────────────────────────
 
 type MobileLearnPhase = 'loading' | 'seeding' | 'question' | 'assessing' | 'feedback' | 'all_done' | 'error' | 'session_done';
@@ -2302,6 +2362,8 @@ interface MobileSession {
   context_snippet: string;
 }
 
+type MobileErrorType = "careless_slip" | "procedural_gap" | "conceptual_misconception" | "knowledge_gap" | null;
+
 interface MobileAssessResult {
   score: number;
   feedback: string;
@@ -2309,6 +2371,13 @@ interface MobileAssessResult {
   graduated: boolean;
   next_concept_id: string | null;
   summary: { total: number; graduated: number; mastery_pct: number };
+  // Error classification (v95)
+  error_type: MobileErrorType;
+  remediation_hint: string | null;
+  deep_review_needed: boolean;
+  socratic_followup: string | null;
+  suggested_prereq_id: string | null;
+  suggested_prereq_subject: string | null;
 }
 
 function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
@@ -2920,7 +2989,7 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
               </Pressable>
             </>
           ) : result ? (
-            /* Feedback */
+            /* Differentiated feedback by error type */
             <View style={{ gap: 12 }}>
               {/* User's answer (dimmed) */}
               <Text style={[styles.itemMeta, {
@@ -2930,16 +2999,13 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
                 {answer}
               </Text>
 
-              {/* Score */}
-              <View style={{
-                flexDirection: 'row', alignItems: 'center', gap: 12,
-                padding: 12, borderRadius: 10, backgroundColor: scoreBg(result.score),
-              }}>
-                <Text style={{ fontSize: 22, fontFamily: 'Inter_700Bold', color: scoreColor(result.score) }}>
+              {/* Score badge */}
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                <Text style={{
+                  fontSize: 24, fontFamily: 'Inter_700Bold',
+                  color: scoreColor(result.score),
+                }}>
                   {Math.round(result.score * 100)}%
-                </Text>
-                <Text style={{ flex: 1, fontSize: 13, color: scoreColor(result.score), lineHeight: 19 }}>
-                  {result.feedback}
                 </Text>
                 {result.graduated && (
                   <View style={{
@@ -2953,36 +3019,203 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
                 )}
               </View>
 
-              {/* Routing hint */}
-              <Text style={[styles.itemMeta, { color: colors.mutedForeground }]}>
-                → {result.route === 'STEP_FORWARD'
-                  ? 'Moving to the next concept'
-                  : result.route === 'STEP_BACKWARD'
-                  ? 'Revisiting a foundational concept'
-                  : 'Keep practising this concept'}
-              </Text>
+              {/* ── careless_slip ─── amber retry card */}
+              {result.error_type === 'careless_slip' && (
+                <View style={{
+                  borderWidth: 1, borderColor: '#fbbf24', borderRadius: 10,
+                  backgroundColor: '#fffbeb', padding: 12, gap: 8,
+                }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10 }}>
+                    <View style={{
+                      width: 28, height: 28, borderRadius: 14,
+                      backgroundColor: '#fef3c7', alignItems: 'center', justifyContent: 'center',
+                    }}>
+                      <Feather name="alert-circle" size={14} color="#d97706" />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: '#92400e', marginBottom: 2 }}>
+                        Almost — small slip
+                      </Text>
+                      <Text style={{ fontSize: 13, color: '#b45309', lineHeight: 19 }}>{result.feedback}</Text>
+                    </View>
+                  </View>
+                  <Pressable
+                    onPress={() => loadQuestion(session?.concept_id)}
+                    style={({ pressed }) => ({
+                      flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+                      gap: 6, paddingVertical: 10, borderRadius: 8,
+                      borderWidth: 1, borderColor: '#fbbf24', backgroundColor: '#fef3c7',
+                      opacity: pressed ? 0.7 : 1,
+                    })}
+                  >
+                    <Feather name="refresh-cw" size={13} color="#d97706" />
+                    <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: '#d97706' }}>Try once more</Text>
+                  </Pressable>
+                </View>
+              )}
 
-              <Pressable
-                onPress={next}
-                style={({ pressed }) => ({
-                  flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-                  gap: 8, paddingVertical: 12, borderRadius: 10,
-                  backgroundColor: colors.primary, opacity: pressed ? 0.7 : 1,
-                })}
-              >
-                <Feather
-                  name={result.summary.mastery_pct === 100 ? 'award' : result.route === 'STEP_FORWARD' ? 'chevron-right' : 'refresh-cw'}
-                  size={14}
-                  color={colors.primaryForeground}
+              {/* ── procedural_gap ─── blue expandable worked-example card */}
+              {result.error_type === 'procedural_gap' && (
+                <MobileProceduralGapCard
+                  feedback={result.feedback}
+                  remediationHint={result.remediation_hint}
+                  colors={colors}
                 />
-                <Text style={{ color: colors.primaryForeground, fontFamily: 'Inter_600SemiBold', fontSize: 14 }}>
-                  {result.summary.mastery_pct === 100
-                    ? 'Done!'
-                    : result.route === 'STEP_FORWARD'
-                    ? 'Next Concept'
-                    : 'Try Again'}
+              )}
+
+              {/* ── conceptual_misconception ─── violet + Socratic follow-up */}
+              {result.error_type === 'conceptual_misconception' && (
+                <View style={{ gap: 8 }}>
+                  {result.deep_review_needed && (
+                    <View style={{
+                      flexDirection: 'row', alignItems: 'center', gap: 6,
+                      paddingHorizontal: 10, paddingVertical: 7, borderRadius: 8,
+                      backgroundColor: '#fee2e2', borderWidth: 1, borderColor: '#fca5a5',
+                    }}>
+                      <Feather name="alert-triangle" size={12} color="#dc2626" />
+                      <Text style={{ fontSize: 12, color: '#b91c1c', fontFamily: 'Inter_500Medium', flex: 1 }}>
+                        Deep review needed — this misconception has appeared multiple times
+                      </Text>
+                    </View>
+                  )}
+                  <View style={{
+                    borderWidth: 1, borderColor: '#c4b5fd', borderRadius: 10,
+                    backgroundColor: '#f5f3ff', padding: 12,
+                    flexDirection: 'row', alignItems: 'flex-start', gap: 10,
+                  }}>
+                    <View style={{
+                      width: 28, height: 28, borderRadius: 14,
+                      backgroundColor: '#ede9fe', alignItems: 'center', justifyContent: 'center',
+                    }}>
+                      <Feather name="help-circle" size={13} color="#7c3aed" />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: '#5b21b6', marginBottom: 2 }}>
+                        Conceptual misconception
+                      </Text>
+                      <Text style={{ fontSize: 13, color: '#6d28d9', lineHeight: 19 }}>{result.feedback}</Text>
+                    </View>
+                  </View>
+                  {result.socratic_followup && (
+                    <View style={{
+                      borderWidth: 1, borderColor: '#c4b5fd', borderRadius: 10,
+                      backgroundColor: '#faf5ff', padding: 12, gap: 6,
+                    }}>
+                      <Text style={{ fontSize: 10, color: '#7c3aed', fontFamily: 'Inter_600SemiBold', textTransform: 'uppercase', letterSpacing: 0.6 }}>
+                        Socratic follow-up
+                      </Text>
+                      <Text style={{ fontSize: 14, color: '#4c1d95', lineHeight: 21, fontFamily: 'Inter_500Medium' }}>
+                        {result.socratic_followup}
+                      </Text>
+                    </View>
+                  )}
+                </View>
+              )}
+
+              {/* ── knowledge_gap ─── red card + prereq link */}
+              {result.error_type === 'knowledge_gap' && (
+                <View style={{ gap: 8 }}>
+                  <View style={{
+                    borderWidth: 1, borderColor: '#fca5a5', borderRadius: 10,
+                    backgroundColor: '#fef2f2', padding: 12,
+                    flexDirection: 'row', alignItems: 'flex-start', gap: 10,
+                  }}>
+                    <View style={{
+                      width: 28, height: 28, borderRadius: 14,
+                      backgroundColor: '#fee2e2', alignItems: 'center', justifyContent: 'center',
+                    }}>
+                      <Feather name="book-open" size={13} color="#dc2626" />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: '#991b1b', marginBottom: 2 }}>
+                        Knowledge gap
+                      </Text>
+                      <Text style={{ fontSize: 13, color: '#b91c1c', lineHeight: 19 }}>{result.feedback}</Text>
+                    </View>
+                  </View>
+                  {result.suggested_prereq_id && result.suggested_prereq_subject && (
+                    <View style={{
+                      flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+                      padding: 12, borderRadius: 10, borderWidth: 1, borderColor: colors.border,
+                      backgroundColor: colors.muted,
+                    }}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ fontSize: 10, color: colors.mutedForeground, fontFamily: 'Inter_600SemiBold', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 2 }}>
+                          Suggested prerequisite
+                        </Text>
+                        <Text style={{ fontSize: 13, color: colors.foreground, fontFamily: 'Inter_500Medium' }} numberOfLines={1}>
+                          {result.suggested_prereq_subject}
+                        </Text>
+                      </View>
+                      <Pressable
+                        onPress={() => loadQuestion(result.suggested_prereq_id)}
+                        style={({ pressed }) => ({
+                          flexDirection: 'row', alignItems: 'center', gap: 4,
+                          paddingHorizontal: 10, paddingVertical: 7, borderRadius: 8,
+                          backgroundColor: colors.primary, opacity: pressed ? 0.7 : 1, marginLeft: 8,
+                        })}
+                      >
+                        <Text style={{ fontSize: 12, color: colors.primaryForeground, fontFamily: 'Inter_600SemiBold' }}>Study first</Text>
+                        <Feather name="chevron-right" size={12} color={colors.primaryForeground} />
+                      </Pressable>
+                    </View>
+                  )}
+                </View>
+              )}
+
+              {/* ── correct / generic fallback ─── plain score card */}
+              {!result.error_type && (
+                <View style={{
+                  padding: 12, borderRadius: 10, backgroundColor: scoreBg(result.score),
+                }}>
+                  <Text style={{ fontSize: 13, color: scoreColor(result.score), lineHeight: 19 }}>
+                    {result.feedback}
+                  </Text>
+                </View>
+              )}
+
+              {/* Routing hint (skip for careless_slip — it has its own retry CTA) */}
+              {result.error_type !== 'careless_slip' && (
+                <Text style={[styles.itemMeta, { color: colors.mutedForeground }]}>
+                  → {result.route === 'STEP_FORWARD'
+                    ? 'Moving to the next concept'
+                    : result.route === 'STEP_BACKWARD'
+                    ? 'Revisiting a foundational concept'
+                    : 'Keep practising this concept'}
                 </Text>
-              </Pressable>
+              )}
+
+              {/* Navigation button (skip for careless_slip — its card has the retry CTA) */}
+              {result.error_type !== 'careless_slip' && (
+                <Pressable
+                  onPress={next}
+                  style={({ pressed }) => ({
+                    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+                    gap: 8, paddingVertical: 12, borderRadius: 10,
+                    backgroundColor: colors.primary, opacity: pressed ? 0.7 : 1,
+                  })}
+                >
+                  <Feather
+                    name={
+                      result.summary.mastery_pct === 100 ? 'award'
+                      : result.route === 'STEP_FORWARD' ? 'chevron-right'
+                      : result.error_type === 'knowledge_gap' ? 'book-open'
+                      : 'refresh-cw'
+                    }
+                    size={14}
+                    color={colors.primaryForeground}
+                  />
+                  <Text style={{ color: colors.primaryForeground, fontFamily: 'Inter_600SemiBold', fontSize: 14 }}>
+                    {result.summary.mastery_pct === 100
+                      ? 'Done!'
+                      : result.route === 'STEP_FORWARD'
+                      ? 'Next Concept'
+                      : result.error_type === 'knowledge_gap' && result.suggested_prereq_id
+                      ? 'Review Prerequisite'
+                      : 'Keep Practising'}
+                  </Text>
+                </Pressable>
+              )}
             </View>
           ) : null}
         </View>

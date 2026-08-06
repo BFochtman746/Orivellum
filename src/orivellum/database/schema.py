@@ -1588,4 +1588,17 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             JOIN work_concepts p ON p.id = c.prereq_id AND p.work_id = c.work_id
             WHERE c.prereq_id IS NOT NULL;
     """),
+
+    # v95 — Error classification columns on work_mastery.
+    # Adds per-assessment diagnosis:
+    #   error_type      — null (correct), careless_slip, procedural_gap,
+    #                     conceptual_misconception, or knowledge_gap
+    #   remediation_hint — 1-sentence targeted next-step suggestion from the LLM critic
+    # These allow the UI to route wrong answers to the right remediation instead
+    # of a generic "try again", and enable aggregate misconception tracking.
+    (95, "Add error classification columns to work_mastery", """
+        ALTER TABLE work_mastery ADD COLUMN error_type       TEXT;
+        ALTER TABLE work_mastery ADD COLUMN remediation_hint TEXT;
+        CREATE INDEX IF NOT EXISTS work_mastery_error_type ON work_mastery(concept_id, error_type);
+    """),
 ]

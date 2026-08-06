@@ -190,12 +190,13 @@ async def learning_assess(work_id: str, body: AssessBody):
     # Attach summary + next concept hint
     result["summary"]         = get_mastery_summary(db, work_id)
     if result["route"] == "STEP_FORWARD":
-        result["next_concept_id"] = next_concept_id(db, work_id)
+        result["next_concept_id"]        = next_concept_id(db, work_id)
+        result["suggested_prereq_id"]    = None
+        result["suggested_prereq_subject"] = None
     elif result["route"] == "STEP_BACKWARD":
         # Pick the weakest-mastery prerequisite using the latest mastery row per prereq.
-        # Window-function ranking by created_at matches list_concepts semantics: a reset
-        # streak (fail after high passes) is reflected correctly because we read the most
-        # recent record, not the historical maximum.
+        # Window-function ranking by created_at DESC, rowid DESC is deterministic even
+        # when two records share the same timestamp (rowid is monotonically increasing).
         from orivellum.capabilities.learning import get_prereq_ids
         prereq_ids = get_prereq_ids(db, body.concept_id)
         if prereq_ids:
@@ -218,9 +219,23 @@ async def learning_assess(work_id: str, body: AssessBody):
                 ).fetchall()
             _passes = {r["concept_id"]: r["consecutive_passes"] for r in _rows}
             # Concepts absent from work_mastery have 0 passes — pick the weakest
-            result["next_concept_id"] = min(prereq_ids, key=lambda pid: _passes.get(pid, 0))
+            weakest_prereq_id = min(prereq_ids, key=lambda pid: _passes.get(pid, 0))
+            result["next_concept_id"] = weakest_prereq_id
         else:
-            result["next_concept_id"] = concept_row["prereq_id"] or body.concept_id
+            weakest_prereq_id = concept_row["prereq_id"] or body.concept_id
+            result["next_concept_id"] = weakest_prereq_id
+
+        # Resolve subject name for the suggested prereq so the UI can name it
+        result["suggested_prereq_id"] = weakest_prereq_id
+        with db._lock:
+            _prereq_row = db._conn.execute(
+                "SELECT subject FROM work_concepts WHERE id=?", (weakest_prereq_id,)
+            ).fetchone()
+        result["suggested_prereq_subject"] = (
+            _prereq_row["subject"] if _prereq_row else None
+        )
     else:
-        result["next_concept_id"] = body.concept_id
+        result["next_concept_id"]        = body.concept_id
+        result["suggested_prereq_id"]    = None
+        result["suggested_prereq_subject"] = None
     return result

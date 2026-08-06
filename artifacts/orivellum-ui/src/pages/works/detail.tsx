@@ -89,6 +89,9 @@ import {
   Film,
   Scroll,
   Lock,
+  HelpCircle,
+  Wrench,
+  AlertCircle,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -2223,6 +2226,8 @@ interface LearningSession {
   context_snippet: string;
 }
 
+type ErrorType = "careless_slip" | "procedural_gap" | "conceptual_misconception" | "knowledge_gap" | null;
+
 interface AssessResult {
   score: number;
   feedback: string;
@@ -2230,6 +2235,149 @@ interface AssessResult {
   graduated: boolean;
   next_concept_id: string | null;
   summary: { total: number; graduated: number; mastery_pct: number };
+  // Error classification (v95)
+  error_type: ErrorType;
+  remediation_hint: string | null;
+  deep_review_needed: boolean;
+  socratic_followup: string | null;
+  suggested_prereq_id: string | null;
+  suggested_prereq_subject: string | null;
+}
+
+// ─── Error-type feedback sub-components ──────────────────────────────────────
+
+function CarelessSlipCard({ feedback, onRetry }: { feedback: string; onRetry: () => void }) {
+  return (
+    <div className="space-y-3">
+      <div className="flex items-start gap-3 p-4 rounded-lg border border-amber-400/50 bg-amber-50/70 dark:bg-amber-950/30">
+        <div className="w-8 h-8 rounded-full bg-amber-100 dark:bg-amber-900/60 flex items-center justify-center shrink-0 mt-0.5">
+          <AlertCircle className="w-4 h-4 text-amber-600" />
+        </div>
+        <div className="flex-1 space-y-0.5">
+          <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">Almost — small slip</p>
+          <p className="text-sm text-amber-700 dark:text-amber-400 leading-relaxed">{feedback}</p>
+        </div>
+      </div>
+      <Button
+        variant="outline"
+        size="sm"
+        className="gap-2 border-amber-400/60 text-amber-700 hover:bg-amber-50 dark:text-amber-400 dark:border-amber-700"
+        onClick={onRetry}
+      >
+        <RefreshCw className="w-3.5 h-3.5" /> Try once more
+      </Button>
+    </div>
+  );
+}
+
+function ProceduralGapCard({ feedback, remediationHint }: { feedback: string; remediationHint: string | null }) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <div className="space-y-3">
+      <div className="flex items-start gap-3 p-4 rounded-lg border border-blue-400/40 bg-blue-50/60 dark:bg-blue-950/30">
+        <div className="w-8 h-8 rounded-full bg-blue-100 dark:bg-blue-900/60 flex items-center justify-center shrink-0 mt-0.5">
+          <Wrench className="w-4 h-4 text-blue-600" />
+        </div>
+        <div className="flex-1 space-y-0.5">
+          <p className="text-sm font-semibold text-blue-800 dark:text-blue-300">Procedural gap</p>
+          <p className="text-sm text-blue-700 dark:text-blue-400 leading-relaxed">{feedback}</p>
+        </div>
+      </div>
+      {remediationHint && (
+        <div>
+          <button
+            onClick={() => setExpanded(e => !e)}
+            className="flex items-center gap-1.5 text-xs font-mono text-blue-600 dark:text-blue-400 hover:text-blue-700 transition-colors"
+          >
+            <ChevronRight className={`w-3.5 h-3.5 transition-transform duration-200 ${expanded ? "rotate-90" : ""}`} />
+            {expanded ? "Hide" : "Show"} worked example
+          </button>
+          {expanded && (
+            <div className="mt-2 p-4 rounded-lg bg-muted/50 border border-border/60 space-y-1">
+              <p className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-2">Step-by-step hint</p>
+              <p className="text-sm font-serif leading-relaxed">{remediationHint}</p>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ConceptualMisconceptionCard({
+  feedback, remediationHint, socraticFollowup, deepReviewNeeded,
+}: {
+  feedback: string;
+  remediationHint: string | null;
+  socraticFollowup: string | null;
+  deepReviewNeeded: boolean;
+}) {
+  return (
+    <div className="space-y-3">
+      {deepReviewNeeded && (
+        <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-red-50 border border-red-200 text-xs font-mono text-red-700 dark:bg-red-950/30 dark:border-red-800/60 dark:text-red-400">
+          <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+          Deep review needed — this misconception has appeared multiple times
+        </div>
+      )}
+      <div className="flex items-start gap-3 p-4 rounded-lg border border-violet-400/40 bg-violet-50/60 dark:bg-violet-950/30">
+        <div className="w-8 h-8 rounded-full bg-violet-100 dark:bg-violet-900/60 flex items-center justify-center shrink-0 mt-0.5">
+          <HelpCircle className="w-4 h-4 text-violet-600" />
+        </div>
+        <div className="flex-1 space-y-0.5">
+          <p className="text-sm font-semibold text-violet-800 dark:text-violet-300">Conceptual misconception</p>
+          <p className="text-sm text-violet-700 dark:text-violet-400 leading-relaxed">{feedback}</p>
+        </div>
+      </div>
+      {socraticFollowup && (
+        <div className="p-4 rounded-lg border border-violet-300/50 bg-violet-50/40 dark:bg-violet-950/20 space-y-2">
+          <p className="text-[10px] font-mono uppercase tracking-wider text-violet-500">Socratic follow-up</p>
+          <p className="text-sm font-medium leading-relaxed text-violet-900 dark:text-violet-200">{socraticFollowup}</p>
+        </div>
+      )}
+      {!socraticFollowup && remediationHint && (
+        <p className="text-sm text-muted-foreground italic px-1">{remediationHint}</p>
+      )}
+    </div>
+  );
+}
+
+function KnowledgeGapCard({
+  feedback, remediationHint, prereqSubject, prereqId, onStudyPrereq,
+}: {
+  feedback: string;
+  remediationHint: string | null;
+  prereqSubject: string | null;
+  prereqId: string | null;
+  onStudyPrereq: (id: string) => void;
+}) {
+  return (
+    <div className="space-y-3">
+      <div className="flex items-start gap-3 p-4 rounded-lg border border-red-300/50 bg-red-50/50 dark:bg-red-950/20">
+        <div className="w-8 h-8 rounded-full bg-red-100 dark:bg-red-900/60 flex items-center justify-center shrink-0 mt-0.5">
+          <BookOpen className="w-4 h-4 text-red-500" />
+        </div>
+        <div className="flex-1 space-y-0.5">
+          <p className="text-sm font-semibold text-red-700 dark:text-red-400">Knowledge gap</p>
+          <p className="text-sm text-red-600 dark:text-red-400/90 leading-relaxed">{feedback}</p>
+        </div>
+      </div>
+      {prereqId && prereqSubject && (
+        <div className="flex items-center justify-between p-3 rounded-lg border border-border/60 bg-muted/20">
+          <div>
+            <p className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">Suggested prerequisite</p>
+            <p className="text-sm font-medium mt-0.5">{prereqSubject}</p>
+          </div>
+          <Button size="sm" variant="outline" className="gap-1.5 shrink-0 ml-3" onClick={() => onStudyPrereq(prereqId)}>
+            Study first <ChevronRight className="w-3 h-3" />
+          </Button>
+        </div>
+      )}
+      {remediationHint && !prereqId && (
+        <p className="text-sm text-muted-foreground italic px-1">{remediationHint}</p>
+      )}
+    </div>
+  );
 }
 
 // ─── Gaps tab ────────────────────────────────────────────────────────────────
@@ -2998,47 +3146,92 @@ function LearnTab({ workId }: { workId: string }) {
               </div>
             </>
           ) : result ? (
-            /* Feedback */
+            /* Differentiated feedback by error type */
             <div className="space-y-4">
+              {/* User's answer (dimmed) */}
               <div className="px-3 py-2 rounded bg-muted/40 text-sm font-serif text-muted-foreground italic">
                 {answer}
               </div>
 
-              {/* Score */}
-              <div className={`flex items-center gap-3 p-3 rounded-lg border ${
-                result.score >= 0.75
-                  ? "bg-emerald-500/10 border-emerald-500/30"
-                  : result.score >= 0.5
-                  ? "bg-amber-500/10 border-amber-500/30"
-                  : "bg-red-500/10 border-red-500/30"
-              }`}>
-                <div className="text-2xl font-bold font-mono">
+              {/* Score badge (always shown) */}
+              <div className="flex items-center gap-3">
+                <span className={`text-2xl font-bold font-mono ${
+                  result.score >= 0.75 ? "text-emerald-600" : result.score >= 0.5 ? "text-amber-600" : "text-red-600"
+                }`}>
                   {Math.round(result.score * 100)}%
-                </div>
-                <div className="flex-1">
-                  <p className="text-sm leading-relaxed">{result.feedback}</p>
-                </div>
+                </span>
                 {result.graduated && (
-                  <div className="shrink-0 flex items-center gap-1 px-2 py-1 rounded-full bg-emerald-500/20 border border-emerald-500/40 text-emerald-700 text-xs font-mono font-semibold">
+                  <span className="flex items-center gap-1 px-2 py-1 rounded-full bg-emerald-500/20 border border-emerald-500/40 text-emerald-700 text-xs font-mono font-semibold">
                     <Trophy className="w-3 h-3" /> Graduated!
-                  </div>
+                  </span>
                 )}
               </div>
 
-              {/* Routing hint */}
-              <p className="text-xs font-mono text-muted-foreground">
-                → {routeLabel[result.route]}
-              </p>
+              {/* Error-type differentiated feedback card */}
+              {result.error_type === "careless_slip" ? (
+                <CarelessSlipCard
+                  feedback={result.feedback}
+                  onRetry={() => startOrContinue(session?.concept_id)}
+                />
+              ) : result.error_type === "procedural_gap" ? (
+                <ProceduralGapCard
+                  feedback={result.feedback}
+                  remediationHint={result.remediation_hint}
+                />
+              ) : result.error_type === "conceptual_misconception" ? (
+                <ConceptualMisconceptionCard
+                  feedback={result.feedback}
+                  remediationHint={result.remediation_hint}
+                  socraticFollowup={result.socratic_followup}
+                  deepReviewNeeded={result.deep_review_needed}
+                />
+              ) : result.error_type === "knowledge_gap" ? (
+                <KnowledgeGapCard
+                  feedback={result.feedback}
+                  remediationHint={result.remediation_hint}
+                  prereqId={result.suggested_prereq_id}
+                  prereqSubject={result.suggested_prereq_subject}
+                  onStudyPrereq={(id) => startOrContinue(id)}
+                />
+              ) : (
+                /* Correct answer — simple success card */
+                <div className={`flex items-start gap-3 p-4 rounded-lg border ${
+                  result.score >= 0.75
+                    ? "bg-emerald-500/10 border-emerald-500/30"
+                    : result.score >= 0.5
+                    ? "bg-amber-500/10 border-amber-500/30"
+                    : "bg-red-500/10 border-red-500/30"
+                }`}>
+                  <div className="flex-1">
+                    <p className="text-sm leading-relaxed">{result.feedback}</p>
+                    {result.remediation_hint && result.score < 0.75 && (
+                      <p className="text-xs text-muted-foreground mt-1.5 italic">{result.remediation_hint}</p>
+                    )}
+                  </div>
+                </div>
+              )}
 
-              <div className="flex justify-end">
-                <Button onClick={next} className="gap-2">
-                  {result.summary.mastery_pct === 100
-                    ? <><Trophy className="w-4 h-4" /> Done!</>
-                    : result.route === "STEP_FORWARD"
-                    ? <><ChevronRight className="w-4 h-4" /> Next Concept</>
-                    : <><RefreshCw className="w-4 h-4" /> Try Again</>}
-                </Button>
-              </div>
+              {/* Routing hint (for non-careless-slip errors) */}
+              {result.error_type !== "careless_slip" && (
+                <p className="text-xs font-mono text-muted-foreground">
+                  → {routeLabel[result.route]}
+                </p>
+              )}
+
+              {/* Navigation button (skip for careless_slip — its card has its own retry button) */}
+              {result.error_type !== "careless_slip" && (
+                <div className="flex justify-end">
+                  <Button onClick={next} className="gap-2">
+                    {result.summary.mastery_pct === 100
+                      ? <><Trophy className="w-4 h-4" /> Done!</>
+                      : result.route === "STEP_FORWARD"
+                      ? <><ChevronRight className="w-4 h-4" /> Next Concept</>
+                      : result.error_type === "knowledge_gap" && result.suggested_prereq_id
+                      ? <><BookOpen className="w-4 h-4" /> Review Prerequisite</>
+                      : <><RefreshCw className="w-4 h-4" /> Keep Practising</>}
+                  </Button>
+                </div>
+              )}
             </div>
           ) : null}
         </Card>
