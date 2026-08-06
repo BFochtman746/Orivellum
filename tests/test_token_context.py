@@ -518,3 +518,95 @@ class TestContinuationBudget:
         # DB error → _get_effective_context_window falls back to config default.
         # One tiny message fits easily, so content is returned unchanged.
         assert result == prior, "history content must be preserved when DB fails"
+
+
+# ---------------------------------------------------------------------------
+# 9. Oversized single-item truncation (task #417)
+# ---------------------------------------------------------------------------
+
+class TestOversizedItemTruncation:
+    """When a single knowledge item exceeds the 30% knowledge budget it must be
+    truncated to fit, not skipped.  Skipping causes an empty context which
+    leads to silent 400 context-overflow errors on small context windows."""
+
+    def test_single_oversized_item_is_truncated_not_skipped(self):
+        """An item larger than the entire budget is truncated and injected."""
+        with tempfile.TemporaryDirectory() as tmp:
+            db, _cfg = _make_db(tmp)
+            conv = db.create_conversation(title="Overflow test")
+
+            from orivellum.api.routes import conversations as C
+
+            # Context window = 512 tokens → budget = 153 tokens → 612 chars max.
+            # Item is 2000 chars (500 tokens) — well over budget.
+            giant_text = "G" * 2000
+            oversized = [_knowledge_hit(giant_text, "w1")]
+
+            out_sources: list = []
+            with patch("orivellum.capabilities.embeddings.hybrid_search_knowledge",
+                       return_value=oversized), \
+                 patch("orivellum.capabilities.embeddings.hybrid_search_chunks",
+                       return_value=[]):
+                mock_cfg = type("C", (), {"serving": type("S", (), {
+                    "context_window": 512,
+                    "base_url": "http://localhost",
+                    "workhorse_model": "test",
+                })()})()
+                with patch.object(C, "get_config", return_value=mock_cfg):
+                    prompt = C._build_system_prompt(
+                        db, conv, user_query="test query",
+                        out_sources=out_sources,
+                    )
+
+            # The item must be injected (not skipped) — out_sources is populated
+            assert len(out_sources) == 1, (
+                "Oversized item must be truncated and injected, not skipped; "
+                f"got {len(out_sources)} sources"
+            )
+            # The injected text must be shorter than the original
+            injected_passage = out_sources[0]["passage"]
+            assert len(injected_passage) < len(giant_text), (
+                "Injected passage must be shorter than the original oversized text"
+            )
+            # And the prompt must contain part of the item text
+            assert "G" * 10 in prompt, "Prompt must include content from the truncated item"
+            db.close()
+
+    def test_item_exactly_at_budget_is_accepted(self):
+        """An item whose token count exactly equals the budget is accepted in full."""
+        with tempfile.TemporaryDirectory() as tmp:
+            db, _cfg = _make_db(tmp)
+            conv = db.create_conversation(title="Exact budget test")
+
+            from orivellum.api.routes import conversations as C
+            from orivellum.api.routes.conversations import _CHARS_PER_TOKEN
+
+            # Context window = 512 → budget = int(512 * 0.30) = 153 tokens
+            # Item text = exactly 153 * 4 = 612 chars → exactly at budget
+            _ctx = 512
+            _budget_tokens = int(_ctx * 0.30)          # 153
+            exact_chars = _budget_tokens * _CHARS_PER_TOKEN  # 612
+            exact_text = "E" * exact_chars
+            exact_item = [_knowledge_hit(exact_text, "w1")]
+
+            out_sources: list = []
+            with patch("orivellum.capabilities.embeddings.hybrid_search_knowledge",
+                       return_value=exact_item), \
+                 patch("orivellum.capabilities.embeddings.hybrid_search_chunks",
+                       return_value=[]):
+                mock_cfg = type("C", (), {"serving": type("S", (), {
+                    "context_window": _ctx,
+                    "base_url": "http://localhost",
+                    "workhorse_model": "test",
+                })()})()
+                with patch.object(C, "get_config", return_value=mock_cfg):
+                    C._build_system_prompt(
+                        db, conv, user_query="test query",
+                        out_sources=out_sources,
+                    )
+
+            assert len(out_sources) == 1, (
+                f"Item exactly at budget ({_budget_tokens} tokens) must be accepted; "
+                f"got {len(out_sources)} sources"
+            )
+            db.close()

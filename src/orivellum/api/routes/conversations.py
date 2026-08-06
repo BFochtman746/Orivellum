@@ -1299,9 +1299,20 @@ def _build_system_prompt(db: Any, conv: dict, scope: str = "work",
                 for _fki_raw in _fk:
                     if _fki_raw.get("review_status") not in _TRUSTED:
                         continue
-                    _ft_cost = estimate_tokens(_fki_raw.get("text", ""))
-                    if len(_trusted_fk) >= _CONTEXT_KNOWLEDGE or _f_k_used + _ft_cost > _f_budget:
+                    _fki_text = _fki_raw.get("text", "")
+                    _ft_cost = estimate_tokens(_fki_text)
+                    if len(_trusted_fk) >= _CONTEXT_KNOWLEDGE:
                         break
+                    if _f_k_used + _ft_cost > _f_budget:
+                        if not _trusted_fk:
+                            # First item alone exceeds the budget — truncate it to fit
+                            # rather than skipping it entirely (an empty context leads
+                            # to silent 400 context-overflow errors on small windows).
+                            _fki_raw = {**_fki_raw,
+                                        "text": _fki_text[: _f_budget * _CHARS_PER_TOKEN]}
+                            _ft_cost = _f_budget
+                        else:
+                            break
                     _trusted_fk.append(_fki_raw)
                     _f_k_used += _ft_cost
 
@@ -1539,9 +1550,19 @@ def _build_system_prompt(db: Any, conv: dict, scope: str = "work",
             for _ki in knowledge_hits:
                 if _ki.get("review_status") not in _TRUSTED:
                     continue
-                _t = estimate_tokens(_ki.get("text", ""))
-                if len(trusted_k) >= _ret_cfg.top_k_knowledge or _k_used + _t > _k_budget:
+                _ki_text = _ki.get("text", "")
+                _t = estimate_tokens(_ki_text)
+                if len(trusted_k) >= _ret_cfg.top_k_knowledge:
                     break
+                if _k_used + _t > _k_budget:
+                    if not trusted_k:
+                        # First item alone exceeds the budget — truncate it to fit
+                        # rather than skipping it entirely (an empty context leads
+                        # to silent 400 context-overflow errors on small windows).
+                        _ki = {**_ki, "text": _ki_text[: _k_budget * _CHARS_PER_TOKEN]}
+                        _t = _k_budget
+                    else:
+                        break
                 trusted_k.append(_ki)
                 _k_used += _t
 
@@ -1712,15 +1733,29 @@ def _build_system_prompt(db: Any, conv: dict, scope: str = "work",
     _fb_budget = int(_get_effective_context_window(db) * 0.30)
 
     def _trim_by_budget(candidates: list[dict]) -> list[dict]:
-        """Return trusted knowledge items within the token budget."""
+        """Return trusted knowledge items within the token budget.
+
+        If the very first trusted item is larger than the entire budget it is
+        truncated to fit rather than skipped, so the model always receives at
+        least one item's worth of context (prevents silent 400 overflow errors
+        when a single item is larger than 30 % of the context window).
+        """
         result: list[dict] = []
         used = 0
         for _k in candidates:
             if _k.get("review_status") not in _TRUSTED:
                 continue
-            _t = estimate_tokens(_k.get("text", ""))
-            if len(result) >= _CONTEXT_KNOWLEDGE or used + _t > _fb_budget:
+            _k_text = _k.get("text", "")
+            _t = estimate_tokens(_k_text)
+            if len(result) >= _CONTEXT_KNOWLEDGE:
                 break
+            if used + _t > _fb_budget:
+                if not result:
+                    # First item alone exceeds the budget — truncate to fit.
+                    _k = {**_k, "text": _k_text[: _fb_budget * _CHARS_PER_TOKEN]}
+                    _t = _fb_budget
+                else:
+                    break
             result.append(_k)
             used += _t
         return result
