@@ -473,5 +473,145 @@ class TestIntentDispatch(unittest.TestCase):
         self.assertIn("intent", meta)
 
 
+class TestRecallOutputIntent(unittest.TestCase):
+    """recall_output intent: fast-path classification + dispatch + handler."""
+
+    # ── intent classifier ────────────────────────────────────────────────────
+
+    def test_fast_path_find_report_i_made(self):
+        from orivellum.capabilities.intent import classify_intent
+        r = classify_intent("find the report I made about taxes", "http://x", "m")
+        self.assertEqual(r["intent"], "recall_output")
+
+    def test_fast_path_show_me_tts_clip(self):
+        from orivellum.capabilities.intent import classify_intent
+        r = classify_intent("show me the TTS clip I generated last week", "http://x", "m")
+        self.assertEqual(r["intent"], "recall_output")
+
+    def test_fast_path_find_document_i_uploaded(self):
+        from orivellum.capabilities.intent import classify_intent
+        r = classify_intent("find the document I uploaded about machine learning", "http://x", "m")
+        self.assertEqual(r["intent"], "recall_output")
+
+    def test_fast_path_show_my_generated_files(self):
+        from orivellum.capabilities.intent import classify_intent
+        r = classify_intent("show my generated files", "http://x", "m")
+        self.assertEqual(r["intent"], "recall_output")
+
+    def test_fast_path_does_not_match_regular_recall(self):
+        """'where are we on X' is recall, not recall_output."""
+        from orivellum.capabilities.intent import classify_intent
+        r = classify_intent("where are we on the project", "http://x", "m")
+        self.assertNotEqual(r["intent"], "recall_output")
+
+    # ── db.search_provenance ─────────────────────────────────────────────────
+
+    def setUp(self):
+        import tempfile
+        self.tmp = tempfile.mkdtemp()
+        from orivellum.database.db import OrivellumDB
+        from orivellum.configuration.config import OrivellumConfig, ServingConfig
+        from pathlib import Path
+        data_dir = Path(self.tmp) / "data"
+        data_dir.mkdir(parents=True, exist_ok=True)
+        self.db = OrivellumDB(str(data_dir / "test.db"))
+        self.cfg = OrivellumConfig(
+            data_dir=str(data_dir),
+            serving=ServingConfig(base_url="http://localhost:8001"),
+        )
+
+    def _register_output(self, title: str, kind: str = "pdf",
+                         source: str = "generation") -> str:
+        """Create a document + provenance row and return doc_id."""
+        from orivellum.capabilities.persist import record_provenance
+        doc = self.db.create_document(title=title, source=source, kind=kind)
+        doc_id = doc["id"]
+        record_provenance(doc_id, source, self.db)
+        return doc_id
+
+    def test_search_provenance_finds_matching_title(self):
+        self._register_output("Tax Report 2024", kind="pdf", source="generation")
+        self._register_output("Recipe Collection", kind="docx", source="upload")
+
+        results = self.db.search_provenance("tax report")
+        titles = [r["title"] for r in results]
+        self.assertIn("Tax Report 2024", titles)
+        self.assertNotIn("Recipe Collection", titles)
+
+    def test_search_provenance_empty_query_returns_recent(self):
+        self._register_output("Alpha", source="upload")
+        self._register_output("Beta", source="generation")
+
+        results = self.db.search_provenance("")
+        self.assertGreaterEqual(len(results), 2)
+
+    def test_search_provenance_source_filter(self):
+        self._register_output("Studio Clip", kind="mp3", source="studio")
+        self._register_output("Uploaded PDF", kind="pdf", source="upload")
+
+        results = self.db.search_provenance("", source="studio")
+        sources = {r["source"] for r in results}
+        self.assertEqual(sources, {"studio"})
+
+    # ── handler ──────────────────────────────────────────────────────────────
+
+    def test_handler_returns_markdown_list(self):
+        from orivellum.api.routes.conversations import _handle_recall_output
+        self._register_output("Tax Report 2024", kind="pdf", source="generation")
+
+        text, meta = _handle_recall_output(self.db, "find the tax report I generated")
+        self.assertIn("Tax Report 2024", text)
+        self.assertIn("/library/", text)
+        self.assertEqual(meta["intent"], "recall_output")
+        self.assertGreater(meta["count"], 0)
+
+    def test_handler_no_results_returns_friendly_message(self):
+        from orivellum.api.routes.conversations import _handle_recall_output
+        text, meta = _handle_recall_output(self.db, "find the nonexistent dragon document")
+        self.assertIn("No matching", text)
+        self.assertEqual(meta["count"], 0)
+
+    # ── dispatch integration ─────────────────────────────────────────────────
+
+    def _run(self, coro):
+        import asyncio
+        loop = asyncio.new_event_loop()
+        try:
+            asyncio.set_event_loop(loop)
+            return loop.run_until_complete(coro)
+        finally:
+            loop.close()
+            asyncio.set_event_loop(None)
+
+    def test_dispatch_recall_output_returns_meta(self):
+        from orivellum.api.routes.conversations import _maybe_dispatch_intent
+        self._register_output("Quantum Report", kind="pdf", source="generation")
+        classification = {"intent": "recall_output", "query": "quantum report I generated",
+                          "location": None}
+        with patch("orivellum.capabilities.intent.classify_intent", return_value=classification):
+            result = self._run(
+                _maybe_dispatch_intent(self.db, "find the quantum report I generated", "http://x", "m")
+            )
+        self.assertIsNotNone(result)
+        text, meta = result
+        self.assertEqual(meta["intent"], "recall_output")
+        self.assertIsInstance(text, str)
+
+    def test_dispatch_recall_output_handler_exception_returns_fallback(self):
+        from orivellum.api.routes.conversations import _maybe_dispatch_intent
+        classification = {"intent": "recall_output", "query": "find report", "location": None}
+        with patch("orivellum.capabilities.intent.classify_intent", return_value=classification):
+            with patch(
+                "orivellum.api.routes.conversations._handle_recall_output",
+                side_effect=Exception("db error"),
+            ):
+                result = self._run(
+                    _maybe_dispatch_intent(self.db, "find the report I made", "http://x", "m")
+                )
+        self.assertIsNotNone(result)
+        _, meta = result
+        self.assertEqual(meta["intent"], "recall_output")
+
+
 if __name__ == "__main__":
     unittest.main()

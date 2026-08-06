@@ -4591,6 +4591,79 @@ class OrivellumDB:
             self._conn.execute("DELETE FROM push_tokens WHERE token=?", (token,))
             self._conn.commit()
 
+    def search_provenance(
+        self,
+        query: str = "",
+        *,
+        source: str | None = None,
+        work_id: str | None = None,
+        limit: int = 10,
+    ) -> list[dict]:
+        """Return documents recorded in object_provenance that match *query* keywords.
+
+        Searches document titles with LIKE for each meaningful keyword in *query*.
+        When *query* is empty, returns the most recently added provenance items.
+
+        Parameters
+        ----------
+        query:
+            Free-text search string; stop-words and short tokens are ignored.
+        source:
+            Optional provenance source filter, e.g. ``"upload"``, ``"studio"``,
+            ``"generation"``.
+        work_id:
+            Optional Work filter — only returns documents linked to this Work.
+        limit:
+            Maximum number of results (capped at 50).
+        """
+        limit = min(limit, 50)
+        _STOP = frozenset({
+            "find", "show", "get", "retrieve", "locate", "where", "give",
+            "list", "the", "my", "a", "an", "that", "which", "what", "i",
+            "we", "me", "you", "us", "made", "created", "generated", "uploaded",
+            "wrote", "built", "produced", "have", "did", "about", "for", "on",
+            "is", "are", "was", "been", "files", "file", "outputs", "output",
+            "all", "any", "some", "latest", "recent", "new",
+        })
+        keywords = [
+            w for w in query.lower().split()
+            if len(w) > 2 and w.isalnum() and w not in _STOP
+        ]
+
+        sql = """
+            SELECT d.id, d.title, d.kind, d.readiness, d.content_path,
+                   p.source, p.work_id AS prov_work_id, p.origin_id,
+                   p.created_at AS prov_created_at
+            FROM object_provenance p
+            JOIN documents d ON d.id = p.object_id
+            WHERE 1=1
+        """
+        args: list = []
+
+        if keywords:
+            clause = " OR ".join("d.title LIKE ?" for _ in keywords)
+            sql += f" AND ({clause})"
+            args.extend(f"%{kw}%" for kw in keywords)
+
+        if source is not None:
+            sql += " AND p.source = ?"
+            args.append(source)
+
+        if work_id is not None:
+            sql += " AND p.work_id = ?"
+            args.append(work_id)
+
+        sql += " ORDER BY p.created_at DESC LIMIT ?"
+        args.append(limit)
+
+        try:
+            with self._lock:
+                rows = self._conn.execute(sql, args).fetchall()
+            return [dict(r) for r in rows]
+        except Exception as exc:
+            logger.debug("search_provenance failed (non-fatal): %s", exc)
+            return []
+
     def close(self) -> None:
         with self._lock:
             # Close the main writer connection.

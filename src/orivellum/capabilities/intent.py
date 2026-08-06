@@ -76,6 +76,16 @@ _ACTION_PATTERNS: list[tuple[re.Pattern[str], str, str]] = [
 ]
 
 _PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    # recall_output — "find the report I made", "show me the TTS clip I generated"
+    (re.compile(
+        r"\b(find|show|get|retrieve|locate|where is)\b.{0,50}"
+        r"\b(i (made|created|generated|uploaded|wrote|built|produced)"
+        r"|my (report|tts|clip|image|document|pdf|docx|manuscript|file|output|summary|transcript))\b"
+        r"|\bfind what i (made|created|generated|produced|uploaded) (about|on|for|regarding)\b"
+        r"|\b(show|find|get|list) my (generated|created|uploaded|recent) (files?|outputs?|documents?|reports?|clips?|images?|tts)\b"
+        r"|\bwhat (files?|outputs?|documents?|reports?|clips?|images?) (did i|have i) (made?|created?|generated?|uploaded?)\b",
+        re.IGNORECASE,
+    ), "recall_output"),
     # recall — "where are we on X", "what did we decide", "what's our progress"
     (re.compile(
         r"\b(where (are|were) we (on|with|regarding|about)"
@@ -135,13 +145,14 @@ def _extract_weather_location(text: str) -> str | None:
 _CLASSIFY_PROMPT = """Classify the user's message into exactly one intent.
 
 Intents:
-- "web_search"  — wants information from the web, recent news, research papers, or facts the AI may not know
-- "weather"     — wants current weather, temperature, or forecast for a location
-- "image_gen"   — wants an image generated or drawn
-- "remember"    — explicitly wants to store a personal fact/preference for later recall
-- "recall"      — asking about past conversations, decisions, or progress: "where are we on X", "what did we decide about Y", "what's our status on Z"
-- "action"      — wants to execute a specific action: build/create a tax package or expense report, export a book/manuscript, compile/assemble a report, create a study/learning plan, fill a template
-- "chat"        — everything else: questions, analysis, writing, research assistance
+- "web_search"     — wants information from the web, recent news, research papers, or facts the AI may not know
+- "weather"        — wants current weather, temperature, or forecast for a location
+- "image_gen"      — wants an image generated or drawn
+- "remember"       — explicitly wants to store a personal fact/preference for later recall
+- "recall"         — asking about past conversations, decisions, or progress: "where are we on X", "what did we decide about Y", "what's our status on Z"
+- "recall_output"  — wants to find or retrieve a specific file, document, report, TTS clip, image, or other output they previously created, uploaded, or generated: "find the report I made about X", "show me the TTS clip from last week", "where is the PDF I uploaded"
+- "action"         — wants to execute a specific action: build/create a tax package or expense report, export a book/manuscript, compile/assemble a report, create a study/learning plan, fill a template
+- "chat"           — everything else: questions, analysis, writing, research assistance
 
 For "action" intent also include "action_name" (one of: tax_package, book_export, report_assembler, study_plan, template_fill) and "action_inputs" (object with year for tax_package, else {}).
 
@@ -224,7 +235,8 @@ def classify_intent(
             return {"intent": "chat", "query": user_text, "location": None}
         parsed = json.loads(raw.strip())
         intent = parsed.get("intent", "chat")
-        if intent not in ("web_search", "weather", "image_gen", "remember", "recall", "chat", "action"):
+        if intent not in ("web_search", "weather", "image_gen", "remember", "recall",
+                          "recall_output", "chat", "action"):
             intent = "chat"
         result: dict = {
             "intent": intent,

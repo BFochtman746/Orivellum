@@ -2672,6 +2672,17 @@ async def _maybe_dispatch_intent(
             text = f"Image generation encountered an error: {exc}"
         return text, {"intent": "image_gen", "query": query}
 
+    if intent == "recall_output":
+        try:
+            text, ro_meta = await asyncio.to_thread(
+                _handle_recall_output, db, query, work_id
+            )
+        except Exception as exc:
+            logger.warning("Recall output handler failed: %s", exc)
+            text = "I couldn't search your outputs right now — try again in a moment."
+            ro_meta = {"intent": "recall_output", "query": query}
+        return text, ro_meta
+
     if intent == "action":
         action_name = classification.get("action_name") or ""
         action_inputs = dict(classification.get("action_inputs") or {})
@@ -2918,6 +2929,75 @@ def _infer_memory_facts(
             logger.info("Inference memory: wrote %d fact(s) from conv %s", written, conv_id[:8])
     except Exception as exc:
         logger.debug("Inference memory extraction skipped: %s", exc)
+
+
+def _handle_recall_output(
+    db: Any,
+    query: str,
+    work_id: str | None = None,
+) -> tuple[str, dict]:
+    """Search object_provenance for user-created outputs matching *query*.
+
+    Returns a markdown reply with a bulleted list of matching documents plus
+    a metadata dict so the frontend can build clickable result cards.
+    """
+    # Strip intent phrases, keep only meaningful content keywords.
+    _STOP = frozenset({
+        "find", "show", "get", "retrieve", "locate", "where", "give", "list",
+        "the", "my", "a", "an", "that", "which", "what", "i", "we", "me",
+        "you", "us", "made", "created", "generated", "uploaded", "wrote",
+        "built", "produced", "have", "did", "about", "for", "on", "is", "are",
+        "was", "been", "files", "file", "outputs", "output", "all", "any",
+        "some", "latest", "recent", "new",
+    })
+    terms = " ".join(
+        w for w in query.lower().split()
+        if w.isalnum() and w not in _STOP and len(w) > 2
+    )
+
+    results = db.search_provenance(terms, work_id=work_id, limit=15)
+
+    meta: dict = {"intent": "recall_output", "query": query, "count": len(results)}
+
+    if not results:
+        msg = "🔍 **No matching outputs found**\n\nI couldn't find any files, documents, or outputs"
+        if terms:
+            msg += f" matching **{terms}**"
+        msg += ".\n\nTry a different keyword, or open the Library to browse all your documents."
+        return msg, meta
+
+    _SOURCE_LABEL: dict[str, str] = {
+        "upload":       "uploaded",
+        "generation":   "generated",
+        "studio":       "created in Studio",
+        "chat":         "created in chat",
+        "zip_extract":  "extracted from archive",
+        "intake":       "researched",
+    }
+
+    lines = ["📁 **Outputs matching your search**\n"]
+    for item in results[:10]:
+        title      = item.get("title") or "Untitled"
+        kind       = item.get("kind") or "file"
+        source     = item.get("source") or "upload"
+        doc_id     = item.get("id") or ""
+        prov_date  = (item.get("prov_created_at") or "")[:10]
+
+        label = _SOURCE_LABEL.get(source, source)
+        date_part = f" · {prov_date}" if prov_date else ""
+        lines.append(
+            f"- **{title}** (`{kind}`, {label}{date_part})"
+            f" — [Open in Library](/library/{doc_id})"
+        )
+
+    if len(results) > 10:
+        lines.append(f"\n…and {len(results) - 10} more. Visit the Library to see all.")
+
+    meta["results"] = [
+        {"id": r.get("id"), "title": r.get("title"), "kind": r.get("kind")}
+        for r in results[:10]
+    ]
+    return "\n".join(lines), meta
 
 
 def _handle_recall_query(
