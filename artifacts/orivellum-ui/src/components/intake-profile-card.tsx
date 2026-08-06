@@ -285,6 +285,7 @@ export function IntakeProfileCard({
     setResearching(true);
     setShowResearchConfirm(false);
     try {
+      // Fire-and-forget: POST returns immediately with {job_id, status:"pending"}
       const resp = await apiFetch(`${BASE}/intake/research`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -294,9 +295,38 @@ export function IntakeProfileCard({
         const err = await resp.json().catch(() => ({}));
         throw new Error((err as any).detail ?? "Research failed");
       }
-      const data: IntakeProfile = await resp.json();
-      setResearchProfile(data);
-      toast.success("Research complete — results saved as a knowledge note");
+      // Poll status at 2s intervals; max 35 attempts (~70s covers the 60s synthesis timeout)
+      const docId = profile.doc_id;
+      const MAX_POLLS = 35;
+      for (let i = 0; i < MAX_POLLS; i++) {
+        await new Promise<void>(r => setTimeout(r, 2_000));
+        const statusResp = await apiFetch(`${BASE}/intake/${docId}/research-status`);
+        if (!statusResp.ok) {
+          // Job registry may have expired — treat as timeout
+          throw new Error("Research status unavailable");
+        }
+        const job = await statusResp.json() as {
+          status: string;
+          research_summary?: string | null;
+          research_sources?: Array<{ title?: string; url?: string }>;
+          error?: string | null;
+        };
+        if (job.status === "done") {
+          // Merge research results into a synthetic profile update
+          setResearchProfile({
+            ...profile,
+            research_summary: job.research_summary ?? null,
+            research_sources: job.research_sources ?? [],
+          });
+          toast.success("Research complete — results saved as a knowledge note");
+          return;
+        }
+        if (job.status === "error") {
+          throw new Error(job.error ?? "Research failed on the server");
+        }
+        // status is pending/running — keep polling
+      }
+      throw new Error("Research timed out — Tavily may be slow. Try again later.");
     } catch (err: any) {
       toast.error(err.message ?? "Research failed");
     } finally {

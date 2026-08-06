@@ -302,6 +302,7 @@ function ProfileCard({
               onPress: async () => {
                 setActionBusy(action.id);
                 try {
+                  // Fire-and-forget POST — returns immediately with {job_id, status}
                   const resp = await mobileFetch(`${API_BASE}/api/intake/research`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -311,8 +312,38 @@ function ProfileCard({
                     const e = await resp.json().catch(() => ({}));
                     throw new Error((e as any).detail ?? 'Research failed');
                   }
-                  const updated: IntakeProfile = await resp.json();
-                  onProfileUpdate?.(updated);
+                  // Poll at 2s intervals; max 35 attempts (~70s)
+                  const docId = profile.doc_id;
+                  const MAX_POLLS = 35;
+                  let done = false;
+                  for (let i = 0; i < MAX_POLLS; i++) {
+                    await new Promise<void>(r => setTimeout(r, 2000));
+                    const statusResp = await mobileFetch(
+                      `${API_BASE}/api/intake/${docId}/research-status`
+                    );
+                    if (!statusResp.ok) throw new Error('Research status unavailable');
+                    const job = await statusResp.json() as {
+                      status: string;
+                      research_summary?: string | null;
+                      research_sources?: Array<{ title?: string; url?: string }>;
+                      error?: string | null;
+                    };
+                    if (job.status === 'done') {
+                      // Merge research results into the existing profile
+                      onProfileUpdate?.({
+                        ...profile,
+                        research_summary: job.research_summary ?? null,
+                        research_sources: job.research_sources ?? [],
+                      });
+                      done = true;
+                      break;
+                    }
+                    if (job.status === 'error') {
+                      throw new Error(job.error ?? 'Research failed on the server');
+                    }
+                    // pending / running — keep polling
+                  }
+                  if (!done) throw new Error('Research timed out. Tavily may be slow — try again later.');
                 } catch (e: any) {
                   Alert.alert('Research failed', e.message ?? 'Unknown error');
                 } finally {
