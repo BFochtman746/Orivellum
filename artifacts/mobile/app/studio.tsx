@@ -191,6 +191,108 @@ function SavePhotoButton({ uri, name, compact }: { uri: string; name?: string; c
   );
 }
 
+// ── Audio share / export ──────────────────────────────────────────────────────
+
+/**
+ * Download an authenticated audio URL and open the native share sheet.
+ * On web, falls back to a browser download (same as saveImageToPhotos).
+ */
+async function shareAudioFile(uri: string, name = `orivellum_${Date.now()}.mp3`) {
+  if (Platform.OS === 'web') {
+    const resp = await mobileFetch(uri);
+    if (!resp.ok) throw new Error(`Download failed (HTTP ${resp.status})`);
+    const href = URL.createObjectURL(await resp.blob());
+    const a = document.createElement('a');
+    a.href = href;
+    a.download = name;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(href), 10_000);
+    return;
+  }
+
+  const FileSystem = await import('expo-file-system/legacy');
+  const Sharing    = await import('expo-sharing');
+
+  const token = getApiToken();
+  const dest  = `${FileSystem.cacheDirectory}${name}`;
+  const dl = await FileSystem.downloadAsync(uri, dest, {
+    headers: token ? { authorization: `Bearer ${token}` } : undefined,
+  });
+  if (dl.status !== 200) throw new Error(`Download failed (HTTP ${dl.status})`);
+
+  const canShare = await Sharing.isAvailableAsync();
+  if (canShare) {
+    await Sharing.shareAsync(dl.uri, {
+      mimeType: 'audio/mpeg',
+      dialogTitle: name,
+      UTI: 'public.mp3',
+    });
+  } else {
+    Alert.alert('Share unavailable', 'Sharing is not supported on this platform.');
+  }
+  // Clean up cache after sharing dialog closes (best-effort)
+  FileSystem.deleteAsync(dest, { idempotent: true }).catch(() => {});
+}
+
+/** Small share icon button for audio rows — busy/done feedback matches SavePhotoButton. */
+function ShareAudioButton({ uri, name, compact }: { uri: string; name?: string; compact?: boolean }) {
+  const colors = useColors();
+  const [state, setState] = useState<'idle' | 'sharing' | 'done'>('idle');
+
+  const handleShare = async () => {
+    if (state === 'sharing') return;
+    setState('sharing');
+    try {
+      await shareAudioFile(uri, name);
+      setState('done');
+      setTimeout(() => setState('idle'), 2500);
+    } catch (e: any) {
+      setState('idle');
+      Alert.alert('Could not share audio', e?.message ?? 'Sharing failed');
+    }
+  };
+
+  if (compact) {
+    return (
+      <Pressable onPress={handleShare} hitSlop={8} style={styles.iconBtn} disabled={state === 'sharing'}>
+        {state === 'sharing' ? (
+          <ActivityIndicator size="small" color={colors.primary} />
+        ) : (
+          <Feather
+            name={state === 'done' ? 'check' : 'share-2'}
+            size={16}
+            color={state === 'done' ? '#22c55e' : colors.primary}
+          />
+        )}
+      </Pressable>
+    );
+  }
+
+  return (
+    <Pressable
+      onPress={handleShare}
+      disabled={state === 'sharing'}
+      style={({ pressed }) => [
+        styles.saveButton,
+        { borderColor: colors.border, opacity: pressed ? 0.7 : 1 },
+      ]}
+    >
+      {state === 'sharing' ? (
+        <ActivityIndicator size="small" color={colors.primary} />
+      ) : (
+        <Feather
+          name={state === 'done' ? 'check' : 'share-2'}
+          size={15}
+          color={state === 'done' ? '#22c55e' : colors.primary}
+        />
+      )}
+      <Text style={[styles.saveButtonText, { color: state === 'done' ? '#22c55e' : colors.primary }]}>
+        {state === 'sharing' ? 'Sharing…' : state === 'done' ? 'Shared!' : Platform.OS === 'web' ? 'Download' : 'Share'}
+      </Text>
+    </Pressable>
+  );
+}
+
 // ── Shared UI bits ─────────────────────────────────────────────────────────────
 
 function SectionCard({
@@ -2005,6 +2107,7 @@ function OutputsPanel({
                     <Feather name={isPlaying ? 'pause' : 'play'} size={16} color={colors.primary} />
                   </Pressable>
                 )}
+                {isAudio && <ShareAudioButton uri={serveUrl(out.path)} name={out.name} compact />}
                 {isImage && <SavePhotoButton uri={serveUrl(out.path)} name={out.name} compact />}
                 <Pressable onPress={() => handleDelete(out)} hitSlop={8} style={styles.iconBtn}>
                   <Feather name="trash-2" size={16} color={colors.destructive} />
