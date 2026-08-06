@@ -384,6 +384,223 @@ class TestRegisterTextNote(unittest.TestCase):
                          "Same file registered twice should return the same doc_id (SHA dedup)")
 
 
+class TestStudioRoundTrip(unittest.TestCase):
+    """Studio outputs must remain ready and FTS-searchable after a simulated restart.
+
+    The most likely failure mode is the document being created with
+    readiness='imported' (never reaching 'ready') or content_path becoming
+    stale after a restart — neither should be possible because
+    register_and_index() sets readiness='ready' and stores a lib-root-relative
+    content_path synchronously before returning.
+
+    Each test:
+      1. Registers a Studio output via register_and_index on DB instance A.
+      2. Closes DB A and opens a *new* OrivellumDB instance B pointing to the
+         same file — simulating an API server restart.
+      3. Asserts readiness and chunks survive on B.
+
+    FTS sub-tests additionally run db.search_chunks() on B to confirm the
+    document surfaces via keyword search, proving chunks are properly written
+    to the chunks_fts shadow table (not just the chunks row table).
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.db, self.cfg = _make_db_and_cfg(self.tmp)
+        self._db_path = str(Path(self.tmp) / "data" / "test.db")
+        self._out_dir = Path(self.tmp) / "data" / "outputs"
+        self._out_dir.mkdir(parents=True, exist_ok=True)
+
+    def _reopen_db(self):
+        """Close the current DB connection and open a fresh one to the same file."""
+        self.db.close()
+        from orivellum.database.db import OrivellumDB
+        self.db = OrivellumDB(self._db_path)
+
+    # ── TTS clip ─────────────────────────────────────────────────────────────
+
+    def test_tts_clip_is_ready_after_restart(self):
+        """A TTS MP3 registered before restart is still readiness='ready' after."""
+        from orivellum.capabilities.persist import register_and_index
+
+        clip = self._out_dir / "tts_restart_test.mp3"
+        clip.write_bytes(b"ID3" + b"\x00" * 64)
+
+        doc_id = register_and_index(
+            doc_path=clip,
+            text_content="Quantum computing uses qubits and superposition to solve hard problems.",
+            kind="mp3",
+            db=self.db,
+            cfg=self.cfg,
+            title="TTS: Quantum Computing Introduction",
+            provenance_source="studio",
+            origin_id="test-restart-001",
+        )
+
+        # Simulate restart
+        self._reopen_db()
+
+        with self.db._lock:
+            doc = self.db._conn.execute(
+                "SELECT readiness, kind FROM documents WHERE id=?", (doc_id,)
+            ).fetchone()
+
+        self.assertIsNotNone(doc, "Document vanished after simulated restart")
+        self.assertEqual(doc["readiness"], "ready",
+                         f"readiness degraded to {doc['readiness']!r} after restart — "
+                         "document is no longer usable")
+
+    def test_tts_clip_chunks_survive_restart(self):
+        """FTS chunks for a TTS clip are still present after a simulated restart."""
+        from orivellum.capabilities.persist import register_and_index
+
+        clip = self._out_dir / "tts_chunks_restart.mp3"
+        clip.write_bytes(b"ID3" + b"\x00" * 64)
+
+        doc_id = register_and_index(
+            doc_path=clip,
+            text_content="Quantum computing uses qubits and superposition to solve hard problems.",
+            kind="mp3",
+            db=self.db,
+            cfg=self.cfg,
+            title="TTS: Quantum Computing Chunks",
+            provenance_source="studio",
+        )
+
+        self._reopen_db()
+
+        with self.db._lock:
+            n = self.db._conn.execute(
+                "SELECT COUNT(*) AS n FROM chunks WHERE doc_id=?", (doc_id,)
+            ).fetchone()["n"]
+
+        self.assertGreater(n, 0,
+                           "Chunks missing after restart — document not FTS-searchable")
+
+    def test_tts_clip_surfaces_via_fts_after_restart(self):
+        """search_chunks() on a fresh DB instance finds the registered TTS clip."""
+        from orivellum.capabilities.persist import register_and_index
+
+        clip = self._out_dir / "tts_fts_restart.mp3"
+        clip.write_bytes(b"ID3" + b"\x00" * 64)
+
+        register_and_index(
+            doc_path=clip,
+            text_content="Quantum computing uses qubits and superposition to solve hard problems.",
+            kind="mp3",
+            db=self.db,
+            cfg=self.cfg,
+            title="TTS: Quantum Computing FTS",
+            provenance_source="studio",
+        )
+
+        self._reopen_db()
+
+        hits = self.db.search_chunks("quantum computing")
+        doc_ids = [h.get("doc_id") or h.get("id") for h in hits]
+        # At least one hit must reference a document with 'quantum' in its chunks
+        chunk_texts = " ".join(
+            h.get("text", "") or h.get("snippet", "") or "" for h in hits
+        ).lower()
+
+        self.assertGreater(len(hits), 0,
+                           "search_chunks returned nothing after restart — FTS index lost")
+        self.assertIn("quantum", chunk_texts,
+                      "Expected 'quantum' in FTS results but none of the hits contain it")
+
+    # ── Generated image ───────────────────────────────────────────────────────
+
+    def test_generated_image_is_ready_after_restart(self):
+        """A generated PNG registered before restart is still readiness='ready' after."""
+        from orivellum.capabilities.persist import register_and_index
+
+        img = self._out_dir / "image_restart_test.png"
+        img.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 64)
+
+        doc_id = register_and_index(
+            doc_path=img,
+            text_content="A futuristic cityscape at sunset with flying cars and neon lights.",
+            kind="png",
+            db=self.db,
+            cfg=self.cfg,
+            title="Image: Futuristic Cityscape",
+            provenance_source="studio",
+        )
+
+        self._reopen_db()
+
+        with self.db._lock:
+            doc = self.db._conn.execute(
+                "SELECT readiness FROM documents WHERE id=?", (doc_id,)
+            ).fetchone()
+
+        self.assertIsNotNone(doc)
+        self.assertEqual(doc["readiness"], "ready",
+                         "Generated image readiness degraded after restart")
+
+    def test_generated_image_fts_after_restart(self):
+        """search_chunks() finds a generated image by its prompt text after restart."""
+        from orivellum.capabilities.persist import register_and_index
+
+        img = self._out_dir / "image_fts_restart.png"
+        img.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 64)
+
+        register_and_index(
+            doc_path=img,
+            text_content="A futuristic cityscape at sunset with flying cars and neon lights.",
+            kind="png",
+            db=self.db,
+            cfg=self.cfg,
+            title="Image: Futuristic Cityscape FTS",
+            provenance_source="studio",
+        )
+
+        self._reopen_db()
+
+        hits = self.db.search_chunks("cityscape sunset")
+        chunk_texts = " ".join(
+            h.get("text", "") or h.get("snippet", "") or "" for h in hits
+        ).lower()
+
+        self.assertGreater(len(hits), 0,
+                           "search_chunks returned no results after restart — PNG prompt not indexed")
+        self.assertIn("cityscape", chunk_texts,
+                      "Expected 'cityscape' in FTS results after restart")
+
+    # ── Provenance survives restart ───────────────────────────────────────────
+
+    def test_provenance_row_survives_restart(self):
+        """object_provenance row is still present after a simulated restart."""
+        from orivellum.capabilities.persist import register_and_index
+
+        clip = self._out_dir / "tts_prov_restart.mp3"
+        clip.write_bytes(b"ID3" + b"\x00" * 64)
+
+        doc_id = register_and_index(
+            doc_path=clip,
+            text_content="Provenance durability test content.",
+            kind="mp3",
+            db=self.db,
+            cfg=self.cfg,
+            title="TTS: Provenance Durability",
+            provenance_source="studio",
+            origin_id="restart-prov-check",
+        )
+
+        self._reopen_db()
+
+        with self.db._lock:
+            prov = self.db._conn.execute(
+                "SELECT source, origin_id FROM object_provenance WHERE object_id=?",
+                (doc_id,),
+            ).fetchone()
+
+        self.assertIsNotNone(prov,
+                             "Provenance row missing after restart — recall queries will fail")
+        self.assertEqual(prov["source"], "studio")
+        self.assertEqual(prov["origin_id"], "restart-prov-check")
+
+
 class TestLibraryPathResolution(unittest.TestCase):
     """content_path stored by register_and_index/register_text_note must resolve
     correctly under data_dir/library — the invariant every Library endpoint relies on.
