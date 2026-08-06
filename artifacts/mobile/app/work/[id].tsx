@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { mobileFetch } from '@/lib/api';
+import { getApiToken } from '@/lib/token';
 import {
   ActivityIndicator,
   Alert,
@@ -1012,6 +1013,120 @@ function GapsTab({
 
 // ─── Overview tab with "Start Discussion" CTA ────────────────────────────────
 
+// ── Generate section ──────────────────────────────────────────────────────────
+
+type GenerateFormat = 'excel' | 'pdf' | 'docx' | 'slides';
+
+const GENERATE_FORMATS: { key: GenerateFormat; label: string; icon: string; endpoint: string; body: object; mime: string; uti: string }[] = [
+  { key: 'excel',  label: 'Excel',       icon: 'grid',        endpoint: '/generate/excel',  body: {},           mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',          uti: 'com.microsoft.excel.xlsx' },
+  { key: 'pdf',    label: 'PDF Report',  icon: 'file-text',   endpoint: '/generate/report', body: { format: 'pdf' },  mime: 'application/pdf',           uti: 'com.adobe.pdf' },
+  { key: 'docx',   label: 'DOCX Report', icon: 'align-left',  endpoint: '/generate/report', body: { format: 'docx' }, mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', uti: 'org.openxmlformats.wordprocessingml.document' },
+  { key: 'slides', label: 'Slides',      icon: 'monitor',     endpoint: '/generate/slides', body: {},           mime: 'application/vnd.openxmlformats-officedocument.presentationml.presentation', uti: 'org.openxmlformats.presentationml.presentation' },
+];
+
+function GenerateSection({ workId, colors }: { workId: string; colors: any }) {
+  const domain = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
+  const [busy, setBusy] = useState<Record<GenerateFormat, boolean>>({ excel: false, pdf: false, docx: false, slides: false });
+
+  const handleGenerate = async (fmt: typeof GENERATE_FORMATS[number]) => {
+    setBusy(prev => ({ ...prev, [fmt.key]: true }));
+    try {
+      const res = await mobileFetch(`https://${domain}/api${fmt.endpoint}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ work_id: workId, ...fmt.body }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error((err as any).detail ?? `Generation failed (HTTP ${res.status})`);
+      }
+      const data = await res.json() as { ok: boolean; filename: string; download_url: string };
+
+      if (Platform.OS === 'web') {
+        // Web: open the download URL in a new tab
+        const { Linking } = await import('react-native');
+        await Linking.openURL(`https://${domain}${data.download_url}`);
+        return;
+      }
+
+      // Native: download with auth header, then share/open via system sheet
+      const FileSystem = await import('expo-file-system/legacy');
+      const Sharing    = await import('expo-sharing');
+      const token = getApiToken();
+      const dest  = `${FileSystem.cacheDirectory ?? ''}${data.filename}`;
+      const dl = await FileSystem.downloadAsync(
+        `https://${domain}${data.download_url}`,
+        dest,
+        { headers: token ? { authorization: `Bearer ${token}` } : undefined },
+      );
+      if (dl.status !== 200) throw new Error(`Download failed (HTTP ${dl.status})`);
+
+      const canShare = await Sharing.isAvailableAsync();
+      if (canShare) {
+        await Sharing.shareAsync(dl.uri, {
+          mimeType: fmt.mime,
+          dialogTitle: data.filename,
+          UTI: fmt.uti,
+        });
+      } else {
+        Alert.alert('Saved', `${data.filename} is saved in your Files app.`);
+      }
+      // best-effort cleanup after share sheet closes
+      FileSystem.deleteAsync(dest, { idempotent: true }).catch(() => {});
+    } catch (err: any) {
+      Alert.alert('Generation failed', err?.message ?? 'Unknown error. Try again.');
+    } finally {
+      setBusy(prev => ({ ...prev, [fmt.key]: false }));
+    }
+  };
+
+  return (
+    <View style={{ marginTop: 16 }}>
+      {/* Section header */}
+      <View style={{
+        flexDirection: 'row', alignItems: 'center', gap: 6,
+        marginBottom: 8,
+      }}>
+        <Feather name="download" size={13} color={colors.mutedForeground} />
+        <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: colors.mutedForeground, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+          Generate &amp; Export
+        </Text>
+      </View>
+
+      {/* 2×2 button grid */}
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+        {GENERATE_FORMATS.map(fmt => {
+          const isBusy = busy[fmt.key];
+          return (
+            <Pressable
+              key={fmt.key}
+              onPress={() => handleGenerate(fmt)}
+              disabled={isBusy}
+              style={({ pressed }) => ({
+                flexDirection: 'row', alignItems: 'center', gap: 6,
+                flex: 1, minWidth: '44%',
+                paddingHorizontal: 12, paddingVertical: 10, borderRadius: 8,
+                borderWidth: 1,
+                borderColor: colors.border,
+                backgroundColor: pressed ? colors.muted : colors.card,
+                opacity: isBusy ? 0.6 : 1,
+              })}
+            >
+              {isBusy
+                ? <ActivityIndicator size="small" color={colors.primary} />
+                : <Feather name={fmt.icon as any} size={14} color={colors.primary} />
+              }
+              <Text style={{ fontSize: 13, fontFamily: 'Inter_500Medium', color: colors.foreground, flexShrink: 1 }}>
+                {isBusy ? 'Generating…' : fmt.label}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+    </View>
+  );
+}
+
 function OverviewTab({ workId, onStartDiscussion, starting, onNavigateToTab, bookIntel, onOpenBook }: {
   workId: string;
   onStartDiscussion: () => void;
@@ -1227,6 +1342,9 @@ function OverviewTab({ workId, onStartDiscussion, starting, onNavigateToTab, boo
           </View>
         );
       })()}
+
+      {/* Generate & Export */}
+      <GenerateSection workId={workId} colors={colors} />
 
       {/* Start Discussion CTA */}
       <Pressable
