@@ -515,14 +515,45 @@ function ReasoningBlock({ text, colors }: { text: string; colors: any }) {
   );
 }
 
-function TypingIndicator({ colors }: { colors: any }) {
+// stallLevel: 0 = normal typing dots, 1 = "Taking longer…" (≥15 s), 2 = "This is taking a while…" (≥30 s)
+function TypingIndicator({ colors, stallLevel = 0 }: { colors: any; stallLevel?: 0 | 1 | 2 }) {
+  const stallText =
+    stallLevel === 2
+      ? 'This is taking a while — you can retry if it hangs'
+      : stallLevel === 1
+      ? 'Taking longer than usual…'
+      : null;
+
   return (
     <View style={[styles.bubbleRow, styles.bubbleLeft]}>
       <View style={[styles.avatar, { backgroundColor: colors.primary }]}>
         <Feather name="cpu" size={12} color={colors.primaryForeground} />
       </View>
-      <View style={[styles.bubble, { backgroundColor: colors.card, borderColor: colors.border, borderWidth: 1 }]}>
-        <ActivityIndicator size="small" color={colors.mutedForeground} />
+      <View
+        style={[
+          styles.bubble,
+          {
+            backgroundColor: colors.card,
+            borderColor: stallLevel > 0 ? '#f97316' + '55' : colors.border,
+            borderWidth: 1,
+            gap: stallText ? 6 : 0,
+          },
+        ]}
+      >
+        <ActivityIndicator size="small" color={stallLevel > 0 ? '#f97316' : colors.mutedForeground} />
+        {!!stallText && (
+          <Text
+            style={{
+              fontSize: 11,
+              fontFamily: 'Inter_400Regular',
+              color: '#f97316',
+              fontStyle: 'italic',
+              maxWidth: 220,
+            }}
+          >
+            {stallText}
+          </Text>
+        )}
       </View>
     </View>
   );
@@ -550,6 +581,9 @@ export default function ChatScreen() {
   const [sendFailed, setSendFailed] = useState(false);
   const [modelPickerVisible, setModelPickerVisible] = useState(false);
   const [deepMode, setDeepMode] = useState(false);
+  // stallLevel: 0 = normal, 1 = "Taking longer…" (15 s), 2 = "This is taking a while…" (30 s)
+  const [stallLevel, setStallLevel] = useState<0 | 1 | 2>(0);
+  const stallTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
   // Image attachment state
   const [pendingImage, setPendingImage] = useState<{
     uri: string;
@@ -748,6 +782,31 @@ export default function ChatScreen() {
       if (highlightTimer) clearTimeout(highlightTimer);
     };
   }, [msgId, localMessages]);
+
+  // ── Stall indicator timers ────────────────────────────────────────────────
+  // When sending, fire at 15 s (level 1) and 30 s (level 2) to update the
+  // TypingIndicator caption.  All timers are cleared whenever sending stops
+  // so a fast reply leaves zero residue.
+  useEffect(() => {
+    // Clear any previously running timers first
+    stallTimersRef.current.forEach(clearTimeout);
+    stallTimersRef.current = [];
+
+    if (!sending) {
+      setStallLevel(0);
+      return;
+    }
+
+    const t1 = setTimeout(() => setStallLevel(1), 15_000);
+    const t2 = setTimeout(() => setStallLevel(2), 30_000);
+    stallTimersRef.current = [t1, t2];
+
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+      setStallLevel(0);
+    };
+  }, [sending]);
 
   const displayMessages = [...localMessages].reverse();
 
@@ -1258,7 +1317,7 @@ export default function ChatScreen() {
               }
             }, 200);
           }}
-          ListHeaderComponent={sending ? <TypingIndicator colors={colors} /> : null}
+          ListHeaderComponent={sending ? <TypingIndicator colors={colors} stallLevel={stallLevel} /> : null}
           ListEmptyComponent={
             !sending ? (
               <View style={styles.emptyWrap}>
