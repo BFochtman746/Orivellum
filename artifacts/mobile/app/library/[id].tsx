@@ -423,7 +423,15 @@ export default function LibraryDocDetail() {
   type DlState = 'idle' | 'generating' | 'downloading' | 'done' | 'error';
   const [dlState, setDlState] = useState<DlState>('idle');
   const [dlProgress, setDlProgress] = useState<{ done: number; total: number } | null>(null);
+  // dlJobRef stores the server job ID for the DELETE cancel call.
   const dlJobRef = useRef<string | null>(null);
+  // dlRunRef is a monotonic cancellation token. Incrementing it causes any
+  // in-flight handleDownloadAudiobook invocation to exit silently after its
+  // next await, without showing error UI.
+  const dlRunRef = useRef(0);
+  // dlJobId mirrors dlJobRef as React state so the Cancel button only renders
+  // once the server has confirmed the job (preventing a cancel-before-POST race).
+  const [dlJobId, setDlJobId] = useState<string | null>(null);
 
   const handleReprocess = async () => {
     setReprocessing(true);
@@ -446,9 +454,20 @@ export default function LibraryDocDetail() {
   const handleDownloadAudiobook = async () => {
     if (dlState === 'generating' || dlState === 'downloading') return;
 
+    // Claim this generation run. Any older in-flight run will see a stale
+    // runId and exit silently after its next await.
+    const runId = ++dlRunRef.current;
+
+    const reset = (nextState: DlState, delay?: number) => {
+      if (dlRunRef.current !== runId) return; // already cancelled
+      setDlState(nextState);
+      if (delay) setTimeout(() => { if (dlRunRef.current === runId) setDlState('idle'); }, delay);
+    };
+
     setDlState('generating');
     setDlProgress(null);
     dlJobRef.current = null;
+    setDlJobId(null);
 
     try {
       // ── 1. Start async generation job ──────────────────────────────────────
@@ -458,6 +477,9 @@ export default function LibraryDocDetail() {
         body: JSON.stringify({ doc_id: id, voice: ttsVoice, speed: ttsSpeed }),
       });
 
+      // Exit silently if cancelled while the POST was in flight.
+      if (dlRunRef.current !== runId) return;
+
       if (!startRes.ok) {
         let detail = `Server error (${startRes.status})`;
         try { detail = (await startRes.json()).detail ?? detail; } catch { /* ignore */ }
@@ -465,15 +487,23 @@ export default function LibraryDocDetail() {
           startRes.status === 422 ? 'Document not ready' : 'Could not start',
           detail,
         );
-        setDlState('error');
-        setTimeout(() => setDlState('idle'), 3_000);
+        reset('error', 3_000);
         return;
       }
 
       const { job_id, total_segments } = (await startRes.json()) as {
         job_id: string; total_segments: number;
       };
+
+      // Exit silently if cancelled between POST response and job ID commit.
+      if (dlRunRef.current !== runId) {
+        // Cancel the server job immediately since we won't track it.
+        mobileFetch(`https://${domain}/api/studio/tts/document/${job_id}`, { method: 'DELETE' }).catch(() => {});
+        return;
+      }
+
       dlJobRef.current = job_id;
+      setDlJobId(job_id);           // makes Cancel button appear
       setDlProgress({ done: 0, total: total_segments });
 
       // ── 2. Poll until done (max ~6 min; 2 s interval × 180 attempts) ───────
@@ -483,15 +513,22 @@ export default function LibraryDocDetail() {
       for (let attempt = 0; attempt < 180; attempt++) {
         await new Promise<void>((r) => setTimeout(r, 2_000));
 
+        // Exit silently if the user tapped Cancel during the sleep.
+        if (dlRunRef.current !== runId) return;
+
         const statusRes = await mobileFetch(
           `https://${domain}/api/studio/tts/document/${job_id}/status`,
         );
+
+        if (dlRunRef.current !== runId) return;
         if (!statusRes.ok) continue;
 
         const status = (await statusRes.json()) as {
           state: string; segments_done: number; total_segments: number;
           mp3_path: string | null; filename: string | null; error: string | null;
         };
+
+        if (dlRunRef.current !== runId) return;
 
         setDlProgress({
           done:  status.segments_done  ?? 0,
@@ -504,26 +541,32 @@ export default function LibraryDocDetail() {
           break;
         }
 
-        if (status.state === 'error' || status.state === 'cancelled') {
+        if (status.state === 'cancelled') {
+          // Server confirmed cancellation — UI already reset by handleCancelAudiobook.
+          return;
+        }
+
+        if (status.state === 'error') {
           Alert.alert(
             'Generation failed',
             status.error ?? 'Audiobook generation failed. Please try again.',
           );
-          setDlState('error');
-          setTimeout(() => setDlState('idle'), 3_000);
+          reset('error', 3_000);
           return;
         }
       }
 
+      if (dlRunRef.current !== runId) return;
+
       if (!mp3Path) {
         Alert.alert('Timed out', 'Audiobook generation is taking too long. Try again — long documents can take several minutes.');
-        setDlState('error');
-        setTimeout(() => setDlState('idle'), 3_000);
+        reset('error', 3_000);
         return;
       }
 
       // ── 3. Download MP3 to device ───────────────────────────────────────────
       setDlState('downloading');
+      setDlJobId(null); // job is done; hide Cancel button
 
       const token = getApiToken();
       const downloadUrl =
@@ -534,10 +577,11 @@ export default function LibraryDocDetail() {
         headers: token ? { Authorization: `Bearer ${token}` } : undefined,
       });
 
+      if (dlRunRef.current !== runId) return;
+
       if (dlResult.status !== 200) {
         Alert.alert('Download failed', `Server returned ${dlResult.status}`);
-        setDlState('error');
-        setTimeout(() => setDlState('idle'), 3_000);
+        reset('error', 3_000);
         return;
       }
 
@@ -554,12 +598,27 @@ export default function LibraryDocDetail() {
         Alert.alert('Downloaded', `Audiobook saved as "${filename}".`);
       }
 
+      if (dlRunRef.current !== runId) return;
       setDlState('done');
-      setTimeout(() => setDlState('idle'), 5_000);
+      setTimeout(() => { if (dlRunRef.current === runId) setDlState('idle'); }, 5_000);
     } catch (e: any) {
-      Alert.alert('Error', e?.message ?? 'Could not download audiobook');
-      setDlState('error');
-      setTimeout(() => setDlState('idle'), 3_000);
+      if (dlRunRef.current !== runId) return; // cancelled; don't show error
+      Alert.alert('Error', (e as any)?.message ?? 'Could not download audiobook');
+      reset('error', 3_000);
+    }
+  };
+
+  const handleCancelAudiobook = () => {
+    // Invalidate the running generation — checked after every await above.
+    dlRunRef.current++;
+    const jobId = dlJobRef.current;
+    dlJobRef.current = null;
+    setDlJobId(null);
+    setDlState('idle');
+    setDlProgress(null);
+    // Best-effort server-side cancel; fire-and-forget.
+    if (jobId) {
+      mobileFetch(`https://${domain}/api/studio/tts/document/${jobId}`, { method: 'DELETE' }).catch(() => {});
     }
   };
 
@@ -1240,33 +1299,58 @@ export default function LibraryDocDetail() {
               </Pressable>
             </View>
 
-            {/* Download Audiobook MP3 button */}
-            <Pressable
-              onPress={handleDownloadAudiobook}
-              disabled={dlState === 'generating' || dlState === 'downloading'}
-              style={[styles.listenBtn, {
-                borderColor: dlState === 'done' ? '#05966955' : '#05966955',
-                backgroundColor: dlState === 'done' ? '#05966915' : '#05966910',
-                opacity: (dlState === 'generating' || dlState === 'downloading') ? 0.8 : 1,
-              }]}
-            >
-              {dlState === 'generating' || dlState === 'downloading' ? (
-                <ActivityIndicator size="small" color="#059669" />
-              ) : dlState === 'done' ? (
-                <Feather name="check-circle" size={14} color="#059669" />
-              ) : (
-                <Feather name="download" size={14} color="#059669" />
+            {/* Download Audiobook MP3 button + cancel */}
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              <Pressable
+                onPress={handleDownloadAudiobook}
+                disabled={dlState === 'generating' || dlState === 'downloading'}
+                style={[styles.listenBtn, {
+                  flex: 1,
+                  borderColor: '#05966955',
+                  backgroundColor: dlState === 'done' ? '#05966915' : '#05966910',
+                  opacity: (dlState === 'generating' || dlState === 'downloading') ? 0.8 : 1,
+                }]}
+              >
+                {dlState === 'generating' || dlState === 'downloading' ? (
+                  <ActivityIndicator size="small" color="#059669" />
+                ) : dlState === 'done' ? (
+                  <Feather name="check-circle" size={14} color="#059669" />
+                ) : (
+                  <Feather name="download" size={14} color="#059669" />
+                )}
+                <Text style={[styles.listenBtnText, { color: '#059669' }]}>
+                  {dlState === 'generating'
+                    ? (dlProgress ? `Synthesising ${dlProgress.done}/${dlProgress.total}…` : 'Synthesising…')
+                    : dlState === 'downloading'
+                    ? 'Saving…'
+                    : dlState === 'done'
+                    ? 'Saved!'
+                    : 'Download MP3'}
+                </Text>
+              </Pressable>
+
+              {/* Cancel button — only shown once the server has confirmed the job ID,
+                  preventing a cancel-before-POST race where no job exists to delete */}
+              {dlJobId !== null && (
+                <Pressable
+                  onPress={handleCancelAudiobook}
+                  style={({ pressed }) => ({
+                    paddingHorizontal: 12,
+                    paddingVertical: 10,
+                    borderRadius: 8,
+                    borderWidth: 1,
+                    borderColor: colors.border,
+                    backgroundColor: pressed ? colors.muted : 'transparent',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  })}
+                  accessibilityLabel="Cancel audiobook generation"
+                  accessibilityRole="button"
+                >
+                  <Feather name="x" size={14} color={colors.mutedForeground} />
+                </Pressable>
               )}
-              <Text style={[styles.listenBtnText, { color: '#059669' }]}>
-                {dlState === 'generating'
-                  ? (dlProgress ? `Synthesising ${dlProgress.done}/${dlProgress.total}…` : 'Synthesising…')
-                  : dlState === 'downloading'
-                  ? 'Saving…'
-                  : dlState === 'done'
-                  ? 'Saved!'
-                  : 'Download MP3'}
-              </Text>
-            </Pressable>
+            </View>
           </>
         )}
       </View>
