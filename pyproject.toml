@@ -39,6 +39,10 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "httpx>=0.28.0", "ruff>=0.8.0"]
+# Local STT fallback: ~4× faster than vanilla Whisper, MIT license, no server required.
+# Install with: pip install faster-whisper   (or uv add faster-whisper)
+# Models auto-download on first transcription (~150 MB for "base", ~3 GB for "large-v3").
+asr = ["faster-whisper>=1.0"]
 
 [project.scripts]
 orivellum = "orivellum.cli:main"

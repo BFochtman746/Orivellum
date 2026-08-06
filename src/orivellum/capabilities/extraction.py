@@ -789,38 +789,124 @@ def _extract_zip(path: Path) -> ExtractionResult:
 # Public entry point
 # ---------------------------------------------------------------------------
 
-def _extract_audio(path: Path, db=None) -> ExtractionResult:
-    """Transcribe an audio file using the AI server's Whisper endpoint.
+# ---------------------------------------------------------------------------
+# faster-whisper — lazy singleton (loaded on first transcription call)
+# ---------------------------------------------------------------------------
+# Use threading.Lock to guard against concurrent first-call races.
+# _fw_instance is:
+#   None  — not yet attempted
+#   False — attempted and failed (package missing or load error)
+#   WhisperModel — successfully loaded
 
-    Tries POST /v1/audio/transcriptions (OpenAI-compatible Whisper API).
-    Falls back to a minimal metadata-only result if the endpoint is absent or
-    the server is unreachable — so the document still lands in the library as
-    an audio file users can download.
+import threading as _threading
 
-    ``db`` (optional) — supplies the base_url from config, and records telemetry.
+_fw_lock = _threading.Lock()
+_fw_instance: object = None   # WhisperModel | False | None
+_fw_loaded_size: str = ""     # model size string for the loaded singleton
+
+
+def _get_faster_whisper(model_size: str = "base"):
+    """Return a cached WhisperModel, loading it on first call.
+
+    Returns None when the package is not installed or the model fails to load
+    so callers can fall through to the metadata-only result without raising.
     """
-    import os
+    global _fw_instance, _fw_loaded_size
+    if _fw_instance is not None:
+        return None if _fw_instance is False else _fw_instance
+    with _fw_lock:
+        if _fw_instance is not None:
+            return None if _fw_instance is False else _fw_instance
+        try:
+            from faster_whisper import WhisperModel  # type: ignore[import]
+            logger.info("Loading faster-whisper model '%s' (first-run download may take a moment)…", model_size)
+            model = WhisperModel(model_size, device="auto", compute_type="int8")
+            _fw_instance = model
+            _fw_loaded_size = model_size
+            logger.info("faster-whisper model '%s' ready.", model_size)
+        except ImportError:
+            logger.info("faster-whisper not installed — local ASR fallback unavailable")
+            _fw_instance = False
+        except Exception as exc:
+            logger.warning("faster-whisper failed to load model '%s': %s", model_size, exc)
+            _fw_instance = False
+    return None if _fw_instance is False else _fw_instance
+
+
+def _is_faster_whisper_loaded() -> bool:
+    """True only when the WhisperModel is actually in memory and ready to use."""
+    return _fw_instance is not None and _fw_instance is not False
+
+
+def _transcribe_faster_whisper(path: Path, model_size: str = "base") -> "ExtractionResult | None":
+    """Transcribe *path* locally using faster-whisper.
+
+    Returns None when the package is absent or transcription fails so the
+    caller can fall through to the metadata-only result.
+    """
+    model = _get_faster_whisper(model_size)
+    if model is None:
+        return None
+    try:
+        segments, _info = model.transcribe(str(path))
+        text = " ".join(seg.text for seg in segments).strip()
+        if not text:
+            logger.info("faster-whisper returned no text for %s", path.name)
+            return None
+        full = f"[Audio transcript: {path.name}]\n\n{text}"
+        logger.info("faster-whisper transcription OK: %d words from %s", len(text.split()), path.name)
+        return ExtractionResult(
+            kind="audio",
+            full_text=full,
+            word_count=len(text.split()),
+            pages=[PageSegment(page=1, text=text)],
+            meta={
+                "transcription": "faster_whisper",
+                "model_size": model_size,
+                "source": str(path.name),
+            },
+        )
+    except Exception as exc:
+        logger.warning("faster-whisper transcription failed for %s: %s", path.name, exc)
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Audio extraction (AI server → faster-whisper → metadata-only)
+# ---------------------------------------------------------------------------
+
+def _extract_audio(path: Path, db=None) -> ExtractionResult:
+    """Transcribe an audio file.
+
+    Priority order:
+      1. AI server /v1/audio/transcriptions (OpenAI-compatible Whisper API)
+      2. faster-whisper local (CTranslate2 — ~4× faster than vanilla Whisper)
+      3. Metadata-only placeholder so the file is still searchable/downloadable
+
+    ``db`` (optional) is threaded from the public extract() entry point.
+    """
     import urllib.request as _urlr
     import json as _json
     import mimetypes as _mt
-    from email.mime.multipart import MIMEMultipart
-    from email.mime.application import MIMEApplication
 
     base_url: str = ""
     asr_model: str = "whisper-1"
+    asr_local_model: str = "base"
     try:
         # Prefer the request-scoped config when running inside the FastAPI server.
         # Fall back to load_config() when called from a standalone script or test.
         try:
             from orivellum.api._deps import get_config as _get_cfg
             _cfg_obj = _get_cfg()
-            base_url  = _cfg_obj.serving.base_url.rstrip("/")
-            asr_model = _cfg_obj.serving.asr_model
+            base_url        = _cfg_obj.serving.base_url.rstrip("/")
+            asr_model       = _cfg_obj.serving.asr_model
+            asr_local_model = getattr(_cfg_obj.serving, "asr_local_model", "base")
         except Exception:
             from orivellum.configuration.config import load_config as _load_cfg
-            _cfg_obj  = _load_cfg()
-            base_url  = _cfg_obj.serving.base_url.rstrip("/")
-            asr_model = getattr(_cfg_obj.serving, "asr_model", "whisper-1")
+            _cfg_obj        = _load_cfg()
+            base_url        = _cfg_obj.serving.base_url.rstrip("/")
+            asr_model       = getattr(_cfg_obj.serving, "asr_model", "whisper-1")
+            asr_local_model = getattr(_cfg_obj.serving, "asr_local_model", "base")
     except Exception:
         pass
 
@@ -828,71 +914,82 @@ def _extract_audio(path: Path, db=None) -> ExtractionResult:
         text = (
             f"Audio file: {path.name}\n"
             f"Note: {msg}\n\n"
-            "To enable transcription, ensure your AI server supports the "
-            "OpenAI /v1/audio/transcriptions endpoint (e.g. Whisper via LocalAI or llama.cpp)."
+            "To enable transcription: (1) ensure your AI server exposes "
+            "/v1/audio/transcriptions, or (2) install faster-whisper "
+            "(`uv add faster-whisper`) for fully offline transcription."
         )
         return ExtractionResult(
             kind="audio", full_text=text, word_count=len(text.split()),
             meta={"transcription": None, "reason": msg},
         )
 
-    if not base_url:
-        return _metadata_only("AI server URL not configured")
+    # ── 1. AI server ──────────────────────────────────────────────────────────
+    ai_server_exc: str = ""
+    if base_url:
+        try:
+            mime_type, _ = _mt.guess_type(path.name)
+            mime_type = mime_type or "application/octet-stream"
 
-    try:
-        mime_type, _ = _mt.guess_type(path.name)
-        mime_type = mime_type or "application/octet-stream"
+            import uuid as _uuid
+            boundary = f"---{_uuid.uuid4().hex}"
+            filename = path.name
 
-        # Build a minimal multipart/form-data body manually (no requests dependency)
-        import uuid as _uuid
-        boundary = f"---{_uuid.uuid4().hex}"
-        filename = path.name
+            with open(path, "rb") as fh:
+                file_bytes = fh.read()
 
-        with open(path, "rb") as fh:
-            file_bytes = fh.read()
+            body_parts: list[bytes] = []
+            body_parts.append(
+                f"--{boundary}\r\n"
+                f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'
+                f"Content-Type: {mime_type}\r\n\r\n"
+                .encode("utf-8") + file_bytes + b"\r\n"
+            )
+            body_parts.append(
+                f"--{boundary}\r\n"
+                'Content-Disposition: form-data; name="model"\r\n\r\n'
+                f"{asr_model}\r\n"
+                .encode("utf-8")
+            )
+            body_parts.append(f"--{boundary}--\r\n".encode("utf-8"))
+            body = b"".join(body_parts)
 
-        body_parts: list[bytes] = []
-        # File part
-        body_parts.append(
-            f"--{boundary}\r\n"
-            f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'
-            f"Content-Type: {mime_type}\r\n\r\n"
-            .encode("utf-8") + file_bytes + b"\r\n"
-        )
-        # model part — uses cfg.serving.asr_model (default: "whisper-1")
-        body_parts.append(
-            f"--{boundary}\r\n"
-            'Content-Disposition: form-data; name="model"\r\n\r\n'
-            f"{asr_model}\r\n"
-            .encode("utf-8")
-        )
-        body_parts.append(f"--{boundary}--\r\n".encode("utf-8"))
-        body = b"".join(body_parts)
+            req = _urlr.Request(
+                f"{base_url}/audio/transcriptions",
+                data=body,
+                headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+                method="POST",
+            )
+            with _urlr.urlopen(req, timeout=120) as resp:
+                data = _json.loads(resp.read().decode("utf-8"))
+            transcript = data.get("text", "").strip()
+            if transcript:
+                logger.info("AI server transcription OK: %d words from %s",
+                            len(transcript.split()), path.name)
+                return ExtractionResult(
+                    kind="audio",
+                    full_text=f"[Audio transcript: {path.name}]\n\n{transcript}",
+                    word_count=len(transcript.split()),
+                    pages=[PageSegment(page=1, text=transcript)],
+                    meta={"transcription": "ai_server", "asr_model": asr_model,
+                          "source": str(path.name)},
+                )
+            ai_server_exc = "AI server returned an empty transcription"
+            logger.warning("AI server transcription: empty response for %s", path.name)
+        except Exception as exc:
+            ai_server_exc = str(exc)
+            logger.info("AI server transcription unavailable for %s (%s) — trying faster-whisper",
+                        path.name, exc)
 
-        req = _urlr.Request(
-            f"{base_url}/audio/transcriptions",
-            data=body,
-            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
-            method="POST",
-        )
-        with _urlr.urlopen(req, timeout=120) as resp:
-            data = _json.loads(resp.read().decode("utf-8"))
-        transcript = data.get("text", "").strip()
-        if not transcript:
-            return _metadata_only("Whisper returned an empty transcription")
+    # ── 2. faster-whisper local ───────────────────────────────────────────────
+    fw_result = _transcribe_faster_whisper(path, asr_local_model)
+    if fw_result is not None:
+        return fw_result
 
-        logger.info("Audio transcription OK: %d words from %s", len(transcript.split()), path.name)
-        result = ExtractionResult(
-            kind="audio",
-            full_text=f"[Audio transcript: {path.name}]\n\n{transcript}",
-            word_count=len(transcript.split()),
-            pages=[PageSegment(page=1, text=transcript)],
-            meta={"transcription": "whisper", "source": str(path.name)},
-        )
-        return result
-    except Exception as exc:
-        logger.warning("Audio transcription failed for %s: %s", path.name, exc)
-        return _metadata_only(f"Transcription unavailable: {exc}")
+    # ── 3. Metadata-only ─────────────────────────────────────────────────────
+    reason = ai_server_exc or "AI server URL not configured"
+    if not _is_faster_whisper_loaded():
+        reason += " | faster-whisper not installed"
+    return _metadata_only(reason)
 
 
 _DISPATCH: dict[str, object] = {

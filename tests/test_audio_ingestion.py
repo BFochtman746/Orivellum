@@ -280,7 +280,7 @@ class TestAudioExtraction:
             assert result.kind == "audio"
             assert "mock transcript" in result.full_text.lower()
             assert result.word_count > 0
-            assert result.meta.get("transcription") == "whisper"
+            assert result.meta.get("transcription") == "ai_server"
         finally:
             urllib.request.urlopen = original_urlopen
             _deps.get_config = orig_get_cfg

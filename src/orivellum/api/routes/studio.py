@@ -2681,6 +2681,32 @@ def studio_status():
     else:
         _active_ocr_engine = None
 
+    # ── ASR ───────────────────────────────────────────────────────────────────
+    # The AI server's /audio/transcriptions endpoint lives on the same host as
+    # /models — if the AI server is reachable (ai_tts_ok probed /models), we
+    # assume it may expose a Whisper endpoint as well.  We report this separately
+    # because users may have Whisper loaded or not, even with the server up.
+    from orivellum.capabilities.extraction import (
+        _is_faster_whisper_loaded as _fw_loaded_check,
+    )
+    ai_asr_server_ok = bool(ai_tts_ok)   # same server; proxy from TTS probe
+    fw_installed = importlib.util.find_spec("faster_whisper") is not None
+    fw_loaded = _fw_loaded_check()
+    asr_local_model_sz = getattr(cfg.serving, "asr_local_model", "base")
+
+    # Active ASR engine: AI server first, then faster-whisper, then none.
+    if ai_asr_server_ok:
+        _active_asr_engine: str | None = f"AI server ({cfg.serving.asr_model})"
+    elif fw_loaded:
+        _active_asr_engine = f"faster-whisper ({asr_local_model_sz})"
+    elif fw_installed:
+        # Package installed but model not yet loaded — will load on first call.
+        _active_asr_engine = f"faster-whisper ({asr_local_model_sz}, pending)"
+    else:
+        _active_asr_engine = None
+
+    asr_available = ai_asr_server_ok or fw_installed
+
     return {
         "tts": {
             "available": best_tts is not None,
@@ -2716,6 +2742,24 @@ def studio_status():
             # Tesseract details
             "tesseract_available": tess_ok and pillow_ok and pytesseract_ok,
             "missing": ocr_missing if not _vlm_ocr_active else [],
+        },
+        "asr": {
+            # available = at least one transcription path is operational
+            # (AI server reachable OR faster-whisper installed locally)
+            "available": asr_available,
+            # active_engine: which engine will handle the NEXT transcription call.
+            #   "AI server (whisper-1)"          — AI server is reachable
+            #   "faster-whisper (base)"          — model loaded in memory, AI offline
+            #   "faster-whisper (base, pending)" — installed, loads on first use
+            #   null                             — no ASR available
+            "active_engine": _active_asr_engine,
+            # AI server ASR details
+            "ai_server_available": ai_asr_server_ok,
+            "ai_server_model": cfg.serving.asr_model,
+            # Local faster-whisper details
+            "faster_whisper_installed": fw_installed,
+            "faster_whisper_loaded": fw_loaded,
+            "faster_whisper_model_size": asr_local_model_sz,
         },
         "last_checked": datetime.now(timezone.utc).isoformat(),
     }

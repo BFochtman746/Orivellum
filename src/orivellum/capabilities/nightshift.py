@@ -509,6 +509,87 @@ def _pass_no_text_reextract(db: "OrivellumDB", cfg: "OrivellumConfig",
         logger.warning("VLM re-extract pass failed (non-fatal): %s", exc)
 
 
+def _pass_audio_reextract(db: "OrivellumDB", cfg: "OrivellumConfig",
+                          report: list[str]) -> None:
+    """Re-transcribe audio docs that previously got only a metadata-only placeholder.
+
+    When faster-whisper is installed, documents that landed in the library as
+    "Audio file: …  Note: Transcription unavailable…" can be silently re-transcribed
+    overnight.  We identify them by the exact marker string injected by
+    _metadata_only() in extraction.py — "To enable transcription" — which appears
+    in extracted_text only when both the AI server AND faster-whisper failed.
+    This ensures legitimate short recordings (voice notes, brief clips) are never
+    accidentally requeued.
+
+    Skips when faster-whisper is not installed (no-op, no import needed to check).
+    """
+    try:
+        import importlib.util as _ilu
+        if _ilu.find_spec("faster_whisper") is None:
+            # Package not installed — nothing to do
+            return
+
+        with db._lock:
+            rows = db._conn.execute(
+                """SELECT d.id, d.kind, d.work_id, d.title,
+                          d.content_path, d.source
+                   FROM documents d
+                   WHERE d.kind = 'audio'
+                     AND d.readiness = 'ready'
+                     AND d.extracted_text LIKE '%To enable transcription%'
+                   ORDER BY d.created_at DESC
+                   LIMIT 10""",
+            ).fetchall()
+        docs = [dict(r) for r in rows]
+
+        if not docs:
+            return
+
+        lib_root = Path(cfg.data_dir) / "library"
+        queue: list[dict] = []
+        for doc in docs:
+            content_path = doc.get("content_path")
+            file_path: Path | None = None
+            if content_path:
+                file_path = lib_root / content_path
+            elif doc.get("source"):
+                file_path = Path(doc["source"])
+            if not file_path or not file_path.exists():
+                continue
+            queue.append({**doc, "_file_path": str(file_path)})
+
+        if not queue:
+            return
+
+        from orivellum.capabilities.pipeline import process_document as _proc
+
+        def _worker(items: list[dict]) -> None:
+            for it in items:
+                try:
+                    db.update_document_extracted(it["id"], "", 0,
+                                                 readiness="imported",
+                                                 error_message=None)
+                    _proc(doc_id=it["id"], file_path=it["_file_path"],
+                          kind="audio",
+                          work_id=it.get("work_id"),
+                          title=it.get("title") or it["id"],
+                          db=db)
+                except Exception as exc:
+                    logger.warning("Audio re-transcription failed for %s: %s", it["id"], exc)
+
+        threading.Thread(target=_worker, args=(queue,),
+                         name="nightshift-audio-reextract", daemon=True).start()
+        asr_size = getattr(cfg.serving, "asr_local_model", "base")
+        report.append(
+            f"Audio re-transcription: queued {len(queue)} metadata-only audio doc(s) "
+            f"(faster-whisper {asr_size})"
+        )
+        logger.info("Nightshift audio re-transcription: queued %d docs via faster-whisper %s",
+                    len(queue), asr_size)
+    except Exception as exc:
+        logger.warning("Audio re-transcription pass failed (non-fatal): %s", exc)
+
+
 def _pass_sparse_harvest(db: "OrivellumDB", report: list[str]) -> int:
     """Re-harvest documents with few knowledge items; returns items added."""
     items_added = 0
@@ -1181,6 +1262,10 @@ def _run_nightshift_passes(db: "OrivellumDB", cfg: "OrivellumConfig") -> None:
     # 5b — VLM re-extraction of no_text PDFs/images (when vision model now configured)
     logger.info("Nightshift pass 5b: VLM no_text re-extraction")
     _pass_no_text_reextract(db, cfg, report)
+
+    # 5c — faster-whisper re-transcription of metadata-only audio docs
+    logger.info("Nightshift pass 5c: audio re-transcription via faster-whisper")
+    _pass_audio_reextract(db, cfg, report)
 
     # 6 — Harvest sparse documents
     logger.info("Nightshift pass 6/13: sparse document harvest")
