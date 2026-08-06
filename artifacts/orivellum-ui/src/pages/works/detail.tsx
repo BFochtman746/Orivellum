@@ -86,6 +86,7 @@ import {
   Download,
   Zap,
   RotateCcw,
+  Film,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -98,6 +99,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { BookTab }       from "./book-tab";
 import { BrainstormTab } from "./brainstorm-tab";
+import { TrailerTab }    from "./trailer-tab";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { toast } from "sonner";
 import { KnowledgeGraph, GNode } from "@/components/knowledge-graph";
@@ -487,6 +489,7 @@ export default function WorkDetail() {
               { value: "quiz",         icon: GraduationCap, label: "Quiz",         badge: null },
               { value: "learn",        icon: BookOpen,      label: "Learn",        badge: null },
               { value: "brainstorm",   icon: Lightbulb,     label: "Brainstorm",   badge: null },
+              { value: "trailer",      icon: Film,          label: "Trailer",       badge: ((stats as any)?.trailer_count > 0 ? (stats as any)?.trailer_count : null) as number | null },
             ].map(({ value, icon: Icon, label, badge }) => (
               <TabsTrigger
                 key={value}
@@ -516,6 +519,7 @@ export default function WorkDetail() {
             <TabsContent value="quiz"><ErrorBoundary label="quiz tab"><QuizTab workId={workId!} workTitle={(work as any)?.title ?? "this Work"} /></ErrorBoundary></TabsContent>
             <TabsContent value="learn"><ErrorBoundary label="learn tab"><LearnTab workId={workId!} /></ErrorBoundary></TabsContent>
             <TabsContent value="brainstorm"><ErrorBoundary label="brainstorm tab"><BrainstormTab key={brainstormSeed} workId={workId!} initialSeed={brainstormSeed} initialContext={brainstormContext} /></ErrorBoundary></TabsContent>
+            <TabsContent value="trailer"><ErrorBoundary label="trailer tab"><TrailerTab workId={workId!} /></ErrorBoundary></TabsContent>
           </div>
         </Tabs>
       </div>
