@@ -22,7 +22,8 @@ test('upload document → processing completes → knowledge items appear', asyn
   await ensureLoggedIn(page);
 
   // ── Open the Import dialog ────────────────────────────────────────────────
-  const importBtn = page.getByRole('button', { name: 'Import Document' });
+  // Trigger label changed to "Import Documents" (multi-file dialog)
+  const importBtn = page.getByRole('button', { name: 'Import Documents' });
   await expect(importBtn).toBeVisible({ timeout: 10_000 });
   await importBtn.click();
 
@@ -36,7 +37,8 @@ test('upload document → processing completes → knowledge items appear', asyn
     (r) => r.url().includes('/api/library/upload') && r.request().method() === 'POST',
     { timeout: 30_000 },
   );
-  const submitBtn = page.getByRole('button', { name: 'Import' }).last();
+  // Submit button now reads "Import 1 file" (dynamic count label)
+  const submitBtn = page.getByRole('button', { name: /^Import \d+ file/i }).last();
   await expect(submitBtn).toBeEnabled({ timeout: 5_000 });
   await submitBtn.click();
 

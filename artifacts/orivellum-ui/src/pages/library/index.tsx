@@ -302,102 +302,190 @@ interface ImportDialogProps {
   defaultOpen?: boolean;
 }
 
+type FileState = "pending" | "uploading" | "done" | "duplicate" | "error";
+
+interface FileStatus {
+  file: File;
+  state: FileState;
+  pct: number;       // 0-100
+  docId?: string;
+  error?: string;
+}
+
+function fmt(bytes: number) {
+  if (bytes >= 1_048_576) return `${(bytes / 1_048_576).toFixed(1)} MB`;
+  return `${(bytes / 1024).toFixed(1)} KB`;
+}
+
 function ImportDialog({ onSuccess, defaultOpen = false }: ImportDialogProps) {
   const [open, setOpen] = useState(defaultOpen);
-  const [file, setFile] = useState<File | null>(null);
+  const [queue, setQueue] = useState<FileStatus[]>([]);
   const [workId, setWorkId] = useState("");
   const [dragging, setDragging] = useState(false);
-  const [uploadPct, setUploadPct] = useState<number | null>(null);
+  const [uploading, setUploading] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const [, navigateTo] = useLocation();
   const { data: worksResp } = useListWorks();
 
-  const handleFile = (f: File) => setFile(f);
+  const addFiles = (incoming: FileList | File[]) => {
+    // No client-side deduplication by name — two files can share a basename
+    // (e.g. from different folders). Content identity is the backend's job via SHA.
+    const arr = Array.from(incoming);
+    setQueue((prev) => [
+      ...prev,
+      ...arr.map((f): FileStatus => ({ file: f, state: "pending", pct: 0 })),
+    ]);
+  };
+
+  const removeFile = (idx: number) =>
+    setQueue((prev) => prev.filter((_, i) => i !== idx));
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setDragging(false);
-    const f = e.dataTransfer.files[0];
-    if (f) handleFile(f);
+    // Reject drops while the queue is running — the loop snapshot would miss them.
+    if (uploading) return;
+    if (e.dataTransfer.files.length) addFiles(e.dataTransfer.files);
   };
 
-  const [uploading, setUploading] = useState(false);
+  const updateStatus = (idx: number, patch: Partial<FileStatus>) =>
+    setQueue((prev) => prev.map((s, i) => (i === idx ? { ...s, ...patch } : s)));
 
-  const handleImport = () => {
-    if (!file || uploading) return;
-    setUploading(true);
-    setUploadPct(0);
+  const uploadOne = (status: FileStatus, idx: number, wId: string): Promise<void> =>
+    new Promise((resolve) => {
+      updateStatus(idx, { state: "uploading", pct: 0 });
+      const form = new FormData();
+      form.append("file", status.file, status.file.name);
+      if (wId) form.append("work_id", wId);
 
-    // Multipart streaming upload — no base64, real upload progress via XHR.
-    const form = new FormData();
-    form.append("file", file, file.name);
-    if (workId) form.append("work_id", workId);
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", `${BASE}/library/upload`);
+      xhr.withCredentials = true;
 
-    const xhr = new XMLHttpRequest();
-    xhr.open("POST", `${BASE}/library/upload`);
-    xhr.withCredentials = true; // session-cookie auth
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) {
+          updateStatus(idx, { pct: Math.min(99, Math.round((e.loaded / e.total) * 100)) });
+        }
+      };
 
-    xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable) {
-        setUploadPct(Math.min(99, Math.round((e.loaded / e.total) * 100)));
-      }
-    };
+      xhr.onload = () => {
+        if (xhr.status < 200 || xhr.status >= 300) {
+          let detail = `HTTP ${xhr.status}`;
+          try { detail = JSON.parse(xhr.responseText)?.detail ?? detail; } catch {}
+          updateStatus(idx, { state: "error", pct: 0, error: detail });
+        } else {
+          let res: any = {};
+          try { res = JSON.parse(xhr.responseText); } catch {}
+          if (res.duplicate) {
+            updateStatus(idx, { state: "duplicate", pct: 100, docId: res.document?.id });
+          } else {
+            updateStatus(idx, { state: "done", pct: 100, docId: res.document?.id });
+          }
+        }
+        resolve();
+      };
 
-    xhr.onload = () => {
-      setUploading(false);
-      if (xhr.status < 200 || xhr.status >= 300) {
-        setUploadPct(null);
-        let detail = `HTTP ${xhr.status}`;
-        try { detail = JSON.parse(xhr.responseText)?.detail ?? detail; } catch {}
-        toast.error(`Import failed: ${detail}`);
-        return;
-      }
-      let res: any = {};
-      try { res = JSON.parse(xhr.responseText); } catch {}
-      setUploadPct(100);
-      onSuccess();
-      setOpen(false);
-      setFile(null);
-      setWorkId("");
-      setUploadPct(null);
-      if (res.duplicate) {
-        toast.info(`${file.name} already exists — opening existing document`);
-        const existingId = res.document?.id;
-        if (existingId) navigateTo(`/library/${existingId}`);
+      xhr.onerror = () => {
+        updateStatus(idx, { state: "error", pct: 0, error: "Network error" });
+        resolve(); // continue queue even on failure
+      };
+
+      xhr.send(form);
+    });
+
+  // Shared finish logic — inspects the final queue snapshot after a run completes.
+  const finishRun = (final: FileStatus[]) => {
+    const done  = final.filter((s) => s.state === "done").length;
+    const dupes = final.filter((s) => s.state === "duplicate");
+    const errors = final.filter((s) => s.state === "error").length;
+    const total  = final.length;
+
+    if (errors === 0) {
+      if (total === 1) {
+        const s = final[0];
+        if (s.state === "duplicate") {
+          toast.info(`${s.file.name} already exists — opening existing document`);
+          if (s.docId) navigateTo(`/library/${s.docId}`);
+        } else {
+          toast.success(`${s.file.name} imported — extraction running`, {
+            description: s.docId ? "View Intake Profile →" : undefined,
+            action: s.docId ? { label: "Intake Profile", onClick: () => navigateTo(`/intake?doc=${s.docId}`) } : undefined,
+            duration: 8000,
+          });
+        }
       } else {
-        const newDocId = res.document?.id;
-        toast.success(`${file.name} imported — extraction running`, {
-          description: newDocId ? "View Intake Profile →" : undefined,
-          action: newDocId ? {
-            label: "Intake Profile",
-            onClick: () => navigateTo(`/intake?doc=${newDocId}`),
-          } : undefined,
-          duration: 8000,
-        });
+        const parts: string[] = [];
+        if (done) parts.push(`${done} imported`);
+        if (dupes.length) parts.push(`${dupes.length} already existed`);
+        toast.success(`${parts.join(", ")} — extraction running`);
+        if (dupes.length === 1 && done === 0 && dupes[0].docId) {
+          navigateTo(`/library/${dupes[0].docId}`);
+        }
       }
-    };
+      setTimeout(() => { setOpen(false); setQueue([]); setWorkId(""); }, 300);
+    } else {
+      toast.warning(`${done + dupes.length} of ${total} imported — ${errors} failed`);
+    }
+  };
 
-    xhr.onerror = () => {
-      setUploading(false);
-      setUploadPct(null);
-      toast.error("Import failed — network error");
-    };
+  const handleImport = async () => {
+    const pending = queue.filter((s) => s.state === "pending");
+    if (!pending.length || uploading) return;
+    setUploading(true);
 
-    xhr.send(form);
+    // Upload sequentially using the closure snapshot — drops are blocked while
+    // uploading so queue.length is stable for the duration of this loop.
+    for (let i = 0; i < queue.length; i++) {
+      if (queue[i].state !== "pending") continue;
+      await uploadOne(queue[i], i, workId);
+    }
+
+    onSuccess();
+    setUploading(false);
+    setQueue((final) => { finishRun(final); return final; });
+  };
+
+  // Immediately retry a single failed file without re-running the whole queue.
+  const retryFile = async (status: FileStatus, idx: number) => {
+    if (uploading) return;
+    setUploading(true);
+    await uploadOne(status, idx, workId);
+    onSuccess();
+    setUploading(false);
+    setQueue((final) => {
+      const allTerminal = final.every(
+        (s) => s.state === "done" || s.state === "duplicate" || s.state === "error"
+      );
+      if (allTerminal) finishRun(final);
+      return final;
+    });
+  };
+
+  const anyPending = queue.some((s) => s.state === "pending");
+  const uploadingCount = queue.filter((s) => s.state === "uploading").length;
+  const doneCount = queue.filter((s) => s.state === "done" || s.state === "duplicate").length;
+  const total = queue.length;
+
+  const stateIcon = (s: FileStatus) => {
+    if (s.state === "done") return <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />;
+    if (s.state === "duplicate") return <CheckCircle2 className="w-3.5 h-3.5 text-blue-400 shrink-0" />;
+    if (s.state === "error") return <AlertCircle className="w-3.5 h-3.5 text-destructive shrink-0" />;
+    if (s.state === "uploading") return <Clock className="w-3.5 h-3.5 text-primary animate-pulse shrink-0" />;
+    return <FileText className="w-3.5 h-3.5 text-muted-foreground shrink-0" />;
   };
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog open={open} onOpenChange={(v) => { if (!uploading) { setOpen(v); if (!v) { setQueue([]); setWorkId(""); } } }}>
       <DialogTrigger asChild>
         <Button className="gap-2">
           <Upload className="w-4 h-4" />
-          Import Document
+          Import Documents
         </Button>
       </DialogTrigger>
 
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle className="font-serif text-2xl">Import Document</DialogTitle>
+          <DialogTitle className="font-serif text-2xl">Import Documents</DialogTitle>
         </DialogHeader>
 
         {/* Drop zone */}
@@ -405,13 +493,12 @@ function ImportDialog({ onSuccess, defaultOpen = false }: ImportDialogProps) {
           onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
           onDragLeave={() => setDragging(false)}
           onDrop={handleDrop}
-          onClick={() => inputRef.current?.click()}
-          className={`mt-2 border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors ${
-            dragging
-              ? "border-primary bg-primary/5"
-              : file
-              ? "border-emerald-400 bg-emerald-50/30"
-              : "border-border hover:border-primary/50 hover:bg-muted/30"
+          onClick={() => !uploading && inputRef.current?.click()}
+          className={`mt-2 border-2 border-dashed rounded-lg p-6 text-center transition-colors ${
+            uploading ? "cursor-default opacity-60" :
+            dragging ? "border-primary bg-primary/5 cursor-copy" :
+            queue.length ? "border-primary/40 bg-muted/10 cursor-pointer hover:border-primary/60" :
+            "border-border hover:border-primary/50 hover:bg-muted/30 cursor-pointer"
           }`}
         >
           <input
@@ -420,40 +507,81 @@ function ImportDialog({ onSuccess, defaultOpen = false }: ImportDialogProps) {
             className="hidden"
             accept=".pdf,application/pdf,.docx,.doc,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,.csv,text/csv,.pptx,.ppt,application/vnd.openxmlformats-officedocument.presentationml.presentation,.txt,text/plain,.md,text/markdown,.png,.jpg,.jpeg,.webp,.gif,image/*,.mp3,audio/mpeg,.wav,audio/wav,.m4a,audio/mp4,.ogg,audio/ogg,.flac,audio/flac,audio/*,.py,.js,.ts,.jsx,.tsx,.java,.cpp,.c,.cs,.go,.rs,.rb,.html,.htm,text/html,.json,application/json,.zip,application/zip,.rtf,.epub,.xml"
             multiple
-            onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }}
+            disabled={uploading}
+            onChange={(e) => { if (e.target.files?.length) { addFiles(e.target.files); e.target.value = ""; } }}
           />
-          {file ? (
-            <div className="flex items-center justify-center gap-3">
-              <FileText className="w-6 h-6 text-emerald-600" />
-              <div className="text-left">
-                <p className="font-medium text-sm">{file.name}</p>
-                <p className="text-xs text-muted-foreground font-mono">
-                  {(file.size / 1024).toFixed(1)} KB
-                </p>
-              </div>
-              <button
-                onClick={(e) => { e.stopPropagation(); setFile(null); }}
-                className="ml-auto text-muted-foreground hover:text-destructive"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-          ) : (
+          {queue.length === 0 ? (
             <>
               <Upload className="w-8 h-8 text-muted-foreground mx-auto mb-2" />
-              <p className="text-sm font-medium">Drop a file or click to browse</p>
+              <p className="text-sm font-medium">Drop files or click to browse</p>
               <p className="text-xs text-muted-foreground mt-1">
-                PDF, DOCX, XLSX, CSV, PPTX, TXT, MD, HTML, JSON, ZIP, images, code, and more
+                Select multiple files — PDF, DOCX, XLSX, CSV, PPTX, TXT, MD, images, audio, code, ZIP, and more
               </p>
             </>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              {uploading
+                ? `Uploading ${doneCount + uploadingCount} of ${total}…`
+                : `${total} file${total !== 1 ? "s" : ""} queued · click or drop to add more`}
+            </p>
           )}
         </div>
 
+        {/* File queue */}
+        {queue.length > 0 && (
+          <div className="max-h-52 overflow-y-auto space-y-1.5 pr-0.5">
+            {queue.map((s, idx) => (
+              <div key={`${s.file.name}-${idx}`} className="flex items-center gap-2 rounded-md border border-border/50 bg-muted/20 px-3 py-2">
+                {stateIcon(s)}
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-medium truncate" title={s.file.name}>{s.file.name}</p>
+                  {s.state === "uploading" ? (
+                    <div className="mt-1 h-1 w-full rounded-full bg-muted overflow-hidden">
+                      <div
+                        className="h-full bg-primary transition-all duration-200 rounded-full"
+                        style={{ width: `${s.pct}%` }}
+                      />
+                    </div>
+                  ) : s.state === "error" ? (
+                    <p className="text-[10px] text-destructive font-mono mt-0.5 truncate">{s.error}</p>
+                  ) : s.state === "duplicate" ? (
+                    <p className="text-[10px] text-blue-500 font-mono mt-0.5">already in library</p>
+                  ) : (
+                    <p className="text-[10px] text-muted-foreground font-mono">{fmt(s.file.size)}</p>
+                  )}
+                </div>
+                {s.state === "pending" && !uploading && (
+                  <button onClick={() => removeFile(idx)} className="text-muted-foreground hover:text-destructive shrink-0">
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+                {s.state === "duplicate" && s.docId && (
+                  <button
+                    onClick={() => navigateTo(`/library/${s.docId}`)}
+                    className="text-[10px] font-mono text-blue-500 hover:underline shrink-0"
+                  >
+                    View
+                  </button>
+                )}
+                {s.state === "error" && !uploading && (
+                  <button
+                    onClick={() => retryFile(s, idx)}
+                    className="text-[10px] font-mono text-muted-foreground hover:text-foreground shrink-0"
+                  >
+                    Retry now
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Work link selector */}
         <div className="space-y-1">
           <label className="text-xs font-mono uppercase text-muted-foreground">
-            Link to Work (optional)
+            Link all to Work (optional)
           </label>
-          <Select value={workId || "__none__"} onValueChange={(v) => setWorkId(v === "__none__" ? "" : v)}>
+          <Select value={workId || "__none__"} onValueChange={(v) => setWorkId(v === "__none__" ? "" : v)} disabled={uploading}>
             <SelectTrigger className="font-mono text-sm">
               <SelectValue placeholder="— None —" />
             </SelectTrigger>
@@ -468,29 +596,14 @@ function ImportDialog({ onSuccess, defaultOpen = false }: ImportDialogProps) {
           </Select>
         </div>
 
-        {/* Upload progress bar — shown during base64 conversion + upload */}
-        {uploadPct !== null && (
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between text-xs font-mono text-muted-foreground">
-              <span>{uploadPct < 100 ? "Uploading…" : "Done"}</span>
-              <span>{uploadPct}%</span>
-            </div>
-            <div className="h-1.5 w-full rounded-full bg-secondary overflow-hidden">
-              <div
-                className="h-full bg-primary transition-all duration-200 rounded-full"
-                style={{ width: `${uploadPct}%` }}
-              />
-            </div>
-          </div>
-        )}
-
         <DialogFooter>
-          <Button variant="outline" onClick={() => setOpen(false)} disabled={uploading}>Cancel</Button>
-          <Button
-            onClick={handleImport}
-            disabled={!file || uploading}
-          >
-            {uploading ? "Importing…" : "Import"}
+          <Button variant="outline" onClick={() => { setOpen(false); setQueue([]); setWorkId(""); }} disabled={uploading}>
+            Cancel
+          </Button>
+          <Button onClick={handleImport} disabled={!anyPending || uploading}>
+            {uploading
+              ? `Uploading ${doneCount + uploadingCount} of ${total}…`
+              : `Import ${queue.filter(s => s.state === "pending").length || ""} ${queue.filter(s => s.state === "pending").length === 1 ? "file" : "files"}`.trim()}
           </Button>
         </DialogFooter>
       </DialogContent>
