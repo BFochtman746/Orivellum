@@ -31,6 +31,47 @@ import { apiFetch } from "@/lib/auth";
 
 const BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
 
+// ── TTS voice + speed options ─────────────────────────────────────────────────
+
+const TTS_VOICE_OPTIONS = [
+  // American Female
+  { id: "af_heart",   label: "Heart",   accent: "♀ US" },
+  { id: "af_bella",   label: "Bella",   accent: "♀ US" },
+  { id: "af_nova",    label: "Nova",    accent: "♀ US" },
+  { id: "af_sarah",   label: "Sarah",   accent: "♀ US" },
+  { id: "af_jessica", label: "Jessica", accent: "♀ US" },
+  { id: "af_nicole",  label: "Nicole",  accent: "♀ US" },
+  { id: "af_sky",     label: "Sky",     accent: "♀ US" },
+  { id: "af_kore",    label: "Kore",    accent: "♀ US" },
+  { id: "af_aoede",   label: "Aoede",   accent: "♀ US" },
+  { id: "af_river",   label: "River",   accent: "♀ US" },
+  // American Male
+  { id: "am_adam",    label: "Adam",    accent: "♂ US" },
+  { id: "am_echo",    label: "Echo",    accent: "♂ US" },
+  { id: "am_eric",    label: "Eric",    accent: "♂ US" },
+  { id: "am_liam",    label: "Liam",    accent: "♂ US" },
+  { id: "am_onyx",    label: "Onyx",    accent: "♂ US" },
+  { id: "am_fenrir",  label: "Fenrir",  accent: "♂ US" },
+  { id: "am_puck",    label: "Puck",    accent: "♂ US" },
+  // British Female
+  { id: "bf_emma",     label: "Emma",     accent: "♀ UK" },
+  { id: "bf_alice",    label: "Alice",    accent: "♀ UK" },
+  { id: "bf_isabella", label: "Isabella", accent: "♀ UK" },
+  { id: "bf_lily",     label: "Lily",     accent: "♀ UK" },
+  // British Male
+  { id: "bm_george", label: "George", accent: "♂ UK" },
+  { id: "bm_daniel", label: "Daniel", accent: "♂ UK" },
+  { id: "bm_fable",  label: "Fable",  accent: "♂ UK" },
+  { id: "bm_lewis",  label: "Lewis",  accent: "♂ UK" },
+] as const;
+
+const TTS_SPEED_OPTIONS = [
+  { value: 0.75, label: "0.75×" },
+  { value: 1.0,  label: "1×" },
+  { value: 1.25, label: "1.25×" },
+  { value: 1.5,  label: "1.5×" },
+] as const;
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 type Tab = "overview" | "text" | "knowledge" | "chapters" | "versions" | "chunks" | "related";
@@ -696,6 +737,14 @@ export default function DocumentDetail() {
   // Monotonic session id — bumped on close, new read, doc change, and unmount.
   // Any synthesis result from an older session is discarded (never cached).
   const ttsSessionRef = useRef(0);
+  // Voice + speed — persisted to localStorage
+  const TTS_LS_VOICE = "orivellum:tts_voice";
+  const TTS_LS_SPEED = "orivellum:tts_speed";
+  const [ttsVoice, setTtsVoice] = useState<string>(() => localStorage.getItem(TTS_LS_VOICE) ?? "af_heart");
+  const [ttsSpeed, setTtsSpeed] = useState<number>(() => parseFloat(localStorage.getItem(TTS_LS_SPEED) ?? "1"));
+  // Refs mirror state so async callbacks always read current values without stale closure
+  const ttsVoiceRef = useRef(ttsVoice);
+  const ttsSpeedRef = useRef(ttsSpeed);
   useEffect(() => {
     return () => {
       ttsSessionRef.current++;
@@ -973,7 +1022,7 @@ export default function DocumentDetail() {
   /** Synthesize one part, cache the blob URL, and return it.
    *  Single-flight per part via a promise map; results from an older
    *  session are discarded before any blob URL is created. */
-  const synthesizePart = (parts: string[], i: number): Promise<string> => {
+  const synthesizePart = (parts: string[], i: number, voice: string, speed: number): Promise<string> => {
     const session = ttsSessionRef.current;
     const cached = ttsUrlCacheRef.current.get(i);
     if (cached) return Promise.resolve(cached);
@@ -983,7 +1032,7 @@ export default function DocumentDetail() {
       const resp = await apiFetch(`${BASE}/studio/tts`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: parts[i], voice: "af_heart", speed: 1.0 }),
+        body: JSON.stringify({ text: parts[i], voice, speed }),
       });
       if (ttsSessionRef.current !== session) throw new Error(TTS_STALE);
       if (!resp.ok) {
@@ -1004,9 +1053,9 @@ export default function DocumentDetail() {
   };
 
   /** Fire-and-forget prefetch of the next part so playback never stalls. */
-  const prefetchPart = (parts: string[], i: number) => {
+  const prefetchPart = (parts: string[], i: number, voice: string, speed: number) => {
     if (i >= parts.length) return;
-    synthesizePart(parts, i).catch(() => {});
+    synthesizePart(parts, i, voice, speed).catch(() => {});
   };
 
   /** Revoke cached blob URLs far behind the current part so memory stays
@@ -1065,10 +1114,10 @@ export default function DocumentDetail() {
       const parts = splitTextForTts(text);
       setTtsChunks(parts);
       setTtsIndex(0);
-      const url = await synthesizePart(parts, 0);
+      const url = await synthesizePart(parts, 0, ttsVoiceRef.current, ttsSpeedRef.current);
       if (ttsSessionRef.current !== session) return; // closed/superseded meanwhile
       setTtsAudioUrl(url);
-      prefetchPart(parts, 1);
+      prefetchPart(parts, 1, ttsVoiceRef.current, ttsSpeedRef.current);
       // Do NOT autoplay the first part — iOS Safari blocks audio from async
       // code. The playback bar below appears; the user taps play.
     } catch (e: any) {
@@ -1087,12 +1136,12 @@ export default function DocumentDetail() {
     const session = ttsSessionRef.current;
     setTtsLoading(true);
     try {
-      const url = await synthesizePart(ttsChunks, i);
+      const url = await synthesizePart(ttsChunks, i, ttsVoiceRef.current, ttsSpeedRef.current);
       if (ttsSessionRef.current !== session) return; // closed/superseded meanwhile
       ttsAutoPlayRef.current = autoplay;
       setTtsIndex(i);
       setTtsAudioUrl(url);
-      prefetchPart(ttsChunks, i + 1);
+      prefetchPart(ttsChunks, i + 1, ttsVoiceRef.current, ttsSpeedRef.current);
       evictOldParts(i);
     } catch (e: any) {
       if (e?.message !== TTS_STALE && ttsSessionRef.current === session) {
@@ -1124,6 +1173,42 @@ export default function DocumentDetail() {
   };
 
   const closeTtsPlayer = () => resetTts();
+
+  /** Change voice and/or speed; clears the part cache so stale audio never replays.
+   *  If a player is currently open, re-synthesizes the current part immediately. */
+  const applyTtsSettings = async (newVoice: string, newSpeed: number) => {
+    // Update refs first so any concurrent synthesizePart calls use the new values
+    ttsVoiceRef.current = newVoice;
+    ttsSpeedRef.current = newSpeed;
+    setTtsVoice(newVoice);
+    setTtsSpeed(newSpeed);
+    localStorage.setItem(TTS_LS_VOICE, newVoice);
+    localStorage.setItem(TTS_LS_SPEED, String(newSpeed));
+
+    // If a player is currently shown, evict the cache and resynthesize from the current part
+    if (ttsAudioUrl && ttsChunks.length > 0) {
+      const session = ttsSessionRef.current;
+      // Pause current audio and clear old blobs
+      ttsAudioRef.current?.pause();
+      for (const url of ttsUrlCacheRef.current.values()) URL.revokeObjectURL(url);
+      ttsUrlCacheRef.current.clear();
+      ttsPromisesRef.current.clear();
+      setTtsPlaying(false);
+      setTtsLoading(true);
+      try {
+        const url = await synthesizePart(ttsChunks, ttsIndex, newVoice, newSpeed);
+        if (ttsSessionRef.current !== session) return;
+        setTtsAudioUrl(url);
+        prefetchPart(ttsChunks, ttsIndex + 1, newVoice, newSpeed);
+      } catch (e: any) {
+        if (e?.message !== TTS_STALE && ttsSessionRef.current === session) {
+          toast.error(`Could not apply new voice: ${e.message ?? "error"}`);
+        }
+      } finally {
+        if (ttsSessionRef.current === session) setTtsLoading(false);
+      }
+    }
+  };
 
   // Reset the TTS session when navigating between documents so audio from a
   // previous doc can never surface on the new one.
@@ -1381,64 +1466,107 @@ export default function DocumentDetail() {
 
         {/* Read Aloud playback bar */}
         {ttsAudioUrl && (
-          <div className="mt-3 flex items-center gap-2 p-3 rounded-lg bg-muted/30 border border-border/50 flex-wrap">
-            <Button
-              size="icon"
-              variant="secondary"
-              className="h-9 w-9 rounded-full shrink-0"
-              onClick={toggleTtsPlay}
-              disabled={ttsLoading}
-            >
-              {ttsLoading
-                ? <Loader2 className="w-4 h-4 animate-spin" />
-                : ttsPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
-            </Button>
-            <audio
-              ref={ttsAudioRef}
-              src={ttsAudioUrl}
-              onEnded={handleTtsEnded}
-              onPause={() => setTtsPlaying(false)}
-              onPlay={() => setTtsPlaying(true)}
-              className="flex-1 h-8"
-              controls
-              style={{ minWidth: 160 }}
-            />
-            {ttsChunks.length > 1 && (
-              <div className="flex items-center gap-1 shrink-0">
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  className="h-7 w-7"
-                  onClick={() => goToPart(ttsIndex - 1, ttsPlaying)}
-                  disabled={ttsLoading || ttsIndex === 0}
-                  title="Previous part"
-                >
-                  <ChevronDown className="w-3.5 h-3.5 rotate-90" />
-                </Button>
-                <span className="text-[11px] font-mono text-muted-foreground whitespace-nowrap tabular-nums">
-                  Part {ttsIndex + 1} / {ttsChunks.length}
-                </span>
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  className="h-7 w-7"
-                  onClick={() => goToPart(ttsIndex + 1, ttsPlaying)}
-                  disabled={ttsLoading || ttsIndex >= ttsChunks.length - 1}
-                  title="Next part"
-                >
-                  <ChevronDown className="w-3.5 h-3.5 -rotate-90" />
-                </Button>
+          <div className="mt-3 rounded-lg bg-muted/30 border border-border/50 overflow-hidden">
+            {/* Main controls row */}
+            <div className="flex items-center gap-2 p-3 flex-wrap">
+              <Button
+                size="icon"
+                variant="secondary"
+                className="h-9 w-9 rounded-full shrink-0"
+                onClick={toggleTtsPlay}
+                disabled={ttsLoading}
+              >
+                {ttsLoading
+                  ? <Loader2 className="w-4 h-4 animate-spin" />
+                  : ttsPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+              </Button>
+              <audio
+                ref={ttsAudioRef}
+                src={ttsAudioUrl}
+                onEnded={handleTtsEnded}
+                onPause={() => setTtsPlaying(false)}
+                onPlay={() => setTtsPlaying(true)}
+                className="flex-1 h-8"
+                controls
+                style={{ minWidth: 160 }}
+              />
+              {ttsChunks.length > 1 && (
+                <div className="flex items-center gap-1 shrink-0">
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="h-7 w-7"
+                    onClick={() => goToPart(ttsIndex - 1, ttsPlaying)}
+                    disabled={ttsLoading || ttsIndex === 0}
+                    title="Previous part"
+                  >
+                    <ChevronDown className="w-3.5 h-3.5 rotate-90" />
+                  </Button>
+                  <span className="text-[11px] font-mono text-muted-foreground whitespace-nowrap tabular-nums">
+                    Part {ttsIndex + 1} / {ttsChunks.length}
+                  </span>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="h-7 w-7"
+                    onClick={() => goToPart(ttsIndex + 1, ttsPlaying)}
+                    disabled={ttsLoading || ttsIndex >= ttsChunks.length - 1}
+                    title="Next part"
+                  >
+                    <ChevronDown className="w-3.5 h-3.5 -rotate-90" />
+                  </Button>
+                </div>
+              )}
+              <Button
+                size="icon"
+                variant="ghost"
+                className="shrink-0"
+                onClick={closeTtsPlayer}
+                title="Stop and close"
+              >
+                <X className="w-4 h-4" />
+              </Button>
+            </div>
+            {/* Voice + speed picker row */}
+            <div className="flex items-center gap-3 px-3 pb-2.5 flex-wrap border-t border-border/30 pt-2">
+              <span className="text-[10px] font-mono font-semibold uppercase tracking-widest text-muted-foreground shrink-0">
+                Voice
+              </span>
+              <Select
+                value={ttsVoice}
+                onValueChange={(v) => applyTtsSettings(v, ttsSpeedRef.current)}
+              >
+                <SelectTrigger className="h-7 text-xs font-mono w-36 shrink-0">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="max-h-56">
+                  {TTS_VOICE_OPTIONS.map((v) => (
+                    <SelectItem key={v.id} value={v.id} className="text-xs font-mono">
+                      {v.label}
+                      <span className="ml-1.5 text-muted-foreground text-[10px]">{v.accent}</span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <span className="text-[10px] font-mono font-semibold uppercase tracking-widest text-muted-foreground shrink-0 ml-2">
+                Speed
+              </span>
+              <div className="flex items-center gap-1">
+                {TTS_SPEED_OPTIONS.map((s) => (
+                  <button
+                    key={s.value}
+                    onClick={() => applyTtsSettings(ttsVoiceRef.current, s.value)}
+                    className={`px-2 py-0.5 rounded text-[11px] font-mono transition-colors ${
+                      ttsSpeed === s.value
+                        ? "bg-primary text-primary-foreground font-semibold"
+                        : "bg-muted text-muted-foreground hover:bg-muted/80 hover:text-foreground"
+                    }`}
+                  >
+                    {s.label}
+                  </button>
+                ))}
               </div>
-            )}
-            <Button
-              size="icon"
-              variant="ghost"
-              className="shrink-0"
-              onClick={closeTtsPlayer}
-              title="Stop and close"
-            >
-              <X className="w-4 h-4" />
-            </Button>
+            </div>
           </div>
         )}
 
