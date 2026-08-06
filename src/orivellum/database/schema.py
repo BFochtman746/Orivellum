@@ -1503,4 +1503,54 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             FOREIGN KEY (work_id) REFERENCES works(id)
         )
     """),
+
+    # v92 — GENESIS Book Origination System.
+    # genesis_books: one per Work (1:1 in practice; work_id UNIQUE).
+    # genesis_stages: G0..G9 status per book (PENDING/PASSED/FAILED).
+    # genesis_artifacts: markdown content per stage, stored in DB (not filesystem).
+    # genesis_ledger: tamper-evident append-only hash chain per book.
+    (92, "Add GENESIS book origination tables", """
+        CREATE TABLE IF NOT EXISTS genesis_books (
+            id            TEXT PRIMARY KEY,
+            work_id       TEXT NOT NULL UNIQUE,
+            mode          TEXT NOT NULL CHECK (mode IN ('cold','library')),
+            length        INTEGER NOT NULL DEFAULT 80,
+            acts          INTEGER NOT NULL DEFAULT 4,
+            state         TEXT NOT NULL DEFAULT 'G0',
+            manifest_json TEXT,
+            created_at    TEXT NOT NULL,
+            updated_at    TEXT NOT NULL,
+            FOREIGN KEY (work_id) REFERENCES works(id)
+        );
+        CREATE TABLE IF NOT EXISTS genesis_stages (
+            id         TEXT PRIMARY KEY,
+            book_id    TEXT NOT NULL,
+            stage_code TEXT NOT NULL,
+            status     TEXT NOT NULL DEFAULT 'PENDING'
+                       CHECK (status IN ('PENDING','PASSED','FAILED')),
+            UNIQUE (book_id, stage_code),
+            FOREIGN KEY (book_id) REFERENCES genesis_books(id)
+        );
+        CREATE TABLE IF NOT EXISTS genesis_artifacts (
+            id         TEXT PRIMARY KEY,
+            book_id    TEXT NOT NULL,
+            stage_code TEXT NOT NULL,
+            content    TEXT NOT NULL DEFAULT '',
+            sha256     TEXT NOT NULL DEFAULT '',
+            updated_at TEXT NOT NULL,
+            UNIQUE (book_id, stage_code),
+            FOREIGN KEY (book_id) REFERENCES genesis_books(id)
+        );
+        CREATE TABLE IF NOT EXISTS genesis_ledger (
+            id        TEXT PRIMARY KEY,
+            book_id   TEXT NOT NULL,
+            seq       INTEGER NOT NULL,
+            kind      TEXT NOT NULL,
+            payload   TEXT NOT NULL,
+            prev_hash TEXT NOT NULL,
+            hash      TEXT NOT NULL,
+            at        TEXT NOT NULL,
+            FOREIGN KEY (book_id) REFERENCES genesis_books(id)
+        )
+    """),
 ]
