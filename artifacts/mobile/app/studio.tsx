@@ -2942,6 +2942,9 @@ function _safeTitle(title: string) {
   return title.replace(/[^\w\-]/g, '_').substring(0, 50);
 }
 
+const DEFAULT_NARRATOR = 'bm_george';
+const narratorKey = (wid: string) => `narrator_voice_${wid}`;
+
 function AudiobookPanel({
   voices,
   onGenerated,
@@ -2956,7 +2959,7 @@ function AudiobookPanel({
   const colors = useColors();
   const [works, setWorks] = useState<{ id: string; title: string }[]>([]);
   const [workId, setWorkId] = useState<string | null>(null);
-  const [voice, setVoice] = useState('bm_george');
+  const [voice, setVoice] = useState(DEFAULT_NARRATOR);
   const [speed, setSpeed] = useState(1.0);
   const [phase, setPhase] = useState<AudiobookPhase>('idle');
   const [result, setResult] = useState<{ path: string; filename: string; work_title: string } | null>(null);
@@ -3005,6 +3008,48 @@ function AudiobookPanel({
     if (pollRef.current)  clearInterval(pollRef.current);
     abortRef.current?.abort();
   }, []);
+
+  /**
+   * Generation counter for narrator-preference loads.
+   *
+   * Each effect run and each manual selection advance this counter.  The load
+   * promise only applies its result when the counter still matches the value
+   * captured at dispatch time, preventing two races:
+   *
+   *   A → B fast switch: A's pending load is invalidated when B's effect
+   *   increments the counter before A resolves.
+   *
+   *   Load overtaking a manual pick: if the user selects a voice before the
+   *   current Work's read completes, handleSetVoice increments the counter so
+   *   the arriving read result is silently discarded.
+   */
+  const narratorLoadGenRef = useRef(0);
+
+  // Load the stored narrator for this Work whenever the selection changes.
+  // Resets immediately to DEFAULT_NARRATOR so no prior Work's voice lingers
+  // while the async read is in-flight.  Failed reads also land on the default.
+  useEffect(() => {
+    if (!workId) return;
+    const myGen = ++narratorLoadGenRef.current;
+    setVoice(DEFAULT_NARRATOR);
+    AsyncStorage.getItem(narratorKey(workId))
+      .then(stored => {
+        if (narratorLoadGenRef.current === myGen) setVoice(stored ?? DEFAULT_NARRATOR);
+      })
+      .catch(() => {
+        if (narratorLoadGenRef.current === myGen) setVoice(DEFAULT_NARRATOR);
+      });
+  }, [workId]);
+
+  // Persist the narrator choice and update local state.
+  // Advances the generation counter so any in-flight load is discarded.
+  const handleSetVoice = useCallback((id: string) => {
+    ++narratorLoadGenRef.current;
+    setVoice(id);
+    if (workId) {
+      AsyncStorage.setItem(narratorKey(workId), id).catch(() => {});
+    }
+  }, [workId]);
 
   const selectedWork = works.find(w => w.id === workId) ?? null;
 
@@ -3531,12 +3576,12 @@ function AudiobookPanel({
           workTitle={selectedWork?.title}
           voices={voices}
           audio={audio}
-          onUseVoice={setVoice}
+          onUseVoice={handleSetVoice}
         />
         <VoiceBrowserCard
           voices={voices}
           selectedId={voice}
-          onSelect={setVoice}
+          onSelect={handleSetVoice}
           audio={audio}
         />
       </View>
