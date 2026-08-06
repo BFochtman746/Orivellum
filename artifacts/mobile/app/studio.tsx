@@ -2957,9 +2957,21 @@ function AudiobookPanel({
   const [result, setResult] = useState<{ path: string; filename: string; work_title: string } | null>(null);
   const [errorMsg, setErrorMsg] = useState('');
   const [elapsed, setElapsed] = useState(0);
-  const [sharing, setSharing] = useState(false);
-  const abortRef = useRef<AbortController | null>(null);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [sharing,        setSharing]        = useState(false);
+  const [jobId,          setJobId]          = useState<string | null>(null);
+  const [chapIdx,        setChapIdx]        = useState(0);
+  const [totalChaps,     setTotalChaps]     = useState(0);
+  const [chapTitle,      setChapTitle]      = useState('');
+  // True only after the first /status poll tick arrives — prevents showing
+  // "Chapter 1 of N" before the server has reported any real progress.
+  const [statusReceived, setStatusReceived] = useState(false);
+  const abortRef      = useRef<AbortController | null>(null);
+  const timerRef      = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pollRef       = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Set to true the moment the user cancels so we can guard the async-start race:
+  // if the POST /start response arrives after cancel was pressed we immediately
+  // delete the server job and skip setting up polling.
+  const cancelledRef  = useRef(false);
 
   // Load works list
   useEffect(() => {
@@ -2981,6 +2993,7 @@ function AudiobookPanel({
   // Cleanup on unmount
   useEffect(() => () => {
     if (timerRef.current) clearInterval(timerRef.current);
+    if (pollRef.current)  clearInterval(pollRef.current);
     abortRef.current?.abort();
   }, []);
 
@@ -3007,17 +3020,25 @@ function AudiobookPanel({
     return m > 0 ? `${m}m ${sec}s` : `${s}s`;
   };
 
+  const stopPoll = () => {
+    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+  };
+
   const handleGenerate = async () => {
     if (!workId) return;
     audio.stop();
+    cancelledRef.current = false; // arm for new run
     setPhase('generating');
     setResult(null);
     setErrorMsg('');
+    setJobId(null);
+    setChapIdx(0);
+    setTotalChaps(0);
+    setChapTitle('');
+    setStatusReceived(false);
     startTimer();
-    const ctrl = new AbortController();
-    abortRef.current = ctrl;
     try {
-      const resp = await mobileFetch(`${API}/studio/tts/work`, {
+      const resp = await mobileFetch(`${API}/studio/tts/work/start`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -3026,34 +3047,76 @@ function AudiobookPanel({
           speed,
           include_credits: true,
           acx_mastering: true,
-          return_url: true,
         }),
-        signal: ctrl.signal,
       });
-      stopTimer();
       if (!resp.ok) {
         const err = await resp.json().catch(() => ({}));
         throw new Error((err as any).detail ?? `HTTP ${resp.status}`);
       }
-      const data = await resp.json();
-      setResult({ path: data.path, filename: data.filename, work_title: data.work_title });
-      setPhase('done');
-      onGenerated();
-    } catch (e: any) {
-      stopTimer();
-      if (e?.name === 'AbortError') {
-        setPhase('idle');
+      const { job_id, total_chapters } = await resp.json();
+
+      // Guard the async-start race: if the user cancelled while the POST was
+      // in-flight, delete the newly-created job and do not start polling.
+      if (cancelledRef.current) {
+        mobileFetch(`${API}/studio/tts/work/${job_id}`, { method: 'DELETE' }).catch(() => {});
         return;
       }
-      setErrorMsg(e?.message ?? 'Audiobook generation failed');
-      setPhase('error');
+
+      setJobId(job_id);
+      setTotalChaps(total_chapters);
+
+      // Poll for chapter-level progress every 2 s
+      pollRef.current = setInterval(async () => {
+        // Skip if cancelled while a poll tick was already in-flight
+        if (cancelledRef.current) { stopPoll(); return; }
+        try {
+          const sr = await mobileFetch(`${API}/studio/tts/work/${job_id}/status`);
+          if (!sr.ok) return; // transient; keep polling
+          const status = await sr.json();
+          if (cancelledRef.current) { stopPoll(); return; }
+          setStatusReceived(true);
+          setChapIdx(status.chapter_idx ?? 0);
+          setTotalChaps(status.total_chapters ?? total_chapters);
+          setChapTitle(status.chapter_title ?? '');
+
+          if (status.state === 'done') {
+            stopPoll(); stopTimer();
+            const r = status.result;
+            setResult({ path: r.path, filename: r.filename, work_title: r.work_title });
+            setPhase('done');
+            onGenerated();
+          } else if (status.state === 'failed') {
+            stopPoll(); stopTimer();
+            setErrorMsg(status.error ?? 'Audiobook generation failed');
+            setPhase('error');
+          } else if (status.state === 'cancelled') {
+            stopPoll(); stopTimer();
+            setPhase('idle');
+          }
+        } catch (_) {
+          // transient network error; keep polling
+        }
+      }, 2000);
+    } catch (e: any) {
+      stopTimer();
+      if (!cancelledRef.current) {
+        setErrorMsg(e?.message ?? 'Audiobook generation failed');
+        setPhase('error');
+      }
     }
   };
 
   const handleCancel = () => {
-    abortRef.current?.abort();
+    cancelledRef.current = true; // disarm any in-flight start/poll
+    stopPoll();
     stopTimer();
     setPhase('idle');
+    // Signal the server to stop the background job; also used as a
+    // deferred DELETE if job_id arrives after cancel was pressed (see
+    // the cancelledRef guard inside handleGenerate).
+    if (jobId) {
+      mobileFetch(`${API}/studio/tts/work/${jobId}`, { method: 'DELETE' }).catch(() => {});
+    }
   };
 
   const handleShare = async () => {
@@ -3081,16 +3144,16 @@ function AudiobookPanel({
 
   // ── Generating ───────────────────────────────────────────────────────────────
   if (phase === 'generating') {
-    const STEPS = [
-      'Fetching document text from all chapters',
-      'Synthesizing narration segments',
-      'Concatenating + ACX loudness mastering',
-    ];
-    // Each step takes roughly 20 s of elapsed time as a heuristic marker
+    // statusReceived is only true after the first /status poll tick arrives,
+    // so we show "Preparing narration…" even when totalChaps is already known
+    // from the /start response.
+    const hasProgress = statusReceived && totalChaps > 0;
+    const pct = hasProgress ? Math.min(chapIdx / totalChaps, 1) : 0;
+
     return (
       <SectionCard title="Generating Audiobook" icon="headphones">
         <View style={{ gap: 16, paddingVertical: 6 }}>
-          {/* Waveform visual */}
+          {/* Animated waveform bars */}
           <View style={{ flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'center', gap: 4, height: 44 }}>
             {[14, 30, 38, 26, 18, 36, 22, 32, 16, 28].map((h, i) => (
               <View
@@ -3105,41 +3168,53 @@ function AudiobookPanel({
             ))}
           </View>
 
+          {/* Chapter label */}
           <View style={{ gap: 4, alignItems: 'center' }}>
             <Text style={{ color: colors.foreground, fontSize: 15, fontFamily: 'Inter_600SemiBold' }}>
-              Synthesizing narration…
+              {hasProgress
+                ? `Chapter ${chapIdx + 1} of ${totalChaps}`
+                : 'Preparing narration…'}
             </Text>
-            <Text style={{ color: colors.mutedForeground, fontSize: 12, fontFamily: 'Inter_400Regular' }}>
+            {chapTitle ? (
+              <Text
+                style={{ color: colors.mutedForeground, fontSize: 12, fontFamily: 'Inter_500Medium' }}
+                numberOfLines={1}
+                ellipsizeMode="tail"
+              >
+                {chapTitle}
+              </Text>
+            ) : null}
+            <Text style={{ color: colors.mutedForeground, fontSize: 11, fontFamily: 'Inter_400Regular' }}>
               Elapsed: {formatElapsed(elapsed)} · Large works take several minutes
             </Text>
           </View>
 
-          {STEPS.map((step, i) => {
-            const done   = elapsed >= (i + 1) * 20;
-            const active = !done && elapsed >= i * 20;
-            return (
-              <View key={i} style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-                <View style={[wsStyles.phaseIcon, {
-                  backgroundColor: done   ? '#22c55e22' : active ? colors.primary + '22' : colors.muted,
-                  borderColor:     done   ? '#22c55e55' : active ? colors.primary + '55' : colors.border,
-                }]}>
-                  {done
-                    ? <Feather name="check" size={11} color="#22c55e" />
-                    : active
-                    ? <ActivityIndicator size="small" color={colors.primary} style={{ transform: [{ scale: 0.6 }] }} />
-                    : <Feather name="clock" size={11} color={colors.mutedForeground} />
-                  }
-                </View>
-                <Text style={{
-                  fontSize: 13, lineHeight: 18,
-                  fontFamily: active ? 'Inter_500Medium' : 'Inter_400Regular',
-                  color: done ? '#22c55e' : active ? colors.foreground : colors.mutedForeground,
-                }}>
-                  {step}
-                </Text>
-              </View>
-            );
-          })}
+          {/* Progress bar */}
+          <View style={{ gap: 6 }}>
+            <View style={{
+              height: 6,
+              borderRadius: 3,
+              backgroundColor: colors.border,
+              overflow: 'hidden',
+            }}>
+              <View style={{
+                height: 6,
+                width: hasProgress ? `${Math.round(pct * 100)}%` : '0%',
+                borderRadius: 3,
+                backgroundColor: colors.primary,
+              }} />
+            </View>
+            {hasProgress && (
+              <Text style={{
+                fontSize: 11,
+                fontFamily: 'Inter_400Regular',
+                color: colors.mutedForeground,
+                textAlign: 'right',
+              }}>
+                {chapIdx} of {totalChaps} chapter{totalChaps !== 1 ? 's' : ''} done
+              </Text>
+            )}
+          </View>
 
           <Pressable
             onPress={handleCancel}

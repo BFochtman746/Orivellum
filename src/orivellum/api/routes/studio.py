@@ -1307,6 +1307,339 @@ def synthesize_work_audiobook(body: WorkAudiobookRequest):
             pass
 
 
+# ── Work-Audiobook async job model ───────────────────────────────────────────
+# Per-job registry keys: state, chapter_idx, total_chapters, chapter_title,
+#                        work_title, cancel_requested, result?, error?
+_work_tts_jobs: dict[str, dict] = {}
+_work_tts_jobs_lock = threading.Lock()
+
+
+def _run_work_tts_job(
+    job_id: str,
+    voice: str,
+    speed: float,
+    include_credits: bool,
+    acx_mastering: bool,
+    work_title: str,
+    doc_texts: list[tuple[str, str]],
+    out_dir: Path,
+    cfg,
+) -> None:
+    """Background worker: synthesise a full work audiobook chapter by chapter."""
+    kokoro_eng = _get_kokoro()
+    try:
+        import soundfile as _sf2
+    except ImportError:
+        _sf2 = None  # type: ignore[assignment]
+
+    voice_id   = _resolve_kokoro_voice(voice)
+    espeak_v   = _ESPEAK_VOICE_MAP.get(voice, "en+m3")
+    wpm        = max(80, min(400, int(175 * speed)))
+    voice_meta = _VOICE_BY_ID.get(voice, {})
+    voice_name = voice_meta.get("name", voice)
+
+    tmp_dir = Path(tempfile.mkdtemp())
+    wav_parts: list[Path] = []
+    seg_idx = 0
+
+    def _synth(text: str) -> "Path | None":
+        nonlocal seg_idx
+        wav = tmp_dir / f"seg_{seg_idx:06d}.wav"
+        seg_idx += 1
+        if kokoro_eng is not None and _sf2 is not None:
+            try:
+                samples, sr = kokoro_eng.create(text, voice=voice_id, speed=speed, lang="en-us")
+                _sf2.write(str(wav), samples, sr)
+                return wav
+            except Exception as ke:
+                logger.debug("Kokoro work-job %s seg: %s", job_id, ke)
+        try:
+            r = subprocess.run(
+                ["espeak-ng", "-v", espeak_v, "-s", str(wpm), "-w", str(wav), text],
+                capture_output=True, timeout=120,
+            )
+            if r.returncode == 0:
+                return wav
+        except Exception as ee:
+            logger.debug("espeak work-job %s seg: %s", job_id, ee)
+        return None
+
+    def _silence(dur: float) -> None:
+        nonlocal seg_idx
+        sil = tmp_dir / f"seg_{seg_idx:06d}.wav"
+        seg_idx += 1
+        subprocess.run(
+            ["ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=22050:cl=mono",
+             "-t", str(dur), str(sil)],
+            capture_output=True, timeout=10,
+        )
+        if sil.exists():
+            wav_parts.append(sil)
+
+    def _cancelled() -> bool:
+        with _work_tts_jobs_lock:
+            return bool(_work_tts_jobs.get(job_id, {}).get("cancel_requested"))
+
+    try:
+        with _work_tts_jobs_lock:
+            _work_tts_jobs[job_id]["state"] = "running"
+
+        # Opening credits
+        if include_credits:
+            credits_text = (
+                f"{work_title}. Narrated by {voice_name}. "
+                "This is an AI-generated audiobook produced with Orivellum."
+            )
+            p = _synth(credits_text)
+            if p:
+                wav_parts.append(p)
+            _silence(1.0)
+
+        # Chapter-by-chapter synthesis
+        for idx, (doc_title, doc_text) in enumerate(doc_texts):
+            if _cancelled():
+                with _work_tts_jobs_lock:
+                    _work_tts_jobs[job_id]["state"] = "cancelled"
+                return
+
+            with _work_tts_jobs_lock:
+                _work_tts_jobs[job_id].update({
+                    "chapter_idx": idx,
+                    "chapter_title": doc_title,
+                })
+
+            intro = _synth(doc_title + ".")
+            if intro:
+                wav_parts.append(intro)
+
+            for seg_text in _split_text_into_segments(doc_text)[:60]:
+                if _cancelled():
+                    with _work_tts_jobs_lock:
+                        _work_tts_jobs[job_id]["state"] = "cancelled"
+                    return
+                p = _synth(seg_text)
+                if p:
+                    wav_parts.append(p)
+
+            _silence(1.5)
+
+        # Closing credits — skip entirely if cancelled after the last chapter
+        if include_credits and not _cancelled():
+            closing = (
+                f"You have been listening to {work_title}. "
+                f"Narrated by {voice_name}. The end."
+            )
+            p = _synth(closing)
+            if p:
+                wav_parts.append(p)
+
+        if not wav_parts:
+            raise RuntimeError("No audio segments were generated")
+
+        # Final cancellation gate: if the user cancelled during or after the
+        # last chapter, stop here before the expensive concat / mastering /
+        # registration steps.
+        if _cancelled():
+            with _work_tts_jobs_lock:
+                _work_tts_jobs[job_id]["state"] = "cancelled"
+            return
+
+        # Concatenate all WAV parts to MP3
+        safe_title = re.sub(r"[^\w\-]", "_", work_title)[:50]
+        raw_mp3    = out_dir / f"{safe_title}_{uuid.uuid4().hex[:6]}_raw.mp3"
+        final_mp3  = out_dir / f"{safe_title}_{uuid.uuid4().hex[:6]}.mp3"
+
+        concat_list = tmp_dir / "concat.txt"
+        concat_list.write_text(
+            "\n".join(f"file '{p}'" for p in wav_parts), encoding="utf-8"
+        )
+        ff = subprocess.run(
+            ["ffmpeg", "-y", "-f", "concat", "-safe", "0",
+             "-i", str(concat_list),
+             "-codec:a", "libmp3lame", "-q:a", "2", str(raw_mp3)],
+            capture_output=True, timeout=600,
+        )
+        if ff.returncode != 0:
+            raise RuntimeError(f"ffmpeg concat failed: {ff.stderr.decode()[:400]}")
+
+        # ACX mastering
+        if acx_mastering and _apply_acx_mastering(str(raw_mp3), str(final_mp3)):
+            raw_mp3.unlink(missing_ok=True)
+            mp3_path = final_mp3
+        else:
+            raw_mp3.rename(final_mp3)
+            mp3_path = final_mp3 if final_mp3.exists() else raw_mp3
+
+        # Cancellation gate: checked BEFORE any durable publication so a cancel
+        # that arrived during mastering cannot leave a registered artifact behind.
+        if _cancelled():
+            try:
+                mp3_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+            with _work_tts_jobs_lock:
+                _work_tts_jobs[job_id]["state"] = "cancelled"
+            return
+
+        _ab_rel = _link_output_sync(mp3_path)
+        _rotate_outputs(out_dir)
+
+        all_text = "\n\n".join(t for _, t in doc_texts)
+        from orivellum.api.executor import get_executor as _gex_wj
+        _gex_wj().submit(
+            _register_output_bg, mp3_path, all_text[:8000], "mp3",
+            f"Audiobook: {work_title}", prelinked_rel=_ab_rel,
+        )
+
+        # Push notification (best-effort)
+        try:
+            from orivellum.capabilities.push import notify_push_best_effort as _push_wj
+            threading.Thread(
+                target=_push_wj,
+                args=(
+                    get_db(),
+                    "🎙️ Audiobook ready",
+                    f'"{work_title[:50]}" audiobook is ready to play',
+                    {"screen": "studio"},
+                ),
+                daemon=True,
+            ).start()
+        except Exception:
+            pass
+
+        rel = str(mp3_path.relative_to(out_dir))
+        with _work_tts_jobs_lock:
+            _work_tts_jobs[job_id].update({
+                "state": "done",
+                "chapter_idx": len(doc_texts),
+                "chapter_title": "",
+                "result": {
+                    "path": rel,
+                    "filename": mp3_path.name,
+                    "work_title": work_title,
+                },
+            })
+
+    except Exception as exc:
+        logger.error("Work TTS job %s failed: %s", job_id, exc)
+        with _work_tts_jobs_lock:
+            _work_tts_jobs[job_id].update({"state": "failed", "error": str(exc)[:400]})
+    finally:
+        for p in wav_parts:
+            p.unlink(missing_ok=True)
+        for f in tmp_dir.iterdir():
+            f.unlink(missing_ok=True)
+        try:
+            tmp_dir.rmdir()
+        except Exception:
+            pass
+
+
+class WorkAudiobookStartRequest(BaseModel):
+    work_id: str
+    voice: str = "bm_george"
+    speed: float = 1.0
+    include_credits: bool = True
+    acx_mastering: bool = True
+
+
+@router.post("/studio/tts/work/start")
+def start_work_audiobook_async(body: WorkAudiobookStartRequest):
+    """Start an async audiobook generation job; returns {job_id, total_chapters} immediately.
+
+    Poll GET /studio/tts/work/{job_id}/status for chapter-level progress.
+    Send DELETE /studio/tts/work/{job_id} to cancel.
+    """
+    db  = get_db()
+    cfg = get_config()
+
+    with db._lock:
+        work_row = db._conn.execute(
+            "SELECT id, title FROM works WHERE id=?", (body.work_id,)
+        ).fetchone()
+    if not work_row:
+        raise HTTPException(404, f"Work {body.work_id!r} not found")
+
+    work_title = work_row["title"] or "Untitled Work"
+
+    with db._lock:
+        doc_rows = db._conn.execute(
+            """SELECT d.id, d.title, d.source
+               FROM documents d JOIN objects o ON o.id = d.id
+               WHERE d.work_id=? AND d.readiness='ready'
+               ORDER BY o.created_at""",
+            (body.work_id,),
+        ).fetchall()
+
+    if not doc_rows:
+        raise HTTPException(422, "No ready documents found in this Work. "
+                                 "Process documents in the Library first.")
+
+    doc_texts: list[tuple[str, str]] = []
+    with db._lock:
+        for doc in doc_rows:
+            chunks = db._conn.execute(
+                "SELECT text FROM chunks WHERE doc_id=? ORDER BY page, rowid",
+                (doc["id"],),
+            ).fetchall()
+            if chunks:
+                text = "\n\n".join(r["text"] for r in chunks)
+                doc_title = doc["title"] or (
+                    doc["source"].split("/")[-1] if doc["source"] else "Chapter"
+                )
+                doc_texts.append((doc_title, text))
+
+    if not doc_texts:
+        raise HTTPException(422, "No extracted text found in any document of this Work.")
+
+    job_id  = str(uuid.uuid4())
+    out_dir = Path(cfg.data_dir) / "outputs"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    with _work_tts_jobs_lock:
+        _work_tts_jobs[job_id] = {
+            "state": "starting",
+            "chapter_idx": 0,
+            "total_chapters": len(doc_texts),
+            "chapter_title": "",
+            "work_title": work_title,
+            "cancel_requested": False,
+        }
+
+    threading.Thread(
+        target=_run_work_tts_job,
+        args=(job_id, body.voice, body.speed, body.include_credits,
+              body.acx_mastering, work_title, doc_texts, out_dir, cfg),
+        daemon=True,
+    ).start()
+
+    return {"job_id": job_id, "total_chapters": len(doc_texts)}
+
+
+@router.get("/studio/tts/work/{job_id}/status")
+def get_work_tts_status(job_id: str):
+    """Return current chapter-level progress for a work audiobook job."""
+    with _work_tts_jobs_lock:
+        raw = _work_tts_jobs.get(job_id)
+    if raw is None:
+        raise HTTPException(404, f"Work TTS job {job_id!r} not found")
+    # Strip the internal cancel flag before returning
+    out = {k: v for k, v in raw.items() if k != "cancel_requested"}
+    return {"job_id": job_id, **out}
+
+
+@router.delete("/studio/tts/work/{job_id}")
+def cancel_work_tts(job_id: str):
+    """Request cancellation of an in-progress work audiobook job."""
+    with _work_tts_jobs_lock:
+        job = _work_tts_jobs.get(job_id)
+    if job is None:
+        raise HTTPException(404, f"Work TTS job {job_id!r} not found")
+    with _work_tts_jobs_lock:
+        _work_tts_jobs[job_id]["cancel_requested"] = True
+    return {"ok": True, "job_id": job_id}
+
+
 # ── TTS synthesis ─────────────────────────────────────────────────────────────
 
 class TTSRequest(BaseModel):
