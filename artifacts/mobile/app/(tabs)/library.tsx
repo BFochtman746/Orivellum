@@ -172,33 +172,8 @@ export default function LibraryScreen() {
       });
       if (result.canceled || !result.assets?.length) return;
       const asset = result.assets[0];
-      setUploading(true);
-      setUploadProgress(5);
-      // Read file as base64 using fetch + FileReader
-      const fileResp = await fetch(asset.uri);
-      const blob = await fileResp.blob();
-      setUploadProgress(15);
-      const reader = new FileReader();
-      const b64: string = await new Promise((resolve, reject) => {
-        reader.onprogress = (evt) => {
-          if (evt.lengthComputable) {
-            // Scale reading progress to 15–80%
-            const pct = 15 + Math.round((evt.loaded / evt.total) * 65);
-            setUploadProgress(pct);
-          }
-        };
-        reader.onload = () => {
-          setUploadProgress(82);
-          const dataUrl = reader.result as string;
-          resolve(dataUrl.split(',')[1] ?? '');
-        };
-        reader.onerror = reject;
-        reader.readAsDataURL(blob);
-      });
-      setUploadProgress(90);
-      const domain = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
 
-      // Ask which Work to link this document to (optional)
+      // Ask which Work to link this document to (optional) before uploading
       const uploadWorkId = await new Promise<string | null>((resolve) => {
         const workOptions = works.map((w: any) => w.title as string);
         const workIds = works.map((w: any) => w.id as string);
@@ -217,24 +192,47 @@ export default function LibraryScreen() {
         );
       });
 
-      const resp = await mobileFetch(`https://${domain}/api/library/import`, {
+      setUploading(true);
+      setUploadProgress(10);
+
+      const domain = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
+
+      // Multipart FormData upload — no base64 encoding, no 50 MB ceiling.
+      // mobileFetch attaches the bearer token automatically.
+      const form = new FormData();
+      form.append('file', { uri: asset.uri, name: asset.name, type: asset.mimeType ?? 'application/octet-stream' } as any);
+      if (uploadWorkId) form.append('work_id', uploadWorkId);
+
+      setUploadProgress(30);
+
+      const resp = await mobileFetch(`https://${domain}/api/library/upload`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          filename: asset.name,
-          content_b64: b64,
-          mime_type: asset.mimeType ?? 'application/octet-stream',
-          ...(uploadWorkId ? { work_id: uploadWorkId } : {}),
-        }),
+        body: form as any,
       });
+
+      setUploadProgress(90);
+
       if (!resp.ok) {
         const err = await resp.json().catch(() => ({}));
-        Alert.alert('Upload failed', err.detail ?? 'Could not import document');
+        Alert.alert('Upload failed', (err as any).detail ?? 'Could not import document');
         return;
       }
+
       setUploadProgress(100);
       const data = await resp.json();
-      Alert.alert('Uploaded', `"${asset.name}" added to your library`);
+
+      // Server returns duplicate:true when the same file was imported before.
+      // Navigate to the existing document instead of creating a duplicate alert.
+      if (data?.duplicate && data?.document?.id) {
+        Alert.alert(
+          'Already in library',
+          `"${asset.name}" is already imported. Opening the existing document.`,
+          [{ text: 'OK', onPress: () => router.push(`/library/${data.document.id}` as any) }]
+        );
+        refetchList();
+        return;
+      }
+
       refetchList();
       if (data?.document?.id) router.push(`/library/${data.document.id}` as any);
     } catch (err: any) {
