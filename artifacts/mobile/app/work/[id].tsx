@@ -1,8 +1,9 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { mobileFetch } from '@/lib/api';
 import {
   ActivityIndicator,
   Alert,
+  Animated,
   FlatList,
   Platform,
   Pressable,
@@ -13,6 +14,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { Swipeable } from 'react-native-gesture-handler';
 import { useColors } from '@/hooks/useColors';
 import { Feather } from '@expo/vector-icons';
 import {
@@ -24,6 +26,7 @@ import {
   useCreateConversation,
   useListConversations,
   useUpdateWork,
+  useUpdateConversation,
   getListConversationsQueryKey,
   getGetWorkTasksQueryKey,
   getGetWorkStatsQueryKey,
@@ -267,6 +270,93 @@ function TaskRow({ task, onDelete, onToggle }: { task: Task; onDelete?: () => vo
         </Text>
       </View>
     </Pressable>
+  );
+}
+
+// ─── Swipeable conversation row ──────────────────────────────────────────────
+
+function ConvSwipeRow({
+  conv,
+  colors,
+  onPress,
+  onArchive,
+}: {
+  conv: any;
+  colors: any;
+  onPress: () => void;
+  onArchive: (id: string, title: string) => void;
+}) {
+  const swipeRef = useRef<Swipeable>(null);
+
+  const renderRightActions = (_progress: any, dragX: Animated.AnimatedInterpolation<number>) => {
+    const scale = dragX.interpolate({ inputRange: [-80, 0], outputRange: [1, 0.8], extrapolate: 'clamp' });
+    return (
+      <Animated.View style={{ transform: [{ scale }], justifyContent: 'center', paddingHorizontal: 12, paddingVertical: 6 }}>
+        <Pressable
+          onPress={() => {
+            swipeRef.current?.close();
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+            onArchive(conv.id, conv.title ?? 'Untitled');
+          }}
+          style={{
+            backgroundColor: '#f59e0b',
+            borderRadius: 10,
+            paddingHorizontal: 18,
+            paddingVertical: 10,
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 4,
+            minHeight: 52,
+          }}
+        >
+          <Feather name="archive" size={16} color="#fff" />
+          <Text style={{ color: '#fff', fontSize: 12, fontFamily: 'Inter_700Bold' }}>Archive</Text>
+        </Pressable>
+      </Animated.View>
+    );
+  };
+
+  const rowContent = (
+    <Pressable
+      onPress={onPress}
+      style={({ pressed }: { pressed: boolean }) => [
+        styles.listItem,
+        { borderColor: colors.border, opacity: pressed ? 0.7 : 1 },
+      ]}
+    >
+      <View style={[styles.itemIcon, { backgroundColor: colors.muted }]}>
+        <Feather name="message-circle" size={14} color={colors.primary} />
+      </View>
+      <View style={styles.itemBody}>
+        <Text style={[styles.itemTitle, { color: colors.foreground }]} numberOfLines={1}>
+          {conv.title || 'Untitled'}
+        </Text>
+        {conv.last_message ? (
+          <Text style={[styles.itemMeta, { color: colors.mutedForeground }]} numberOfLines={1}>
+            {conv.last_message}
+          </Text>
+        ) : null}
+        <Text style={[styles.itemMeta, { color: colors.mutedForeground, opacity: 0.7 }]}>
+          {conv.message_count ?? 0} msg{(conv.message_count ?? 0) === 1 ? '' : 's'}
+          {conv.updated_at ? ` · ${new Date(conv.updated_at).toLocaleDateString()}` : ''}
+        </Text>
+      </View>
+      <Feather name="chevron-right" size={14} color={colors.mutedForeground} />
+    </Pressable>
+  );
+
+  // Swipe gestures are not meaningful on web
+  if (Platform.OS === 'web') return rowContent;
+
+  return (
+    <Swipeable
+      ref={swipeRef}
+      renderRightActions={renderRightActions}
+      overshootRight={false}
+      rightThreshold={40}
+    >
+      {rowContent}
+    </Swipeable>
   );
 }
 
@@ -2226,6 +2316,63 @@ export default function WorkDetailScreen() {
   // Conversations search
   const [convSearch, setConvSearch] = useState('');
 
+  // Conversations archive — deferred commit (server call only fires after the undo window closes)
+  // This eliminates archive/unarchive races: Undo simply cancels the pending timer, no server call needed.
+  const [hiddenConvIds, setHiddenConvIds] = useState<Set<string>>(new Set());
+  const [undoConv, setUndoConv] = useState<{ id: string; title: string } | null>(null);
+  const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingArchiveRef = useRef<{ id: string } | null>(null);
+  const { mutateAsync: archiveConvMutation } = useUpdateConversation();
+
+  // Called when the undo window expires (or a second swipe preempts the first).
+  const commitArchive = useCallback(async (convId: string) => {
+    try {
+      await archiveConvMutation({ convId, data: { archived: true } });
+      queryClient.invalidateQueries({ queryKey: getListConversationsQueryKey() });
+    } catch {
+      // Server failed after the undo window — restore the row and inform the user.
+      setHiddenConvIds(prev => { const n = new Set(prev); n.delete(convId); return n; });
+      Alert.alert('Archive failed', 'Could not archive the conversation. It has been restored.');
+    }
+  }, [archiveConvMutation, queryClient]);
+
+  const handleArchiveConv = useCallback((convId: string, title: string) => {
+    // If there is already a pending archive, commit it immediately before starting a new one.
+    if (undoTimerRef.current && pendingArchiveRef.current) {
+      const prev = pendingArchiveRef.current;
+      clearTimeout(undoTimerRef.current);
+      undoTimerRef.current = null;
+      pendingArchiveRef.current = null;
+      void commitArchive(prev.id);
+    }
+    // Optimistically hide the row.
+    setHiddenConvIds(prev => new Set([...prev, convId]));
+    // Record the pending archive (server call deferred until window closes).
+    pendingArchiveRef.current = { id: convId };
+    setUndoConv({ id: convId, title });
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    // Commit after 4 s unless Undo is pressed first.
+    undoTimerRef.current = setTimeout(() => {
+      undoTimerRef.current = null;
+      const pending = pendingArchiveRef.current;
+      pendingArchiveRef.current = null;
+      setUndoConv(null);
+      if (pending) void commitArchive(pending.id);
+    }, 4_000);
+  }, [commitArchive]);
+
+  const handleUndoArchive = useCallback(() => {
+    // Cancel the pending timer — no server call is needed at all.
+    if (undoTimerRef.current) { clearTimeout(undoTimerRef.current); undoTimerRef.current = null; }
+    const pending = pendingArchiveRef.current;
+    pendingArchiveRef.current = null;
+    setUndoConv(null);
+    if (pending) {
+      setHiddenConvIds(prev => { const n = new Set(prev); n.delete(pending.id); return n; });
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    }
+  }, []);
+
   // Docs sort
   const [docSortKey, setDocSortKey] = useState<'date' | 'name' | 'kind'>('date');
 
@@ -2695,9 +2842,10 @@ export default function WorkDetailScreen() {
             />
           );
         }
-        const filteredConvs = convSearch.trim()
+        const filteredConvs = (convSearch.trim()
           ? convs.filter((c: any) => (c.title ?? '').toLowerCase().includes(convSearch.toLowerCase()))
-          : convs;
+          : convs
+        ).filter((c: any) => !hiddenConvIds.has(c.id));
         return (
           <>
             {convsError && convs.length > 0 && (
@@ -2723,32 +2871,12 @@ export default function WorkDetailScreen() {
               data={filteredConvs}
               keyExtractor={(c) => (c as any).id ?? ''}
               renderItem={({ item: c }) => (
-                <Pressable
+                <ConvSwipeRow
+                  conv={c}
+                  colors={colors}
                   onPress={() => router.push(`/chat/${(c as any).id}` as any)}
-                  style={({ pressed }) => [
-                    styles.listItem,
-                    { borderColor: colors.border, opacity: pressed ? 0.7 : 1 },
-                  ]}
-                >
-                  <View style={[styles.itemIcon, { backgroundColor: colors.muted }]}>
-                    <Feather name="message-circle" size={14} color={colors.primary} />
-                  </View>
-                  <View style={styles.itemBody}>
-                    <Text style={[styles.itemTitle, { color: colors.foreground }]} numberOfLines={1}>
-                      {(c as any).title || 'Untitled'}
-                    </Text>
-                    {(c as any).last_message ? (
-                      <Text style={[styles.itemMeta, { color: colors.mutedForeground }]} numberOfLines={1}>
-                        {(c as any).last_message}
-                      </Text>
-                    ) : null}
-                    <Text style={[styles.itemMeta, { color: colors.mutedForeground, opacity: 0.7 }]}>
-                      {(c as any).message_count ?? 0} msg{((c as any).message_count ?? 0) === 1 ? '' : 's'}
-                      {(c as any).updated_at ? ` · ${new Date((c as any).updated_at).toLocaleDateString()}` : ''}
-                    </Text>
-                  </View>
-                  <Feather name="chevron-right" size={14} color={colors.mutedForeground} />
-                </Pressable>
+                  onArchive={handleArchiveConv}
+                />
               )}
               contentContainerStyle={styles.listPad}
               refreshControl={
@@ -2770,6 +2898,31 @@ export default function WorkDetailScreen() {
                 </View>
               }
             />
+            {/* Undo archive toast */}
+            {undoConv && (
+              <View style={{
+                position: 'absolute', bottom: 16, left: 16, right: 16,
+                flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+                backgroundColor: '#1f2937', borderRadius: 12,
+                paddingVertical: 12, paddingHorizontal: 16,
+                shadowColor: '#000', shadowOffset: { width: 0, height: 4 },
+                shadowOpacity: 0.3, shadowRadius: 8, elevation: 8,
+              }}>
+                <Text style={{ color: '#f9fafb', fontSize: 13, fontFamily: 'Inter_400Regular', flex: 1 }} numberOfLines={1}>
+                  "{undoConv.title}" archived
+                </Text>
+                <Pressable
+                  onPress={handleUndoArchive}
+                  hitSlop={8}
+                  style={({ pressed }: { pressed: boolean }) => ({
+                    paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8,
+                    backgroundColor: '#f59e0b', opacity: pressed ? 0.8 : 1, marginLeft: 12,
+                  })}
+                >
+                  <Text style={{ color: '#fff', fontSize: 13, fontFamily: 'Inter_700Bold' }}>Undo</Text>
+                </Pressable>
+              </View>
+            )}
           </>
         );
       }
