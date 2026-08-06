@@ -2770,8 +2770,18 @@ def _probe_tesseract_cmd() -> None:
             return
 
 
+_OCR_TIMEOUT = 60  # seconds — runaway Tesseract jobs return 504 after this
+
+
 @router.post("/studio/ocr")
-def run_ocr(body: OCRRequest):
+async def run_ocr(body: OCRRequest):
+    """Run Tesseract OCR off the event-loop thread so concurrent requests are never blocked.
+
+    ``pytesseract.image_to_string`` is CPU-bound and can take 5–30 s for
+    high-resolution images.  Running it in the thread pool via
+    ``asyncio.to_thread`` keeps the event loop free for other requests.
+    A 60-second timeout cancels runaway scans and returns HTTP 504.
+    """
     import base64
     import io
 
@@ -2783,11 +2793,25 @@ def run_ocr(body: OCRRequest):
     try:
         from PIL import Image
         import pytesseract
-        _probe_tesseract_cmd()
-        img = Image.open(io.BytesIO(data))
-        text = pytesseract.image_to_string(img)
-        return {"text": text, "ok": True}
     except ImportError:
         raise HTTPException(503, "OCR dependencies (Pillow, pytesseract) not available")
+
+    try:
+        _probe_tesseract_cmd()
+        img = Image.open(io.BytesIO(data))
+
+        try:
+            text = await asyncio.wait_for(
+                asyncio.to_thread(pytesseract.image_to_string, img),
+                timeout=_OCR_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            logger.warning("OCR timed out after %ds", _OCR_TIMEOUT)
+            raise HTTPException(504, f"OCR timed out after {_OCR_TIMEOUT} s — "
+                                     "try a smaller or lower-resolution image")
+
+        return {"text": text, "ok": True}
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(500, f"OCR failed: {exc}")
