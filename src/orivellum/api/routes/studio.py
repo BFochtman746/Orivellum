@@ -2236,15 +2236,23 @@ async def _stream_tts_events(body: "TTSRequest"):
                 )
                 Path(list_file.name).unlink(missing_ok=True)
                 if ff.returncode == 0:
-                    # Hard-link before rotation
-                    concat_lib_rel = _link_output_sync(concat_mp3)
-                    full_title = f"TTS narration: {body.text[:60]}"
-                    _gex().submit(
-                        _register_output_bg, concat_mp3,
-                        body.text[:4000], "mp3", full_title,
-                        prelinked_rel=concat_lib_rel,
-                    )
-                    concat_rel = str(concat_mp3.relative_to(out_dir))
+                    # Verify concat file has content before advertising it
+                    try:
+                        concat_size = concat_mp3.stat().st_size
+                    except OSError:
+                        concat_size = 0
+                    if concat_size > 0:
+                        # Hard-link before rotation
+                        concat_lib_rel = _link_output_sync(concat_mp3)
+                        full_title = f"TTS narration: {body.text[:60]}"
+                        _gex().submit(
+                            _register_output_bg, concat_mp3,
+                            body.text[:4000], "mp3", full_title,
+                            prelinked_rel=concat_lib_rel,
+                        )
+                        concat_rel = str(concat_mp3.relative_to(out_dir))
+                    else:
+                        logger.warning("TTS concat produced an empty file — skipping")
                 else:
                     logger.warning(
                         "TTS concat ffmpeg failed: %s",
@@ -2253,6 +2261,17 @@ async def _stream_tts_events(body: "TTSRequest"):
             except Exception as exc:
                 logger.warning("TTS concat failed (non-fatal): %s", exc)
 
+    # ── Emit dedicated concat event so clients get the merged URI directly ──
+    # Emitted BEFORE rotation and done so clients can set up the share button
+    # without waiting for done or building the URL themselves.
+    # Shape: {"type":"concat","path":"<out_dir-relative>","uri":"<serve URL>","ok":true}
+    # Non-fatal: if concat failed, no concat event is emitted; clients fall
+    # back to the last-segment URI tracked via lastSegPath.
+    if concat_rel:
+        from urllib.parse import quote as _quote
+        concat_uri = f"/api/studio/outputs/serve?path={_quote(concat_rel, safe='')}"
+        yield f"data: {_json.dumps({'type': 'concat', 'path': concat_rel, 'uri': concat_uri, 'ok': True})}\n\n"
+
     # Rotate after all links are written
     await asyncio.to_thread(_rotate_outputs, out_dir)
     done_evt: dict = {
@@ -2260,7 +2279,7 @@ async def _stream_tts_events(body: "TTSRequest"):
         "ok_count": ok_count, "error_count": err_count,
     }
     if concat_rel:
-        done_evt["concat_path"] = concat_rel
+        done_evt["concat_path"] = concat_rel   # kept for backward compat
     yield f"data: {_json.dumps(done_evt)}\n\n"
 
 

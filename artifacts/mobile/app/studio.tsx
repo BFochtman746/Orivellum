@@ -1649,6 +1649,18 @@ function useStreamingTTS() {
               segTotalRef.current = evt.total ?? segTotalRef.current;
               lastSegPath = evt.path as string; // track for fallback
 
+            } else if (evt.type === 'concat' && evt.path) {
+              // ── Server-merged file available ─────────────────────────────
+              // The server emits this event after ffmpeg concat succeeds,
+              // before the done event.  Use it to set the share URI directly
+              // so the button is ready the moment done arrives.
+              // Prefer the serve URL the server computed; fall back to building
+              // it from path so both v1 (uri field) and v2 (path-only) work.
+              const concatUri = (evt.uri as string | undefined)
+                ? `${API.replace('/api', '')}${evt.uri}`
+                : serveUrl(evt.path as string);
+              if (mountedRef.current) setFullAudioUri(concatUri);
+
             } else if (evt.type === 'segment_error') {
               segErrorRef.current += 1;
               segTotalRef.current = evt.total ?? segTotalRef.current;
@@ -1662,12 +1674,17 @@ function useStreamingTTS() {
               const errCount = evt.error_count ?? segErrorRef.current;
               if (mountedRef.current) setSegTotal(total);
 
-              // Resolve the share URI: prefer the server-concatenated file
-              // (present when there are ≥1 successful segments); fall back to
-              // the last individual segment so single-segment TTS always works.
-              const sharePath = (evt.concat_path as string | undefined) ?? lastSegPath;
-              if (sharePath && mountedRef.current) {
-                setFullAudioUri(serveUrl(sharePath));
+              // fullAudioUri was already set by the concat event above.
+              // Fall back to concat_path in done (backward compat) or the
+              // last individual segment path if concat failed or was absent.
+              if (mountedRef.current) {
+                // Only override if the concat event didn't already set it.
+                // Prefers concat_path (backward compat) over last segment path.
+                const fallbackPath =
+                  (evt.concat_path as string | undefined) ?? lastSegPath;
+                if (fallbackPath) {
+                  setFullAudioUri(prev => (prev !== null ? prev : serveUrl(fallbackPath)));
+                }
               }
 
               if (total > 0 && okCount === 0) {

@@ -530,6 +530,88 @@ class TestStreamingTTSEndpoint(unittest.TestCase):
             f"(900-char cap). If total==1 the endpoint is using the 1500-char default.",
         )
 
+    # ── concat event ──────────────────────────────────────────────────────────
+
+    def test_concat_event_emitted_before_done(self):
+        """A {"type":"concat",...} SSE event must arrive before the done event."""
+        _, _, events = self._post_stream(_LONG_TEXT)
+        types = [e["type"] for e in events]
+        self.assertIn("concat", types,
+                      "No concat event in stream — merged file not announced")
+        self.assertIn("done", types)
+        concat_idx = types.index("concat")
+        done_idx   = len(types) - 1 - types[::-1].index("done")
+        self.assertLess(concat_idx, done_idx,
+                        "concat event must arrive before done event")
+
+    def test_concat_event_has_required_fields(self):
+        """concat event must carry path, uri, and ok=true."""
+        _, _, events = self._post_stream(_LONG_TEXT)
+        concat_evts = [e for e in events if e["type"] == "concat"]
+        self.assertEqual(len(concat_evts), 1, "Expected exactly one concat event")
+        evt = concat_evts[0]
+        self.assertIn("path", evt, "concat event missing 'path'")
+        self.assertIn("uri",  evt, "concat event missing 'uri'")
+        self.assertTrue(evt.get("ok"), "concat event ok must be True")
+        self.assertIsInstance(evt["path"], str)
+        self.assertIsInstance(evt["uri"],  str)
+        self.assertGreater(len(evt["path"]), 0)
+        self.assertGreater(len(evt["uri"]),  0)
+
+    def test_concat_event_uri_references_serve_endpoint(self):
+        """concat.uri must point to the /api/studio/outputs/serve endpoint."""
+        _, _, events = self._post_stream(_LONG_TEXT)
+        evt = next(e for e in events if e["type"] == "concat")
+        self.assertIn("/api/studio/outputs/serve", evt["uri"],
+                      f"concat.uri doesn't reference serve endpoint: {evt['uri']}")
+
+    def test_concat_event_path_matches_done_concat_path(self):
+        """concat.path and done.concat_path must agree (both point to the same file)."""
+        _, _, events = self._post_stream(_LONG_TEXT)
+        concat_evt = next((e for e in events if e["type"] == "concat"), None)
+        done_evt   = next((e for e in events if e["type"] == "done"),   None)
+        self.assertIsNotNone(concat_evt)
+        self.assertIsNotNone(done_evt)
+        self.assertEqual(
+            concat_evt["path"], done_evt.get("concat_path"),
+            "concat.path and done.concat_path disagree — "
+            "server emitted inconsistent merge references",
+        )
+
+    def test_no_concat_event_when_all_backends_fail(self):
+        """No concat event should appear when synthesis fully fails."""
+        with patch(
+            "orivellum.api.routes.studio._synthesize_text_to_mp3",
+            side_effect=_always_fail_synth,
+        ):
+            resp = self._client.post(
+                "/api/studio/tts",
+                json={"text": _LONG_TEXT, "voice": "af_heart",
+                      "speed": 1.0, "stream": True},
+            )
+        events = _parse_sse(resp.text)
+        concat_evts = [e for e in events if e["type"] == "concat"]
+        self.assertEqual(len(concat_evts), 0,
+                         "concat event emitted even though synthesis fully failed")
+
+    def test_concat_event_path_is_serveable(self):
+        """The file at concat.path must be served with HTTP 200/206."""
+        with patch(
+            "orivellum.api.routes.studio._synthesize_text_to_mp3",
+            side_effect=_fast_synth,
+        ):
+            resp = self._client.post(
+                "/api/studio/tts",
+                json={"text": _LONG_TEXT, "voice": "af_heart",
+                      "speed": 1.0, "stream": True},
+            )
+        events = _parse_sse(resp.text)
+        evt = next((e for e in events if e["type"] == "concat"), None)
+        self.assertIsNotNone(evt, "No concat event in stream")
+        serve = self._client.get(f"/api/studio/outputs/serve?path={evt['path']}")
+        self.assertIn(serve.status_code, (200, 206),
+                      f"concat.path not serveable (HTTP {serve.status_code}): {evt['path']}")
+
     def test_empty_text_returns_400(self):
         resp = self._client.post(
             "/api/studio/tts",
