@@ -165,23 +165,30 @@ export default function LibraryScreen() {
     return () => { cancelled = true; clearInterval(interval); };
   }, [searchMode]);
 
+  // Tracks how many files have finished in the current multi-upload run (for the
+  // progress bar label). Stored in state so the button text updates reactively.
+  const [uploadIndex, setUploadIndex] = useState(0);
+  const [uploadTotal, setUploadTotal]  = useState(0);
+
   const handleUpload = async () => {
     try {
       const result = await DocumentPicker.getDocumentAsync({
         type: '*/*',
         copyToCacheDirectory: true,
-      });
+        multiple: true,
+      } as any);
       if (result.canceled || !result.assets?.length) return;
-      const asset = result.assets[0];
+      const assets = result.assets;
 
-      // Ask which Work to link this document to (optional) before uploading
+      // Ask which Work to link the documents to (optional). One prompt covers
+      // all selected files so the user isn't interrupted N times.
       const uploadWorkId = await new Promise<string | null>((resolve) => {
         const workOptions = works.map((w: any) => w.title as string);
-        const workIds = works.map((w: any) => w.id as string);
+        const workIds    = works.map((w: any) => w.id as string);
         if (workOptions.length === 0) { resolve(null); return; }
         Alert.alert(
           'Link to a Work?',
-          'Optionally assign this document to an existing Work.',
+          `Optionally assign ${assets.length === 1 ? 'this document' : `all ${assets.length} documents`} to an existing Work.`,
           [
             { text: 'No Work', onPress: () => resolve(null) },
             ...workOptions.slice(0, 8).map((label, idx) => ({
@@ -194,48 +201,84 @@ export default function LibraryScreen() {
       });
 
       setUploading(true);
-      setUploadProgress(10);
+      setUploadIndex(0);
+      setUploadTotal(assets.length);
 
       const domain = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
+      let importedCount  = 0;
+      let duplicateCount = 0;
+      let failedCount    = 0;
+      let singleDocId: string | null = null;
 
-      // Multipart FormData upload — no base64 encoding, no 50 MB ceiling.
-      // mobileFetch attaches the bearer token automatically.
-      const form = new FormData();
-      form.append('file', { uri: asset.uri, name: asset.name, type: asset.mimeType ?? 'application/octet-stream' } as any);
-      if (uploadWorkId) form.append('work_id', uploadWorkId);
+      for (let i = 0; i < assets.length; i++) {
+        const asset = assets[i];
+        setUploadIndex(i + 1);
+        // Show 10–90 % per file so the bar always moves forward.
+        setUploadProgress(10 + Math.round((i / assets.length) * 80));
 
-      setUploadProgress(30);
+        try {
+          const form = new FormData();
+          form.append('file', { uri: asset.uri, name: asset.name, type: asset.mimeType ?? 'application/octet-stream' } as any);
+          if (uploadWorkId) form.append('work_id', uploadWorkId);
 
-      const resp = await mobileFetch(`https://${domain}/api/library/upload`, {
-        method: 'POST',
-        body: form as any,
-      });
+          const resp = await mobileFetch(`https://${domain}/api/library/upload`, {
+            method: 'POST',
+            body: form as any,
+          });
 
-      setUploadProgress(90);
+          if (!resp.ok) {
+            const err = await resp.json().catch(() => ({}));
+            const detail = (err as any).detail ?? 'Upload failed';
+            failedCount++;
+            // Per-file error toast — does not abort the remaining queue.
+            Alert.alert('Upload failed', `"${asset.name}": ${detail}`);
+            continue;
+          }
 
-      if (!resp.ok) {
-        const err = await resp.json().catch(() => ({}));
-        Alert.alert('Upload failed', (err as any).detail ?? 'Could not import document');
-        return;
+          const data = await resp.json();
+
+          if (data?.duplicate && data?.document?.id) {
+            duplicateCount++;
+            if (assets.length === 1) {
+              // Single-file duplicate: mirror the old behaviour (prompt + navigate).
+              Alert.alert(
+                'Already in library',
+                `"${asset.name}" is already imported. Opening the existing document.`,
+                [{ text: 'OK', onPress: () => router.push(`/library/${data.document.id}` as any) }]
+              );
+            }
+            // Multi-file duplicates: counted silently; summary shown at end.
+          } else {
+            importedCount++;
+            if (data?.document?.id) singleDocId = data.document.id;
+          }
+        } catch (err: any) {
+          failedCount++;
+          Alert.alert('Upload error', `"${asset.name}": ${err?.message ?? 'Unknown error'}`);
+        }
       }
 
       setUploadProgress(100);
-      const data = await resp.json();
-
-      // Server returns duplicate:true when the same file was imported before.
-      // Navigate to the existing document instead of creating a duplicate alert.
-      if (data?.duplicate && data?.document?.id) {
-        Alert.alert(
-          'Already in library',
-          `"${asset.name}" is already imported. Opening the existing document.`,
-          [{ text: 'OK', onPress: () => router.push(`/library/${data.document.id}` as any) }]
-        );
-        refetchList();
-        return;
-      }
-
       refetchList();
-      if (data?.document?.id) router.push(`/library/${data.document.id}` as any);
+
+      // ── Post-run summary ──────────────────────────────────────────────────
+      if (assets.length === 1) {
+        // Single file: navigate to the new document (existing behaviour).
+        if (importedCount === 1 && singleDocId) {
+          router.push(`/library/${singleDocId}` as any);
+        }
+        // Duplicate and failed cases already showed their own alerts above.
+      } else {
+        // Multi-file: show a concise summary toast.
+        const parts: string[] = [];
+        if (importedCount)  parts.push(`${importedCount} imported`);
+        if (duplicateCount) parts.push(`${duplicateCount} already existed`);
+        if (failedCount)    parts.push(`${failedCount} failed`);
+        Alert.alert(
+          failedCount > 0 ? 'Import finished with errors' : 'Import complete',
+          parts.join(' · ') || 'No files uploaded'
+        );
+      }
     } catch (err: any) {
       if (!String(err).includes('cancel')) {
         Alert.alert('Error', err?.message ?? 'Upload failed');
@@ -243,6 +286,8 @@ export default function LibraryScreen() {
     } finally {
       setUploading(false);
       setUploadProgress(0);
+      setUploadIndex(0);
+      setUploadTotal(0);
     }
   };
 
@@ -356,7 +401,11 @@ export default function LibraryScreen() {
           >
             <Feather name={uploading ? 'loader' : 'upload'} size={14} color="#fff" />
             <Text style={{ color: '#fff', fontSize: 13, fontFamily: 'Inter_600SemiBold' }}>
-              {uploading ? 'Uploading…' : 'Import'}
+              {uploading
+                ? uploadTotal > 1
+                  ? `Uploading ${uploadIndex} of ${uploadTotal}…`
+                  : 'Uploading…'
+                : 'Import'}
             </Text>
           </Pressable>
         </View>
