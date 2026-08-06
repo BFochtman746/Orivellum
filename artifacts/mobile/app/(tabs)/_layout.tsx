@@ -85,6 +85,8 @@ function useSectionLabel(): string {
   if (path.includes('/backups')) return 'Backups';
   if (path.includes('/graph')) return 'Knowledge Graph';
   if (path.includes('/topics')) return 'Topic Graph';
+  if (path.includes('/governance')) return 'Governance';
+  if (path.includes('/system')) return 'System';
   if (path.includes('/works')) return 'Works';
   if (path.includes('/library')) return 'Library';
   return 'Orivellum';
@@ -200,6 +202,8 @@ const NAV_ITEMS: NavItem[] = [
   { key: 'library',       label: 'Library',   icon: 'folder',         route: '/library'       },
   { key: 'review',        label: 'Review',    icon: 'shield',         route: '/review'        },
   { key: 'topics',        label: 'Topics',    icon: 'layers',         route: '/topics'        },
+  { key: 'governance',    label: 'Governance', icon: 'shield-off',    route: '/governance'    },
+  { key: 'system',        label: 'System',    icon: 'settings',       route: '/system'        },
   { key: 'backups',       label: 'Backups',   icon: 'hard-drive',     route: '/backups'       },
 ];
 
