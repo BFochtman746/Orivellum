@@ -24,25 +24,63 @@ router = APIRouter(prefix="/api", tags=["topics"])
 # ── GET /api/topics ──────────────────────────────────────────────────────────
 
 @router.get("/topics")
-def list_topics(with_docs: bool = False):
+def list_topics(with_docs: bool = False, q: Optional[str] = None):
     """Return all topic clusters with document counts and profile summary.
 
     Pass ``with_docs=true`` to include ``doc_ids`` (list of document IDs) and
     ``doc_titles`` (doc_id → title mapping) in each topic — used by the library
     "By Topic" grouped view to avoid per-topic round-trips.
+
+    Pass ``q=<term>`` to search across topic names, profile descriptions, and
+    the titles/sources of member documents.  Each result includes a
+    ``match_reason`` field: ``"name"``, ``"profile"``, or ``"document"``.
     """
     db = get_db()
-    with db._lock:
-        rows = db._conn.execute(
-            """SELECT t.id, t.name, t.kind, t.meta, t.created_at,
-                      COUNT(tm.object_id) FILTER (WHERE tm.object_type='document') AS doc_count,
-                      tp.what_it_is, tp.purpose
-               FROM topics t
-               LEFT JOIN topic_members tm ON tm.topic_id = t.id
-               LEFT JOIN topic_profiles tp ON tp.topic_id = t.id
-               GROUP BY t.id
-               ORDER BY doc_count DESC, t.name""",
-        ).fetchall()
+
+    if q and q.strip():
+        pat = f"%{q.strip()}%"
+        with db._lock:
+            rows = db._conn.execute(
+                """SELECT t.id, t.name, t.kind, t.meta, t.created_at,
+                          COUNT(tm.object_id) FILTER (WHERE tm.object_type='document') AS doc_count,
+                          tp.what_it_is, tp.purpose,
+                          CASE
+                            WHEN t.name LIKE :pat THEN 'name'
+                            WHEN tp.what_it_is LIKE :pat OR tp.purpose LIKE :pat THEN 'profile'
+                            ELSE 'document'
+                          END AS match_reason
+                   FROM topics t
+                   LEFT JOIN topic_members tm ON tm.topic_id = t.id
+                   LEFT JOIN topic_profiles tp ON tp.topic_id = t.id
+                   WHERE t.name LIKE :pat
+                      OR tp.what_it_is LIKE :pat
+                      OR tp.purpose LIKE :pat
+                      OR EXISTS (
+                           SELECT 1 FROM topic_members tm2
+                           JOIN documents d ON d.id = tm2.object_id
+                           WHERE tm2.topic_id = t.id AND tm2.object_type = 'document'
+                             AND (d.title LIKE :pat OR d.source LIKE :pat)
+                         )
+                   GROUP BY t.id
+                   ORDER BY
+                     CASE WHEN t.name LIKE :pat THEN 0
+                          WHEN tp.what_it_is LIKE :pat OR tp.purpose LIKE :pat THEN 1
+                          ELSE 2 END,
+                     doc_count DESC, t.name""",
+                {"pat": pat},
+            ).fetchall()
+    else:
+        with db._lock:
+            rows = db._conn.execute(
+                """SELECT t.id, t.name, t.kind, t.meta, t.created_at,
+                          COUNT(tm.object_id) FILTER (WHERE tm.object_type='document') AS doc_count,
+                          tp.what_it_is, tp.purpose
+                   FROM topics t
+                   LEFT JOIN topic_members tm ON tm.topic_id = t.id
+                   LEFT JOIN topic_profiles tp ON tp.topic_id = t.id
+                   GROUP BY t.id
+                   ORDER BY doc_count DESC, t.name""",
+            ).fetchall()
 
     # Optionally load full doc membership + titles in a single query
     doc_map: dict[str, list[str]] = {}  # topic_id → [doc_id, …]
@@ -79,6 +117,11 @@ def list_topics(with_docs: bool = False):
             "meta": meta,
             "created_at": r["created_at"],
         }
+        # Include match_reason when a search query was supplied
+        if q and q.strip():
+            keys = r.keys() if hasattr(r, "keys") else []
+            if "match_reason" in keys:
+                entry["match_reason"] = r["match_reason"]
         if with_docs:
             entry["doc_ids"] = doc_map.get(r["id"], [])
         topics.append(entry)

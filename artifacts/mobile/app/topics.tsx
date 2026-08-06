@@ -7,7 +7,7 @@
  *
  * Refreshes on every screen focus so post-nightshift updates appear automatically.
  */
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -38,6 +38,7 @@ interface Topic {
   what_it_is: string | null;
   purpose: string | null;
   created_at: string;
+  match_reason?: 'name' | 'profile' | 'document';
 }
 
 interface TopicDoc {
@@ -70,6 +71,11 @@ const KIND_ICON: Record<string, string> = {
 };
 
 // ── Topic card (collapsed + expanded) ─────────────────────────────────────────
+
+const MATCH_REASON_LABEL: Record<string, string> = {
+  document: 'via document',
+  profile:  'via description',
+};
 
 function TopicCard({
   topic, expanded, onToggle, colors, onDocPress,
@@ -117,11 +123,18 @@ function TopicCard({
           <Text style={[s.topicName, { color: colors.foreground }]} numberOfLines={1}>
             {topic.name}
           </Text>
-          {topic.what_it_is && !expanded && (
+          {topic.match_reason && topic.match_reason !== 'name' ? (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
+              <Feather name="search" size={9} color={colors.primary} />
+              <Text style={{ fontSize: 10, fontFamily: 'Inter_500Medium', color: colors.primary }}>
+                {MATCH_REASON_LABEL[topic.match_reason]}
+              </Text>
+            </View>
+          ) : topic.what_it_is && !expanded ? (
             <Text style={[s.topicDesc, { color: colors.mutedForeground }]} numberOfLines={1}>
               {topic.what_it_is}
             </Text>
-          )}
+          ) : null}
         </View>
 
         <View style={[s.countBadge, { backgroundColor: colors.muted }]}>
@@ -242,10 +255,22 @@ export default function TopicsScreen() {
   const router      = useRouter();
   const qc          = useQueryClient();
   const { topicId: initialTopicId } = useLocalSearchParams<{ topicId?: string }>();
-  const [search,     setSearch]     = useState('');
+  const [search,         setSearch]         = useState('');
+  const [debouncedQuery, setDebouncedQuery] = useState('');
   // Pre-expand the topic passed via ?topicId= (e.g. from a related-doc topic badge)
-  const [expandedId, setExpandedId] = useState<string | null>(initialTopicId ?? null);
+  const [expandedId,     setExpandedId]     = useState<string | null>(initialTopicId ?? null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Debounce search input → fire server query 300 ms after the user stops typing
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      setDebouncedQuery(search.trim());
+    }, 300);
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+  }, [search]);
+
+  // ── Full topic list (used when not searching) ──────────────────────────────
   const { data, isLoading, isError, refetch, isRefetching } = useQuery<{
     topics: Topic[];
     total: number;
@@ -259,6 +284,22 @@ export default function TopicsScreen() {
     staleTime: 60_000,
   });
 
+  // ── Server-side search query (fires when debouncedQuery ≥ 2 chars) ─────────
+  const {
+    data:      searchData,
+    isLoading: searchLoading,
+    isError:   searchError,
+  } = useQuery<{ topics: Topic[]; total: number }>({
+    queryKey: ['topics-search', debouncedQuery],
+    queryFn:  async () => {
+      const r = await mobileFetch(`${API}/topics?q=${encodeURIComponent(debouncedQuery)}`);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return r.json();
+    },
+    enabled:   debouncedQuery.length >= 2,
+    staleTime: 30_000,
+  });
+
   // Invalidate on every focus so nightshift-generated topics appear automatically.
   useFocusEffect(
     useCallback(() => {
@@ -267,9 +308,18 @@ export default function TopicsScreen() {
   );
 
   const allTopics: Topic[] = data?.topics ?? [];
-  const visible: Topic[]   = search.trim()
-    ? allTopics.filter((t) => t.name.toLowerCase().includes(search.toLowerCase()))
-    : allTopics;
+
+  // Decide which list to show
+  const isSearchMode = debouncedQuery.length >= 2;
+  const visible: Topic[] = isSearchMode
+    // Server results when available; fall back to client-side filter on error
+    ? (searchError
+        ? allTopics.filter((t) => t.name.toLowerCase().includes(debouncedQuery.toLowerCase()))
+        : (searchData?.topics ?? []))
+    // Client-side filter for short queries (< 2 chars typed but not yet debounced)
+    : search.trim()
+      ? allTopics.filter((t) => t.name.toLowerCase().includes(search.toLowerCase()))
+      : allTopics;
 
   const toggleExpand = (id: string) =>
     setExpandedId((prev) => (prev === id ? null : id));
@@ -299,7 +349,11 @@ export default function TopicsScreen() {
         <View style={{ flex: 1 }}>
           <Text style={[s.headerTitle, { color: colors.foreground }]}>Topic Graph</Text>
           <Text style={[s.headerSub, { color: colors.mutedForeground }]}>
-            {isLoading ? '…' : `${data?.total ?? 0} semantic cluster${(data?.total ?? 0) !== 1 ? 's' : ''}`}
+            {isLoading
+              ? '…'
+              : isSearchMode
+                ? `${visible.length} result${visible.length !== 1 ? 's' : ''} for "${debouncedQuery}"`
+                : `${data?.total ?? 0} semantic cluster${(data?.total ?? 0) !== 1 ? 's' : ''}`}
           </Text>
         </View>
       </View>
@@ -309,10 +363,12 @@ export default function TopicsScreen() {
         backgroundColor: colors.background,
         borderBottomColor: colors.border,
       }]}>
-        <Feather name="search" size={15} color={colors.mutedForeground} />
+        {searchLoading
+          ? <ActivityIndicator size="small" color={colors.primary} style={{ width: 15 }} />
+          : <Feather name="search" size={15} color={colors.mutedForeground} />}
         <TextInput
           style={[s.searchInput, { color: colors.foreground, fontFamily: 'Inter_400Regular' }]}
-          placeholder="Filter topics…"
+          placeholder="Search topics and documents…"
           placeholderTextColor={colors.mutedForeground}
           value={search}
           onChangeText={setSearch}
@@ -325,6 +381,16 @@ export default function TopicsScreen() {
           </Pressable>
         )}
       </View>
+
+      {/* Server-error fallback notice when in search mode */}
+      {isSearchMode && searchError && (
+        <View style={{ paddingHorizontal: 16, paddingVertical: 6, backgroundColor: colors.muted + '55', flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          <Feather name="wifi-off" size={11} color={colors.mutedForeground} />
+          <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: colors.mutedForeground }}>
+            Server unreachable — showing name matches only
+          </Text>
+        </View>
+      )}
 
       {/* Body */}
       {isLoading && !data ? (
@@ -349,6 +415,12 @@ export default function TopicsScreen() {
           </Pressable>
         </View>
 
+      ) : isSearchMode && searchLoading && !searchData ? (
+        <View style={s.center}>
+          <ActivityIndicator color={colors.primary} size="large" />
+          <Text style={[s.emptyText, { color: colors.mutedForeground }]}>Searching…</Text>
+        </View>
+
       ) : visible.length === 0 ? (
         <View style={s.center}>
           <Feather name="layers" size={44} color={colors.mutedForeground} style={{ opacity: 0.38 }} />
@@ -357,7 +429,7 @@ export default function TopicsScreen() {
           </Text>
           <Text style={[s.emptyText, { color: colors.mutedForeground }]}>
             {search
-              ? 'Try a different search term'
+              ? 'Try a different keyword — results include topic names and document content'
               : 'Topics are built automatically during the nightly maintenance pass.'}
           </Text>
         </View>
@@ -383,11 +455,15 @@ export default function TopicsScreen() {
           }}
           showsVerticalScrollIndicator={false}
           refreshControl={
-            <RefreshControl
-              refreshing={isRefetching && !isLoading}
-              onRefresh={refetch}
-              tintColor={colors.primary}
-            />
+            // Disable pull-to-refresh while in search mode — refetching the
+            // full list mid-search would reset results and confuse the user.
+            isSearchMode ? undefined : (
+              <RefreshControl
+                refreshing={isRefetching && !isLoading}
+                onRefresh={refetch}
+                tintColor={colors.primary}
+              />
+            )
           }
         />
       )}
