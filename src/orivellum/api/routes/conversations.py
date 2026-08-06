@@ -395,10 +395,12 @@ async def send_message(conv_id: str, body: MessageSend):
 
     # Non-streaming path
     _ns_sources: list = []
+    _ns_strategy_meta: dict = {}
     messages = _build_messages(
         db, conv, body.text, scope=body.scope,
         image_b64=body.image_b64, image_media_type=body.image_media_type,
         out_sources=_ns_sources,
+        out_meta=_ns_strategy_meta,
     )
     _seen_ns: set = set()
     ns_sources: list = []
@@ -524,6 +526,9 @@ async def send_message(conv_id: str, body: MessageSend):
     ns_meta: dict = {"model": model}
     if ns_sources:
         ns_meta["sources"] = ns_sources
+    if _ns_strategy_meta.get("retrieval_strategy"):
+        ns_meta["retrieval_strategy"] = _ns_strategy_meta["retrieval_strategy"]
+        ns_meta["query_type"] = _ns_strategy_meta.get("query_type", "")
     msg = db.add_message(conv_id, "assistant", reply, meta=ns_meta)
     _maybe_auto_title(db, conv, body.text)
     # Background: embed exchange + inference memory capture (non-streaming)
@@ -963,7 +968,8 @@ def _detect_query_filters(
 
 def _build_system_prompt(db: Any, conv: dict, scope: str = "work",
                          user_query: str | None = None,
-                         out_sources: list | None = None) -> str:
+                         out_sources: list | None = None,
+                         out_meta: dict | None = None) -> str:
     """Build a system prompt enriched with relevant knowledge from the database.
 
     Knowledge retrieval strategy (always global):
@@ -1240,12 +1246,101 @@ def _build_system_prompt(db: Any, conv: dict, scope: str = "work",
                 pass  # fall through to hybrid search on any error
 
         try:
+            # ── Adaptive retrieval: classify query → tuned strategy ─────────────
+            # The classifier returns one of four types (FACTUAL / SYNTHESIS /
+            # COMPARISON / CONVERSATIONAL).  Each type maps to a RetrievalConfig
+            # that controls top-k limits and the FTS vs semantic weight split in
+            # the hybrid-search RRF fusion.  The classification is cached by
+            # message hash so retries never re-run the regex pass.
+            from orivellum.capabilities.retrieval import (
+                classify_query as _classify_query,
+                get_retrieval_config as _get_retrieval_config,
+                extract_comparison_entities as _extract_entities,
+            )
+            _query_type = _classify_query(user_query, db)
+            _ret_cfg = _get_retrieval_config(_query_type)
+
+            # Log strategy: INFO line (visible in server logs + system diagnostics)
+            # and a row in conversation_events (visible on the diagnostics page).
+            logger.info(
+                "adaptive_retrieval conv=%s query_type=%s label=%s top_k_k=%d top_k_c=%d",
+                (conv.get("id") or "?")[:8], _query_type.value, _ret_cfg.label,
+                _ret_cfg.top_k_knowledge, _ret_cfg.top_k_chunks,
+            )
+            try:
+                db.log_conversation_event(
+                    conversation_id=conv.get("id") or "",
+                    event_type="retrieval_strategy",
+                    detail={
+                        "query_type": _query_type.value,
+                        "label": _ret_cfg.label,
+                        "top_k_knowledge": _ret_cfg.top_k_knowledge,
+                        "top_k_chunks": _ret_cfg.top_k_chunks,
+                        "fts_weight": _ret_cfg.fts_weight,
+                        "semantic_weight": _ret_cfg.semantic_weight,
+                    },
+                )
+            except Exception:
+                pass  # non-fatal — event table may not exist on old schemas
+
+            # Expose query_type to the caller via out_meta so it can be stored
+            # on the message record for client-side diagnostics.
+            if out_meta is not None:
+                out_meta["query_type"] = _query_type.value
+                out_meta["retrieval_strategy"] = _ret_cfg.label
+
             # Search knowledge items and raw document chunks across ALL works.
             # Hybrid = keyword FTS + semantic vectors (falls back to FTS-only
             # automatically when the embeddings endpoint is unavailable).
-            from orivellum.capabilities.embeddings import hybrid_search_knowledge
-            knowledge_hits = hybrid_search_knowledge(user_query, db,
-                                                     limit=_CONTEXT_KNOWLEDGE * 2)
+            from orivellum.capabilities.embeddings import (
+                hybrid_search_knowledge, hybrid_search_chunks,
+            )
+
+            # ── COMPARISON: per-entity sub-queries ─────────────────────────────
+            # Extract the two (or more) named subjects from the query and run a
+            # separate hybrid search for each.  Results are merged by insertion
+            # order (first entity first) with de-duplication by id so each
+            # subject is fairly represented in the final context window.
+            if _ret_cfg.multi_entity:
+                _entities = _extract_entities(user_query)
+                _k_seen: set = set()
+                knowledge_hits: list[dict] = []
+                _c_seen: set = set()
+                _raw_chunk_hits: list[dict] = []
+                _per_entity_k = max(4, _ret_cfg.top_k_knowledge // max(len(_entities), 1))
+                _per_entity_c = max(2, _ret_cfg.top_k_chunks // max(len(_entities), 1))
+                for _entity in _entities:
+                    for _eh in hybrid_search_knowledge(
+                        _entity, db,
+                        limit=_per_entity_k * 2,
+                        fts_weight=_ret_cfg.fts_weight,
+                        semantic_weight=_ret_cfg.semantic_weight,
+                    ):
+                        if _eh.get("id") not in _k_seen:
+                            _k_seen.add(_eh["id"])
+                            knowledge_hits.append(_eh)
+                    for _ec in hybrid_search_chunks(
+                        _entity, db, work_id=None,
+                        limit=_per_entity_c * 2,
+                        fts_weight=_ret_cfg.fts_weight,
+                        semantic_weight=_ret_cfg.semantic_weight,
+                    ):
+                        if _ec.get("id") not in _c_seen:
+                            _c_seen.add(_ec["id"])
+                            _raw_chunk_hits.append(_ec)
+            else:
+                knowledge_hits = hybrid_search_knowledge(
+                    user_query, db,
+                    limit=_ret_cfg.top_k_knowledge * 2,
+                    fts_weight=_ret_cfg.fts_weight,
+                    semantic_weight=_ret_cfg.semantic_weight,
+                )
+                _raw_chunk_hits = hybrid_search_chunks(
+                    user_query, db, work_id=None,
+                    limit=_ret_cfg.top_k_chunks * 2,
+                    fts_weight=_ret_cfg.fts_weight,
+                    semantic_weight=_ret_cfg.semantic_weight,
+                )
 
             # Re-rank knowledge hits by BM25 (always) + optional LLM listwise
             # (gated by ai_reranking_enabled setting).  Re-ranking bubbles the
@@ -1258,7 +1353,7 @@ def _build_system_prompt(db: Any, conv: dict, scope: str = "work",
                 logger.debug("Knowledge re-rank skipped (non-fatal): %s", _rk_exc)
 
             # Token budget: 30% of context_window for all injected knowledge.
-            # Count cap (_CONTEXT_KNOWLEDGE / _CONTEXT_CHUNKS) is a backstop.
+            # Count cap (top_k_knowledge / top_k_chunks from strategy config) is a backstop.
             _k_budget = int(_get_effective_context_window(db) * 0.30)
 
             trusted_k: list[dict] = []
@@ -1267,24 +1362,18 @@ def _build_system_prompt(db: Any, conv: dict, scope: str = "work",
                 if _ki.get("review_status") not in _TRUSTED:
                     continue
                 _t = estimate_tokens(_ki.get("text", ""))
-                if len(trusted_k) >= _CONTEXT_KNOWLEDGE or _k_used + _t > _k_budget:
+                if len(trusted_k) >= _ret_cfg.top_k_knowledge or _k_used + _t > _k_budget:
                     break
                 trusted_k.append(_ki)
                 _k_used += _t
 
-            # Hybrid chunk retrieval (BM25 + cosine, RRF-fused).  Falls back to
-            # keyword-only when embeddings are unavailable, and to semantic-only
-            # when the query is too short/conceptual for FTS5 to match anything.
-            from orivellum.capabilities.embeddings import hybrid_search_chunks
-            chunk_hits = hybrid_search_chunks(user_query, db, work_id=None,
-                                              limit=_CONTEXT_CHUNKS * 2)
-
             # Re-rank chunk hits by the same pipeline as knowledge hits.
             try:
                 from orivellum.capabilities.rerank import rerank_candidates as _rerank_c
-                chunk_hits = _rerank_c(user_query, chunk_hits, db)
+                chunk_hits = _rerank_c(user_query, _raw_chunk_hits, db)
             except Exception as _rk_c_exc:
                 logger.debug("Chunk re-rank skipped (non-fatal): %s", _rk_c_exc)
+                chunk_hits = _raw_chunk_hits
 
             # Chunks share what remains of the 30% budget after knowledge items
             _c_budget = max(0, _k_budget - _k_used)
@@ -1292,7 +1381,7 @@ def _build_system_prompt(db: Any, conv: dict, scope: str = "work",
             _c_used = 0
             for _ci in chunk_hits:
                 _t = estimate_tokens(_ci.get("text", ""))
-                if len(trusted_c) >= _CONTEXT_CHUNKS or _c_used + _t > _c_budget:
+                if len(trusted_c) >= _ret_cfg.top_k_chunks or _c_used + _t > _c_budget:
                     break
                 trusted_c.append(_ci)
                 _c_used += _t
@@ -1508,11 +1597,13 @@ def _build_messages(
     image_b64: str | None = None,
     image_media_type: str = "image/jpeg",
     out_sources: list | None = None,
+    out_meta: dict | None = None,
 ) -> list[dict]:
     """Build the full OpenAI-format messages array for this conversation."""
     system_prompt = _build_system_prompt(db, conv, scope=scope,
                                          user_query=new_user_text,
-                                         out_sources=out_sources)
+                                         out_sources=out_sources,
+                                         out_meta=out_meta)
 
     # ── Web search grounding ──────────────────────────────────────────────────
     # When the conversation has web_search_enabled=1, fetch live Tavily results
@@ -1716,10 +1807,12 @@ async def _stream_response(
     cfg = get_config()
     conv_id = conv["id"]
     _sources: list = []
+    _stream_strategy_meta: dict = {}
     messages = _build_messages(
         db, conv, user_text, scope=scope,
         image_b64=image_b64, image_media_type=image_media_type,
         out_sources=_sources,
+        out_meta=_stream_strategy_meta,
     )
     # Deduplicate sources by doc_id
     _seen: set = set()
@@ -1876,6 +1969,9 @@ async def _stream_response(
         # The message_id is emitted immediately so the client can associate
         # incoming token SSE events with the right DB row.
         _assist_meta: dict = {"model": model}
+        if _stream_strategy_meta.get("retrieval_strategy"):
+            _assist_meta["retrieval_strategy"] = _stream_strategy_meta["retrieval_strategy"]
+            _assist_meta["query_type"] = _stream_strategy_meta.get("query_type", "")
         _assist_stub = db.add_message(conv_id, "assistant", "", state="queued",
                                       meta=_assist_meta)
         _assist_id = _assist_stub["id"]

@@ -515,13 +515,22 @@ _RRF_K = 60  # standard reciprocal-rank-fusion constant
 
 
 def hybrid_search_chunks(query: str, db: "OrivellumDB", limit: int = 10,
-                         work_id: str | None = None) -> list[dict]:
-    """Hybrid chunk retrieval: FTS5 BM25 + semantic cosine, fused with RRF.
+                         work_id: str | None = None,
+                         fts_weight: float = 0.5,
+                         semantic_weight: float = 0.5) -> list[dict]:
+    """Hybrid chunk retrieval: FTS5 BM25 + semantic cosine, fused with weighted RRF.
 
     Each result carries ``rrf_score`` and ``match_type`` ("keyword",
     "semantic", or "both").  Degrades gracefully:
     - embeddings unavailable → pure BM25 results
     - FTS finds nothing (short/conceptual query) → pure semantic results
+
+    Args:
+        fts_weight:      Relative weight for BM25/FTS hits in RRF fusion.
+                         Higher → exact keyword matches rank more strongly.
+        semantic_weight: Relative weight for semantic cosine hits in RRF
+                         fusion.  Higher → broad conceptual matches rank
+                         more strongly.  Weights need not sum to 1.
     """
     fetch = min(max(limit * 2, 20), 50)
     try:
@@ -539,21 +548,22 @@ def hybrid_search_chunks(query: str, db: "OrivellumDB", limit: int = 10,
             r.setdefault("match_type", "semantic")
         return sem[:limit]
 
-    # Reciprocal rank fusion: score = Σ 1/(k + rank) over both ranked lists.
+    # Weighted reciprocal rank fusion:
+    #   score = fts_weight/(k+rank_fts) + semantic_weight/(k+rank_sem)
     fused: dict[str, dict] = {}
     for rank, hit in enumerate(fts):
         cid = hit.get("id")
         if not cid:
             continue
         entry = fused.setdefault(cid, {"hit": hit, "score": 0.0, "sources": set()})
-        entry["score"] += 1.0 / (_RRF_K + rank + 1)
+        entry["score"] += fts_weight / (_RRF_K + rank + 1)
         entry["sources"].add("keyword")
     for rank, hit in enumerate(sem):
         cid = hit.get("id")
         if not cid:
             continue
         entry = fused.setdefault(cid, {"hit": hit, "score": 0.0, "sources": set()})
-        entry["score"] += 1.0 / (_RRF_K + rank + 1)
+        entry["score"] += semantic_weight / (_RRF_K + rank + 1)
         entry["sources"].add("semantic")
         # Prefer the FTS hit dict (has snippet/bm25) but carry the cosine score
         entry["hit"].setdefault("score", hit.get("score"))
@@ -811,22 +821,44 @@ def semantic_search_conversations(
 
 
 def hybrid_search_knowledge(query: str, db: "OrivellumDB", limit: int = 10,
-                            work_id: str | None = None) -> list[dict]:
-    """Merge FTS (keyword) and semantic hits, deduplicated, semantic-first order
-    interleaved by normalized rank. Falls back to pure FTS when embeddings are off."""
-    # Over-fetch both sources so overlap between them can't leave the merged
-    # result short of `limit`.
+                            work_id: str | None = None,
+                            fts_weight: float = 0.5,
+                            semantic_weight: float = 0.5) -> list[dict]:
+    """Merge FTS (keyword) and semantic hits via weighted RRF, deduplicated.
+
+    Falls back to pure FTS when embeddings are unavailable, and to pure
+    semantic when FTS returns nothing (e.g. very short or conceptual queries).
+
+    Args:
+        fts_weight:      Relative weight for BM25/FTS hits in RRF fusion.
+                         Higher → exact keyword / proper-noun matches rank first.
+        semantic_weight: Relative weight for semantic cosine hits in RRF
+                         fusion.  Higher → thematically related items surface
+                         even when exact wording differs.
+    """
     fetch = min(limit * 2, 50)
     fts = db.search_knowledge(query, work_id=work_id, limit=fetch)
     sem = semantic_search(query, db, "knowledge", limit=fetch, work_id=work_id)
     if not sem:
         return fts[:limit]
-    seen: set = set()
-    merged: list[dict] = []
-    # Interleave: semantic result, then FTS result, alternating
-    for pair in zip(sem + [None] * len(fts), fts + [None] * len(sem)):
-        for hit in pair:
-            if hit and hit.get("id") not in seen:
-                seen.add(hit["id"])
-                merged.append(hit)
-    return merged[:limit]
+    if not fts:
+        return sem[:limit]
+
+    # Weighted RRF fusion — same formula as hybrid_search_chunks.
+    fused: dict[str, dict] = {}
+    for rank, hit in enumerate(fts):
+        kid = hit.get("id")
+        if not kid:
+            continue
+        entry = fused.setdefault(kid, {"hit": hit, "score": 0.0})
+        entry["score"] += fts_weight / (_RRF_K + rank + 1)
+    for rank, hit in enumerate(sem):
+        kid = hit.get("id")
+        if not kid:
+            continue
+        entry = fused.setdefault(kid, {"hit": hit, "score": 0.0})
+        entry["score"] += semantic_weight / (_RRF_K + rank + 1)
+        entry["hit"].setdefault("score", hit.get("score"))
+
+    ranked = sorted(fused.values(), key=lambda e: e["score"], reverse=True)
+    return [e["hit"] for e in ranked[:limit]]

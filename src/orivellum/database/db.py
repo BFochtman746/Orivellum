@@ -1320,6 +1320,71 @@ class OrivellumDB:
         except Exception:
             return []
 
+    def log_conversation_event(
+        self,
+        conversation_id: str,
+        event_type: str,
+        detail: dict | None = None,
+    ) -> None:
+        """Append a diagnostic event row to ``conversation_events`` (best-effort).
+
+        Used by the adaptive retrieval router to record which query type and
+        strategy config were chosen for each turn.  Never raises — missing
+        table (old schema before v83) or any other error is silently ignored
+        so callers do not need a try/except.
+
+        Args:
+            conversation_id: ID of the conversation the event belongs to.
+            event_type:      Short label, e.g. ``"retrieval_strategy"``.
+            detail:          Optional JSON-serialisable payload.
+        """
+        try:
+            now = _now()
+            with self._lock:
+                self._conn.execute(
+                    """INSERT INTO conversation_events
+                       (id, conversation_id, event_type, detail, created_at)
+                       VALUES (?, ?, ?, ?, ?)""",
+                    (
+                        _uuid(),
+                        conversation_id,
+                        event_type,
+                        _jdump(detail) if detail else None,
+                        now,
+                    ),
+                )
+                self._conn.commit()
+        except Exception:
+            pass  # non-fatal — table may not exist on old schemas
+
+    def get_conversation_events(
+        self,
+        conversation_id: str | None = None,
+        event_type: str | None = None,
+        limit: int = 100,
+    ) -> list[dict]:
+        """Return conversation events, optionally filtered.
+
+        Used by the system diagnostics page to surface which retrieval
+        strategies were used across recent conversations.
+        """
+        try:
+            q = "SELECT * FROM conversation_events WHERE 1=1"
+            params: list = []
+            if conversation_id:
+                q += " AND conversation_id=?"
+                params.append(conversation_id)
+            if event_type:
+                q += " AND event_type=?"
+                params.append(event_type)
+            q += " ORDER BY created_at DESC LIMIT ?"
+            params.append(min(limit, 500))
+            with self._lock:
+                rows = self._conn.execute(q, params).fetchall()
+            return [dict(r) for r in rows]
+        except Exception:
+            return []
+
     def create_conversation(self, title: str | None = None, work_id: str | None = None,
                             model: str | None = None) -> dict:
         cid = _uuid()

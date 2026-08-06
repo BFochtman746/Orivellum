@@ -1387,4 +1387,17 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         ALTER TABLE chunks ADD COLUMN char_start INTEGER;
         ALTER TABLE chunks ADD COLUMN char_end INTEGER;
     """),
+    (83, "Conversation events table for retrieval-strategy and other diagnostic logs", """
+        CREATE TABLE IF NOT EXISTS conversation_events (
+            id TEXT PRIMARY KEY,
+            conversation_id TEXT NOT NULL,
+            event_type TEXT NOT NULL,
+            detail TEXT,
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_conv_events_conv
+            ON conversation_events(conversation_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_conv_events_type
+            ON conversation_events(event_type, created_at DESC)
+    """),
 ]
