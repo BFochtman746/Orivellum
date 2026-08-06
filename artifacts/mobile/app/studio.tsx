@@ -1143,7 +1143,7 @@ function VoiceRecommenderCard({
       const resp = await mobileFetch(`${API}/studio/voices/recommend`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ work_id: wid, top_n: 3 }),
+        body: JSON.stringify({ work_id: wid, top_n: 5 }),
       });
 
       if (requestGen.current !== myGen) return; // superseded — discard
@@ -1325,7 +1325,7 @@ function VoiceRecommenderCard({
           )}
 
           {/* Ranked voice cards */}
-          {(result.recommendations ?? []).slice(0, 3).map((rec, i) => {
+          {(result.recommendations ?? []).slice(0, 5).map((rec, i) => {
             const v: VoiceEntry = (rec.voice as VoiceEntry | undefined) ??
               voices.find(vv => vv.id === rec.voice_id) ??
               { id: rec.voice_id, name: rec.voice_id };

@@ -648,6 +648,40 @@ def delete_user_memory(memory_id: str):
         raise HTTPException(500, f"Could not delete memory: {exc}")
 
 
+@router.get("/system/settings/audio-enhance")
+def get_audio_enhance_setting():
+    """Return DeepFilterNet3 availability and whether enhancement is enabled."""
+    db = get_db()
+    enabled = db.get_setting("audio_enhance_enabled", "false").lower() == "true"
+    try:
+        from orivellum.capabilities.enhancement import is_available as _dfn_ok
+        installed = _dfn_ok()
+    except Exception:
+        installed = False
+    return {
+        "enabled": enabled,
+        "installed": installed,
+        "model": "DeepFilterNet3",
+        "install_hint": (
+            None if installed else
+            "uv add deepfilternet torch torchaudio "
+            "--extra-index-url https://download.pytorch.org/whl/cpu"
+        ),
+    }
+
+
+class AudioEnhanceUpdate(BaseModel):
+    enabled: bool
+
+
+@router.put("/system/settings/audio-enhance")
+def set_audio_enhance_setting(body: AudioEnhanceUpdate):
+    """Enable or disable DeepFilterNet3 audio enhancement for transcription."""
+    db = get_db()
+    db.set_setting("audio_enhance_enabled", "true" if body.enabled else "false", actor="user")
+    return {"enabled": body.enabled, "ok": True}
+
+
 @router.get("/system/settings/ai-extraction")
 def get_ai_extraction_setting():
     """Return whether LLM-powered knowledge extraction is enabled."""

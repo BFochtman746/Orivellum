@@ -3,7 +3,7 @@ import { apiFetch } from "@/lib/auth";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
-import { Activity, Database, Cpu, CheckCircle2, XCircle, AlertCircle, AlertTriangle, Terminal, Sparkles, Moon, Brain, Trash2, ScrollText, User, Settings, Image as ImageIcon, Eye, Loader2, FileSearch, ClipboardCopy, ChevronDown, ChevronRight, Zap, Download, RotateCcw, FolderOpen, FolderPlus, Plus, X, GitMerge, Archive, Save } from "lucide-react";
+import { Activity, Database, Cpu, CheckCircle2, XCircle, AlertCircle, AlertTriangle, Terminal, Sparkles, Moon, Brain, Trash2, ScrollText, User, Settings, Image as ImageIcon, Eye, Loader2, FileSearch, ClipboardCopy, ChevronDown, ChevronRight, Zap, Download, RotateCcw, FolderOpen, FolderPlus, Plus, X, GitMerge, Archive, Save, Mic2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -1343,6 +1343,109 @@ function ExtractionTemplatesCard() {
   );
 }
 
+// ─── Audio Enhancement (DeepFilterNet3) toggle ────────────────────────────────
+
+type AudioEnhanceStatus = {
+  enabled: boolean;
+  installed: boolean;
+  model: string;
+  install_hint: string | null;
+};
+
+function useAudioEnhanceSetting() {
+  return useQuery({
+    queryKey: ["system", "audio-enhance"],
+    queryFn: async () => {
+      const r = await apiFetch(`${API_BASE}/api/system/settings/audio-enhance`);
+      if (!r.ok) throw new Error("Failed to fetch audio enhancement setting");
+      return r.json() as Promise<AudioEnhanceStatus>;
+    },
+    staleTime: 30_000,
+  });
+}
+
+function useSetAudioEnhanceSetting() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (enabled: boolean) => {
+      const r = await apiFetch(`${API_BASE}/api/system/settings/audio-enhance`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled }),
+      });
+      if (!r.ok) throw new Error("Failed to update audio enhancement setting");
+      return r.json();
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["system", "audio-enhance"] });
+      toast.success("Audio enhancement setting saved");
+    },
+    onError: () => toast.error("Could not update audio enhancement setting"),
+  });
+}
+
+function AudioEnhancementCard() {
+  const { data, isLoading } = useAudioEnhanceSetting();
+  const setEnhance = useSetAudioEnhanceSetting();
+
+  return (
+    <Card>
+      <CardContent className="p-6">
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex items-start gap-3">
+            <Mic2 className="w-5 h-5 text-primary mt-0.5 shrink-0" />
+            <div className="space-y-1">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="font-medium text-sm">Audio Enhancement (DeepFilterNet3)</h3>
+                {data && (
+                  <Badge
+                    variant={data.installed ? "default" : "secondary"}
+                    className="text-[10px] h-4 px-1.5"
+                  >
+                    {data.installed ? "installed" : "not installed"}
+                  </Badge>
+                )}
+              </div>
+              <p className="text-sm text-muted-foreground max-w-xl">
+                When enabled, audio files are denoised with{" "}
+                <span className="font-medium text-foreground">DeepFilterNet3</span> before being
+                sent to Whisper — removing background noise, room reverb, and crosstalk.
+                Dramatically improves transcription accuracy on phone recordings and voice memos.
+                Runs on CPU at ~0.2× real-time with no GPU required.
+              </p>
+              {data && !data.installed && (
+                <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">
+                  Package not installed. Run:{" "}
+                  <code className="font-mono bg-muted px-1 rounded text-[11px]">
+                    {data.install_hint}
+                  </code>
+                </p>
+              )}
+              {data?.installed && data.enabled && (
+                <p className="text-xs text-emerald-600 dark:text-emerald-400 mt-1">
+                  Active — audio files will be enhanced before transcription.
+                </p>
+              )}
+            </div>
+          </div>
+          <div className="shrink-0 pt-0.5">
+            {isLoading ? (
+              <Skeleton className="h-6 w-11 rounded-full" />
+            ) : (
+              <Switch
+                checked={data?.enabled ?? false}
+                onCheckedChange={(checked) => setEnhance.mutate(checked)}
+                disabled={setEnhance.isPending || (!data?.installed && !data?.enabled)}
+                aria-label="Enable DeepFilterNet3 audio enhancement"
+              />
+            )}
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 // ─── AI Extraction toggle ─────────────────────────────────────────────────────
 
 function useAiExtractionSetting() {
@@ -2058,6 +2161,9 @@ export default function System() {
 
       {/* Image Generation URL Setting */}
       <ImageGenUrlCard />
+
+      {/* Audio Enhancement (DeepFilterNet3) */}
+      <AudioEnhancementCard />
 
       {/* AI Extraction Setting */}
       <Card>

@@ -923,73 +923,106 @@ def _extract_audio(path: Path, db=None) -> ExtractionResult:
             meta={"transcription": None, "reason": msg},
         )
 
-    # ── 1. AI server ──────────────────────────────────────────────────────────
-    ai_server_exc: str = ""
-    if base_url:
-        try:
-            mime_type, _ = _mt.guess_type(path.name)
-            mime_type = mime_type or "application/octet-stream"
-
-            import uuid as _uuid
-            boundary = f"---{_uuid.uuid4().hex}"
-            filename = path.name
-
-            with open(path, "rb") as fh:
-                file_bytes = fh.read()
-
-            body_parts: list[bytes] = []
-            body_parts.append(
-                f"--{boundary}\r\n"
-                f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'
-                f"Content-Type: {mime_type}\r\n\r\n"
-                .encode("utf-8") + file_bytes + b"\r\n"
+    # ── 0. Optional audio enhancement (DeepFilterNet3) ───────────────────────
+    # Pre-process the audio before Whisper to remove background noise, room
+    # reverb, and non-stationary interference.  Best-effort — any failure
+    # silently falls back to the original file so transcription always runs.
+    import tempfile as _tf_enh, shutil as _sh_enh  # noqa: E401
+    _enh_tmp: str | None = None
+    transcribe_path = path
+    try:
+        if db is not None and \
+                db.get_setting("audio_enhance_enabled", "false").lower() == "true":
+            from orivellum.capabilities.enhancement import (  # noqa: PLC0415
+                enhance_audio as _enhance_audio,
+                is_available as _dfn_available,
             )
-            body_parts.append(
-                f"--{boundary}\r\n"
-                'Content-Disposition: form-data; name="model"\r\n\r\n'
-                f"{asr_model}\r\n"
-                .encode("utf-8")
-            )
-            body_parts.append(f"--{boundary}--\r\n".encode("utf-8"))
-            body = b"".join(body_parts)
+            if _dfn_available():
+                _enh_tmp = _tf_enh.mkdtemp(prefix="orivellum_dfn_")
+                _ep = _enhance_audio(path, output_dir=Path(_enh_tmp))
+                if _ep != path:
+                    transcribe_path = _ep
+                    logger.info(
+                        "DeepFilterNet3 applied for %s; transcribing enhanced audio",
+                        path.name,
+                    )
+    except Exception as _enh_err:
+        logger.debug("Audio enhancement skipped: %s", _enh_err)
 
-            req = _urlr.Request(
-                f"{base_url}/audio/transcriptions",
-                data=body,
-                headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
-                method="POST",
-            )
-            with _urlr.urlopen(req, timeout=120) as resp:
-                data = _json.loads(resp.read().decode("utf-8"))
-            transcript = data.get("text", "").strip()
-            if transcript:
-                logger.info("AI server transcription OK: %d words from %s",
-                            len(transcript.split()), path.name)
-                return ExtractionResult(
-                    kind="audio",
-                    full_text=f"[Audio transcript: {path.name}]\n\n{transcript}",
-                    word_count=len(transcript.split()),
-                    pages=[PageSegment(page=1, text=transcript)],
-                    meta={"transcription": "ai_server", "asr_model": asr_model,
-                          "source": str(path.name)},
+    try:
+        # ── 1. AI server (Lemonade / any OpenAI-compatible Whisper endpoint) ─
+        ai_server_exc: str = ""
+        if base_url:
+            try:
+                mime_type, _ = _mt.guess_type(path.name)
+                mime_type = mime_type or "application/octet-stream"
+
+                import uuid as _uuid
+                boundary = f"---{_uuid.uuid4().hex}"
+                filename = path.name  # keep original filename in the multipart header
+
+                with open(transcribe_path, "rb") as fh:
+                    file_bytes = fh.read()
+
+                body_parts: list[bytes] = []
+                body_parts.append(
+                    f"--{boundary}\r\n"
+                    f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'
+                    f"Content-Type: {mime_type}\r\n\r\n"
+                    .encode("utf-8") + file_bytes + b"\r\n"
                 )
-            ai_server_exc = "AI server returned an empty transcription"
-            logger.warning("AI server transcription: empty response for %s", path.name)
-        except Exception as exc:
-            ai_server_exc = str(exc)
-            logger.info("AI server transcription unavailable for %s (%s) — trying faster-whisper",
-                        path.name, exc)
+                body_parts.append(
+                    f"--{boundary}\r\n"
+                    'Content-Disposition: form-data; name="model"\r\n\r\n'
+                    f"{asr_model}\r\n"
+                    .encode("utf-8")
+                )
+                body_parts.append(f"--{boundary}--\r\n".encode("utf-8"))
+                body = b"".join(body_parts)
 
-    # ── 2. faster-whisper local ───────────────────────────────────────────────
-    fw_result = _transcribe_faster_whisper(path, asr_local_model)
-    if fw_result is not None:
-        return fw_result
+                req = _urlr.Request(
+                    f"{base_url}/audio/transcriptions",
+                    data=body,
+                    headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+                    method="POST",
+                )
+                with _urlr.urlopen(req, timeout=120) as resp:
+                    data = _json.loads(resp.read().decode("utf-8"))
+                transcript = data.get("text", "").strip()
+                if transcript:
+                    logger.info("AI server transcription OK: %d words from %s",
+                                len(transcript.split()), path.name)
+                    return ExtractionResult(
+                        kind="audio",
+                        full_text=f"[Audio transcript: {path.name}]\n\n{transcript}",
+                        word_count=len(transcript.split()),
+                        pages=[PageSegment(page=1, text=transcript)],
+                        meta={"transcription": "ai_server", "asr_model": asr_model,
+                              "source": str(path.name),
+                              "enhanced": transcribe_path != path},
+                    )
+                ai_server_exc = "AI server returned an empty transcription"
+                logger.warning("AI server transcription: empty response for %s", path.name)
+            except Exception as exc:
+                ai_server_exc = str(exc)
+                logger.info("AI server transcription unavailable for %s (%s) — trying faster-whisper",
+                            path.name, exc)
 
-    # ── 3. Metadata-only ─────────────────────────────────────────────────────
-    reason = ai_server_exc or "AI server URL not configured"
-    if not _is_faster_whisper_loaded():
-        reason += " | faster-whisper not installed"
-    return _metadata_only(reason)
+        # ── 2. faster-whisper local ───────────────────────────────────────────
+        fw_result = _transcribe_faster_whisper(transcribe_path, asr_local_model)
+        if fw_result is not None:
+            return fw_result
+
+        # ── 3. Metadata-only ─────────────────────────────────────────────────
+        reason = ai_server_exc or "AI server URL not configured"
+        if not _is_faster_whisper_loaded():
+            reason += " | faster-whisper not installed"
+        return _metadata_only(reason)
+
+    finally:
+        # Always clean up the temporary enhanced audio file.
+        if _enh_tmp:
+            _sh_enh.rmtree(_enh_tmp, ignore_errors=True)
 
 
 _DISPATCH: dict[str, object] = {
