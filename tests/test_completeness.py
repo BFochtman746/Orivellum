@@ -236,3 +236,114 @@ def test_completeness_scores_update_after_adding_knowledge(tmp_path):
         f"Adding knowledge should not decrease overall score. "
         f"Before: {overall_before}, After: {overall_after}"
     )
+
+
+# ── Custom completeness targets ────────────────────────────────────────────────
+
+def test_custom_word_target_changes_content_score(tmp_path):
+    """Setting a lower word_target raises the content score for a short Work."""
+    _, db = _make_app(tmp_path)
+    from orivellum.capabilities.completeness import calculate_work_completeness
+
+    work = db.create_work("Short Essay")
+    doc = db.create_document("Essay", work_id=work["id"])
+    db.update_document_extracted(doc["id"], "word " * 2000, 2000, readiness="ready")
+
+    # Default target (50,000 words) → ~4%
+    report_default = calculate_work_completeness(work["id"], db)
+    content_default = next(d for d in report_default.dimensions if d.name == "content")
+
+    # Custom target (5,000 words) → 40%
+    db.update_work(work["id"], meta={"completeness_targets": {"word_target": 5000, "chapter_target": 10}})
+    report_custom = calculate_work_completeness(work["id"], db)
+    content_custom = next(d for d in report_custom.dimensions if d.name == "content")
+
+    assert content_custom.score > content_default.score, (
+        f"Custom word target should raise content score. "
+        f"Default: {content_default.score}%, Custom: {content_custom.score}%"
+    )
+    assert content_custom.target == 5000
+    assert content_custom.score == 40
+
+
+def test_custom_chapter_target_changes_structural_score(tmp_path):
+    """Setting a lower chapter_target raises the structural score."""
+    _, db = _make_app(tmp_path)
+    from orivellum.capabilities.completeness import calculate_work_completeness
+
+    work = db.create_work("Two-Chapter Essay")
+    doc = db.create_document("Essay", work_id=work["id"])
+    db.update_document_extracted(doc["id"], "text", 500, readiness="ready")
+
+    # Inject 2 book_chapters using the object registry (required for FK integrity)
+    from orivellum.database.db import _now as _db_now
+    for i in range(2):
+        ch_id = db._create_object("book_chapter")
+        with db._lock:
+            db._conn.execute(
+                """INSERT INTO book_chapters
+                       (id, work_id, source_doc_id, seq, level, title, text,
+                        status, meta, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, 1, ?, ?, 'extracted', '{}', ?, ?)""",
+                (ch_id, work["id"], doc["id"], i + 1,
+                 f"Chapter {i + 1}", "Some text here", _db_now(), _db_now()),
+            )
+            db._conn.commit()
+
+    # Default: 10 chapters expected → structural score = 20%
+    report_default = calculate_work_completeness(work["id"], db)
+    struct_default = next(d for d in report_default.dimensions if d.name == "structural")
+
+    # Custom: 2 chapters → structural score = 100%
+    db.update_work(work["id"], meta={"completeness_targets": {"word_target": 50000, "chapter_target": 2}})
+    report_custom = calculate_work_completeness(work["id"], db)
+    struct_custom = next(d for d in report_custom.dimensions if d.name == "structural")
+
+    assert struct_custom.score == 100, f"Expected 100%, got {struct_custom.score}%"
+    assert struct_custom.score > struct_default.score
+
+
+def test_works_without_custom_targets_use_defaults(tmp_path):
+    """A Work with no meta.completeness_targets must behave identically to before."""
+    _, db = _make_app(tmp_path)
+    from orivellum.capabilities.completeness import (
+        calculate_work_completeness, _CONTENT_BASELINE_WORDS, _EXPECTED_CHAPTERS_DEFAULT
+    )
+
+    work = db.create_work("Default Work")
+    doc = db.create_document("Doc", work_id=work["id"])
+    db.update_document_extracted(doc["id"], "x " * 1000, 1000, readiness="ready")
+
+    report = calculate_work_completeness(work["id"], db)
+    content = next(d for d in report.dimensions if d.name == "content")
+
+    assert content.target == _CONTENT_BASELINE_WORDS, (
+        f"Default word target mismatch: {content.target} != {_CONTENT_BASELINE_WORDS}"
+    )
+
+
+def test_patch_works_sets_completeness_targets_via_api(tmp_path):
+    """PATCH /api/works/{id} with meta.completeness_targets is persisted and reflected in scores."""
+    client, db = _make_app(tmp_path)
+    work = db.create_work("Essay Work")
+    doc = db.create_document("Essay", work_id=work["id"])
+    db.update_document_extracted(doc["id"], "word " * 3000, 3000, readiness="ready")
+
+    # Patch targets via API
+    patch_resp = client.patch(
+        f"/api/works/{work['id']}",
+        json={"meta": {"completeness_targets": {"word_target": 3000, "chapter_target": 5}}},
+    )
+    assert patch_resp.status_code == 200, patch_resp.text
+    returned_meta = patch_resp.json()["work"].get("meta") or {}
+    if isinstance(returned_meta, str):
+        import json
+        returned_meta = json.loads(returned_meta)
+    assert returned_meta.get("completeness_targets", {}).get("word_target") == 3000
+
+    # Completeness now scores 3000 words against 3000-word target → 100%
+    comp_resp = client.get(f"/api/works/{work['id']}/completeness")
+    assert comp_resp.status_code == 200
+    content_dim = next(d for d in comp_resp.json()["dimensions"] if d["name"] == "content")
+    assert content_dim["score"] == 100, f"Expected 100%, got {content_dim['score']}%"
+    assert content_dim["target"] == 3000

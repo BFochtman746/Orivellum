@@ -2432,6 +2432,8 @@ const DIM_BAR_COLOR: Record<string, string> = {
 };
 
 function CompletenessTab({ workId }: { workId: string }) {
+  const queryClient = useQueryClient();
+
   const { data, isLoading, error, refetch, isFetching } = useQuery<ComplReport>({
     queryKey: ["work-completeness", workId],
     queryFn: () =>
@@ -2441,6 +2443,54 @@ function CompletenessTab({ workId }: { workId: string }) {
       }),
     staleTime: 60_000,
   });
+
+  // Fetch the work to read/write meta.completeness_targets
+  const { data: workResp } = useGetWork(workId, {
+    query: { queryKey: getGetWorkQueryKey(workId), enabled: !!workId },
+  });
+  const updateWork = useUpdateWork();
+
+  // ── Target editing state ─────────────────────────────────────────────────
+  const [editingTargets, setEditingTargets] = useState(false);
+  const currentMeta = (workResp?.work as any)?.meta ?? {};
+  const savedTargets = (currentMeta?.completeness_targets ?? {}) as {
+    word_target?: number;
+    chapter_target?: number;
+  };
+
+  const [wordInput, setWordInput]       = useState("");
+  const [chapterInput, setChapterInput] = useState("");
+
+  const openTargetEditor = () => {
+    setWordInput(String(savedTargets.word_target ?? 50000));
+    setChapterInput(String(savedTargets.chapter_target ?? 10));
+    setEditingTargets(true);
+  };
+
+  const saveTargets = () => {
+    const wt = parseInt(wordInput, 10);
+    const ct = parseInt(chapterInput, 10);
+    if (!wt || !ct || wt < 1 || ct < 1) {
+      toast.error("Targets must be positive numbers");
+      return;
+    }
+    const mergedMeta = { ...currentMeta, completeness_targets: { word_target: wt, chapter_target: ct } };
+    updateWork.mutate(
+      { workId, data: { meta: mergedMeta } },
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: getGetWorkQueryKey(workId) });
+          // Invalidate completeness so it reruns with new targets
+          queryClient.invalidateQueries({ queryKey: ["work-completeness", workId] });
+          setEditingTargets(false);
+          toast.success("Targets saved — scores updated");
+        },
+        onError: () => toast.error("Could not save targets"),
+      }
+    );
+  };
+
+  // ── Render ───────────────────────────────────────────────────────────────
 
   if (isLoading) return (
     <div className="space-y-4">
@@ -2476,6 +2526,83 @@ function CompletenessTab({ workId }: { workId: string }) {
             {isFetching ? "updating…" : "refresh"}
           </button>
         </div>
+      </div>
+
+      {/* Completeness targets editor */}
+      <div className="p-4 rounded-lg border border-border/50 bg-muted/10">
+        <div className="flex items-center justify-between mb-3">
+          <div>
+            <h3 className="text-xs font-mono uppercase tracking-widest text-muted-foreground">
+              Completeness targets
+            </h3>
+            {!editingTargets && (
+              <p className="text-[11px] text-muted-foreground/70 mt-0.5">
+                {savedTargets.word_target
+                  ? `${Number(savedTargets.word_target).toLocaleString()} words · ${savedTargets.chapter_target ?? 10} chapters`
+                  : "Using defaults (50,000 words · 10 chapters)"}
+              </p>
+            )}
+          </div>
+          {!editingTargets && (
+            <button
+              onClick={openTargetEditor}
+              className="flex items-center gap-1 text-[11px] font-mono text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <Pencil className="w-3 h-3" /> Edit
+            </button>
+          )}
+        </div>
+
+        {editingTargets && (
+          <div className="space-y-3">
+            <div className="flex items-center gap-3 flex-wrap">
+              <label className="flex items-center gap-2 text-xs font-mono text-muted-foreground">
+                Word target
+                <Input
+                  type="number"
+                  min={1}
+                  value={wordInput}
+                  onChange={(e) => setWordInput(e.target.value)}
+                  className="w-28 h-7 text-sm font-mono"
+                  placeholder="50000"
+                />
+              </label>
+              <label className="flex items-center gap-2 text-xs font-mono text-muted-foreground">
+                Chapter target
+                <Input
+                  type="number"
+                  min={1}
+                  value={chapterInput}
+                  onChange={(e) => setChapterInput(e.target.value)}
+                  className="w-20 h-7 text-sm font-mono"
+                  placeholder="10"
+                />
+              </label>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                onClick={saveTargets}
+                disabled={updateWork.isPending}
+                className="h-7 text-xs gap-1.5"
+              >
+                {updateWork.isPending
+                  ? <Loader2 className="w-3 h-3 animate-spin" />
+                  : <Check className="w-3 h-3" />}
+                Save
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => setEditingTargets(false)}
+                disabled={updateWork.isPending}
+                className="h-7 text-xs gap-1.5"
+              >
+                <X className="w-3 h-3" /> Cancel
+              </Button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Dimension breakdown */}

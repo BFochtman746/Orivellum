@@ -70,12 +70,45 @@ _WEIGHTS = {
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
+def _read_targets(work: dict) -> tuple[int, int]:
+    """Return (word_target, chapter_target) for a Work.
+
+    Reads ``work.meta.completeness_targets`` when present; falls back to the
+    module-level defaults so existing Works are unaffected.
+    """
+    import json as _json
+
+    meta = work.get("meta") or {}
+    if isinstance(meta, str):
+        try:
+            meta = _json.loads(meta)
+        except Exception:
+            meta = {}
+
+    targets = (meta.get("completeness_targets") or {}) if isinstance(meta, dict) else {}
+
+    try:
+        word_target = int(targets.get("word_target") or 0) or _CONTENT_BASELINE_WORDS
+    except (TypeError, ValueError):
+        word_target = _CONTENT_BASELINE_WORDS
+
+    try:
+        chapter_target = int(targets.get("chapter_target") or 0) or _EXPECTED_CHAPTERS_DEFAULT
+    except (TypeError, ValueError):
+        chapter_target = _EXPECTED_CHAPTERS_DEFAULT
+
+    return word_target, chapter_target
+
+
 def calculate_work_completeness(work_id: str, db: "OrivellumDB") -> CompletenessReport:
     """Calculate a multi-dimensional completeness report for a Work."""
     import datetime
 
     work = db.get_work(work_id) or {}
     work_title = work.get("title") or work_id[:8]
+
+    # Per-Work custom targets (fall back to module defaults when not set)
+    _word_target, _chapter_target = _read_targets(work)
 
     # ── Gather raw data ──────────────────────────────────────────────────────
 
@@ -128,7 +161,9 @@ def calculate_work_completeness(work_id: str, db: "OrivellumDB") -> Completeness
     # ── Dimension calculations ───────────────────────────────────────────────
 
     # 1 — Structural
-    expected_ch = max(total_chapters, _EXPECTED_CHAPTERS_DEFAULT)
+    # Use the per-Work chapter target, but never let it be smaller than what
+    # has actually been extracted (a Work can't be more than 100% complete).
+    expected_ch = max(total_chapters, _chapter_target)
     struct_score = min(100, round(total_chapters / expected_ch * 100))
     structural = Dimension(
         name="structural",
@@ -137,20 +172,20 @@ def calculate_work_completeness(work_id: str, db: "OrivellumDB") -> Completeness
         current=total_chapters,
         target=expected_ch,
         unit="chapters",
-        rule=f"chapters extracted ÷ expected ({expected_ch}) × 100",
+        rule=f"chapters extracted ÷ target ({expected_ch}) × 100",
         evidence=[f"{total_chapters} chapter(s) found across {total_docs} document(s)"],
     )
 
     # 2 — Content
-    content_score = min(100, round(total_words / _CONTENT_BASELINE_WORDS * 100))
+    content_score = min(100, round(total_words / _word_target * 100))
     content = Dimension(
         name="content",
         label="Content",
         score=content_score,
         current=total_words,
-        target=_CONTENT_BASELINE_WORDS,
+        target=_word_target,
         unit="words",
-        rule=f"total words ÷ {_CONTENT_BASELINE_WORDS:,} baseline × 100",
+        rule=f"total words ÷ {_word_target:,} target × 100",
         evidence=[f"{total_words:,} words across {total_docs} document(s)"],
     )
 
