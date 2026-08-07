@@ -3,6 +3,7 @@ import React, { useEffect, useRef, useState } from 'react';
 // pattern used by backups.tsx, studio.tsx, and work/[id].tsx).
 import * as FileSystem from 'expo-file-system/legacy';
 import * as MediaLibrary from 'expo-media-library';
+import * as Sharing from 'expo-sharing';
 import { mobileFetch } from '@/lib/api';
 import { getApiToken } from '@/lib/token';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -432,17 +433,49 @@ export default function LibraryDocDetail() {
         return;
       }
 
-      // ── 4. Offer to save to device media library ────────────────────────────
+      // ── 4. Offer to save to device media library + share ───────────────────
+      // shareIt opens the native share sheet (AirDrop, Messages, Files, etc.)
+      // using the local URI returned by downloadAsync.
+      const shareIt = () => {
+        Sharing.shareAsync(dlResult.uri, {
+          mimeType: 'audio/mpeg',
+          dialogTitle: `Share ${filename}`,
+          UTI: 'public.mp3',  // iOS: helps AirDrop identify the file type
+        }).catch(() => {});
+      };
+
       try {
         const { status: perm } = await MediaLibrary.requestPermissionsAsync();
         if (perm === 'granted') {
           await MediaLibrary.saveToLibraryAsync(dlResult.uri);
-          Alert.alert('Saved to Music Library', `"${filename}" is ready in your music library.`);
+          Alert.alert(
+            'Saved to Music Library',
+            `"${filename}" is ready in your music library.`,
+            [
+              { text: 'Share…', onPress: shareIt },
+              { text: 'Done', style: 'cancel' },
+            ],
+          );
         } else {
-          Alert.alert('Downloaded', `Audiobook saved to app storage as "${filename}".`);
+          // No Music Library access — Share is the primary useful action.
+          Alert.alert(
+            'Downloaded',
+            `Audiobook saved to app storage as "${filename}".`,
+            [
+              { text: 'Share…', onPress: shareIt },
+              { text: 'OK', style: 'cancel' },
+            ],
+          );
         }
       } catch {
-        Alert.alert('Downloaded', `Audiobook saved as "${filename}".`);
+        Alert.alert(
+          'Downloaded',
+          `Audiobook saved as "${filename}".`,
+          [
+            { text: 'Share…', onPress: shareIt },
+            { text: 'OK', style: 'cancel' },
+          ],
+        );
       }
 
       if (dlRunRef.current !== runId) return;
