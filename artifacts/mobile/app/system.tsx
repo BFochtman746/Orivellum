@@ -8,9 +8,10 @@
  *  - Nightshift status + manual run
  *  - App version
  */
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { mobileFetch } from '@/lib/api';
 import {
+  Animated,
   ActivityIndicator,
   Alert,
   Platform,
@@ -29,7 +30,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useVellumTokens, alpha } from '@/lib/tokens';
-import { font } from '@/lib/typography';
+import { font, fontSerif } from '@/lib/typography';
 import { SkeletonItem } from '@/components/SkeletonItem';
 
 const DOMAIN = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
@@ -76,6 +77,47 @@ function Section({ title, icon, children }: { title: string; icon: string; child
         <Text style={[s.sectionTitle, { color: colors.mutedForeground }]}>{title.toUpperCase()}</Text>
       </View>
       {children}
+    </View>
+  );
+}
+
+// ── Pulse dot ─────────────────────────────────────────────────────────────────
+
+function PulseDot({ color, size = 10 }: { color: string; size?: number }) {
+  const scale = useRef(new Animated.Value(1)).current;
+  const opacity = useRef(new Animated.Value(0.7)).current;
+
+  useEffect(() => {
+    const pulse = Animated.loop(
+      Animated.sequence([
+        Animated.parallel([
+          Animated.timing(scale,   { toValue: 1.6, duration: 900, useNativeDriver: true }),
+          Animated.timing(opacity, { toValue: 0,   duration: 900, useNativeDriver: true }),
+        ]),
+        Animated.parallel([
+          Animated.timing(scale,   { toValue: 1,   duration: 0,   useNativeDriver: true }),
+          Animated.timing(opacity, { toValue: 0.7, duration: 0,   useNativeDriver: true }),
+        ]),
+      ])
+    );
+    pulse.start();
+    return () => pulse.stop();
+  }, []);
+
+  return (
+    <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}>
+      {/* Pulse ring */}
+      <Animated.View
+        style={{
+          position: 'absolute',
+          width: size, height: size, borderRadius: size / 2,
+          backgroundColor: color,
+          transform: [{ scale }],
+          opacity,
+        }}
+      />
+      {/* Solid dot */}
+      <View style={{ width: size * 0.65, height: size * 0.65, borderRadius: size, backgroundColor: color }} />
     </View>
   );
 }
@@ -452,7 +494,7 @@ export default function SystemScreen() {
                 backgroundColor: alpha(overallOk ? T.green : T.rust, 0.10),
                 borderColor: alpha(overallOk ? T.green : T.rust, 0.28),
               }]}>
-                <View style={[s.dot, { backgroundColor: overallOk ? T.green : T.rust }]} />
+                <PulseDot color={overallOk ? T.green : T.rust} size={10} />
                 <Text style={[s.healthBadgeText, { color: overallOk ? T.green : T.rust }]}>
                   {overallOk ? 'All systems operational' : 'Degraded — check server logs'}
                 </Text>
@@ -641,7 +683,7 @@ const s = StyleSheet.create({
   header: { paddingHorizontal: 16, paddingBottom: 14, borderBottomWidth: 1 },
   backRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 10, minHeight: 44 },
   backLabel: { fontSize: 14, ...font('medium') },
-  title: { fontSize: 22, ...font('bold'), letterSpacing: -0.3 },
+  title: { fontSize: 22, ...fontSerif('bold'), letterSpacing: -0.3 },
   subtitle: { fontSize: 12, lineHeight: 18, ...font('regular'), marginTop: 2 },
   // Section
   section: { borderRadius: 10, borderWidth: 1, padding: 14, marginBottom: 16 },
