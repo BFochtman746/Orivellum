@@ -11,7 +11,8 @@ import { getApiToken } from './token';
 
 /**
  * Fetch with the local API bearer token attached.
- * Drop-in replacement for `fetch` in hand-rolled API calls.
+ * Returns the raw Response — callers must check `response.ok` themselves.
+ * For JSON endpoints that should throw on HTTP errors, use `mobileFetchJson`.
  */
 export async function mobileFetch(
   input: RequestInfo | URL,
@@ -23,4 +24,34 @@ export async function mobileFetch(
     headers.set('authorization', `Bearer ${token}`);
   }
   return fetch(input, { ...init, headers });
+}
+
+/**
+ * Authenticated fetch that parses JSON and throws a descriptive Error on any
+ * non-2xx HTTP status.  Use this for any hand-rolled call that expects JSON
+ * back — it eliminates the common bug of treating HTTP 4xx/5xx as success.
+ *
+ * The error message includes the HTTP status and, when the server returns a
+ * JSON body with a `detail` or `message` field, that text too.
+ *
+ * @example
+ *   const data = await mobileFetchJson<{ items: Item[] }>('/api/items');
+ */
+export async function mobileFetchJson<T = unknown>(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+): Promise<T> {
+  const response = await mobileFetch(input, init);
+  if (!response.ok) {
+    let message = `HTTP ${response.status} ${response.statusText}`;
+    try {
+      const body = await response.json() as Record<string, unknown>;
+      const detail = (body?.detail ?? body?.message ?? body?.error) as string | undefined;
+      if (detail) message = `${message}: ${detail}`;
+    } catch {
+      // body was not JSON — keep the status-only message
+    }
+    throw new Error(message);
+  }
+  return response.json() as Promise<T>;
 }
