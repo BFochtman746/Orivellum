@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { mobileFetch } from '@/lib/api';
 import {
+  AccessibilityInfo,
   Animated,
   AppState,
   Easing,
@@ -13,6 +14,13 @@ import {
   View,
   useColorScheme,
 } from 'react-native';
+import Reanimated, {
+  useSharedValue,
+  withSpring,
+  withSequence,
+  withTiming,
+  useAnimatedStyle,
+} from 'react-native-reanimated';
 import { useAudiobookJobActive } from '@/hooks/useAudiobookJobActive';
 import { useColors } from '@/hooks/useColors';
 import { fontSerif } from '@/lib/typography';
@@ -114,6 +122,22 @@ function useServerDotColor(): string {
   if (isError) return '#ef4444';
   if (data?.status !== 'ok') return '#f59e0b';
   return '#22c55e';
+}
+
+// ── Reduce-motion guard ────────────────────────────────────────────────────────
+
+/**
+ * Returns true when the user has enabled "Reduce Motion" in system settings.
+ * All spring/scale animations must be skipped when this is active.
+ */
+function useReduceMotion(): boolean {
+  const [reduceMotion, setReduceMotion] = useState(false);
+  useEffect(() => {
+    AccessibilityInfo.isReduceMotionEnabled().then(setReduceMotion);
+    const sub = AccessibilityInfo.addEventListener('reduceMotionChanged', setReduceMotion);
+    return () => sub.remove();
+  }, []);
+  return reduceMotion;
 }
 
 // ── Current section label ──────────────────────────────────────────────────────
@@ -323,11 +347,155 @@ interface NavBottomSheetProps {
   audiobookActive?: boolean;
 }
 
+// ── Animated nav item ──────────────────────────────────────────────────────────
+
+/**
+ * A single row in the NavBottomSheet that spring-animates its icon on selection:
+ *   • Tapping while inactive: icon pulses 1 → 1.15 → 1 (spring, tension 200 / friction 10)
+ *   • Route becoming active: same pulse + label fades to full opacity over 120 ms
+ *   • Route becoming inactive: icon springs from 1.15 → 1, label fades to 72 %
+ *   • reduceMotion=true: no animation; static colors only
+ */
+function AnimatedNavItem({
+  item,
+  isActive,
+  showAudiobookDot,
+  onPress,
+  reduceMotion,
+  colors,
+}: {
+  item: NavItem;
+  isActive: boolean;
+  showAudiobookDot: boolean;
+  onPress: () => void;
+  reduceMotion: boolean;
+  colors: ReturnType<typeof useColors>;
+}) {
+  const scale        = useSharedValue(1);
+  const labelOpacity = useSharedValue(isActive ? 1 : 0.72);
+  // Ref tracks previous active state so the effect only fires on changes.
+  const prevActive = useRef(isActive);
+
+  useEffect(() => {
+    const wasActive = prevActive.current;
+    prevActive.current = isActive;
+
+    if (reduceMotion) {
+      scale.value        = 1;
+      labelOpacity.value = isActive ? 1 : 0.72;
+      return;
+    }
+
+    if (isActive && !wasActive) {
+      // Newly selected → pulse icon and fade label in
+      scale.value        = withSequence(
+        withSpring(1.15, { stiffness: 200, damping: 10 }),
+        withSpring(1.0,  { stiffness: 200, damping: 12 }),
+      );
+      labelOpacity.value = withTiming(1, { duration: 120 });
+    } else if (!isActive && wasActive) {
+      // Deselected → spring icon back to rest, dim label
+      scale.value        = withSpring(1, { stiffness: 200, damping: 12 });
+      labelOpacity.value = withTiming(0.72, { duration: 120 });
+    }
+  }, [isActive, reduceMotion]);
+
+  const iconAnimStyle  = useAnimatedStyle(() => ({
+    transform: [{ scale: scale.value }],
+  }));
+  const labelAnimStyle = useAnimatedStyle(() => ({
+    opacity: labelOpacity.value,
+  }));
+
+  const handlePress = () => {
+    // Immediate scale pulse on tap — gives instant tactile feedback before
+    // the route change propagates and re-triggers the effect above.
+    if (!reduceMotion && !isActive) {
+      scale.value = withSequence(
+        withSpring(1.15, { stiffness: 200, damping: 10 }),
+        withSpring(1.0,  { stiffness: 200, damping: 12 }),
+      );
+    }
+    onPress();
+  };
+
+  return (
+    <Pressable
+      onPress={handlePress}
+      style={({ pressed }) => [
+        styles.navItem,
+        {
+          backgroundColor: isActive
+            ? `${colors.primary}14`
+            : pressed
+            ? `${colors.muted}80`
+            : 'transparent',
+        },
+      ]}
+      accessibilityRole="menuitem"
+      accessibilityLabel={
+        showAudiobookDot
+          ? `${item.label} (audiobook generating)`
+          : item.label
+      }
+      accessibilityState={{ selected: isActive }}
+    >
+      {/* Icon container — Reanimated.View drives the spring scale */}
+      <View style={{ position: 'relative' }}>
+        <Reanimated.View
+          style={[
+            styles.navIconWrap,
+            {
+              backgroundColor: isActive
+                ? `${colors.primary}1A`
+                : colors.muted,
+            },
+            iconAnimStyle,
+          ]}
+        >
+          <Feather
+            name={item.icon as any}
+            size={20}
+            color={isActive ? colors.primary : colors.mutedForeground}
+          />
+        </Reanimated.View>
+        {showAudiobookDot && <PulsingDot />}
+      </View>
+
+      {/* Label — Reanimated.Text drives the opacity fade */}
+      <Reanimated.Text
+        style={[
+          styles.navLabel,
+          {
+            color:      isActive ? colors.primary : colors.foreground,
+            fontFamily: isActive ? 'Inter_600SemiBold' : 'Inter_400Regular',
+          },
+          labelAnimStyle,
+        ]}
+      >
+        {item.label}
+      </Reanimated.Text>
+
+      {/* Right side: check mark (active) or "Generating" badge (audiobook) */}
+      {isActive ? (
+        <View style={styles.navCheck}>
+          <Feather name="check" size={15} color={colors.primary} />
+        </View>
+      ) : showAudiobookDot ? (
+        <Text style={[styles.audiobookBadgeLabel, { color: '#f97316' }]}>
+          Generating
+        </Text>
+      ) : null}
+    </Pressable>
+  );
+}
+
 function NavBottomSheet({ visible, onClose, audiobookActive = false }: NavBottomSheetProps) {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const path = usePathname();
+  const reduceMotion = useReduceMotion();
 
   // Keep mounted during close animation
   const [rendered, setRendered] = useState(visible);
@@ -418,72 +586,15 @@ function NavBottomSheet({ visible, onClose, audiobookActive = false }: NavBottom
           const isActive = item.route === active;
           const showAudiobookDot = audiobookActive && item.key === 'studio';
           return (
-            <Pressable
+            <AnimatedNavItem
               key={item.key}
+              item={item}
+              isActive={isActive}
+              showAudiobookDot={showAudiobookDot}
               onPress={() => handleNav(item.route)}
-              style={({ pressed }) => [
-                styles.navItem,
-                {
-                  backgroundColor: isActive
-                    ? `${colors.primary}14`
-                    : pressed
-                    ? `${colors.muted}80`
-                    : 'transparent',
-                },
-              ]}
-              accessibilityRole="menuitem"
-              accessibilityLabel={
-                showAudiobookDot
-                  ? `${item.label} (audiobook generating)`
-                  : item.label
-              }
-              accessibilityState={{ selected: isActive }}
-            >
-              {/* Icon container — with optional pulsing dot overlay */}
-              <View style={{ position: 'relative' }}>
-                <View
-                  style={[
-                    styles.navIconWrap,
-                    {
-                      backgroundColor: isActive
-                        ? `${colors.primary}1A`
-                        : colors.muted,
-                    },
-                  ]}
-                >
-                  <Feather
-                    name={item.icon as any}
-                    size={20}
-                    color={isActive ? colors.primary : colors.mutedForeground}
-                  />
-                </View>
-                {showAudiobookDot && <PulsingDot />}
-              </View>
-
-              {/* Label */}
-              <Text
-                style={[
-                  styles.navLabel,
-                  {
-                    color: isActive ? colors.primary : colors.foreground,
-                    fontFamily: isActive ? 'Inter_600SemiBold' : 'Inter_400Regular',
-                  },
-                ]}
-              >
-                {item.label}
-              </Text>
-
-              {/* Right side: check (active) or "generating" label (audiobook) */}
-              {isActive ? (
-                <View style={styles.navCheck}>
-                  <Feather name="check" size={15} color={colors.primary} />
-                </View>
-              ) : showAudiobookDot ? (
-                <Text style={[styles.audiobookBadgeLabel, { color: '#f97316' }]}>
-                  Generating
-                </Text>
-              ) : null}
-            </Pressable>
+              reduceMotion={reduceMotion}
+              colors={colors}
+            />
           );
         })}
       </Animated.View>
