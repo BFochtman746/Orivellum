@@ -8,6 +8,14 @@ import { getApiToken } from '@/lib/token';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { VOICES } from '@/lib/voices';
 import { useTts, type TtsPlaybackState } from '@/context/TtsContext';
+import {
+  TtsSettingsSheet,
+  SPEED_OPTIONS,
+  SPEED_LABELS,
+  TTS_VOICE_KEY,
+  TTS_SPEED_KEY,
+  type TtsSpeed,
+} from '@/components/TtsSettingsSheet';
 import { createAudioPlayer, setAudioModeAsync, type AudioPlayer } from 'expo-audio';
 import {
   ActivityIndicator,
@@ -217,167 +225,6 @@ function ExtractedTextSection({ text, colors }: { text: string; colors: ReturnTy
         </View>
       )}
     </View>
-  );
-}
-
-// ── TTS settings ─────────────────────────────────────────────────────────────
-
-const SPEED_OPTIONS = [0.75, 1.0, 1.25, 1.5] as const;
-type TtsSpeed = typeof SPEED_OPTIONS[number];
-
-const SPEED_LABELS: Record<number, string> = {
-  0.75: '0.75×', 1.0: '1×', 1.25: '1.25×', 1.5: '1.5×',
-};
-
-// Keys match the web implementation so preferences are named consistently
-const _TTS_VOICE_KEY = 'orivellum:tts_voice';
-const _TTS_SPEED_KEY = 'orivellum:tts_speed';
-
-function TtsSettingsSheet({
-  visible,
-  onClose,
-  voice,
-  onVoiceChange,
-  speed,
-  onSpeedChange,
-}: {
-  visible: boolean;
-  onClose: () => void;
-  voice: string;
-  onVoiceChange: (v: string) => void;
-  speed: TtsSpeed;
-  onSpeedChange: (s: TtsSpeed) => void;
-}) {
-  const colors = useColors();
-  const insets = useSafeAreaInsets();
-
-  return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="slide"
-      onRequestClose={onClose}
-    >
-      <View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.45)' }}>
-        {/* Tap backdrop to close */}
-        <Pressable style={{ flex: 1 }} onPress={onClose} />
-
-        <View
-          style={{
-            backgroundColor: colors.card,
-            borderTopLeftRadius: 22,
-            borderTopRightRadius: 22,
-            borderWidth: 1,
-            borderColor: colors.border,
-            padding: 16,
-            paddingBottom: insets.bottom + 20,
-          }}
-        >
-          {/* Drag handle */}
-          <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: colors.border, alignSelf: 'center', marginBottom: 14 }} />
-
-          {/* Header */}
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 18 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}>
-              <Feather name="headphones" size={16} color={colors.primary} />
-              <Text style={{ fontSize: 17, fontFamily: 'Inter_700Bold', color: colors.foreground }}>
-                Read Aloud Settings
-              </Text>
-            </View>
-            <Pressable onPress={onClose} hitSlop={10}>
-              <Feather name="x" size={20} color={colors.mutedForeground} />
-            </Pressable>
-          </View>
-
-          {/* Speed picker */}
-          <Text style={{ fontSize: 11, fontFamily: 'Inter_600SemiBold', color: colors.mutedForeground, letterSpacing: 0.6, marginBottom: 8 }}>
-            SPEED
-          </Text>
-          <View style={{ flexDirection: 'row', gap: 8, marginBottom: 22 }}>
-            {SPEED_OPTIONS.map(s => {
-              const active = s === speed;
-              return (
-                <Pressable
-                  key={s}
-                  onPress={() => onSpeedChange(s)}
-                  style={{
-                    flex: 1,
-                    paddingVertical: 10,
-                    borderRadius: 8,
-                    borderWidth: 1,
-                    alignItems: 'center',
-                    borderColor: active ? colors.primary : colors.border,
-                    backgroundColor: active ? colors.primary + '18' : 'transparent',
-                  }}
-                >
-                  <Text
-                    style={{
-                      fontSize: 13,
-                      fontFamily: active ? 'Inter_700Bold' : 'Inter_400Regular',
-                      color: active ? colors.primary : colors.foreground,
-                    }}
-                  >
-                    {SPEED_LABELS[s]}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </View>
-
-          {/* Voice picker */}
-          <Text style={{ fontSize: 11, fontFamily: 'Inter_600SemiBold', color: colors.mutedForeground, letterSpacing: 0.6, marginBottom: 8 }}>
-            VOICE
-          </Text>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={{ gap: 8, paddingBottom: 4 }}
-          >
-            {VOICES.map(v => {
-              const active = v.id === voice;
-              const accentColor = v.accent === 'british' ? '#3b82f6' : '#f59e0b';
-              const genderSym = v.gender === 'feminine' ? '♀' : v.gender === 'masculine' ? '♂' : '';
-              return (
-                <Pressable
-                  key={v.id}
-                  onPress={() => onVoiceChange(v.id)}
-                  style={{
-                    width: 84,
-                    padding: 10,
-                    borderRadius: 10,
-                    borderWidth: 1,
-                    borderColor: active ? colors.primary : colors.border,
-                    backgroundColor: active ? colors.primary + '15' : colors.background,
-                    gap: 4,
-                  }}
-                >
-                  <Text
-                    style={{
-                      fontSize: 13,
-                      fontFamily: active ? 'Inter_700Bold' : 'Inter_600SemiBold',
-                      color: active ? colors.primary : colors.foreground,
-                    }}
-                    numberOfLines={1}
-                  >
-                    {v.name}
-                  </Text>
-                  <Text style={{ fontSize: 10, fontFamily: 'Inter_400Regular', color: accentColor }}>
-                    {v.accent === 'american' ? 'US' : v.accent === 'british' ? 'UK' : (v.accent ?? '')}
-                    {genderSym ? ` · ${genderSym}` : ''}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </ScrollView>
-
-          {/* Changes take effect immediately when audio is active, or on the
-              next Listen if nothing is playing. */}
-          <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: colors.mutedForeground, marginTop: 14, textAlign: 'center' }}>
-            Changes apply immediately — or on the next Listen
-          </Text>
-        </View>
-      </View>
-    </Modal>
   );
 }
 
@@ -708,9 +555,9 @@ export default function LibraryDocDetail() {
 
   // Load saved settings on mount
   useEffect(() => {
-    AsyncStorage.multiGet([_TTS_VOICE_KEY, _TTS_SPEED_KEY]).then(pairs => {
-      const voiceVal = pairs.find(p => p[0] === _TTS_VOICE_KEY)?.[1];
-      const speedVal = pairs.find(p => p[0] === _TTS_SPEED_KEY)?.[1];
+    AsyncStorage.multiGet([TTS_VOICE_KEY, TTS_SPEED_KEY]).then(pairs => {
+      const voiceVal = pairs.find(p => p[0] === TTS_VOICE_KEY)?.[1];
+      const speedVal = pairs.find(p => p[0] === TTS_SPEED_KEY)?.[1];
       if (voiceVal) setTtsVoice(voiceVal);
       if (speedVal) {
         const s = parseFloat(speedVal);
@@ -724,7 +571,7 @@ export default function LibraryDocDetail() {
   // from the current part so the change is heard right away.
   const handleVoiceChange = (v: string) => {
     setTtsVoice(v);
-    AsyncStorage.setItem(_TTS_VOICE_KEY, v).catch(() => {});
+    AsyncStorage.setItem(TTS_VOICE_KEY, v).catch(() => {});
     if (_isThisDoc && localTtsState !== 'idle') {
       tts.applySettings(v, ttsSpeed);
     }
@@ -733,7 +580,7 @@ export default function LibraryDocDetail() {
   // Persist speed changes with the same immediate-apply behaviour.
   const handleSpeedChange = (s: TtsSpeed) => {
     setTtsSpeed(s);
-    AsyncStorage.setItem(_TTS_SPEED_KEY, String(s)).catch(() => {});
+    AsyncStorage.setItem(TTS_SPEED_KEY, String(s)).catch(() => {});
     if (_isThisDoc && localTtsState !== 'idle') {
       tts.applySettings(ttsVoice, s);
     }
