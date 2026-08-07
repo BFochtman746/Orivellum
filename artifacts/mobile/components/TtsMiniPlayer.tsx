@@ -72,6 +72,22 @@ export function TtsMiniPlayer() {
 
       {/* Playback controls */}
       <View style={styles.controls}>
+        {/* ← Skip back — only shown when there are multiple parts */}
+        {totalParts > 1 && (
+          <Pressable
+            onPress={() => tts.skipTo(index - 1)}
+            disabled={index === 0}
+            hitSlop={10}
+            style={[styles.skipBtn, { opacity: index === 0 ? 0.3 : 1 }]}
+            accessibilityRole="button"
+            accessibilityLabel="Previous part"
+            accessibilityState={{ disabled: index === 0 }}
+          >
+            <Feather name="skip-back" size={18} color={colors.primary} />
+          </Pressable>
+        )}
+
+        {/* Play / Pause / Loading */}
         {playbackState === 'loading' ? (
           <ActivityIndicator size="small" color={colors.primary} />
         ) : playbackState === 'playing' ? (
@@ -93,6 +109,23 @@ export function TtsMiniPlayer() {
             <Feather name="play" size={22} color={colors.primary} />
           </Pressable>
         )}
+
+        {/* → Skip forward — only shown when there are multiple parts */}
+        {totalParts > 1 && (
+          <Pressable
+            onPress={() => tts.skipTo(index + 1)}
+            disabled={index >= totalParts - 1}
+            hitSlop={10}
+            style={[styles.skipBtn, { opacity: index >= totalParts - 1 ? 0.3 : 1 }]}
+            accessibilityRole="button"
+            accessibilityLabel="Next part"
+            accessibilityState={{ disabled: index >= totalParts - 1 }}
+          >
+            <Feather name="skip-forward" size={18} color={colors.primary} />
+          </Pressable>
+        )}
+
+        {/* Stop */}
         <Pressable
           onPress={tts.stop}
           hitSlop={10}
@@ -134,5 +167,8 @@ const styles = StyleSheet.create({
   controls: {
     flexDirection: 'row',
     alignItems: 'center',
+  },
+  skipBtn: {
+    marginHorizontal: 10,
   },
 });

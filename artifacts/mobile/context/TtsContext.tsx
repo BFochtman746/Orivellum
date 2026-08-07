@@ -44,6 +44,13 @@ export interface TtsContextValue {
    * No-op when playbackState is 'idle'.
    */
   applySettings: (voice: string, speed: number) => void;
+  /**
+   * Jump to a specific part by index (0-based).  Cancels in-flight synthesis
+   * for the current part, keeps already-cached paths for other parts (they
+   * remain valid for the same document), and starts playback at part `i`.
+   * No-op when idle or when `i` is out of bounds.
+   */
+  skipTo: (i: number) => void;
   pause: () => void;
   resume: () => void;
   stop: () => void;
@@ -57,6 +64,7 @@ const TtsContext = createContext<TtsContextValue>({
   index: 0,
   play: () => {},
   applySettings: () => {},
+  skipTo: () => {},
   pause: () => {},
   resume: () => {},
   stop: () => {},
@@ -275,6 +283,31 @@ export function TtsProvider({ children }: { children: ReactNode }) {
     [playPartAt],
   );
 
+  const skipTo = useCallback(
+    (i: number) => {
+      const currentSession = sessionRef.current;
+      if (!currentSession) return;                              // idle
+      if (i < 0 || i >= currentSession.parts.length) return;   // out of bounds
+
+      // Bump counter to cancel any in-flight synthesis for the current part.
+      // We deliberately keep pathCacheRef entries: the synthesized file paths
+      // are still valid on the server (same document, same voice/speed), so
+      // previously cached parts can be served immediately when revisited.
+      sessionCounterRef.current += 1;
+      const sessionId = sessionCounterRef.current;
+
+      playerRef.current?.remove();
+      playerRef.current = null;
+      // Clear only in-flight promise refs — stale promises will reject on the
+      // next counter check, but we don't want them occupying the slot while
+      // the new playPartAt starts its own synthesis.
+      promisesRef.current.clear();
+
+      playPartAt(currentSession.parts, i, currentSession.voice, currentSession.speed, sessionId);
+    },
+    [playPartAt],
+  );
+
   const pause = useCallback(() => {
     playerRef.current?.pause();
     setPlaybackState('paused');
@@ -297,7 +330,7 @@ export function TtsProvider({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <TtsContext.Provider value={{ playbackState, session, index, play, applySettings, pause, resume, stop }}>
+    <TtsContext.Provider value={{ playbackState, session, index, play, applySettings, skipTo, pause, resume, stop }}>
       {children}
     </TtsContext.Provider>
   );
