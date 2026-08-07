@@ -1157,7 +1157,7 @@ export function BookTab({ workId }: { workId: string }) {
                       {c.word_count.toLocaleString()} w
                     </span>
                     <Link
-                      href={`/works/${workId}/intelligence`}
+                      href={`/works/${workId}/intelligence?chapter=${c.id}`}
                       className="text-[10px] font-mono shrink-0 px-1.5 py-0.5 rounded border hover:opacity-75 transition-opacity"
                       style={c.knowledge_count === 0
                         ? { color: "var(--rust)", background: "var(--rust-soft)", borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)" }

@@ -12,7 +12,7 @@
  *  • Knowledge header → "Rescore evidence" runs the evidence-rescore endpoint
  *  • Pipeline banner  → shows current stage + advance readiness
  */
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useParams, useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/auth";
@@ -110,7 +110,16 @@ export default function WorkIntelligence() {
   const { workId } = useParams<{ workId: string }>();
   const [, navigate] = useLocation();
   const queryClient  = useQueryClient();
-  const [open, setOpen] = useState<Set<string>>(new Set(["completeness", "gaps"]));
+
+  // Read ?chapter=<id> from the URL (set by the Book tab knowledge badge link).
+  // Parsed once on mount — we intentionally do NOT react to URL changes here
+  // so the expanded/scroll state is stable after the user interacts with the page.
+  const targetChapterId = new URLSearchParams(window.location.search).get("chapter") ?? undefined;
+  // Auto-open the "chapters" accordion when arriving from a badge link so the
+  // user doesn't have to manually expand it before the scroll lands.
+  const [open, setOpen] = useState<Set<string>>(
+    () => new Set(targetChapterId ? ["completeness", "gaps", "chapters"] : ["completeness", "gaps"]),
+  );
   const [lastRescored, setLastRescored] = useState<string | null>(null);
 
   const toggle = (s: string) =>
@@ -535,6 +544,7 @@ export default function WorkIntelligence() {
             baseApiUrl={BASE}
             onNavigate={navigate}
             libBase={LIB}
+            targetChapterId={targetChapterId}
           />
         </Section>
       )}
@@ -710,15 +720,34 @@ function ChapterKnowledgePanel({ workId, chapterId, baseApiUrl }: {
 }
 
 function ChapterList({
-  workId, chaptersData, baseApiUrl, onNavigate, libBase,
+  workId, chaptersData, baseApiUrl, onNavigate, libBase, targetChapterId,
 }: {
   workId: string;
   chaptersData: ChaptersResponse;
   baseApiUrl: string;
   onNavigate: (path: string) => void;
   libBase: string;
+  targetChapterId?: string;
 }) {
-  const [expandedChapters, setExpandedChapters] = useState<Set<string>>(new Set());
+  // Pre-expand the target chapter so its knowledge panel is visible on arrival.
+  const [expandedChapters, setExpandedChapters] = useState<Set<string>>(
+    () => (targetChapterId ? new Set([targetChapterId]) : new Set()),
+  );
+
+  // Ref map from chapter id → its wrapper div so we can scroll it into view.
+  const chapterRefs = useRef<Record<string, HTMLDivElement | null>>({});
+
+  // Scroll the target chapter into view once after first render.
+  useEffect(() => {
+    if (!targetChapterId) return;
+    const el = chapterRefs.current[targetChapterId];
+    if (!el) return;
+    // A short delay lets the browser finish laying out the expanded panel.
+    const timer = setTimeout(() => {
+      el.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 120);
+    return () => clearTimeout(timer);
+  }, [targetChapterId]);
 
   const toggleChapter = (id: string) =>
     setExpandedChapters(prev => {
@@ -761,7 +790,10 @@ function ChapterList({
                 const hasKnowledge = (ch.knowledge_count ?? 0) > 0;
                 const isMissing = ch.status === "missing";
                 return (
-                  <div key={ch.id}>
+                  <div
+                    key={ch.id}
+                    ref={(el) => { chapterRefs.current[ch.id] = el; }}
+                  >
                     {/* Chapter row */}
                     <div
                       className={`flex items-center gap-2 text-xs py-0.5 rounded px-1 -mx-1 group
