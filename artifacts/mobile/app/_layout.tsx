@@ -25,6 +25,10 @@ import {
   Inter_700Bold,
   useFonts,
 } from '@expo-google-fonts/inter';
+import {
+  Fraunces_600SemiBold,
+  Fraunces_700Bold,
+} from '@expo-google-fonts/fraunces';
 import { router, Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import * as Device from 'expo-device';
@@ -246,6 +250,8 @@ export default function RootLayout() {
     Inter_500Medium,
     Inter_600SemiBold,
     Inter_700Bold,
+    Fraunces_600SemiBold,
+    Fraunces_700Bold,
   });
   const [authState, setAuthState] = useState<AuthState>('loading');
   // Store the bearer token so push registration can authenticate with the server.
