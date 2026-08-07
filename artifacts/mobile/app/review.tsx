@@ -33,6 +33,10 @@ import { Feather } from '@expo/vector-icons';
 import { Stack, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useColors } from '@/hooks/useColors';
+import { useVellumTokens, alpha } from '@/lib/tokens';
+import { font } from '@/lib/typography';
+import { SkeletonItem } from '@/components/SkeletonItem';
+import { EmptyState } from '@/components/EmptyState';
 import { mobileFetch } from '@/lib/api';
 
 const SWIPE_THRESHOLD = 60;  // px to commit a swipe decision
@@ -63,16 +67,16 @@ interface QueueResponse {
 
 type ItemFilter = 'all' | ReviewItem['item_type'];
 
-// ── Type metadata ─────────────────────────────────────────────────────────────
-
-const TYPE_META: Record<
+// ── Type metadata — colors resolved at render time via useVellumTokens() ─────
+// Static fallback strings here are replaced inline in components.
+const TYPE_META_STATIC: Record<
   ReviewItem['item_type'],
-  { label: string; icon: string; color: string }
+  { label: string; icon: string }
 > = {
-  knowledge:  { label: 'AI knowledge', icon: 'star',    color: '#8b5cf6' },
-  reclassify: { label: 'Reclassify',   icon: 'tag',     color: '#f59e0b' },
-  suggestion: { label: 'Suggestion',   icon: 'zap',     color: '#0ea5e9' },
-  duplicate:  { label: 'Duplicate',    icon: 'copy',    color: '#f43f5e' },
+  knowledge:  { label: 'AI knowledge', icon: 'star'  },
+  reclassify: { label: 'Reclassify',   icon: 'tag'   },
+  suggestion: { label: 'Suggestion',   icon: 'zap'   },
+  duplicate:  { label: 'Duplicate',    icon: 'copy'  },
 };
 
 const FILTERS: { key: ItemFilter; label: string }[] = [
@@ -87,10 +91,11 @@ const FILTERS: { key: ItemFilter; label: string }[] = [
 
 function ConfidenceBar({ value }: { value: number | null }) {
   const colors = useColors();
+  const T = useVellumTokens();
   if (value == null) return null;
   const pct = Math.min(100, Math.max(0, Math.round(value * 100)));
   const barColor =
-    value < 0.5 ? '#ef4444' : value < 0.8 ? '#f59e0b' : '#22c55e';
+    value < 0.5 ? T.rust : value < 0.8 ? T.gilt : T.green;
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
       <View
@@ -111,7 +116,8 @@ function ConfidenceBar({ value }: { value: number | null }) {
       <Text
         style={{
           fontSize: 10,
-          fontFamily: 'Inter_500Medium',
+          lineHeight: 14,
+          ...font('medium'),
           color: colors.mutedForeground,
         }}
       >
@@ -155,9 +161,9 @@ function EvidenceLine({ item }: { item: ReviewItem }) {
     <Text
       style={{
         fontSize: 11,
-        fontFamily: 'Inter_400Regular',
-        color: colors.mutedForeground,
         lineHeight: 16,
+        ...font('regular'),
+        color: colors.mutedForeground,
       }}
       numberOfLines={2}
     >
@@ -176,8 +182,22 @@ function ReviewCard({
   onResolved: (id: string) => void;
 }) {
   const colors = useColors();
-  const meta = TYPE_META[item.item_type];
+  const T = useVellumTokens();
+  const meta = TYPE_META_STATIC[item.item_type];
   const isDupe = item.item_type === 'duplicate';
+
+  // Resolve token-based colors per type
+  const typeColor: string =
+    item.item_type === 'knowledge'  ? T.gilt :
+    item.item_type === 'reclassify' ? T.gilt :
+    item.item_type === 'suggestion' ? T.gilt :
+    /* duplicate */                   T.rust;
+
+  const typeColorSoft: string =
+    item.item_type === 'duplicate' ? T.rustSoft : T.giltSoft;
+
+  const typeColorLine: string =
+    item.item_type === 'duplicate' ? alpha(T.rust, 0.32) : T.giltLine;
 
   const [pending, setPending] = useState<
     'approve' | 'reject' | 'defer' | null
@@ -265,17 +285,17 @@ function ReviewCard({
   return (
     <View style={rvStyles.swipeContainer}>
       {/* ── Approve hint (revealed behind card when swiping right) ── */}
-      <Animated.View style={[rvStyles.swipeHintLeft, approveHintStyle]}>
-        <Feather name="thumbs-up" size={22} color="#22c55e" />
-        <Text style={{ fontSize: 12, fontFamily: 'Inter_700Bold', color: '#22c55e', marginTop: 3 }}>
+      <Animated.View style={[rvStyles.swipeHintLeft, { backgroundColor: T.greenSoft }, approveHintStyle]}>
+        <Feather name="thumbs-up" size={22} color={T.green} />
+        <Text style={{ fontSize: 12, lineHeight: 18, ...font('bold'), color: T.green, marginTop: 3 }}>
           Approve
         </Text>
       </Animated.View>
 
       {/* ── Reject hint (revealed behind card when swiping left) ── */}
-      <Animated.View style={[rvStyles.swipeHintRight, rejectHintStyle]}>
-        <Feather name="thumbs-down" size={22} color="#ef4444" />
-        <Text style={{ fontSize: 12, fontFamily: 'Inter_700Bold', color: '#ef4444', marginTop: 3 }}>
+      <Animated.View style={[rvStyles.swipeHintRight, { backgroundColor: T.rustSoft }, rejectHintStyle]}>
+        <Feather name="thumbs-down" size={22} color={T.rust} />
+        <Text style={{ fontSize: 12, lineHeight: 18, ...font('bold'), color: T.rust, marginTop: 3 }}>
           Reject
         </Text>
       </Animated.View>
@@ -288,7 +308,7 @@ function ReviewCard({
             {
               backgroundColor: colors.card,
               borderColor: colors.border,
-              borderLeftColor: meta.color,
+              borderLeftColor: typeColor,
             },
             cardAnimStyle,
           ]}
@@ -299,17 +319,18 @@ function ReviewCard({
               style={[
                 rvStyles.typeBadge,
                 {
-                  backgroundColor: meta.color + '20',
-                  borderColor: meta.color + '44',
+                  backgroundColor: typeColorSoft,
+                  borderColor: typeColorLine,
                 },
               ]}
             >
-              <Feather name={meta.icon as any} size={11} color={meta.color} />
+              <Feather name={meta.icon as any} size={11} color={typeColor} />
               <Text
                 style={{
                   fontSize: 11,
-                  fontFamily: 'Inter_500Medium',
-                  color: meta.color,
+                  lineHeight: 14,
+                  ...font('medium'),
+                  color: typeColor,
                 }}
               >
                 {meta.label}
@@ -350,7 +371,8 @@ function ReviewCard({
               <Text
                 style={{
                   fontSize: 11,
-                  fontFamily: 'Inter_400Regular',
+                  lineHeight: 14,
+                  ...font('regular'),
                   color: colors.mutedForeground,
                 }}
               >
@@ -368,6 +390,7 @@ function ReviewCard({
                   <Pressable
                     key={side}
                     onPress={() => setCanonical(id)}
+                    hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
                     style={[
                       rvStyles.canonicalBtn,
                       {
@@ -381,9 +404,8 @@ function ReviewCard({
                     <Text
                       style={{
                         fontSize: 11,
-                        fontFamily: selected
-                          ? 'Inter_600SemiBold'
-                          : 'Inter_400Regular',
+                        lineHeight: 14,
+                        ...font(selected ? 'semibold' : 'regular'),
                         color: selected ? colors.primary : colors.mutedForeground,
                       }}
                       numberOfLines={1}
@@ -405,8 +427,8 @@ function ReviewCard({
               style={({ pressed }) => [
                 rvStyles.actionBtn,
                 {
-                  borderColor: '#22c55e44',
-                  backgroundColor: pressed ? '#22c55e18' : '#22c55e0a',
+                  borderColor: alpha(T.green, 0.32),
+                  backgroundColor: pressed ? T.greenSoft : alpha(T.green, 0.06),
                   opacity: pending != null ? 0.55 : 1,
                 },
               ]}
@@ -414,17 +436,18 @@ function ReviewCard({
               {pending === 'approve' ? (
                 <ActivityIndicator
                   size="small"
-                  color="#22c55e"
+                  color={T.green}
                   style={{ transform: [{ scale: 0.65 }] }}
                 />
               ) : (
-                <Feather name="thumbs-up" size={13} color="#22c55e" />
+                <Feather name="thumbs-up" size={13} color={T.green} />
               )}
               <Text
                 style={{
                   fontSize: 12,
-                  fontFamily: 'Inter_600SemiBold',
-                  color: '#22c55e',
+                  lineHeight: 18,
+                  ...font('semibold'),
+                  color: T.green,
                 }}
               >
                 Approve
@@ -438,8 +461,8 @@ function ReviewCard({
               style={({ pressed }) => [
                 rvStyles.actionBtn,
                 {
-                  borderColor: '#ef444444',
-                  backgroundColor: pressed ? '#ef444418' : '#ef44440a',
+                  borderColor: alpha(T.rust, 0.32),
+                  backgroundColor: pressed ? T.rustSoft : alpha(T.rust, 0.06),
                   opacity: pending != null ? 0.55 : 1,
                 },
               ]}
@@ -447,17 +470,18 @@ function ReviewCard({
               {pending === 'reject' ? (
                 <ActivityIndicator
                   size="small"
-                  color="#ef4444"
+                  color={T.rust}
                   style={{ transform: [{ scale: 0.65 }] }}
                 />
               ) : (
-                <Feather name="thumbs-down" size={13} color="#ef4444" />
+                <Feather name="thumbs-down" size={13} color={T.rust} />
               )}
               <Text
                 style={{
                   fontSize: 12,
-                  fontFamily: 'Inter_600SemiBold',
-                  color: '#ef4444',
+                  lineHeight: 18,
+                  ...font('semibold'),
+                  color: T.rust,
                 }}
               >
                 Reject
@@ -489,7 +513,8 @@ function ReviewCard({
               <Text
                 style={{
                   fontSize: 12,
-                  fontFamily: 'Inter_500Medium',
+                  lineHeight: 18,
+                  ...font('medium'),
                   color: colors.mutedForeground,
                 }}
               >
@@ -507,9 +532,9 @@ function ReviewCard({
 
 export default function ReviewScreen() {
   const colors = useColors();
+  const T = useVellumTokens();
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const isWeb = Platform.OS === 'web';
 
   const [items, setItems] = useState<ReviewItem[]>([]);
   const [counts, setCounts] = useState<Record<string, number>>({});
@@ -577,8 +602,6 @@ export default function ReviewScreen() {
   const filtered =
     filter === 'all' ? workFiltered : workFiltered.filter(i => i.item_type === filter);
 
-  const topPad = isWeb ? 67 : 0;
-
   return (
     <View style={[rvStyles.container, { backgroundColor: colors.background }]}>
       <Stack.Screen options={{ headerShown: false }} />
@@ -588,7 +611,7 @@ export default function ReviewScreen() {
         style={[
           rvStyles.header,
           {
-            paddingTop: topPad + 12,
+            paddingTop: insets.top + 12,
             borderBottomColor: colors.border,
             backgroundColor: colors.background,
           },
@@ -597,10 +620,16 @@ export default function ReviewScreen() {
         {/* Back button — always shown so users can return from the nav sheet */}
         <Pressable
           onPress={() => (router.canGoBack() ? router.back() : router.replace('/'))}
-          hitSlop={10}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
           accessibilityLabel="Go back"
           accessibilityRole="button"
-          style={({ pressed }) => ({ opacity: pressed ? 0.5 : 1, marginRight: 4 })}
+          style={({ pressed }) => ({
+            opacity: pressed ? 0.5 : 1,
+            marginRight: 4,
+            minHeight: 44,
+            alignItems: 'center',
+            justifyContent: 'center',
+          })}
         >
           <Feather name="arrow-left" size={22} color={colors.foreground} />
         </Pressable>
@@ -621,7 +650,8 @@ export default function ReviewScreen() {
                 style={{
                   color: colors.primaryForeground,
                   fontSize: 11,
-                  fontFamily: 'Inter_700Bold',
+                  lineHeight: 14,
+                  ...font('bold'),
                 }}
               >
                 {totalCount > 99 ? '99+' : String(totalCount)}
@@ -632,9 +662,14 @@ export default function ReviewScreen() {
 
         <Pressable
           onPress={() => fetchQueue(true)}
-          hitSlop={10}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
           disabled={refreshing}
-          style={{ opacity: refreshing ? 0.45 : 1 }}
+          style={{
+            opacity: refreshing ? 0.45 : 1,
+            minHeight: 44,
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
         >
           <Feather name="refresh-cw" size={16} color={colors.mutedForeground} />
         </Pressable>
@@ -647,8 +682,9 @@ export default function ReviewScreen() {
         contentContainerStyle={{
           flexDirection: 'row',
           gap: 6,
-          paddingHorizontal: 12,
+          paddingHorizontal: 16,
           paddingVertical: 10,
+          alignItems: 'center',
         }}
         style={{
           borderBottomWidth: worksInQueue.length > 0 ? 0 : StyleSheet.hairlineWidth,
@@ -664,9 +700,11 @@ export default function ReviewScreen() {
             <Pressable
               key={f.key}
               onPress={() => setFilter(f.key)}
+              hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
               style={{
                 paddingHorizontal: 12,
-                paddingVertical: 6,
+                paddingVertical: 8,
+                minHeight: 36,
                 borderRadius: 8,
                 borderWidth: 1,
                 borderColor: active ? colors.primary : colors.border,
@@ -681,7 +719,8 @@ export default function ReviewScreen() {
               <Text
                 style={{
                   fontSize: 13,
-                  fontFamily: 'Inter_500Medium',
+                  lineHeight: 18,
+                  ...font('medium'),
                   color: active ? colors.primary : colors.mutedForeground,
                 }}
               >
@@ -691,7 +730,8 @@ export default function ReviewScreen() {
                 <Text
                   style={{
                     fontSize: 10,
-                    fontFamily: 'Inter_500Medium',
+                    lineHeight: 14,
+                    ...font('medium'),
                     color: active ? colors.primary : colors.mutedForeground,
                     opacity: 0.7,
                   }}
@@ -712,7 +752,7 @@ export default function ReviewScreen() {
           contentContainerStyle={{
             flexDirection: 'row',
             gap: 6,
-            paddingHorizontal: 12,
+            paddingHorizontal: 16,
             paddingVertical: 8,
             alignItems: 'center',
           }}
@@ -722,24 +762,29 @@ export default function ReviewScreen() {
             flexShrink: 0,
           }}
         >
-          <Text style={{ fontSize: 10, fontFamily: 'Inter_500Medium', color: colors.mutedForeground, marginRight: 2 }}>
+          <Text style={{ fontSize: 10, lineHeight: 14, ...font('medium'), color: colors.mutedForeground, marginRight: 2 }}>
             WORK
           </Text>
           {/* "All Works" chip */}
           <Pressable
             onPress={() => setWorkFilter(null)}
+            hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
             style={{
               paddingHorizontal: 10,
-              paddingVertical: 5,
+              paddingVertical: 6,
+              minHeight: 32,
               borderRadius: 8,
               borderWidth: 1,
               borderColor: workFilter === null ? colors.primary : colors.border,
               backgroundColor: workFilter === null ? colors.primary + '18' : 'transparent',
+              alignItems: 'center',
+              justifyContent: 'center',
             }}
           >
             <Text style={{
               fontSize: 12,
-              fontFamily: workFilter === null ? 'Inter_600SemiBold' : 'Inter_400Regular',
+              lineHeight: 16,
+              ...font(workFilter === null ? 'semibold' : 'regular'),
               color: workFilter === null ? colors.primary : colors.mutedForeground,
             }}>
               All
@@ -752,21 +797,26 @@ export default function ReviewScreen() {
               <Pressable
                 key={w.id}
                 onPress={() => setWorkFilter(w.id)}
+                hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
                 style={{
                   paddingHorizontal: 10,
-                  paddingVertical: 5,
+                  paddingVertical: 6,
+                  minHeight: 32,
                   borderRadius: 8,
                   borderWidth: 1,
                   borderColor: active ? colors.primary : colors.border,
                   backgroundColor: active ? colors.primary + '18' : 'transparent',
                   maxWidth: 160,
+                  alignItems: 'center',
+                  justifyContent: 'center',
                 }}
               >
                 <Text
                   numberOfLines={1}
                   style={{
                     fontSize: 12,
-                    fontFamily: active ? 'Inter_600SemiBold' : 'Inter_400Regular',
+                    lineHeight: 16,
+                    ...font(active ? 'semibold' : 'regular'),
                     color: active ? colors.primary : colors.mutedForeground,
                   }}
                 >
@@ -780,68 +830,48 @@ export default function ReviewScreen() {
 
       {/* Content */}
       {loading && items.length === 0 ? (
-        <View style={rvStyles.centered}>
-          <ActivityIndicator color={colors.primary} />
+        <View style={{ flex: 1, paddingTop: 8 }}>
+          {[...Array(4)].map((_, i) => (
+            <SkeletonItem key={i} lines={3} />
+          ))}
         </View>
       ) : fetchError && items.length === 0 ? (
         /* Distinct error state — never confuse a failed fetch with an empty queue */
         <View style={rvStyles.centered}>
           <Feather name="wifi-off" size={44} color={colors.mutedForeground} style={{ opacity: 0.55 }} />
-          <Text style={{ fontSize: 17, fontFamily: 'Inter_600SemiBold', color: colors.foreground, marginTop: 12 }}>
+          <Text style={{ fontSize: 17, lineHeight: 22, ...font('semibold'), color: colors.foreground, marginTop: 12 }}>
             Can't reach the server
           </Text>
-          <Text style={{ fontSize: 14, fontFamily: 'Inter_400Regular', color: colors.mutedForeground, textAlign: 'center', marginTop: 4, lineHeight: 20 }}>
+          <Text style={{ fontSize: 14, lineHeight: 20, ...font('regular'), color: colors.mutedForeground, textAlign: 'center', marginTop: 4 }}>
             Your review queue could not be loaded. Check that Orivellum is running and try again.
           </Text>
           <Pressable
             onPress={() => fetchQueue(true)}
             style={({ pressed }) => ({
               marginTop: 16, paddingHorizontal: 20, paddingVertical: 10,
+              minHeight: 44,
               borderRadius: 8, borderWidth: 1, borderColor: colors.border,
               backgroundColor: pressed ? colors.muted : 'transparent',
               flexDirection: 'row', alignItems: 'center', gap: 7,
             })}
           >
             <Feather name="refresh-cw" size={14} color={colors.foreground} />
-            <Text style={{ fontSize: 14, fontFamily: 'Inter_500Medium', color: colors.foreground }}>Retry</Text>
+            <Text style={{ fontSize: 14, lineHeight: 20, ...font('medium'), color: colors.foreground }}>Retry</Text>
           </Pressable>
         </View>
       ) : !fetchError && filtered.length === 0 ? (
         /* All-clear — only shown after a confirmed successful fetch with zero items */
-        <View style={rvStyles.centered}>
-          <Feather
-            name="check-circle"
-            size={48}
-            color="#22c55e"
-            style={{ opacity: 0.55 }}
-          />
-          <Text
-            style={{
-              fontSize: 17,
-              fontFamily: 'Inter_600SemiBold',
-              color: colors.foreground,
-              marginTop: 12,
-            }}
-          >
-            All clear
-          </Text>
-          <Text
-            style={{
-              fontSize: 14,
-              fontFamily: 'Inter_400Regular',
-              color: colors.mutedForeground,
-              textAlign: 'center',
-              marginTop: 4,
-              lineHeight: 20,
-            }}
-          >
-            {workFilter !== null
+        <EmptyState
+          icon="check-circle"
+          title="All caught up!"
+          body={
+            workFilter !== null
               ? 'No items for this Work need review.'
               : filter === 'all'
-              ? 'Nothing needs your review right now.'
-              : 'No items of this type need review.'}
-          </Text>
-        </View>
+              ? 'No items need your review right now.'
+              : 'No items of this type need review.'
+          }
+        />
       ) : (
         <FlatList
           data={filtered}
@@ -857,9 +887,10 @@ export default function ReviewScreen() {
             />
           }
           contentContainerStyle={{
-            padding: 12,
+            paddingHorizontal: 16,
+            paddingTop: 12,
             gap: 10,
-            paddingBottom: (isWeb ? 34 : insets.bottom) + 24,
+            paddingBottom: insets.bottom + 24,
           }}
           showsVerticalScrollIndicator={false}
           ItemSeparatorComponent={() => <View style={{ height: 2 }} />}
@@ -884,7 +915,8 @@ const rvStyles = StyleSheet.create({
   },
   pageTitle: {
     fontSize: 24,
-    fontFamily: 'Inter_700Bold',
+    lineHeight: 30,
+    ...font('bold'),
     letterSpacing: -0.3,
   },
   countBadge: {
@@ -928,13 +960,13 @@ const rvStyles = StyleSheet.create({
   },
   itemTitle: {
     fontSize: 14,
-    fontFamily: 'Inter_600SemiBold',
-    lineHeight: 19,
+    lineHeight: 20,
+    ...font('semibold'),
   },
   itemDesc: {
     fontSize: 13,
-    fontFamily: 'Inter_400Regular',
     lineHeight: 18,
+    ...font('regular'),
   },
 
   // Confidence
@@ -967,11 +999,12 @@ const rvStyles = StyleSheet.create({
     justifyContent: 'center',
     gap: 5,
     paddingHorizontal: 10,
-    paddingVertical: 8,
+    paddingVertical: 10,
     borderRadius: 8,
     borderWidth: 1,
     flex: 1,
     minWidth: 80,
+    minHeight: 44,
   },
 
   // Swipe gesture container + hint layers
@@ -986,7 +1019,6 @@ const rvStyles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    backgroundColor: '#22c55e18',
     alignItems: 'flex-start',
     justifyContent: 'center',
     paddingLeft: 20,
@@ -997,7 +1029,6 @@ const rvStyles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    backgroundColor: '#ef444418',
     alignItems: 'flex-end',
     justifyContent: 'center',
     paddingRight: 20,
