@@ -43,6 +43,7 @@ import {
   Pin, PinOff, Trash2, Plus, Download,
   ChevronRight, ChevronDown, Loader2, MoreHorizontal,
   BookOpen, MessageSquare, ImageIcon, X as XIcon,
+  PanelLeft,
 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -610,6 +611,10 @@ export default function WriteDeskPage() {
   const [saving, setSaving]       = useState(false);
   const [focusMode, setFocusMode] = useState(false);
   const [aiPanelOpen, setAiPanelOpen] = useState(true);
+  // mobileSidebarOpen: controls the slide-over on viewports < 640 px.
+  // Defaults to false — on narrow phones the sidebar auto-hides so the editor
+  // gets the full width without the user needing to find focus mode.
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const saveTimer                 = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { toast } = useToast();
   const [, navigate] = useLocation();
@@ -818,6 +823,19 @@ export default function WriteDeskPage() {
     return () => { vv.removeEventListener('resize', handleResize); };
   }, [editor]);
 
+  // ── Auto-collapse sidebar on narrow viewports (<640 px) ──────────────────
+  //
+  // When the user rotates to portrait or opens the page on a phone, close the
+  // sidebar so the editor has the full width.  Widening back to ≥640 px
+  // (tablet / desktop) does NOT re-open it — the user controls that threshold
+  // themselves — but the sidebar is always visible there via CSS (sm:translate-x-0).
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 639px)');
+    const close = (e: MediaQueryListEvent) => { if (e.matches) setMobileSidebarOpen(false); };
+    mq.addEventListener('change', close);
+    return () => mq.removeEventListener('change', close);
+  }, []);
+
   // ── Word count display ────────────────────────────────────────────────────
 
   const wordCount = editor?.storage.characterCount?.words() ?? 0;
@@ -827,17 +845,42 @@ export default function WriteDeskPage() {
 
   return (
     <div className="flex flex-1 min-h-0 overflow-hidden bg-background">
-      {/* Sidebar */}
+      {/* Sidebar — static on ≥sm (640 px); slide-over on narrow phones */}
       {!focusMode && (
-        <DocSidebar
-          docs={docs}
-          activeId={activeDoc?.id ?? null}
-          onSelect={handleSelectDoc}
-          onNew={handleNew}
-          onDelete={handleDelete}
-          onTogglePin={handleTogglePin}
-          loading={loading}
-        />
+        <>
+          {/* Tap-outside backdrop — mobile only */}
+          {mobileSidebarOpen && (
+            <div
+              className="fixed inset-0 z-20 bg-black/40 sm:hidden"
+              onClick={() => setMobileSidebarOpen(false)}
+              aria-hidden="true"
+            />
+          )}
+
+          {/*
+           * Positioning wrapper:
+           *   • mobile (<sm): fixed slide-in from the left, above content (z-30)
+           *   • desktop (≥sm): normal flex child, always visible
+           *
+           * The translate trick keeps the sidebar in the DOM so TipTap focus
+           * events aren't disrupted when toggling on desktop.
+           */}
+          <div className={[
+            'fixed sm:relative inset-y-0 left-0 z-30 sm:z-auto',
+            'transition-transform duration-200 ease-in-out',
+            mobileSidebarOpen ? 'translate-x-0' : '-translate-x-full sm:translate-x-0',
+          ].join(' ')}>
+            <DocSidebar
+              docs={docs}
+              activeId={activeDoc?.id ?? null}
+              onSelect={(id) => { handleSelectDoc(id); setMobileSidebarOpen(false); }}
+              onNew={() => { handleNew(); setMobileSidebarOpen(false); }}
+              onDelete={handleDelete}
+              onTogglePin={handleTogglePin}
+              loading={loading}
+            />
+          </div>
+        </>
       )}
 
       {/* Editor area */}
@@ -845,6 +888,22 @@ export default function WriteDeskPage() {
 
         {/* Header bar */}
         <div className="flex items-center gap-2 px-4 py-2 border-b border-border/50 bg-background/80 backdrop-blur-sm shrink-0">
+          {/* Documents list toggle — only visible on narrow phones (hidden on sm+) */}
+          {!focusMode && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  size="sm" variant="ghost"
+                  className="h-7 w-7 p-0 shrink-0 sm:hidden"
+                  onClick={() => setMobileSidebarOpen((v) => !v)}
+                  aria-label="Toggle document list"
+                >
+                  <PanelLeft className="w-3.5 h-3.5" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent className="text-xs">Documents</TooltipContent>
+            </Tooltip>
+          )}
           <Input
             value={title}
             onChange={(e) => setTitle(e.target.value)}
