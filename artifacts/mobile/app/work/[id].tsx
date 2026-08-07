@@ -4252,6 +4252,10 @@ function BookIntelTab({
                 <Pressable
                   key={ch.id ?? i}
                   delayLongPress={450}
+                  onPress={() => {
+                    if (Platform.OS !== 'web') Haptics.selectionAsync().catch(() => {});
+                    onDiscuss(`Help me with chapter: ${chTitle}`);
+                  }}
                   onLongPress={() => {
                     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
                     Alert.alert(
