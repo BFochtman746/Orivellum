@@ -1039,7 +1039,7 @@ export default function Library() {
                 <button
                   key={value}
                   onClick={() => setSearchMode(value)}
-                  className={`px-2.5 py-1 rounded text-xs font-mono transition-colors ${
+                  className={`px-2.5 py-1.5 rounded text-xs font-mono transition-colors min-h-[34px] touch-manipulation ${
                     searchMode === value
                       ? "bg-background shadow-sm text-foreground"
                       : "text-muted-foreground hover:text-foreground"
@@ -1205,9 +1205,10 @@ export default function Library() {
                 groups.push({ title: hasTopics ? "Unclassified" : "Unassigned", color: "text-muted-foreground", docs: unclassified });
               }
               if (groups.length === 0) return (
-                <div className="text-center py-20 bg-muted/10 border border-dashed rounded-lg">
-                  <LibraryIcon className="w-10 h-10 text-muted-foreground mx-auto mb-4 opacity-50" />
-                  <h3 className="text-lg font-serif font-medium">No documents found</h3>
+                <div className="vellum-card text-center py-16 px-8" style={{ border: '1px dashed var(--gilt-line)' }}>
+                  <LibraryIcon className="w-10 h-10 mx-auto mb-4" style={{ color: 'var(--ink-faint)', opacity: 0.5 }} />
+                  <div className="gilt-rule w-16 mx-auto mb-3" />
+                  <h3 className="text-lg font-serif font-medium text-balance">No documents found</h3>
                 </div>
               );
               return groups.map((group) => (
@@ -1235,7 +1236,9 @@ export default function Library() {
                         key={doc.id}
                         data-doc-id={doc.id}
                         onClick={() => navigate(`/library/${doc.id}`)}
-                        className={`transition-colors group cursor-pointer ${hasError ? "border-red-200/60" : "hover-elevate"}`}
+                        className={`vellum-card tap spring-scale group cursor-pointer ${hasError ? "" : ""}`}
+                        style={hasError ? { borderColor: 'var(--rust)', background: 'var(--rust-soft)' } : {}}
+                        data-interactive
                       >
                         <CardContent className="p-3 sm:p-4 flex items-center justify-between gap-4">
                           <div className="flex items-center gap-3 min-w-0">
@@ -1299,16 +1302,19 @@ export default function Library() {
                   key={doc.id}
                   data-doc-id={doc.id}
                   onClick={() => navigate(`/library/${doc.id}`)}
-                  className={`transition-colors group cursor-pointer ${hasError ? "border-red-200/60" : "hover-elevate"}`}
+                  className="vellum-card tap spring-scale group cursor-pointer"
+                  style={hasError ? { borderColor: 'var(--rust)', background: 'var(--rust-soft)' } : {}}
+                  data-interactive
                 >
                   <CardContent className="p-4 sm:p-5 flex flex-col sm:flex-row sm:items-start justify-between gap-4">
                     {/* Left: icon + meta */}
                     <div className="flex items-start gap-4 min-w-0">
-                      <div className={`w-9 h-9 rounded flex items-center justify-center shrink-0 border ${
-                        hasError ? "bg-red-50 border-red-200" : "bg-muted/50 border-border/50"
-                      }`}>
+                      <div className="w-9 h-9 rounded flex items-center justify-center shrink-0 border"
+                           style={hasError
+                             ? { background: 'var(--rust-soft)', borderColor: 'var(--rust)' }
+                             : { background: 'hsl(var(--muted) / 0.5)', borderColor: 'hsl(var(--border) / 0.5)' }}>
                         {hasError
-                          ? <AlertCircle className="w-4 h-4 text-red-500" />
+                          ? <AlertCircle className="w-4 h-4" style={{ color: 'var(--rust)' }} />
                           : <FileText className="w-4 h-4 text-muted-foreground group-hover:text-primary transition-colors" />
                         }
                       </div>
@@ -1335,13 +1341,15 @@ export default function Library() {
                             </span>
                           )}
                           {doc.meta?.zip_exploded && (
-                            <span className="text-[10px] text-amber-600 flex items-center gap-1 font-mono bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5">
+                            <span className="text-[10px] flex items-center gap-1 font-mono rounded px-1.5 py-0.5"
+                                  style={{ color: 'var(--gilt)', background: 'var(--gilt-soft)', border: '1px solid var(--gilt-line)' }}>
                               <Package className="w-2.5 h-2.5" />
                               {doc.meta.zip_child_count ?? "?"} docs inside
                             </span>
                           )}
                           {doc.meta?.from_zip && !doc.meta?.zip_exploded && (
-                            <span className="text-[10px] text-violet-600 flex items-center gap-1 font-mono bg-violet-50 border border-violet-200 rounded px-1.5 py-0.5">
+                            <span className="text-[10px] flex items-center gap-1 font-mono rounded px-1.5 py-0.5"
+                                  style={{ color: 'var(--t-artifact)', border: '1px solid var(--t-artifact)' }}>
                               <FolderOpen className="w-2.5 h-2.5" />
                               {doc.meta.zip_folder ? `${doc.meta.zip_folder}/` : "archive"}
                             </span>
@@ -1357,7 +1365,8 @@ export default function Library() {
 
                         {/* Error message */}
                         {hasError && doc.error_message && (
-                          <p className="mt-2 text-xs text-red-600 font-mono bg-red-50 border border-red-100 rounded px-2 py-1 break-all">
+                          <p className="mt-2 text-xs font-mono rounded px-2 py-1 break-all"
+                             style={{ color: 'var(--rust)', background: 'var(--rust-soft)', border: '1px solid var(--rust)' }}>
                             {doc.error_message}
                           </p>
                         )}
@@ -1429,10 +1438,11 @@ export default function Library() {
               );
             })
           ) : (
-            <div className="text-center py-20 bg-muted/10 border border-dashed rounded-lg">
-              <LibraryIcon className="w-10 h-10 text-muted-foreground mx-auto mb-4 opacity-50" />
-              <h3 className="text-lg font-serif font-medium">No documents found</h3>
-              <p className="text-muted-foreground mt-1 text-sm">
+            <div className="vellum-card text-center py-16 px-8" style={{ border: '1px dashed var(--gilt-line)' }}>
+              <LibraryIcon className="w-10 h-10 mx-auto mb-4" style={{ color: 'var(--ink-faint)', opacity: 0.5 }} />
+              <div className="gilt-rule w-16 mx-auto mb-3" />
+              <h3 className="text-lg font-serif font-medium text-balance">No documents found</h3>
+              <p className="mt-1 text-[13px] text-balance" style={{ color: 'var(--ink-soft)' }}>
                 {search
                   ? "No full-text matches for your query."
                   : "Import a PDF, DOCX, CSV, or text file to start building your library."}
