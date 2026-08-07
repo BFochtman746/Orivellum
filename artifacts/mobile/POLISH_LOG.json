@@ -1,0 +1,33 @@
+{
+  "_meta": {
+    "task": "Mobile UI Polish Pass — VELLUM design system, spatial design, color theory, 2026 best practices",
+    "started": "2026-08-07",
+    "references": {
+      "ios26_liquid_glass": "iOS 26 Liquid Glass: frosted specular glass on warm paper backgrounds; BlurView intensity 80-100, hairline specular border at top, warm tint overlay; degrades to solid on Android",
+      "editorial_typography": "Measure 50-65 chars/line; body 16px/24px lineHeight; heading 22-26px/1.2-1.25; caption 12px/18px; eyebrow 11px uppercase 0.08em tracking; Fraunces for editorial titles",
+      "micro_interactions": "Spring tension:200 friction:20 for appear (slight overshoot); 160ms ease-in for dismiss; tap: opacity 0.65-0.75 in 80ms; state change 150ms ease-in-out",
+      "empty_skeleton_states": "Skeleton shimmer 900ms opacity 0.35→0.65 loop; EmptyState: 56px icon circle + 18px headline + 14px body + 44px CTA button; all centered",
+      "touch_targets": "minHeight 44pt on all interactive rows; hitSlop {top:10, bottom:10, left:10, right:10} for icon-only buttons; disabled opacity: 0.38",
+      "safe_area_spacing": "useSafeAreaInsets() on every screen; header = insets.top + 56; bottom content = insets.bottom + 24; screen gutter 16px horizontal"
+    },
+    "sharedComponents": [
+      "artifacts/mobile/components/SkeletonItem.tsx",
+      "artifacts/mobile/components/EmptyState.tsx"
+    ]
+  },
+  "screens": {
+    "Home":        { "status": "pending", "file": "app/(tabs)/index.tsx" },
+    "Chat":        { "status": "pending", "file": "app/(tabs)/conversations.tsx + app/chat/[id].tsx" },
+    "Library":     { "status": "pending", "file": "app/(tabs)/library.tsx" },
+    "Works":       { "status": "pending", "file": "app/(tabs)/works.tsx" },
+    "BookDetail":  { "status": "pending", "file": "app/work/[id].tsx" },
+    "Learn":       { "status": "pending", "file": "app/(tabs)/learn.tsx" },
+    "Intake":      { "status": "pending", "file": "app/(tabs)/intake.tsx" },
+    "Studio":      { "status": "pending", "file": "app/studio.tsx" },
+    "Graph":       { "status": "pending", "file": "app/graph.tsx" },
+    "Recall":      { "status": "pending", "file": "app/memory.tsx" },
+    "Review":      { "status": "pending", "file": "app/review.tsx" },
+    "Settings":    { "status": "pending", "file": "app/system.tsx" }
+  },
+  "deferred": []
+}
