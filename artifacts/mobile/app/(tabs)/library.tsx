@@ -1,5 +1,6 @@
 import React, { useMemo, useRef, useState, useEffect } from 'react';
 import { mobileFetch } from '@/lib/api';
+import { getApiToken } from '@/lib/token';
 import { readCache, writeCache } from '@/lib/cache';
 import {
   ActivityIndicator,
@@ -213,18 +214,38 @@ export default function LibraryScreen() {
       for (let i = 0; i < assets.length; i++) {
         const asset = assets[i];
         setUploadIndex(i + 1);
-        // Show 10–90 % per file so the bar always moves forward.
-        setUploadProgress(10 + Math.round((i / assets.length) * 80));
+        // Reset to 0 for each file so the bar sweeps 0→100% per file.
+        setUploadProgress(0);
 
         try {
           const form = new FormData();
           form.append('file', { uri: asset.uri, name: asset.name, type: asset.mimeType ?? 'application/octet-stream' } as any);
           if (uploadWorkId) form.append('work_id', uploadWorkId);
 
-          const resp = await mobileFetch(`https://${domain}/api/library/upload`, {
-            method: 'POST',
-            body: form as any,
-          });
+          // Use XHR so upload.onprogress fires with real byte counts.
+          const resp = await new Promise<{ ok: boolean; status: number; json: () => Promise<any> }>(
+            (resolve, reject) => {
+              const xhr = new XMLHttpRequest();
+              xhr.upload.onprogress = (e) => {
+                if (e.lengthComputable) {
+                  setUploadProgress(Math.round((e.loaded / e.total) * 100));
+                }
+              };
+              xhr.onload = () => {
+                const text = xhr.responseText;
+                resolve({
+                  ok: xhr.status >= 200 && xhr.status < 300,
+                  status: xhr.status,
+                  json: () => { try { return Promise.resolve(JSON.parse(text)); } catch { return Promise.resolve({}); } },
+                });
+              };
+              xhr.onerror = () => reject(new Error('Network error during upload'));
+              xhr.open('POST', `https://${domain}/api/library/upload`);
+              const token = getApiToken();
+              if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+              xhr.send(form as any);
+            }
+          );
 
           if (!resp.ok) {
             const err = await resp.json().catch(() => ({}));
