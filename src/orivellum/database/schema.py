@@ -1721,4 +1721,28 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         INSERT INTO user_memory_fts(rowid, key, value, memory_id)
         SELECT rowid, key, value, id FROM user_memory
     """),
+
+    # v102 — Knowledge retrieval log for cold-item detection
+    # Tracks every knowledge item that was actually injected into a chat context
+    # (by _build_system_prompt).  Nightshift pass cold_item_detection uses this
+    # to surface items that have never been retrieved, or not retrieved in the
+    # last 60 days, as governance suggestions for user review.
+    #
+    # Design constraints:
+    #   - Inserts are fire-and-forget (background thread) — never block chat.
+    #   - ON DELETE CASCADE on both FKs: removing a conversation or knowledge
+    #     item automatically prunes its retrieval rows.
+    #   - Indexes on knowledge_id + retrieved_at support the nightshift GROUP BY
+    #     query efficiently without a full table scan.
+    (102, "Knowledge retrieval log for cold-item detection", """
+        CREATE TABLE IF NOT EXISTS knowledge_retrievals (
+            id           TEXT PRIMARY KEY,
+            knowledge_id TEXT NOT NULL REFERENCES knowledge(id) ON DELETE CASCADE,
+            conv_id      TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+            retrieved_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS kr_knowledge_id  ON knowledge_retrievals(knowledge_id);
+        CREATE INDEX IF NOT EXISTS kr_conv_id       ON knowledge_retrievals(conv_id);
+        CREATE INDEX IF NOT EXISTS kr_retrieved_at  ON knowledge_retrievals(retrieved_at);
+    """),
 ]

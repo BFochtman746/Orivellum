@@ -1435,6 +1435,154 @@ def _pass_knowledge_semantic_dedup(db: "OrivellumDB", report: list[str]) -> None
         )
 
 
+def _pass_cold_item_detection(db: "OrivellumDB", report: list[str]) -> None:
+    """Surface knowledge items that have never been injected into chat, or not
+    injected in the last 60 days, as ``cold_knowledge_item`` governance
+    suggestions so the user can decide whether to keep, archive, or delete them.
+
+    Cold criteria
+    -------------
+    A knowledge item is considered cold when ALL of the following hold:
+    - ``review_status`` is not ``rejected`` or ``superseded_duplicate``
+      (already-retired items are already out of the active index).
+    - It was created more than 30 days ago (newly imported items get a grace
+      period before they can be flagged cold).
+    - It has *no row* in ``knowledge_retrievals`` at all (never injected), OR
+      its most-recent retrieval row is older than 60 days.
+
+    Does **not** auto-delete or change ``review_status`` — only inserts a
+    suggestion of kind ``cold_knowledge_item``.  Existing suggestions for the
+    same item are skipped (idempotent).
+
+    Gates
+    -----
+    - Silently no-ops when the ``knowledge_retrievals`` table does not exist
+      yet (old schema before v102).  This prevents nightshift from crashing on
+      instances that have not yet run the migration.
+    """
+    import json as _json
+    import uuid as _uuid_mod
+    import datetime as _dt
+
+    _COLD_THRESHOLD_DAYS      = 60   # days since last retrieval → cold
+    _NEW_ITEM_GRACE_DAYS      = 30   # items younger than this are never flagged
+    _MAX_SUGGESTIONS_PER_RUN  = 200  # cap to avoid suggestion flood on first run
+
+    # Gate: knowledge_retrievals table must exist (schema v102+)
+    try:
+        with db._lock:
+            db._conn.execute(
+                "SELECT 1 FROM knowledge_retrievals LIMIT 1"
+            ).fetchone()
+    except Exception as _exc:
+        logger.debug(
+            "Cold-item detection: knowledge_retrievals table not available (%s)", _exc
+        )
+        report.append("Cold-item detection: skipped (schema v102+ not yet applied)")
+        return
+
+    try:
+        now_iso = _dt.datetime.now(_dt.timezone.utc).isoformat()
+        cutoff_new = (
+            _dt.datetime.now(_dt.timezone.utc)
+            - _dt.timedelta(days=_NEW_ITEM_GRACE_DAYS)
+        ).isoformat()
+        cutoff_cold = (
+            _dt.datetime.now(_dt.timezone.utc)
+            - _dt.timedelta(days=_COLD_THRESHOLD_DAYS)
+        ).isoformat()
+
+        with db._lock:
+            # Find cold items: created before grace-period cutoff; either never
+            # retrieved or last retrieved before the cold threshold.
+            cold_rows = db._conn.execute(
+                """SELECT k.id, k.work_id, k.text, k.kind,
+                          MAX(kr.retrieved_at) AS last_retrieved
+                   FROM knowledge k
+                   LEFT JOIN knowledge_retrievals kr ON kr.knowledge_id = k.id
+                   WHERE k.review_status NOT IN ('rejected', 'superseded_duplicate')
+                     AND k.created_at < ?
+                   GROUP BY k.id
+                   HAVING last_retrieved IS NULL OR last_retrieved < ?
+                   ORDER BY last_retrieved ASC NULLS FIRST, k.created_at ASC
+                   LIMIT ?""",
+                (cutoff_new, cutoff_cold, _MAX_SUGGESTIONS_PER_RUN * 4),
+            ).fetchall()
+
+        if not cold_rows:
+            report.append("Cold-item detection: no cold knowledge items found")
+            return
+
+        # Build set of items that already have a pending cold suggestion so we
+        # don't duplicate-insert (idempotent).
+        with db._lock:
+            existing_raw = db._conn.execute(
+                """SELECT json_extract(meta, '$.knowledge_id') AS kid
+                   FROM suggestions
+                   WHERE kind = 'cold_knowledge_item'"""
+            ).fetchall()
+        existing_kids: set[str] = {r["kid"] for r in existing_raw if r["kid"]}
+
+        inserts: list[tuple] = []
+        count = 0
+        for row in cold_rows:
+            if count >= _MAX_SUGGESTIONS_PER_RUN:
+                break
+            kid = row["id"]
+            if kid in existing_kids:
+                continue
+            last_ret = row["last_retrieved"]
+            if last_ret:
+                age_label = f"last used {last_ret[:10]}"
+            else:
+                age_label = "never used in chat"
+            snippet = (row["text"] or "")[:120].strip()
+            meta_payload = _json.dumps({
+                "knowledge_id": kid,
+                "last_retrieved": last_ret,
+                "kind": row["kind"] or "note",
+                "snippet": snippet,
+            })
+            inserts.append((
+                str(_uuid_mod.uuid4()),
+                row["work_id"],
+                "cold_knowledge_item",
+                (
+                    f"Knowledge item has not been used in chat ({age_label}). "
+                    f"Consider keeping, archiving, or deleting: \"{snippet}\""
+                    if snippet else
+                    f"Knowledge item has not been used in chat ({age_label})."
+                ),
+                meta_payload,
+                now_iso,
+            ))
+            count += 1
+
+        if inserts:
+            with db._lock:
+                db._conn.executemany(
+                    """INSERT INTO suggestions
+                       (id, work_id, kind, text, meta, created_at)
+                       VALUES (?, ?, ?, ?, ?, ?)""",
+                    inserts,
+                )
+                db._conn.commit()
+
+        report.append(
+            f"Cold-item detection: {len(inserts)} new cold item(s) flagged for review"
+            if inserts
+            else "Cold-item detection: all cold items already have suggestions"
+        )
+        if inserts:
+            logger.info(
+                "Nightshift cold-item detection: %d new suggestion(s) inserted", len(inserts)
+            )
+
+    except Exception as exc:
+        logger.warning("Cold-item detection pass failed (non-fatal): %s", exc)
+        report.append(f"Cold-item detection: failed — {exc}")
+
+
 def _run_nightshift_passes(db: "OrivellumDB", cfg: "OrivellumConfig") -> None:
     date_str = datetime.now().strftime("%Y-%m-%d")
     start_ts = time.time()
@@ -1598,6 +1746,16 @@ def _run_nightshift_passes(db: "OrivellumDB", cfg: "OrivellumConfig") -> None:
     except Exception as _ksdex:
         logger.warning("Knowledge semantic dedup pass failed (non-fatal): %s", _ksdex)
         report.append(f"Knowledge semantic dedup: failed — {_ksdex}")
+
+    # 18 — Cold-item detection (knowledge items never used or unused ≥ 60 days)
+    # Reads knowledge_retrievals (schema v102) to find dead facts and surfaces
+    # them as governance suggestions.  Does NOT auto-delete.
+    logger.info("Nightshift pass 18: cold-item detection")
+    try:
+        _pass_cold_item_detection(db, report)
+    except Exception as _cidex:
+        logger.warning("Cold-item detection pass failed (non-fatal): %s", _cidex)
+        report.append(f"Cold-item detection: failed — {_cidex}")
 
     elapsed = time.time() - start_ts
     report.append(f"Completed in {elapsed:.0f}s")

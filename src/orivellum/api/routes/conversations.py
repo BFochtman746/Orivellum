@@ -78,6 +78,51 @@ def estimate_tokens(text: str) -> int:
     return max(0, len(text) // _CHARS_PER_TOKEN)
 
 
+def _log_knowledge_retrievals(db: Any, conv_id: str,
+                               knowledge_items: list[dict]) -> None:
+    """Fire-and-forget: record each knowledge item that was injected into chat.
+
+    Runs in a background daemon thread so it never adds latency to the chat
+    response path.  Failures are logged at DEBUG level and swallowed — this is
+    a best-effort observability log, not a critical write path.
+
+    The knowledge_retrievals table (schema v102) is used by the nightshift
+    cold-item detection pass to identify facts that have never been surfaced
+    in chat, or not surfaced in the last 60 days, so the user can decide
+    whether to keep, archive, or delete them.
+    """
+    if not knowledge_items or not conv_id:
+        return
+    ids = [item["id"] for item in knowledge_items if item.get("id")]
+    if not ids:
+        return
+
+    import threading as _threading
+    import uuid as _uuid_mod
+    import datetime as _dt
+
+    def _worker() -> None:
+        try:
+            now = _dt.datetime.now(_dt.timezone.utc).isoformat()
+            rows = [
+                (str(_uuid_mod.uuid4()), kid, conv_id, now)
+                for kid in ids
+            ]
+            with db._lock:
+                db._conn.executemany(
+                    "INSERT INTO knowledge_retrievals"
+                    " (id, knowledge_id, conv_id, retrieved_at)"
+                    " VALUES (?, ?, ?, ?)",
+                    rows,
+                )
+                db._conn.commit()
+        except Exception as _exc:
+            logger.debug("knowledge_retrievals log failed (non-fatal): %s", _exc)
+
+    t = _threading.Thread(target=_worker, name="kr-log", daemon=True)
+    t.start()
+
+
 def _get_effective_context_window(db: Any) -> int:
     """Return the effective context-window size (tokens) for this request.
 
@@ -1782,6 +1827,8 @@ def _build_system_prompt(db: Any, conv: dict, scope: str = "work",
                             })
 
                     _fknowledge_section = "\n".join(_fparts)
+                    # Log which knowledge items were injected (fire-and-forget)
+                    _log_knowledge_retrievals(db, conv.get("id", ""), _trusted_fk)
                     _fout = [base]
                     if claim_block:
                         _fout.append(claim_block)
@@ -1962,6 +2009,9 @@ def _build_system_prompt(db: Any, conv: dict, scope: str = "work",
                 _c_used += _t
 
             if trusted_k or trusted_c:
+                # Log which knowledge items were injected (fire-and-forget)
+                if trusted_k:
+                    _log_knowledge_retrievals(db, conv.get("id", ""), trusted_k)
                 # Group by work so the AI sees topics clearly
                 by_work: dict[str, dict] = {}
                 work_title_cache: dict[str, str] = {}
@@ -2169,6 +2219,8 @@ def _build_system_prompt(db: Any, conv: dict, scope: str = "work",
             context_parts.append(f"  [{kind}] {text[:400]}")
 
     knowledge_section = "\n".join(context_parts)
+    # Log which knowledge items were injected (fire-and-forget)
+    _log_knowledge_retrievals(db, conv.get("id", ""), knowledge)
     parts = [base]
     if claim_block:
         parts.append(claim_block)
