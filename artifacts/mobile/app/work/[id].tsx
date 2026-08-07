@@ -5694,7 +5694,7 @@ export default function WorkDetailScreen() {
                   refetchDocs();
                 } catch { /* non-fatal */ }
               }} />}
-              contentContainerStyle={styles.listPad}
+              contentContainerStyle={[styles.listPad, { paddingBottom: insets.bottom + 24 }]}
               refreshControl={
                 <RefreshControl refreshing={docsLoading} onRefresh={refetchDocs} tintColor={colors.primary} />
               }
@@ -5769,7 +5769,7 @@ export default function WorkDetailScreen() {
                   onDelete={() => handleDeleteKnowledge((item as any).id)}
                 />
               )}
-              contentContainerStyle={styles.listPad}
+              contentContainerStyle={[styles.listPad, { paddingBottom: insets.bottom + 24 }]}
               refreshControl={
                 <RefreshControl refreshing={knLoading} onRefresh={refetchKn} tintColor={colors.primary} />
               }
@@ -5873,17 +5873,18 @@ export default function WorkDetailScreen() {
                   onToggle={() => handleToggleTask((item as any).id, (item as any).status)}
                 />
               )}
-              contentContainerStyle={styles.listPad}
+              contentContainerStyle={[styles.listPad, { paddingBottom: insets.bottom + 24 }]}
               refreshControl={
                 <RefreshControl refreshing={tasksLoading} onRefresh={refetchTasks} tintColor={colors.primary} />
               }
               ListEmptyComponent={
-                <View style={styles.centered}>
-                  <Feather name="check-square" size={36} color={colors.mutedForeground} />
-                  <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
-                    {taskSearch.trim() ? `No tasks matching "${taskSearch}"` : 'No tasks yet — add one above'}
-                  </Text>
-                </View>
+                tasksLoading
+                  ? <>{[...Array(5)].map((_, i) => <SkeletonItem key={i} lines={2} />)}</>
+                  : <EmptyState
+                      icon="check-square"
+                      title={taskSearch.trim() ? `No tasks matching "${taskSearch}"` : 'No tasks yet'}
+                      body={taskSearch.trim() ? 'Try a different search term.' : 'Add a task using the input above.'}
+                    />
               }
             />
           </>
@@ -6016,7 +6017,7 @@ export default function WorkDetailScreen() {
                   onArchive={handleArchiveConv}
                 />
               )}
-              contentContainerStyle={styles.listPad}
+              contentContainerStyle={[styles.listPad, { paddingBottom: insets.bottom + 24 }]}
               refreshControl={
                 <RefreshControl refreshing={convsLoading} onRefresh={refetchConvs} tintColor={colors.primary} />
               }
@@ -6030,10 +6031,9 @@ export default function WorkDetailScreen() {
                 </Pressable>
               }
               ListEmptyComponent={
-                <View style={styles.centered}>
-                  <Feather name="message-circle" size={36} color={colors.mutedForeground} />
-                  <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>No conversations yet</Text>
-                </View>
+                convsLoading
+                  ? <>{[...Array(5)].map((_, i) => <SkeletonItem key={i} lines={2} />)}</>
+                  : <EmptyState icon="message-circle" title="No conversations yet" body="Start a discussion to begin chatting about this Work." />
               }
             />
             {/* Undo archive toast */}
@@ -6327,7 +6327,7 @@ const styles = StyleSheet.create({
     width: 38, height: 38, borderRadius: 8,
     alignItems: 'center', justifyContent: 'center',
   },
-  listPad: { padding: 16, paddingBottom: 80 },
+  listPad: { paddingHorizontal: 16, paddingTop: 8, paddingBottom: 32 },
   description: { fontSize: 15, fontFamily: 'Inter_400Regular', lineHeight: 22, marginBottom: 20 },
   infoGrid: { borderWidth: 1, borderRadius: 6, overflow: 'hidden' },
   infoRow: {
@@ -6369,6 +6369,7 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     borderRadius: 8,
     borderWidth: 1,
+    minHeight: 44,
   },
   newChatBtnText: { fontSize: 13, fontFamily: 'Inter_600SemiBold', color: '#fff' },
   // Start Discussion button
@@ -6389,6 +6390,9 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     borderRadius: 8,
     borderWidth: 1,
+    minHeight: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   statusBadge: {
     borderRadius: 4,

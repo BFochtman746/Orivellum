@@ -2942,7 +2942,7 @@ function WorkshopPanel() {
               <Text style={{
                 color: critique ? colors.foreground : colors.mutedForeground,
                 fontSize: 13,
-                fontFamily: 'Inter_400Regular',
+                ...font('regular'),
                 lineHeight: 19,
                 padding: 12,
               }}>
@@ -3972,7 +3972,7 @@ const wsStyles = StyleSheet.create({
   },
   answerInput: {
     borderWidth: 1, borderRadius: 8, padding: 10,
-    fontSize: 13, fontFamily: 'Inter_400Regular',
+    fontSize: 13, ...font('regular'),
     minHeight: 52, textAlignVertical: 'top',
   },
   tabBar: {
@@ -4335,7 +4335,7 @@ function SavedFileRow({
           style={{ alignItems: 'center', gap: 3, paddingHorizontal: 10 }}
         >
           <Feather name="trash-2" size={16} color="#fff" />
-          <Text style={{ color: '#fff', fontSize: 10, fontFamily: 'Inter_500Medium' }}>Delete</Text>
+          <Text style={{ color: '#fff', fontSize: 10, ...font('medium') }}>Delete</Text>
         </Pressable>
       </View>
 
