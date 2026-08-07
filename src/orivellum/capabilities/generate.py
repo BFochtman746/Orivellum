@@ -869,3 +869,257 @@ def bundle_files(
     doc_id = _register_output(fpath, work_id, db, cfg, "bundle", title_out, text)
     logger.info("Generated ZIP bundle: %s → doc %s", fpath.name, doc_id)
     return fpath, doc_id
+
+
+# ── Prompt-driven generation ───────────────────────────────────────────────────
+
+def _build_docx_from_data(data: dict, out_path: Path) -> str:
+    """Create a DOCX from LLM-structured JSON and return plain-text content."""
+    from docx import Document as _Doc
+    from docx.shared import Pt, RGBColor
+
+    doc = _Doc()
+
+    title = data.get("title", "Document")
+    doc.add_heading(title, level=0)
+    text_parts = [title]
+
+    for section in data.get("sections", []):
+        heading = section.get("heading", "")
+        if heading:
+            doc.add_heading(heading, level=1)
+            text_parts.append(heading)
+        for para in section.get("paragraphs", []):
+            if str(para).strip():
+                doc.add_paragraph(str(para))
+                text_parts.append(str(para))
+
+    doc.save(str(out_path))
+    return "\n\n".join(text_parts)
+
+
+def _build_pdf_from_data(data: dict, out_path: Path) -> str:
+    """Create a PDF from LLM-structured JSON and return plain-text content."""
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.lib.units import cm
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+
+    doc = SimpleDocTemplate(
+        str(out_path), pagesize=A4,
+        leftMargin=2.5 * cm, rightMargin=2.5 * cm,
+        topMargin=2.5 * cm, bottomMargin=2.5 * cm,
+    )
+    styles = getSampleStyleSheet()
+    story = []
+    text_parts = []
+
+    title = data.get("title", "Document")
+    story.append(Paragraph(title, styles["Title"]))
+    story.append(Spacer(1, 0.5 * cm))
+    text_parts.append(title)
+
+    for section in data.get("sections", []):
+        heading = section.get("heading", "")
+        if heading:
+            story.append(Paragraph(heading, styles["Heading1"]))
+            story.append(Spacer(1, 0.2 * cm))
+            text_parts.append(heading)
+        for para in section.get("paragraphs", []):
+            if str(para).strip():
+                story.append(Paragraph(str(para).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"), styles["BodyText"]))
+                story.append(Spacer(1, 0.15 * cm))
+                text_parts.append(str(para))
+
+    doc.build(story)
+    return "\n\n".join(text_parts)
+
+
+def _build_pptx_from_data(data: dict, out_path: Path) -> str:
+    """Create a PPTX from LLM-structured JSON and return plain-text content."""
+    from pptx import Presentation
+    from pptx.util import Inches, Pt, Emu
+    from pptx.dml.color import RGBColor
+
+    prs = Presentation()
+    prs.slide_width  = Inches(13.33)
+    prs.slide_height = Inches(7.5)
+
+    text_parts = []
+    title_str    = str(data.get("title", "Presentation"))
+    subtitle_str = str(data.get("subtitle", ""))
+
+    # ── Title slide ──
+    slide = prs.slides.add_slide(prs.slide_layouts[0])
+    slide.shapes.title.text = title_str
+    try:
+        slide.placeholders[1].text = subtitle_str
+    except Exception:
+        pass
+    text_parts += [title_str, subtitle_str]
+
+    # ── Content slides ──
+    for s in data.get("slides", []):
+        slide = prs.slides.add_slide(prs.slide_layouts[1])
+        slide_title = str(s.get("title", ""))
+        slide.shapes.title.text = slide_title
+        text_parts.append(slide_title)
+
+        try:
+            tf = slide.placeholders[1].text_frame
+            tf.clear()
+            bullets = s.get("bullets", [])
+            for i, bullet in enumerate(bullets):
+                p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
+                p.text = str(bullet)
+                p.level = 0
+                text_parts.append(str(bullet))
+        except Exception:
+            pass
+
+        notes = str(s.get("speaker_notes", ""))
+        if notes:
+            slide.notes_slide.notes_text_frame.text = notes
+
+    prs.save(str(out_path))
+    return "\n\n".join(t for t in text_parts if t)
+
+
+def _build_xlsx_from_data(data: dict, out_path: Path) -> str:
+    """Create an XLSX from LLM-structured JSON and return plain-text content."""
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment
+
+    wb = openpyxl.Workbook()
+    default_ws = wb.active
+    if default_ws:
+        wb.remove(default_ws)
+
+    text_parts = [str(data.get("title", "Spreadsheet"))]
+
+    for sheet_data in data.get("sheets", []):
+        name = str(sheet_data.get("name", "Sheet"))[:31]
+        ws = wb.create_sheet(title=name)
+
+        headers = sheet_data.get("headers", [])
+        if headers:
+            for col, h in enumerate(headers, 1):
+                cell = ws.cell(row=1, column=col, value=str(h))
+                cell.font = Font(bold=True, color="FFFFFF")
+                cell.fill = PatternFill("solid", fgColor="1E293B")
+                cell.alignment = Alignment(horizontal="center")
+            text_parts.extend(str(h) for h in headers)
+
+        for row_i, row in enumerate(sheet_data.get("rows", []), 2):
+            for col_i, val in enumerate(row, 1):
+                # Preserve numeric types; convert everything else to string
+                if isinstance(val, (int, float)):
+                    ws.cell(row=row_i, column=col_i, value=val)
+                else:
+                    ws.cell(row=row_i, column=col_i, value=str(val) if val is not None else "")
+
+        summary = str(sheet_data.get("summary", ""))
+        if summary:
+            text_parts.append(summary)
+
+    if not wb.sheetnames:
+        wb.create_sheet("Sheet1")
+
+    wb.save(str(out_path))
+    return "\n".join(text_parts)
+
+
+def generate_from_prompt(
+    prompt: str,
+    format: str,
+    filename: "str | None",
+    work_id: "str | None",
+    db: "OrivellumDB",
+    cfg: "OrivellumConfig",
+) -> "tuple[Path, str]":
+    """Generate a document from a free-form text prompt using the LLM.
+
+    Steps:
+    1. Ask the LLM to produce structured JSON content for the requested format.
+    2. Build the actual file with the appropriate library.
+    3. Register it in the library (ARTIFACT tier) and return (path, doc_id).
+    """
+    import json, re
+
+    from orivellum.capabilities.llm import llm_call
+
+    fmt = format.lower().strip(".")
+    if fmt not in ("docx", "pdf", "pptx", "xlsx"):
+        raise ValueError(f"Unsupported format {fmt!r} — use docx, pdf, pptx, or xlsx")
+
+    scope = work_id or "chat"
+    out_dir = Path(cfg.data_dir) / "outputs" / "generate" / scope
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    stem = _slug(filename.rsplit(".", 1)[0] if filename else prompt[:60]) or "document"
+    out_path = out_dir / f"{stem}_{_now_label()}.{fmt}"
+
+    # ── Format-specific system prompt ──
+    if fmt in ("docx", "pdf"):
+        system = (
+            "You are a professional writer. Generate rich, well-structured document content "
+            "based on the user's request. Return ONLY valid JSON — no markdown fences, no prose "
+            "outside the JSON object:\n"
+            '{"title":"...","sections":[{"heading":"...","paragraphs":["...","..."]}]}'
+        )
+    elif fmt == "pptx":
+        system = (
+            "You are a presentation designer. Generate engaging PowerPoint content. "
+            "Return ONLY valid JSON — no markdown fences, no prose outside the JSON object:\n"
+            '{"title":"...","subtitle":"...","slides":[{"title":"...","bullets":["..."],'
+            '"speaker_notes":"..."}]}\n'
+            "Aim for 6-12 slides, 3-5 bullets each."
+        )
+    else:  # xlsx
+        system = (
+            "You are a data analyst. Generate spreadsheet data based on the user's request. "
+            "Return ONLY valid JSON — no markdown fences, no prose outside the JSON object:\n"
+            '{"title":"...","sheets":[{"name":"...","headers":["Col1","Col2"],'
+            '"rows":[["val1","val2"]],"summary":"..."}]}'
+        )
+
+    result = llm_call(
+        messages=[
+            {"role": "system",  "content": system},
+            {"role": "user",    "content": prompt},
+        ],
+        cfg=cfg,
+        db=db,
+        purpose=f"generate_{fmt}_prompt",
+        timeout=90,
+        max_tokens=4096,
+        temperature=0.7,
+    )
+
+    if not result.ok:
+        raise RuntimeError(f"LLM call failed: {result.error}")
+
+    raw = (result.text or "").strip()
+    # Strip any accidental markdown fences the model adds
+    raw = re.sub(r"^```(?:json)?\s*\n?", "", raw, flags=re.MULTILINE)
+    raw = re.sub(r"\n?```\s*$", "", raw, flags=re.MULTILINE)
+    raw = raw.strip()
+
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"LLM returned invalid JSON: {exc}\nPreview: {raw[:400]}")
+
+    # ── Build file ──
+    builders = {
+        "docx": _build_docx_from_data,
+        "pdf":  _build_pdf_from_data,
+        "pptx": _build_pptx_from_data,
+        "xlsx": _build_xlsx_from_data,
+    }
+    text_content = builders[fmt](data, out_path)
+
+    doc_title = str(data.get("title") or stem)
+    doc_id = _register_output(out_path, work_id, db, cfg, fmt, doc_title, text_content)
+    logger.info("generate_from_prompt: %s → %s (doc %s)", fmt, out_path.name, doc_id)
+    return out_path, doc_id

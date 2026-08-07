@@ -816,7 +816,7 @@ export default function GovernancePage() {
 
       {/* Stats strip */}
       {statsData && (
-        <div className="grid grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           {[
             { label: "Pending",  value: statsData.pending,  cls: statsData.pending > 0 ? "text-amber-600" : "text-muted-foreground" },
             { label: "Approved", value: statsData.approved, cls: "text-emerald-600" },

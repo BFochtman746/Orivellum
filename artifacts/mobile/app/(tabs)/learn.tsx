@@ -92,23 +92,17 @@ function LearningHealthCard() {
   ];
 
   return (
-    <Pressable
-      onPress={() => {
-        const domain = process.env.EXPO_PUBLIC_DOMAIN;
-        if (domain) Linking.openURL(`https://${domain}/learn`);
-      }}
-      style={({ pressed }) => ({
+    <View
+      style={{
         borderRadius: 12, borderWidth: 1, borderColor: colors.border,
         backgroundColor: colors.card, padding: 14, marginTop: 4, marginBottom: 16,
-        opacity: pressed ? 0.85 : 1,
-      })}
+      }}
     >
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 10 }}>
         <Feather name="activity" size={13} color={colors.primary} />
         <Text style={{ fontSize: 10, fontFamily: 'Inter_600SemiBold', color: colors.mutedForeground, letterSpacing: 1 }}>
           LEARNING HEALTH
         </Text>
-        <Feather name="external-link" size={10} color={colors.mutedForeground} style={{ marginLeft: 'auto' }} />
       </View>
       <View style={{ flexDirection: 'row', gap: 0 }}>
         {metrics.map((m, i) => (
@@ -129,7 +123,7 @@ function LearningHealthCard() {
           </View>
         ))}
       </View>
-    </Pressable>
+    </View>
   );
 }
 

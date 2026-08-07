@@ -634,6 +634,124 @@ class TestTransferQuestions:
         assert "question_type" in result
 
 
+class TestInterleavedMode:
+    """Tests for interleaved practice mode: selection, endpoint, and persistence."""
+
+    def _seed_in_progress(self, db, work_id: str, count: int) -> list[str]:
+        """Insert `count` concepts with one mastery pass each → in-progress pool."""
+        now = "2024-01-01T00:00:00+00:00"
+        cids = []
+        for i in range(count):
+            cid = str(uuid.uuid4())
+            cids.append(cid)
+            with db._lock:
+                db._conn.execute(
+                    "INSERT INTO work_concepts(id,work_id,subject,description,prereq_id,created_at)"
+                    " VALUES(?,?,?,?,?,?)",
+                    (cid, work_id, f"SubjectIL{i}", f"Description {i}", None, now),
+                )
+                db._conn.execute(
+                    """INSERT INTO work_mastery(id,concept_id,score,consecutive_passes,
+                       brief_feedback,routed_to,created_at,last_reviewed_at,next_review_at,
+                       half_life_days,review_session_count,question_type,session_mode)
+                       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (str(uuid.uuid4()), cid, 0.8, 1, "ok", "STAY_HERE",
+                     now, now, None, 2.0, 1, "recall", "blocked"),
+                )
+                db._conn.commit()
+        return cids
+
+    def test_select_interleaved_returns_none_when_pool_too_small(self):
+        """select_interleaved_concept returns None with < 3 in-progress concepts."""
+        from orivellum.capabilities.learning import select_interleaved_concept
+        db = _make_db()
+        work = db.create_work("SmallWork", work_type="learning")
+        self._seed_in_progress(db, work["id"], 2)
+        assert select_interleaved_concept(db, work["id"]) is None
+
+    def test_select_interleaved_returns_concept_id_when_pool_sufficient(self):
+        """select_interleaved_concept returns a valid concept_id with ≥ 3 in-progress concepts."""
+        from orivellum.capabilities.learning import select_interleaved_concept
+        db = _make_db()
+        work = db.create_work("BigWork", work_type="learning")
+        cids = self._seed_in_progress(db, work["id"], 4)
+        result = select_interleaved_concept(db, work["id"])
+        assert result in cids, f"Expected one of {cids}, got {result!r}"
+
+    def test_interleaved_sample_covers_multiple_concepts(self):
+        """Over 30 draws, select_interleaved_concept returns at least 2 distinct concepts."""
+        from orivellum.capabilities.learning import select_interleaved_concept
+        db = _make_db()
+        work = db.create_work("MultiWork", work_type="learning")
+        self._seed_in_progress(db, work["id"], 5)
+        seen = {select_interleaved_concept(db, work["id"]) for _ in range(30)}
+        assert len(seen) >= 2, f"Expected diversity over 30 draws, got only: {seen}"
+
+    def test_endpoint_interleaved_mode_returns_422_when_pool_too_small(self):
+        """GET /works/{id}/learning/question?mode=interleaved → 422 with < 3 in-progress."""
+        db = _make_db()
+        work = db.create_work("SmallEndpointWork", work_type="learning")
+        work_id = work["id"]
+        db.create_knowledge_item(work_id=work_id, kind="fact",
+                                 text="Only one concept has any mastery yet.")
+        # Give only 2 concepts an in-progress pass — pool is below threshold
+        self._seed_in_progress(db, work_id, 2)
+        client = _make_test_client(db)
+        # select_interleaved_concept is a pure DB call; no LLM mock needed for the 422 path
+        r = client.get(f"/api/works/{work_id}/learning/question?mode=interleaved")
+        assert r.status_code == 422, r.text
+        assert "3" in r.json().get("detail", "")
+
+    def test_endpoint_interleaved_mode_returns_session_mode_field(self):
+        """GET /works/{id}/learning/question?mode=interleaved → 200 + session_mode + concept_name."""
+        db = _make_db()
+        work = db.create_work("InterleavedEndpointWork", work_type="learning")
+        work_id = work["id"]
+        db.create_knowledge_item(work_id=work_id, kind="fact",
+                                 text="Concepts cover a range of topics in this work.")
+        self._seed_in_progress(db, work_id, 4)
+        client = _make_test_client(db)
+        # _call is the internal LLM wrapper in learning.py (used by get_question)
+        with patch("orivellum.capabilities.learning._call",
+                   return_value='{"question":"What is SubjectIL0?","context_snippet":"ctx"}'):
+            r = client.get(f"/api/works/{work_id}/learning/question?mode=interleaved")
+        assert r.status_code == 200, r.text
+        data = r.json()
+        assert data.get("session_mode") == "interleaved"
+        assert "concept_name" in data
+        assert "concept_id" in data
+
+    def test_assess_stores_session_mode_in_mastery(self):
+        """POST /works/{id}/learning/assess with session_mode=interleaved persists to DB."""
+        db = _make_db()
+        work_id, concept_id = _seed(db)
+        client = _make_test_client(db)
+        # Get a question (LLM mocked)
+        with patch("orivellum.capabilities.learning._call",
+                   return_value='{"question":"Explain?","context_snippet":"ctx"}'):
+            qr = client.get(f"/api/works/{work_id}/learning/question?concept_id={concept_id}")
+        assert qr.status_code == 200, qr.text
+        # Submit an answer with session_mode=interleaved (LLM mocked for scoring)
+        score_json = '{"score":0.8,"feedback":"Good.","error_type":null,"remediation_hint":null,"deep_review_needed":false}'
+        with patch("orivellum.capabilities.learning._call", return_value=score_json):
+            ar = client.post(f"/api/works/{work_id}/learning/assess", json={
+                "concept_id": concept_id,
+                "question": qr.json()["question"],
+                "answer": "A thorough answer demonstrating understanding.",
+                "question_type": "recall",
+                "session_mode": "interleaved",
+            })
+        assert ar.status_code == 200, ar.text
+        # Verify session_mode was persisted to work_mastery
+        with db._lock:
+            row = db._conn.execute(
+                "SELECT session_mode FROM work_mastery WHERE concept_id=? ORDER BY created_at DESC LIMIT 1",
+                (concept_id,),
+            ).fetchone()
+        assert row is not None
+        assert row["session_mode"] == "interleaved"
+
+
 class TestTransferRouteSecurity:
     """Route-level tests: server must re-derive question_type, never trust the POST body."""
 

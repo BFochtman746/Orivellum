@@ -300,6 +300,7 @@ function RunsTable({ runs, isLoading, isError, onRetry }: {
         ) : runs.length === 0 ? (
           <p className="text-sm text-muted-foreground py-6 text-center">No runs yet. Start one from a benchmark card above.</p>
         ) : (
+          <div className="overflow-x-auto -mx-2 px-2">
           <Table>
             <TableHeader>
               <TableRow>
@@ -350,6 +351,7 @@ function RunsTable({ runs, isLoading, isError, onRetry }: {
               })}
             </TableBody>
           </Table>
+          </div>
         )}
       </CardContent>
     </Card>
@@ -398,6 +400,7 @@ function TelemetryCard() {
           <p className="text-sm text-muted-foreground py-6 text-center">No LLM calls recorded in the last 7 days.</p>
         ) : (
           <>
+            <div className="overflow-x-auto -mx-2 px-2">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -424,6 +427,7 @@ function TelemetryCard() {
                 ))}
               </TableBody>
             </Table>
+            </div>
             {dailyTotals && (
               <p className="text-xs font-mono text-muted-foreground mt-3">
                 Daily totals: {dailyTotals.calls} calls · {dailyTotals.errors} errors across {data.daily.length} day{data.daily.length === 1 ? "" : "s"}
@@ -1124,6 +1128,7 @@ function RagCalibrationCard() {
             </div>
 
             {latest.results.length > 0 && (
+              <div className="overflow-x-auto -mx-2 px-2">
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -1151,6 +1156,7 @@ function RagCalibrationCard() {
                   })}
                 </TableBody>
               </Table>
+              </div>
             )}
 
             {bestDiffers && best && (

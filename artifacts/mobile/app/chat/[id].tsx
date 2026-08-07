@@ -18,6 +18,8 @@ import {
   useColorScheme,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
+import * as DocumentPicker from 'expo-document-picker';
+import * as FileSystem from 'expo-file-system';
 import Markdown from 'react-native-markdown-display';
 import { useColors } from '@/hooks/useColors';
 import { Feather } from '@expo/vector-icons';
@@ -345,6 +347,86 @@ function MessageBubble({ message, colors, isDark, onResend, onRetry, highlighted
             colors={colors}
           />
         )}
+        {/* Generated document download card */}
+        {!isUser && !isErr && (message as any).meta?.generated_document && (() => {
+          const gd = (message as any).meta.generated_document as {
+            filename: string; download_url: string; format: string; size_bytes: number;
+          };
+          const fmtIcon: Record<string, string> = {
+            docx: '📝', pdf: '📄', pptx: '📊', xlsx: '📈',
+          };
+          const icon = fmtIcon[gd.format] ?? '📁';
+          const kb = (gd.size_bytes / 1024).toFixed(1);
+          return (
+            <Pressable
+              onPress={() => {
+                const domain = process.env.EXPO_PUBLIC_DOMAIN;
+                const url = `https://${domain}${gd.download_url}`;
+                (async () => {
+                  try {
+                    if (Platform.OS === 'web') {
+                      const resp = await mobileFetch(url);
+                      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                      const href = URL.createObjectURL(await resp.blob());
+                      const a = document.createElement('a');
+                      a.href = href; a.download = gd.filename; a.click();
+                      setTimeout(() => URL.revokeObjectURL(href), 10_000);
+                      return;
+                    }
+                    const FileSystem = await import('expo-file-system/legacy');
+                    const Sharing    = await import('expo-sharing');
+                    const { getApiToken } = await import('@/lib/token');
+                    const token = getApiToken();
+                    const safeName = gd.filename.replace(/[^a-zA-Z0-9._-]/g, '_');
+                    const dest = `${FileSystem.cacheDirectory}${safeName}`;
+                    await FileSystem.deleteAsync(dest, { idempotent: true });
+                    const dl = await FileSystem.downloadAsync(url, dest, {
+                      headers: token ? { authorization: `Bearer ${token}` } : undefined,
+                    });
+                    if (dl.status !== 200) throw new Error(`HTTP ${dl.status}`);
+                    const info = await FileSystem.getInfoAsync(dl.uri);
+                    if (!info.exists) throw new Error('File not found after download');
+                    const mimeMap: Record<string, string> = {
+                      docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                      pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+                      xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                      pdf:  'application/pdf',
+                    };
+                    await Sharing.shareAsync(dl.uri, {
+                      mimeType: mimeMap[gd.format] ?? 'application/octet-stream',
+                      dialogTitle: gd.filename,
+                    });
+                    FileSystem.deleteAsync(dest, { idempotent: true }).catch(() => {});
+                  } catch (e: any) {
+                    Alert.alert('Download failed', e.message ?? 'Could not download file');
+                  }
+                })();
+              }}
+              style={({ pressed }) => ({
+                marginTop: 10,
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 10,
+                padding: 12,
+                borderRadius: 10,
+                borderWidth: 1,
+                borderColor: '#16a34a44',
+                backgroundColor: pressed ? '#16a34a18' : '#16a34a0c',
+              })}
+            >
+              <Text style={{ fontSize: 22 }}>{icon}</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: colors.foreground }} numberOfLines={1}>
+                  {gd.filename}
+                </Text>
+                <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: colors.mutedForeground }}>
+                  {gd.format.toUpperCase()} · {kb} KB — tap to download
+                </Text>
+              </View>
+              <Feather name="download" size={18} color="#16a34a" />
+            </Pressable>
+          );
+        })()}
         {/* Queued indicator — shown when the message is held in the offline outbox */}
         {isUser && !!(message as LocalMessage).queued && (
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3, marginTop: 3 }}>
@@ -584,12 +666,20 @@ export default function ChatScreen() {
   // stallLevel: 0 = normal, 1 = "Taking longer…" (15 s), 2 = "This is taking a while…" (30 s)
   const [stallLevel, setStallLevel] = useState<0 | 1 | 2>(0);
   const stallTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+  // Document generation state
+  const [docGenLoading, setDocGenLoading] = useState(false);
   // Image attachment state
   const [pendingImage, setPendingImage] = useState<{
     uri: string;
     base64: string;
     mediaType: string;
   } | null>(null);
+  // Document attachment state (PDF / DOCX / CSV / TXT / XLSX)
+  const [pendingFile, setPendingFile] = useState<{ name: string; text: string } | null>(null);
+  const [fileLoading, setFileLoading] = useState(false);
+  // Web search toggle
+  const [webSearch, setWebSearch] = useState(false);
+  const [webSearchLoading, setWebSearchLoading] = useState(false);
 
   const { data, isLoading, isError, refetch } = useGetConversation(id, { query: { staleTime: 10_000 } } as any);
   const conversation = data?.conversation;
@@ -609,6 +699,13 @@ export default function ChatScreen() {
       AsyncStorage.setItem(LAST_MODEL_KEY, currentModelId).catch(() => {});
     }
   }, [currentModelId]);
+
+  // Sync web search state from conversation data
+  useEffect(() => {
+    if (conversation) {
+      setWebSearch(!!(conversation as any).web_search_enabled);
+    }
+  }, [(conversation as any)?.web_search_enabled]);
 
   // Apply last-used model when conversation has none (#69)
   useEffect(() => {
@@ -862,6 +959,204 @@ export default function ChatScreen() {
     }
   };
 
+  // ── Pick a document for chat context injection ───────────────────────────
+  const handleFileAttach = async () => {
+    if (fileLoading || sending) return;
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: ['*/*'],
+        copyToCacheDirectory: true,
+      });
+      if (result.canceled || !result.assets?.[0]) return;
+      const asset = result.assets[0];
+      setFileLoading(true);
+      const b64 = await FileSystem.readAsStringAsync(asset.uri, {
+        encoding: 'base64' as any,
+      });
+      const domain = process.env.EXPO_PUBLIC_DOMAIN;
+      const resp = await mobileFetch(`https://${domain}/api/extract-file`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filename: asset.name, content_b64: b64 }),
+      });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        throw new Error(err?.detail ?? `Server error ${resp.status}`);
+      }
+      const data = await resp.json();
+      setPendingFile({ name: asset.name, text: data.extracted_text });
+    } catch (e: any) {
+      Alert.alert('File error', e.message ?? 'Could not read file. Try PDF, DOCX, XLSX, CSV or TXT.');
+    } finally {
+      setFileLoading(false);
+    }
+  };
+
+  // ── Download a generated document (authenticated) ────────────────────────
+  const downloadGeneratedDoc = async (downloadPath: string, filename: string) => {
+    const domain = process.env.EXPO_PUBLIC_DOMAIN;
+    const url = `https://${domain}${downloadPath}`;
+    try {
+      if (Platform.OS === 'web') {
+        const resp = await mobileFetch(url);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const href = URL.createObjectURL(await resp.blob());
+        const a = document.createElement('a');
+        a.href = href;
+        a.download = filename;
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(href), 10_000);
+        return;
+      }
+      const FileSystem = await import('expo-file-system/legacy');
+      const Sharing    = await import('expo-sharing');
+      const { getApiToken } = await import('@/lib/token');
+      const token = getApiToken();
+      const safeName = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const dest = `${FileSystem.cacheDirectory}${safeName}`;
+      await FileSystem.deleteAsync(dest, { idempotent: true });
+      const dl = await FileSystem.downloadAsync(url, dest, {
+        headers: token ? { authorization: `Bearer ${token}` } : undefined,
+      });
+      if (dl.status !== 200) throw new Error(`HTTP ${dl.status}`);
+      const info = await FileSystem.getInfoAsync(dl.uri);
+      if (!info.exists || (info as any).size === 0) throw new Error('Downloaded file is empty');
+      const mimeMap: Record<string, string> = {
+        docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+        xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        pdf:  'application/pdf',
+      };
+      const ext = filename.split('.').pop()?.toLowerCase() ?? '';
+      await Sharing.shareAsync(dl.uri, {
+        mimeType: mimeMap[ext] ?? 'application/octet-stream',
+        dialogTitle: filename,
+      });
+      FileSystem.deleteAsync(dest, { idempotent: true }).catch(() => {});
+    } catch (e: any) {
+      Alert.alert('Download failed', e.message ?? 'Could not download file');
+    }
+  };
+
+  // ── Generate a document from the current chat prompt ─────────────────────
+  const handleGenerateDoc = async (format: string) => {
+    const prompt = text.trim();
+    if (!prompt) {
+      Alert.alert('Type a prompt first', 'Describe what you want — e.g. "Write a 5-slide presentation on climate change"');
+      return;
+    }
+    if (docGenLoading || sending) return;
+
+    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    setDocGenLoading(true);
+    setText('');
+
+    const clientMsgId = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    const userMsg: LocalMessage = {
+      id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
+      conversation_id: id,
+      role: 'user',
+      text: `📄 Generate ${format.toUpperCase()}: ${prompt}`,
+      created_at: new Date().toISOString(),
+      msgId: clientMsgId,
+    };
+    setLocalMessages(prev => [...prev, userMsg]);
+
+    try {
+      const domain = process.env.EXPO_PUBLIC_DOMAIN;
+      const resp = await mobileFetch(`https://${domain}/api/generate/from-prompt`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt,
+          format,
+          work_id: (conversation as any)?.work_id || null,
+          conversation_id: id,
+        }),
+      });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        throw new Error(err?.detail ?? `Server error ${resp.status}`);
+      }
+      const data = await resp.json();
+      const aiMsg: LocalMessage = {
+        id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
+        conversation_id: id,
+        role: 'assistant',
+        text: `✅ Your **${data.filename}** is ready (${(data.size_bytes / 1024).toFixed(1)} KB).`,
+        created_at: new Date().toISOString(),
+        meta: {
+          generated_document: {
+            filename: data.filename,
+            download_url: data.download_url,
+            format: format.toLowerCase(),
+            size_bytes: data.size_bytes,
+          },
+        } as any,
+      };
+      setLocalMessages(prev => [...prev, aiMsg]);
+    } catch (e: any) {
+      const errMsg: LocalMessage = {
+        id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
+        conversation_id: id,
+        role: 'assistant',
+        text: `⚠️ Document generation failed: ${e.message ?? 'Unknown error'}`,
+        created_at: new Date().toISOString(),
+        isError: true,
+      };
+      setLocalMessages(prev => [...prev, errMsg]);
+    } finally {
+      setDocGenLoading(false);
+    }
+  };
+
+  // ── Show document format picker ───────────────────────────────────────────
+  const handleDocGenPress = () => {
+    if (!text.trim()) {
+      Alert.alert(
+        'Type your request first',
+        'Describe what to create — e.g. "Research quantum computing and create a PowerPoint"',
+      );
+      return;
+    }
+    const formats = ['DOCX (Word)', 'PDF', 'PPTX (PowerPoint)', 'XLSX (Excel)', 'Cancel'];
+    const formatKeys = ['docx', 'pdf', 'pptx', 'xlsx'];
+    if (Platform.OS === 'ios') {
+      ActionSheetIOS.showActionSheetWithOptions(
+        { options: formats, cancelButtonIndex: formats.length - 1, title: 'Save as…' },
+        (idx) => { if (idx < formatKeys.length) handleGenerateDoc(formatKeys[idx]); },
+      );
+    } else {
+      Alert.alert('Save as…', 'Choose a document format', [
+        { text: 'DOCX (Word)',       onPress: () => handleGenerateDoc('docx') },
+        { text: 'PDF',              onPress: () => handleGenerateDoc('pdf')  },
+        { text: 'PPTX (PowerPoint)', onPress: () => handleGenerateDoc('pptx') },
+        { text: 'XLSX (Excel)',      onPress: () => handleGenerateDoc('xlsx') },
+        { text: 'Cancel', style: 'cancel' },
+      ]);
+    }
+  };
+
+  // ── Toggle Tavily web search for this conversation ────────────────────────
+  const handleWebSearchToggle = async () => {
+    if (webSearchLoading || sending) return;
+    const next = !webSearch;
+    setWebSearch(next); // optimistic
+    setWebSearchLoading(true);
+    try {
+      const domain = process.env.EXPO_PUBLIC_DOMAIN;
+      await mobileFetch(`https://${domain}/api/conversations/${id}/web-search`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: next }),
+      });
+    } catch {
+      setWebSearch(!next); // revert on failure
+    } finally {
+      setWebSearchLoading(false);
+    }
+  };
+
   // ── Show image source picker (library or camera) ──────────────────────────
   const handleImageAttach = () => {
     if (Platform.OS === 'ios') {
@@ -1008,23 +1303,27 @@ export default function ChatScreen() {
     handleSend(rawText);
   };
 
-  // ── Send message (with optional image) ────────────────────────────────────
+  // ── Send message (with optional image or document) ───────────────────────
   const handleSend = async (forceText?: string) => {
     const trimmed = (forceText ?? text).trim();
-    // Allow send with image even when text is empty
-    if ((!trimmed && !pendingImage) || sending) return;
+    // Allow send with image or file even when text is empty
+    if ((!trimmed && !pendingImage && !pendingFile) || sending) return;
 
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     if (!forceText) setText('');
     setSendFailed(false);
 
-    // Capture and clear pending image before the async path
+    // Capture and clear pending attachments before the async path
     const imageToSend = pendingImage;
     setPendingImage(null);
+    const fileToSend = pendingFile;
+    setPendingFile(null);
 
-    // Build display text for the optimistic message
+    // Build display text for the optimistic message bubble
     const displayText = imageToSend
       ? (trimmed ? `[Image] ${trimmed}` : '[Image attached]')
+      : fileToSend
+      ? (trimmed ? `[${fileToSend.name}]\n${trimmed}` : `[${fileToSend.name}]`)
       : trimmed;
 
     // Stable client-side ID used for the idempotency key and queued-bubble
@@ -1050,8 +1349,14 @@ export default function ChatScreen() {
     try {
       const domain = process.env.EXPO_PUBLIC_DOMAIN;
       const url = `https://${domain}/api/conversations/${id}/messages`;
+      // Build the API text: prepend extracted document content when a file is attached
+      let apiText = trimmed || (imageToSend ? 'What is in this image?' : '');
+      if (fileToSend) {
+        const docHeader = `[Document: ${fileToSend.name}]\n\n${fileToSend.text}\n\n---\n\n`;
+        apiText = docHeader + (apiText || 'Please analyze this document.');
+      }
       const payload: Record<string, unknown> = {
-        text: trimmed || (imageToSend ? 'What is in this image?' : ''),
+        text: apiText,
         stream: false,
         deep: deepMode,
         // Server persists this in messages.client_msg_id (schema v86) and
@@ -1394,6 +1699,33 @@ export default function ChatScreen() {
             </View>
           ) : null}
 
+          {/* Pending document chip */}
+          {pendingFile ? (
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6, gap: 8 }}>
+              <View style={{
+                flex: 1, flexDirection: 'row', alignItems: 'center', gap: 7,
+                backgroundColor: colors.primary + '12', borderRadius: 8,
+                borderWidth: 1, borderColor: colors.primary + '30',
+                paddingHorizontal: 10, paddingVertical: 6,
+              }}>
+                <Feather name="file-text" size={13} color={colors.primary} />
+                <Text style={{ flex: 1, fontSize: 12, fontFamily: 'Inter_500Medium', color: colors.foreground }} numberOfLines={1}>
+                  {pendingFile.name}
+                </Text>
+                <Text style={{ fontSize: 10, fontFamily: 'Inter_400Regular', color: colors.mutedForeground }}>
+                  {pendingFile.text.length.toLocaleString()} chars
+                </Text>
+              </View>
+              <Pressable
+                onPress={() => setPendingFile(null)}
+                hitSlop={8}
+                style={{ backgroundColor: colors.muted, borderRadius: 12, padding: 3 }}
+              >
+                <Feather name="x" size={12} color={colors.mutedForeground} />
+              </Pressable>
+            </View>
+          ) : null}
+
           {/* Row: deep toggle + image button + input + send */}
           <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 6 }}>
           {/* Deep mode toggle */}
@@ -1410,6 +1742,23 @@ export default function ChatScreen() {
             <Feather name="cpu" size={12} color={deepMode ? colors.primary : colors.mutedForeground} />
             <Text style={[styles.deepToggleText, { color: deepMode ? colors.primary : colors.mutedForeground }]}>
               {deepMode ? 'Deep' : 'Fast'}
+            </Text>
+          </Pressable>
+          {/* Web search toggle */}
+          <Pressable
+            onPress={handleWebSearchToggle}
+            disabled={webSearchLoading || sending}
+            hitSlop={6}
+            style={[
+              styles.deepToggle,
+              webSearch
+                ? { backgroundColor: '#0891b218', borderColor: '#0891b244' }
+                : { backgroundColor: colors.muted, borderColor: colors.border },
+            ]}
+          >
+            <Feather name="globe" size={12} color={webSearch ? '#0891b2' : colors.mutedForeground} />
+            <Text style={[styles.deepToggleText, { color: webSearch ? '#0891b2' : colors.mutedForeground }]}>
+              Web
             </Text>
           </Pressable>
           {/* Image attach button — opens action sheet: Photo Library or Take Photo */}
@@ -1429,6 +1778,40 @@ export default function ChatScreen() {
               size={14}
               color={pendingImage ? colors.primary : colors.mutedForeground}
             />
+          </Pressable>
+          {/* Document / file attach button */}
+          <Pressable
+            onPress={handleFileAttach}
+            disabled={fileLoading || sending}
+            hitSlop={6}
+            style={[
+              styles.deepToggle,
+              pendingFile
+                ? { backgroundColor: colors.primary + '18', borderColor: colors.primary + '44' }
+                : { backgroundColor: colors.muted, borderColor: colors.border },
+            ]}
+          >
+            {fileLoading
+              ? <ActivityIndicator size="small" color={colors.mutedForeground} style={{ width: 14, height: 14 }} />
+              : <Feather name="paperclip" size={14} color={pendingFile ? colors.primary : colors.mutedForeground} />
+            }
+          </Pressable>
+          {/* Generate document button */}
+          <Pressable
+            onPress={handleDocGenPress}
+            disabled={docGenLoading || sending}
+            hitSlop={6}
+            style={[
+              styles.deepToggle,
+              docGenLoading
+                ? { backgroundColor: '#16a34a18', borderColor: '#16a34a44' }
+                : { backgroundColor: colors.muted, borderColor: colors.border },
+            ]}
+          >
+            {docGenLoading
+              ? <ActivityIndicator size="small" color="#16a34a" style={{ width: 14, height: 14 }} />
+              : <Feather name="file-plus" size={14} color={docGenLoading ? '#16a34a' : colors.mutedForeground} />
+            }
           </Pressable>
           <TextInput
             ref={inputRef}
@@ -1453,12 +1836,12 @@ export default function ChatScreen() {
           />
           <Pressable
             onPress={() => handleSend()}
-            disabled={(!text.trim() && !pendingImage) || sending || (isError && !initialized)}
+            disabled={(!text.trim() && !pendingImage && !pendingFile) || sending || (isError && !initialized)}
             style={({ pressed }) => [
               styles.sendBtn,
               {
                 backgroundColor:
-                  (text.trim() || pendingImage) && !sending && (!isError || initialized)
+                  (text.trim() || pendingImage || pendingFile) && !sending && (!isError || initialized)
                     ? colors.primary : colors.muted,
                 opacity: pressed ? 0.7 : 1,
               },
@@ -1468,7 +1851,7 @@ export default function ChatScreen() {
               name="arrow-up"
               size={20}
               color={
-                (text.trim() || pendingImage) && !sending && (!isError || initialized)
+                (text.trim() || pendingImage || pendingFile) && !sending && (!isError || initialized)
                   ? colors.primaryForeground
                   : colors.mutedForeground
               }

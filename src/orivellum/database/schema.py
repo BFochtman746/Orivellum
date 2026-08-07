@@ -1589,16 +1589,6 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             WHERE c.prereq_id IS NOT NULL;
     """),
 
-    # v96 — Transfer-question tracking on work_mastery.
-    # Stores which question mode (recall vs. transfer) was in effect for each attempt.
-    # Enables analytics to compare recall vs. transfer performance and is used by
-    # assess_answer to award 1.5× streak credit when a transfer question is answered
-    # correctly (score ≥ 0.75), recognising that application questions are harder.
-    (96, "Add question_type column to work_mastery", """
-        ALTER TABLE work_mastery ADD COLUMN question_type TEXT NOT NULL DEFAULT 'recall';
-        CREATE INDEX IF NOT EXISTS work_mastery_qtype ON work_mastery(concept_id, question_type);
-    """),
-
     # v95 — Error classification columns on work_mastery.
     # Adds per-assessment diagnosis:
     #   error_type      — null (correct), careless_slip, procedural_gap,
@@ -1610,5 +1600,25 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         ALTER TABLE work_mastery ADD COLUMN error_type       TEXT;
         ALTER TABLE work_mastery ADD COLUMN remediation_hint TEXT;
         CREATE INDEX IF NOT EXISTS work_mastery_error_type ON work_mastery(concept_id, error_type);
+    """),
+
+    # v96 — Transfer-question tracking on work_mastery.
+    # Stores which question mode (recall vs. transfer) was in effect for each attempt.
+    # Enables analytics to compare recall vs. transfer performance and is used by
+    # assess_answer to award 1.5× streak credit when a transfer question is answered
+    # correctly (score ≥ 0.75), recognising that application questions are harder.
+    (96, "Add question_type column to work_mastery", """
+        ALTER TABLE work_mastery ADD COLUMN question_type TEXT NOT NULL DEFAULT 'recall';
+        CREATE INDEX IF NOT EXISTS work_mastery_qtype ON work_mastery(concept_id, question_type);
+    """),
+
+    # v97 — Interleaved practice mode tracking on work_mastery.
+    # Records which session mode (blocked vs. interleaved) each attempt was taken in,
+    # enabling analytics to compare retention rates across practice strategies.
+    # NOTE: must remain after v95 and v96 so that error_type, remediation_hint, and
+    # question_type columns always exist before session_mode is added on upgrade paths.
+    (97, "Add session_mode column to work_mastery", """
+        ALTER TABLE work_mastery ADD COLUMN session_mode TEXT NOT NULL DEFAULT 'blocked';
+        CREATE INDEX IF NOT EXISTS work_mastery_smode ON work_mastery(concept_id, session_mode);
     """),
 ]

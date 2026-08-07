@@ -209,6 +209,56 @@ def download_generated_file(path: str):
     )
 
 
+# ── Prompt-driven generation (chat-native) ────────────────────────────────────
+
+class GenerateFromPromptRequest(BaseModel):
+    prompt: str
+    format: str = "docx"          # docx | pdf | pptx | xlsx
+    filename: Optional[str] = None
+    work_id: Optional[str] = None
+    conversation_id: Optional[str] = None   # informational only (not used server-side)
+
+
+@router.post("/generate/from-prompt")
+async def generate_from_prompt_endpoint(body: GenerateFromPromptRequest):
+    """Generate a DOCX, PDF, PPTX, or XLSX from any free-form text prompt.
+
+    Unlike the work-scoped endpoints, this does not require a work_id — it works
+    from any chat conversation.  The generated file is stored in
+    ``data/outputs/generate/chat/`` (or the work's folder when work_id is supplied)
+    and registered as an ARTIFACT-tier library document.
+    """
+    db = get_db()
+    cfg = get_config()
+
+    fmt = body.format.lower().strip(".")
+    if fmt not in ("docx", "pdf", "pptx", "xlsx"):
+        raise HTTPException(status_code=422, detail="format must be docx, pdf, pptx, or xlsx")
+
+    if not body.prompt.strip():
+        raise HTTPException(status_code=422, detail="prompt must not be empty")
+
+    # Validate work_id when supplied
+    if body.work_id and not db.get_work(body.work_id):
+        raise HTTPException(status_code=404, detail=f"Work {body.work_id!r} not found")
+
+    try:
+        from orivellum.capabilities.generate import generate_from_prompt
+        fpath, doc_id = generate_from_prompt(
+            prompt=body.prompt,
+            format=fmt,
+            filename=body.filename,
+            work_id=body.work_id,
+            db=db,
+            cfg=cfg,
+        )
+    except Exception as exc:
+        logger.exception("from-prompt generation failed")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    return _generation_result(fpath, doc_id, cfg)
+
+
 # ── Workshop — self-prompting, AI code-generated, critique-looped ──────────────
 
 @router.post("/generate/workshop/plan")

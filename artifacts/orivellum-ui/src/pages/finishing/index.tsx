@@ -229,7 +229,7 @@ function PressDetail({ slug }: { slug: string }) {
         <CardContent className="space-y-2">
           {addingChapter && (
             <div className="border border-dashed rounded-lg p-3 space-y-2">
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                 <div>
                   <Label className="text-xs">Number</Label>
                   <Input className="h-7 text-xs" value={chForm.number} onChange={e => setChForm(f => ({ ...f, number: e.target.value }))} placeholder="#" />
@@ -682,7 +682,7 @@ function AtelierSeriesDetail({ seriesSlug }: { seriesSlug: string }) {
                   <Input type="number" className="h-7 text-xs" value={newBook.number} onChange={e => setNewBook(f => ({ ...f, number: e.target.value }))} />
                 </div>
               </div>
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                 <div>
                   <Label className="text-xs">Pages</Label>
                   <Input type="number" className="h-7 text-xs" value={newBook.pages} onChange={e => setNewBook(f => ({ ...f, pages: e.target.value }))} />

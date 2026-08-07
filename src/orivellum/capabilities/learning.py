@@ -37,6 +37,11 @@ _TRANSFER_STREAK_THRESHOLD = 2  # consecutive passes before "auto" mode switches
 _MAX_TRANSFER_STREAK_CREDIT = 2  # max consecutive_passes increment for a correct transfer answer
 _VALID_QUESTION_TYPES = frozenset({"recall", "transfer", "auto"})
 
+# ── Interleaved practice mode ─────────────────────────────────────────────────
+_INTERLEAVED_MIN_CONCEPTS   = 3    # min in-progress concepts to activate interleaved mode
+_INTERLEAVED_SESSION_LENGTH = 10   # questions per interleaved session
+_VALID_SESSION_MODES = frozenset({"blocked", "interleaved"})
+
 # ── Error classification ──────────────────────────────────────────────────────
 _VALID_ERROR_TYPES = frozenset({
     "careless_slip",          # mostly correct; minor arithmetic / wording slip
@@ -490,6 +495,51 @@ def next_concept_id(db: Any, work_id: str) -> str | None:
     return pool[0]["id"]
 
 
+def select_interleaved_concept(db: Any, work_id: str) -> str | None:
+    """Pick one concept for an interleaved practice turn via weighted random selection.
+
+    Eligibility pool:
+      • In-progress concepts: consecutive_passes > 0 and not yet graduated.
+      • Graduated concepts currently due for spaced-repetition review (is_due).
+
+    Weight = urgency_factor × (1 − mastery_fraction):
+      • urgency_factor: 1 + days_overdue for overdue concepts; 0.5–1.0 for others.
+      • mastery_fraction: consecutive_passes / _PASSES_TO_GRAD (capped at 1.0).
+
+    Returns None when the eligible pool has fewer than _INTERLEAVED_MIN_CONCEPTS
+    entries; the caller should raise HTTP 422 with a helpful error message.
+    """
+    import random
+
+    concepts = list_concepts(db, work_id)
+
+    in_progress  = [c for c in concepts if c["consecutive_passes"] > 0 and not c["graduated"]]
+    due_graduated = [c for c in concepts if c["graduated"] and c.get("is_due")]
+    pool = in_progress + due_graduated
+
+    if len(pool) < _INTERLEAVED_MIN_CONCEPTS:
+        return None
+
+    now_dt = datetime.now(timezone.utc)
+    weights: list[float] = []
+    for c in pool:
+        mastery_fraction = min(1.0, c["consecutive_passes"] / max(1, _PASSES_TO_GRAD))
+        if c.get("is_due") and c.get("next_review_at"):
+            try:
+                nra_str = c["next_review_at"].replace("Z", "+00:00")
+                nra = datetime.fromisoformat(nra_str)
+                days_overdue = max(0.0, (now_dt - nra).total_seconds() / 86_400.0)
+                urgency = 1.0 + days_overdue
+            except Exception:
+                urgency = 1.0
+        else:
+            urgency = 0.5 + 0.5 * (1.0 - mastery_fraction)   # 0.5 – 1.0 range
+        weights.append(max(0.01, urgency * (1.0 - mastery_fraction)))
+
+    selected = random.choices(pool, weights=weights, k=1)[0]
+    return selected["id"]
+
+
 def _resolve_question_type(db: Any, concept_id: str, question_type: str) -> str:
     """Resolve 'auto' to 'recall' or 'transfer' based on the concept's current streak.
 
@@ -641,6 +691,7 @@ def assess_answer(
     base_url: str,
     model: str,
     question_type: str = "recall",
+    session_mode: str = "blocked",
 ) -> dict:
     """Score the user's answer, classify the error type, and return targeted remediation.
 
@@ -684,7 +735,7 @@ def assess_answer(
 
     if not base_url:
         _record_mastery(db, concept_id, 0.5, "STAY_HERE", "AI unavailable",
-                        question_type=resolved_qt)
+                        question_type=resolved_qt, session_mode=session_mode)
         return offline_result
 
     # Transfer questions get a richer critic preamble so the LLM knows it is
@@ -723,7 +774,7 @@ def assess_answer(
                 timeout=25, purpose="learning.assess", db=db)
     if not raw:
         _record_mastery(db, concept_id, 0.5, "STAY_HERE", "AI unavailable",
-                        question_type=resolved_qt)
+                        question_type=resolved_qt, session_mode=session_mode)
         return offline_result
 
     try:
@@ -738,7 +789,7 @@ def assess_answer(
         remediation_hint: str | None = str(parsed.get("remediation_hint", "")).strip() or None
     except Exception:
         _record_mastery(db, concept_id, 0.5, "STAY_HERE", "Could not parse assessment",
-                        question_type=resolved_qt)
+                        question_type=resolved_qt, session_mode=session_mode)
         return offline_result
 
     # Compute streak increment: transfer + correct → +2, everything else → +1
@@ -763,7 +814,7 @@ def assess_answer(
     # from the prev record and applies the multiplier internally.
     _record_mastery(db, concept_id, score, route, feedback,
                     error_type=error_type, remediation_hint=remediation_hint,
-                    question_type=resolved_qt)
+                    question_type=resolved_qt, session_mode=session_mode)
 
     graduated = _is_graduated(db, concept_id)
 
@@ -1209,6 +1260,7 @@ def _record_mastery(
     error_type: str | None = None,
     remediation_hint: str | None = None,
     question_type: str = "recall",
+    session_mode: str = "blocked",
 ) -> None:
     """Insert a mastery record, update the consecutive-pass streak, and apply HLR update.
 
@@ -1271,14 +1323,15 @@ def _record_mastery(
                    last_reviewed_at, next_review_at,
                    half_life_days, review_session_count,
                    error_type, remediation_hint,
-                   question_type)
-               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                   question_type, session_mode)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (mid, concept_id, score, cons,
              feedback, route, now,
              now, next_review_at,
              new_hl, new_session_count,
              error_type, remediation_hint,
-             question_type if question_type in ("recall", "transfer") else "recall"),
+             question_type if question_type in ("recall", "transfer") else "recall",
+             session_mode if session_mode in _VALID_SESSION_MODES else "blocked"),
         )
         db._conn.commit()
     try:

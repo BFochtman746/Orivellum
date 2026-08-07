@@ -63,7 +63,9 @@ def _make_db():
             error_type TEXT,
             remediation_hint TEXT,
             -- v96 transfer-question tracking
-            question_type TEXT NOT NULL DEFAULT 'recall'
+            question_type TEXT NOT NULL DEFAULT 'recall',
+            -- v97 interleaved practice mode
+            session_mode TEXT NOT NULL DEFAULT 'blocked'
         );
         -- v94 multi-prerequisite graph
         CREATE TABLE IF NOT EXISTS work_concept_prereqs (

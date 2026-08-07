@@ -87,6 +87,7 @@ function useSectionLabel(): string {
   if (path.includes('/topics')) return 'Topic Graph';
   if (path.includes('/governance')) return 'Governance';
   if (path.includes('/system')) return 'System';
+  if (path.includes('/studio')) return 'Studio';
   if (path.includes('/works')) return 'Works';
   if (path.includes('/library')) return 'Library';
   return 'Orivellum';
@@ -200,6 +201,8 @@ const NAV_ITEMS: NavItem[] = [
   { key: 'books',         label: 'Books',     icon: 'book',           route: '/books'         },
   { key: 'learn',         label: 'Learn',     icon: 'award',          route: '/learn'         },
   { key: 'library',       label: 'Library',   icon: 'folder',         route: '/library'       },
+  { key: 'studio',        label: 'Studio',    icon: 'mic',            route: '/studio'        },
+  { key: 'graph',         label: 'Graph',     icon: 'share-2',        route: '/graph'         },
   { key: 'review',        label: 'Review',    icon: 'shield',         route: '/review'        },
   { key: 'topics',        label: 'Topics',    icon: 'layers',         route: '/topics'        },
   { key: 'governance',    label: 'Governance', icon: 'shield-off',    route: '/governance'    },
@@ -213,6 +216,12 @@ function currentRoute(path: string): string {
   if (path.includes('/learn')) return '/learn';
   if (path.includes('/intake')) return '/intake';
   if (path.includes('/review')) return '/review';
+  if (path.includes('/studio')) return '/studio';
+  if (path.includes('/graph')) return '/graph';
+  if (path.includes('/topics')) return '/topics';
+  if (path.includes('/governance')) return '/governance';
+  if (path.includes('/system')) return '/system';
+  if (path.includes('/backups')) return '/backups';
   if (path.includes('/works')) return '/works';
   if (path.includes('/library')) return '/library';
   return '/';

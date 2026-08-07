@@ -115,7 +115,7 @@ export default function ProjectDetail() {
       </div>
 
       {/* Stats row */}
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         {[
           { icon: Network, label: "Concepts", value: concepts.length },
           { icon: TrendingUp, label: "Mastered", value: concepts.filter((c) => c.mastery >= 0.9).length },

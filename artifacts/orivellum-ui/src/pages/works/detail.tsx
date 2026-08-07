@@ -92,6 +92,7 @@ import {
   HelpCircle,
   Wrench,
   AlertCircle,
+  Shuffle,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -2225,6 +2226,7 @@ interface LearningSession {
   question: string;
   context_snippet: string;
   question_type: "recall" | "transfer";
+  session_mode: "blocked" | "interleaved";   // mode that produced this question
 }
 
 type ErrorType = "careless_slip" | "procedural_gap" | "conceptual_misconception" | "knowledge_gap" | null;
@@ -3159,6 +3161,9 @@ function LearnTab({ workId }: { workId: string }) {
   const [concepts, setConcepts] = useState<any[]>([]);
   const [resettingConcept, setResettingConcept] = useState<string | null>(null);
   const [learnSection, setLearnSection] = useState<"study" | "analytics">("study");
+  const [interleavedMode, setInterleavedMode] = useState(false);
+  const [interleavedHistory, setInterleavedHistory] = useState<{concept_id: string; subject: string; score: number}[]>([]);
+  const [showInterleavedSummary, setShowInterleavedSummary] = useState(false);
 
   const apiBase = API_BASE_WORKS;
 
@@ -3168,7 +3173,13 @@ function LearnTab({ workId }: { workId: string }) {
     return r.json();
   };
 
-  const startOrContinue = async (conceptId?: string | null) => {
+  const startOrContinue = async (
+    conceptId?: string | null,
+    overrideMode?: "blocked" | "interleaved",
+  ) => {
+    // Use the explicitly requested mode; never fall back to interleavedMode from closure,
+    // because setState calls preceding this function do not commit before the function runs.
+    const mode = overrideMode ?? (interleavedMode ? "interleaved" : "blocked");
     setError(null);
     setAnswer("");
     setResult(null);
@@ -3176,6 +3187,7 @@ function LearnTab({ workId }: { workId: string }) {
     try {
       const params = new URLSearchParams({ type: "auto" });
       if (conceptId) params.set("concept_id", conceptId);
+      params.set("mode", mode);
       const url = `${apiBase}/works/${workId}/learning/question?${params}`;
       const r = await apiFetch(url);
       if (r.status === 422) {
@@ -3191,6 +3203,7 @@ function LearnTab({ workId }: { workId: string }) {
         question:        data.question,
         context_snippet: data.context_snippet ?? "",
         question_type:   data.question_type ?? "recall",
+        session_mode:    (data.session_mode === "interleaved" ? "interleaved" : "blocked"),
       });
     } catch (e: any) {
       setError(e.message ?? "Could not load question");
@@ -3247,12 +3260,27 @@ function LearnTab({ workId }: { workId: string }) {
           question:      session.question,
           answer:        answer.trim(),
           question_type: session.question_type ?? "recall",
+          session_mode:  session.session_mode,   // use the mode that produced this question
         }),
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const data: AssessResult = await r.json();
       setResult(data);
       setSummary(data.summary);
+      // Interleaved-specific tracking: use the session's recorded mode, not the toggle state.
+      // This ensures a blocked question fetched before Mix was toggled is never mislabelled.
+      if (session.session_mode === "interleaved") {
+        const newHistory = [...interleavedHistory, {
+          concept_id: session.concept_id,
+          subject:    session.subject,
+          score:      data.score,
+        }];
+        setInterleavedHistory(newHistory);
+        if (newHistory.length >= 10) {
+          setShowInterleavedSummary(true);
+          return;
+        }
+      }
       setPhase("feedback");
     } catch (e: any) {
       setError(e.message ?? "Could not assess answer");
@@ -3263,7 +3291,13 @@ function LearnTab({ workId }: { workId: string }) {
   const next = async () => {
     if (!result) { await startOrContinue(null); return; }
     if (result.summary.mastery_pct === 100) { setPhase("all_done"); return; }
-    await startOrContinue(result.next_concept_id);
+    if (session?.session_mode === "interleaved") {
+      // In interleaved mode next_concept_id comes from blocked routing — ignore it.
+      // Let select_interleaved_concept pick the next random weighted concept instead.
+      await startOrContinue(null, "interleaved");
+    } else {
+      await startOrContinue(result.next_concept_id);
+    }
   };
 
   const resetConcept = async (conceptId: string, subject: string) => {
@@ -3312,6 +3346,80 @@ function LearnTab({ workId }: { workId: string }) {
       </div>
     );
   };
+
+  // ── Interleaved session summary (shown after 10 questions) ───────────────────
+  if (showInterleavedSummary) {
+    const byConceptId: Record<string, {subject: string; scores: number[]}> = {};
+    for (const h of interleavedHistory) {
+      if (!byConceptId[h.concept_id]) byConceptId[h.concept_id] = { subject: h.subject, scores: [] };
+      byConceptId[h.concept_id].scores.push(h.score);
+    }
+    const conceptStats = Object.values(byConceptId).map(c => ({
+      subject:    c.subject,
+      questions:  c.scores.length,
+      avg_score:  c.scores.reduce((a, b) => a + b, 0) / c.scores.length,
+    })).sort((a, b) => b.avg_score - a.avg_score);
+    const overallAvg = interleavedHistory.reduce((a, h) => a + h.score, 0) / Math.max(interleavedHistory.length, 1);
+
+    const exitInterleaved = () => {
+      setShowInterleavedSummary(false);
+      setInterleavedHistory([]);
+      setInterleavedMode(false);
+      // Pass "blocked" explicitly — setInterleavedMode hasn't committed yet when startOrContinue runs
+      void startOrContinue(null, "blocked");
+    };
+    const anotherSession = () => {
+      setShowInterleavedSummary(false);
+      setInterleavedHistory([]);
+      // interleavedMode is still true here; pass explicitly to be safe
+      void startOrContinue(null, "interleaved");
+    };
+
+    return (
+      <div className="max-w-2xl mx-auto py-4 space-y-4">
+        <LearnSectionPills active="study" onChange={setLearnSection} />
+        <Card className="p-6 space-y-5">
+          {/* Header */}
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-violet-500/10 flex items-center justify-center">
+              <Shuffle className="w-5 h-5 text-violet-500" />
+            </div>
+            <div>
+              <h3 className="font-serif font-semibold text-lg">Interleaved session complete</h3>
+              <p className="text-xs font-mono text-muted-foreground">
+                {interleavedHistory.length} questions · {conceptStats.length} concepts · avg {Math.round(overallAvg * 100)}%
+              </p>
+            </div>
+          </div>
+
+          {/* Per-concept breakdown */}
+          <div className="space-y-0 divide-y divide-border/30">
+            {conceptStats.map((c, i) => (
+              <div key={i} className="flex items-center gap-3 py-2.5">
+                <span className="flex-1 text-sm truncate">{c.subject}</span>
+                <span className="text-[10px] font-mono text-muted-foreground shrink-0">{c.questions}q</span>
+                <span className={`w-12 text-right text-sm font-mono font-bold shrink-0 ${
+                  c.avg_score >= 0.75 ? "text-emerald-600" : c.avg_score >= 0.5 ? "text-amber-600" : "text-red-500"
+                }`}>
+                  {Math.round(c.avg_score * 100)}%
+                </span>
+              </div>
+            ))}
+          </div>
+
+          {/* Actions */}
+          <div className="flex gap-3 pt-1">
+            <Button variant="outline" className="flex-1" onClick={exitInterleaved}>
+              Exit interleaved
+            </Button>
+            <Button className="flex-1 gap-2" onClick={anotherSession}>
+              <Shuffle className="w-3.5 h-3.5" /> New session
+            </Button>
+          </div>
+        </Card>
+      </div>
+    );
+  }
 
   // ── Section: Analytics panel (always reachable, independent of study phase) ──
   if (learnSection === "analytics") {
@@ -3374,6 +3482,50 @@ function LearnTab({ workId }: { workId: string }) {
       <LearnSectionPills active="study" onChange={setLearnSection} />
       <MasteryBar />
 
+      {/* Interleaved mode toggle — shown when ≥3 in-progress concepts */}
+      {(() => {
+        const inProgressCount = concepts.filter((c: any) => c.consecutive_passes > 0 && !c.graduated).length;
+        if (inProgressCount < 3 && !interleavedMode) return null;
+        return (
+          <div className={`flex items-center justify-between gap-3 px-4 py-3 rounded-xl border transition-all ${
+            interleavedMode
+              ? "bg-violet-50/60 dark:bg-violet-950/30 border-violet-200/60 dark:border-violet-800/40"
+              : "bg-muted/30 border-border/40"
+          }`}>
+            <div className="flex items-center gap-2">
+              <Shuffle className={`w-4 h-4 ${interleavedMode ? "text-violet-500" : "text-muted-foreground"}`} />
+              <div>
+                <p className={`text-xs font-semibold ${interleavedMode ? "text-violet-700 dark:text-violet-400" : "text-foreground"}`}>
+                  Interleaved practice
+                </p>
+                <p className="text-[10px] font-mono text-muted-foreground">
+                  {interleavedMode ? "Mixing concepts — concept revealed after each answer" : `${inProgressCount} concepts in progress`}
+                </p>
+              </div>
+            </div>
+            <Button
+              size="sm"
+              variant={interleavedMode ? "default" : "outline"}
+              className={`shrink-0 text-xs h-7 gap-1.5 ${interleavedMode ? "bg-violet-600 hover:bg-violet-700" : ""}`}
+              onClick={() => {
+                if (interleavedMode) {
+                  setInterleavedMode(false);
+                  setInterleavedHistory([]);
+                  void startOrContinue(null, "blocked");     // explicit — setState hasn't committed
+                } else {
+                  setInterleavedMode(true);
+                  setInterleavedHistory([]);
+                  void startOrContinue(null, "interleaved"); // explicit
+                }
+              }}
+            >
+              <Shuffle className="w-3 h-3" />
+              {interleavedMode ? "Exit" : "Start"}
+            </Button>
+          </div>
+        );
+      })()}
+
       {/* Error banner */}
       {error && (
         <div className="px-4 py-3 rounded-lg bg-destructive/10 border border-destructive/20 text-sm text-destructive">
@@ -3382,20 +3534,41 @@ function LearnTab({ workId }: { workId: string }) {
         </div>
       )}
 
-      {/* Active concept header */}
+      {/* Active concept header — masked in interleaved mode until after submission */}
       {session && (
-        <div className="border border-border/60 rounded-xl p-4 bg-muted/20 space-y-1">
-          <div className="flex items-center justify-between">
+        session.session_mode === "interleaved" && phase === "question" ? (
+          <div className="border border-violet-200/60 dark:border-violet-800/40 rounded-xl p-4 bg-violet-50/40 dark:bg-violet-950/20 space-y-1">
             <div className="flex items-center gap-2">
-              <BookOpen className="w-4 h-4 text-primary" />
-              <span className="font-mono text-xs uppercase tracking-wider text-muted-foreground">Studying</span>
+              <Shuffle className="w-4 h-4 text-violet-500" />
+              <span className="font-mono text-xs uppercase tracking-wider text-violet-600 dark:text-violet-400">Interleaved</span>
+              <span className="text-[10px] font-mono text-muted-foreground ml-auto">
+                {interleavedHistory.length + 1}/10
+              </span>
             </div>
+            <h3 className="font-serif text-lg font-semibold">Which concept does this test?</h3>
+            <p className="text-sm text-muted-foreground">
+              Identify the concept and answer — it will be revealed after you submit.
+            </p>
           </div>
-          <h3 className="font-serif text-lg font-semibold">{session.subject}</h3>
-          {session.description && (
-            <p className="text-sm text-muted-foreground leading-relaxed">{session.description}</p>
-          )}
-        </div>
+        ) : (
+          <div className="border border-border/60 rounded-xl p-4 bg-muted/20 space-y-1">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <BookOpen className="w-4 h-4 text-primary" />
+                <span className="font-mono text-xs uppercase tracking-wider text-muted-foreground">
+                  {session.session_mode === "interleaved" ? "Revealed concept" : "Studying"}
+                </span>
+              </div>
+              {session.session_mode === "interleaved" && phase === "feedback" && (
+                <span className="text-[10px] font-mono text-muted-foreground">{interleavedHistory.length}/10</span>
+              )}
+            </div>
+            <h3 className="font-serif text-lg font-semibold">{session.subject}</h3>
+            {session.description && session.session_mode !== "interleaved" && (
+              <p className="text-sm text-muted-foreground leading-relaxed">{session.description}</p>
+            )}
+          </div>
+        )
       )}
 
       {/* Question */}
@@ -3465,11 +3638,27 @@ function LearnTab({ workId }: { workId: string }) {
                 )}
               </div>
 
+              {/* Interleaved concept reveal — bound to session's recorded mode, not toggle state */}
+              {session?.session_mode === "interleaved" && session && (
+                <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-violet-50/60 dark:bg-violet-950/30 border border-violet-200/50 dark:border-violet-800/40 text-sm">
+                  <Shuffle className="w-3.5 h-3.5 text-violet-500 shrink-0" />
+                  <span className="font-mono text-muted-foreground">This tested:</span>
+                  <span className="font-semibold">{session.subject}</span>
+                </div>
+              )}
+
               {/* Error-type differentiated feedback card */}
               {result.error_type === "careless_slip" ? (
                 <CarelessSlipCard
                   feedback={result.feedback}
-                  onRetry={() => startOrContinue(session?.concept_id)}
+                  onRetry={() => {
+                    // In interleaved mode, pick any in-progress concept (not the same one again)
+                    if (session?.session_mode === "interleaved") {
+                      void startOrContinue(null, "interleaved");
+                    } else {
+                      void startOrContinue(session?.concept_id);
+                    }
+                  }}
                 />
               ) : result.error_type === "procedural_gap" ? (
                 <ProceduralGapCard
@@ -3489,7 +3678,7 @@ function LearnTab({ workId }: { workId: string }) {
                   remediationHint={result.remediation_hint}
                   prereqId={result.suggested_prereq_id}
                   prereqSubject={result.suggested_prereq_subject}
-                  onStudyPrereq={(id) => startOrContinue(id)}
+                  onStudyPrereq={(id) => startOrContinue(id, "blocked")}  // exit interleaved to drill specific prereq
                 />
               ) : (
                 /* Correct answer — simple success card */

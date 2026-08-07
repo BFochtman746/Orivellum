@@ -256,7 +256,7 @@ function ConversationHistory({ activeConvId, onNavigate }: { activeConvId: strin
         <button
           onClick={() => setShowArchived(v => !v)}
           title={showArchived ? "Hide archived" : "Show archived"}
-          className={`p-1 rounded transition-colors ${showArchived ? "text-primary" : "text-muted-foreground hover:text-foreground"}`}
+          className={`p-2 rounded transition-colors ${showArchived ? "text-primary" : "text-muted-foreground hover:text-foreground active:text-foreground"}`}
         >
           <Archive className="w-3 h-3" />
         </button>
@@ -264,7 +264,7 @@ function ConversationHistory({ activeConvId, onNavigate }: { activeConvId: strin
           onClick={handleCreate}
           disabled={createConv.isPending}
           title="New conversation"
-          className="p-1 rounded text-muted-foreground hover:text-foreground transition-colors"
+          className="p-2 rounded text-muted-foreground hover:text-foreground active:text-foreground transition-colors"
         >
           <Plus className="w-3 h-3" />
         </button>
@@ -400,10 +400,10 @@ function ConvRow({
           onBlur={() => onCommitRename(conv.id!)}
           className="flex-1 text-xs bg-background border border-border/60 rounded px-1.5 py-0.5 outline-none focus:ring-1 focus:ring-primary/40"
         />
-        <button onClick={() => onCommitRename(conv.id!)} className="p-0.5 text-emerald-500 hover:text-emerald-400">
+        <button onClick={() => onCommitRename(conv.id!)} className="p-2 text-emerald-500 hover:text-emerald-400 active:text-emerald-400">
           <Check className="w-3 h-3" />
         </button>
-        <button onClick={onCancelRename} className="p-0.5 text-muted-foreground hover:text-foreground">
+        <button onClick={onCancelRename} className="p-2 text-muted-foreground hover:text-foreground active:text-foreground">
           <X className="w-3 h-3" />
         </button>
       </div>

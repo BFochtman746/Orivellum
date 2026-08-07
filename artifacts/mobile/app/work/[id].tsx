@@ -2352,7 +2352,7 @@ function MobileProceduralGapCard({
 
 // ─── Mobile Learn tab ─────────────────────────────────────────────────────────
 
-type MobileLearnPhase = 'loading' | 'seeding' | 'question' | 'assessing' | 'feedback' | 'all_done' | 'error' | 'session_done';
+type MobileLearnPhase = 'loading' | 'seeding' | 'question' | 'assessing' | 'feedback' | 'all_done' | 'error' | 'session_done' | 'interleaved_summary';
 
 interface MobileSession {
   concept_id: string;
@@ -2361,6 +2361,7 @@ interface MobileSession {
   question: string;
   context_snippet: string;
   question_type: "recall" | "transfer";
+  session_mode: "blocked" | "interleaved";  // mode that produced this question
 }
 
 type MobileErrorType = "careless_slip" | "procedural_gap" | "conceptual_misconception" | "knowledge_gap" | null;
@@ -2395,8 +2396,11 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
   const [concepts, setConcepts] = useState<any[]>([]);
   const [conceptsLoading, setConceptsLoading] = useState(false);
   const [resettingConcept, setResettingConcept] = useState<string | null>(null);
+  const [interleavedMode, setInterleavedMode] = useState(false);
+  const [interleavedHistory, setInterleavedHistory] = useState<{concept_id: string; subject: string; score: number}[]>([]);
 
   const SESSION_LIMIT = 5; // correct answers before "session complete" screen
+  const INTERLEAVED_SESSION_LENGTH = 10; // questions per interleaved session
 
   const domain = process.env.EXPO_PUBLIC_DOMAIN;
   const apiBase = `https://${domain}/api`;
@@ -2407,12 +2411,14 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
     return r.json();
   };
 
-  const loadQuestion = async (conceptId?: string | null) => {
+  const loadQuestion = async (conceptId?: string | null, forceInterleaved?: boolean) => {
     setAnswer('');
     setResult(null);
     setPhase('question');
+    const useInterleaved = forceInterleaved ?? interleavedMode;
     const params = new URLSearchParams({ type: 'auto' });
-    if (conceptId) params.set('concept_id', conceptId);
+    params.set('mode', useInterleaved ? 'interleaved' : 'blocked');
+    if (!useInterleaved && conceptId) params.set('concept_id', conceptId);
     const url = `${apiBase}/works/${workId}/learning/question?${params}`;
     const r = await mobileFetch(url);
     if (r.status === 422) { setPhase('all_done'); return; }
@@ -2425,6 +2431,7 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
       question:        d.question,
       context_snippet: d.context_snippet ?? '',
       question_type:   d.question_type ?? 'recall',
+      session_mode:    d.session_mode === 'interleaved' ? 'interleaved' : 'blocked',
     });
   };
 
@@ -2520,13 +2527,26 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
           question:      session.question,
           answer:        answer.trim(),
           question_type: session.question_type ?? 'recall',
+          session_mode:  session.session_mode ?? 'blocked',  // use the mode that produced this question
         }),
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const d: MobileAssessResult = await r.json();
       setResult(d);
       setSummary(d.summary);
-      // Track correct answers and enforce session limit
+      // Interleaved-specific tracking: use session's recorded mode, not the toggle state.
+      // Prevents a blocked question (loaded before Mix was toggled) being treated as interleaved.
+      if (session.session_mode === 'interleaved') {
+        const newHistory = [...interleavedHistory, { concept_id: session.concept_id, subject: session.subject, score: d.score }];
+        setInterleavedHistory(newHistory);
+        if (newHistory.length >= INTERLEAVED_SESSION_LENGTH) {
+          setPhase('interleaved_summary');
+          return;
+        }
+        setPhase('feedback');
+        return;
+      }
+      // Blocked mode: track correct answers and enforce session limit
       if (d.score >= 0.75) {
         const newCorrect = sessionCorrect + 1;
         setSessionCorrect(newCorrect);
@@ -2542,7 +2562,14 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
   const next = async () => {
     if (!result) { await loadQuestion(null); return; }
     if (result.summary.mastery_pct === 100) { setPhase('all_done'); return; }
-    try { await loadQuestion(result.next_concept_id); }
+    try {
+      if (session?.session_mode === 'interleaved') {
+        // next_concept_id is from blocked routing — ignore it; let weighted selection pick next
+        await loadQuestion(null, true);
+      } else {
+        await loadQuestion(result.next_concept_id);
+      }
+    }
     catch (e: any) { setErrorMsg(e.message ?? 'Error loading next question'); setPhase('error'); }
   };
 
@@ -2593,6 +2620,98 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
           <Feather name="refresh-cw" size={14} color={colors.foreground} />
           <Text style={[styles.discussBtnText, { color: colors.foreground }]}>Reset &amp; study again</Text>
         </Pressable>
+      </View>
+    );
+  }
+
+  // ── Interleaved session summary (after 10 questions) ────────────────────
+  if (phase === 'interleaved_summary') {
+    const byConceptId: Record<string, { subject: string; scores: number[] }> = {};
+    for (const h of interleavedHistory) {
+      if (!byConceptId[h.concept_id]) byConceptId[h.concept_id] = { subject: h.subject, scores: [] };
+      byConceptId[h.concept_id].scores.push(h.score);
+    }
+    const conceptStats = Object.values(byConceptId)
+      .map(c => ({ subject: c.subject, questions: c.scores.length, avg: c.scores.reduce((a, b) => a + b, 0) / c.scores.length }))
+      .sort((a, b) => b.avg - a.avg);
+    const overallAvg = interleavedHistory.reduce((a, h) => a + h.score, 0) / Math.max(interleavedHistory.length, 1);
+
+    const exitInterleaved = () => {
+      setInterleavedMode(false);
+      setInterleavedHistory([]);
+      // Use forceInterleaved=false explicitly — setInterleavedMode hasn't committed yet
+      loadQuestion(null, false);
+    };
+    const anotherSession = () => {
+      setInterleavedHistory([]);
+      loadQuestion(null, true); // explicit interleaved — interleavedMode is still true here
+    };
+
+    return (
+      <View style={[styles.listPad, { paddingTop: 24, paddingBottom: 80 }]}>
+        {/* Header */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 20 }}>
+          <View style={{ width: 44, height: 44, borderRadius: 12, backgroundColor: '#8b5cf620', alignItems: 'center', justifyContent: 'center' }}>
+            <Feather name="shuffle" size={20} color="#7c3aed" />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={{ fontSize: 17, fontFamily: 'Merriweather_700Bold', color: colors.foreground }}>
+              Session complete
+            </Text>
+            <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: colors.mutedForeground }}>
+              {interleavedHistory.length} questions · {conceptStats.length} concepts · avg {Math.round(overallAvg * 100)}%
+            </Text>
+          </View>
+        </View>
+
+        {/* Per-concept breakdown */}
+        <View style={{ borderRadius: 12, borderWidth: 1, borderColor: colors.border, overflow: 'hidden', marginBottom: 20 }}>
+          {conceptStats.map((c, i) => (
+            <View key={i} style={{
+              flexDirection: 'row', alignItems: 'center', gap: 10,
+              padding: 12, borderBottomWidth: i < conceptStats.length - 1 ? 1 : 0,
+              borderBottomColor: colors.border, backgroundColor: colors.background,
+            }}>
+              <Text style={{ flex: 1, fontSize: 13, fontFamily: 'Inter_500Medium', color: colors.foreground }} numberOfLines={1}>
+                {c.subject}
+              </Text>
+              <Text style={{ fontSize: 10, fontFamily: 'Inter_400Regular', color: colors.mutedForeground }}>
+                {c.questions}q
+              </Text>
+              <Text style={{
+                fontSize: 13, fontFamily: 'Inter_700Bold', width: 44, textAlign: 'right',
+                color: c.avg >= 0.75 ? '#16a34a' : c.avg >= 0.5 ? '#d97706' : '#dc2626',
+              }}>
+                {Math.round(c.avg * 100)}%
+              </Text>
+            </View>
+          ))}
+        </View>
+
+        {/* Actions */}
+        <View style={{ flexDirection: 'row', gap: 12 }}>
+          <Pressable
+            onPress={exitInterleaved}
+            style={({ pressed }) => ({
+              flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 13,
+              borderRadius: 10, borderWidth: 1, borderColor: colors.border,
+              opacity: pressed ? 0.7 : 1, minHeight: 44,
+            })}
+          >
+            <Text style={{ fontSize: 14, fontFamily: 'Inter_600SemiBold', color: colors.foreground }}>Exit</Text>
+          </Pressable>
+          <Pressable
+            onPress={anotherSession}
+            style={({ pressed }) => ({
+              flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+              gap: 6, paddingVertical: 13, borderRadius: 10,
+              backgroundColor: '#7c3aed', opacity: pressed ? 0.7 : 1, minHeight: 44,
+            })}
+          >
+            <Feather name="shuffle" size={14} color="#fff" />
+            <Text style={{ fontSize: 14, fontFamily: 'Inter_600SemiBold', color: '#fff' }}>New session</Text>
+          </Pressable>
+        </View>
       </View>
     );
   }
@@ -2692,8 +2811,8 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
       keyboardShouldPersistTaps="handled"
       showsVerticalScrollIndicator={false}
     >
-      {/* Study / Concepts view toggle */}
-      <View style={{ flexDirection: 'row', gap: 6, marginBottom: 16 }}>
+      {/* Study / Concepts view toggle + Interleaved toggle */}
+      <View style={{ flexDirection: 'row', gap: 6, marginBottom: 16, flexWrap: 'wrap' }}>
         {(['study', 'concepts'] as const).map((v) => (
           <Pressable
             key={v}
@@ -2705,14 +2824,39 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
               backgroundColor: learnView === v ? colors.primary + '18' : 'transparent',
             }}
           >
-            <Text style={{
-              fontSize: 13, fontWeight: '600',
-              color: learnView === v ? colors.primary : colors.mutedForeground,
-            }}>
+            <Text style={{ fontSize: 13, fontWeight: '600', color: learnView === v ? colors.primary : colors.mutedForeground }}>
               {v === 'study' ? 'Study' : 'Concepts'}
             </Text>
           </Pressable>
         ))}
+        {/* Interleaved toggle — shown when ≥3 in-progress concepts or already active */}
+        {(() => {
+          const inProgressCount = concepts.filter((c: any) => c.consecutive_passes > 0 && !c.graduated).length;
+          if (inProgressCount < 3 && !interleavedMode) return null;
+          return (
+            <Pressable
+              onPress={() => {
+                const next = !interleavedMode;
+                setInterleavedMode(next);
+                setInterleavedHistory([]);
+                setLearnView('study');
+                loadQuestion(null, next);
+              }}
+              hitSlop={8}
+              style={{
+                flexDirection: 'row', alignItems: 'center', gap: 5,
+                paddingHorizontal: 12, paddingVertical: 6, borderRadius: 12, borderWidth: 1,
+                borderColor: interleavedMode ? '#8b5cf6' : colors.border,
+                backgroundColor: interleavedMode ? '#8b5cf618' : 'transparent',
+              }}
+            >
+              <Feather name="shuffle" size={12} color={interleavedMode ? '#7c3aed' : colors.mutedForeground} />
+              <Text style={{ fontSize: 13, fontWeight: '600', color: interleavedMode ? '#7c3aed' : colors.mutedForeground }}>
+                {interleavedMode ? 'Interleaved' : 'Mix'}
+              </Text>
+            </Pressable>
+          );
+        })()}
       </View>
 
       {/* Concepts list — shown when learnView === 'concepts' */}
@@ -2914,27 +3058,47 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
         </Pressable>
       )}
 
-      {/* Concept chip — study view only */}
+      {/* Concept chip — study view only; masked when interleaved + question phase */}
       {learnView === 'study' && session && (
-        <View style={{
-          borderWidth: 1, borderColor: colors.border, borderRadius: 10,
-          padding: 14, marginBottom: 16, backgroundColor: colors.background,
-        }}>
-          <Text style={[styles.itemMeta, {
-            color: colors.mutedForeground, textTransform: 'uppercase',
-            letterSpacing: 0.8, marginBottom: 4,
-          }]}>
-            Studying
-          </Text>
-          <Text style={[styles.itemTitle, { color: colors.foreground, fontSize: 16 }]}>
-            {session.subject}
-          </Text>
-          {session.description ? (
-            <Text style={[styles.itemMeta, { color: colors.mutedForeground, marginTop: 4 }]}>
-              {session.description}
+        session.session_mode === 'interleaved' && phase === 'question' ? (
+          <View style={{
+            borderWidth: 1, borderColor: '#8b5cf644', borderRadius: 10,
+            padding: 14, marginBottom: 16, backgroundColor: '#8b5cf608',
+          }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+              <Feather name="shuffle" size={11} color="#7c3aed" />
+              <Text style={{ fontSize: 10, fontFamily: 'Inter_600SemiBold', color: '#7c3aed', textTransform: 'uppercase', letterSpacing: 0.8 }}>
+                Interleaved · {interleavedHistory.length + 1}/{INTERLEAVED_SESSION_LENGTH}
+              </Text>
+            </View>
+            <Text style={[styles.itemTitle, { color: colors.foreground, fontSize: 16 }]}>
+              Which concept does this test?
             </Text>
-          ) : null}
-        </View>
+            <Text style={[styles.itemMeta, { color: colors.mutedForeground, marginTop: 4 }]}>
+              Identify the concept and answer — revealed after you submit.
+            </Text>
+          </View>
+        ) : (
+          <View style={{
+            borderWidth: 1, borderColor: colors.border, borderRadius: 10,
+            padding: 14, marginBottom: 16, backgroundColor: colors.background,
+          }}>
+            <Text style={[styles.itemMeta, {
+              color: colors.mutedForeground, textTransform: 'uppercase',
+              letterSpacing: 0.8, marginBottom: 4,
+            }]}>
+              {session.session_mode === 'interleaved' ? 'Revealed concept' : 'Studying'}
+            </Text>
+            <Text style={[styles.itemTitle, { color: colors.foreground, fontSize: 16 }]}>
+              {session.subject}
+            </Text>
+            {session.session_mode !== 'interleaved' && session.description ? (
+              <Text style={[styles.itemMeta, { color: colors.mutedForeground, marginTop: 4 }]}>
+                {session.description}
+              </Text>
+            ) : null}
+          </View>
+        )
       )}
 
       {/* Question card — study view only */}
@@ -3026,23 +3190,27 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
 
               {/* Score badge */}
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                <Text style={{
-                  fontSize: 24, fontFamily: 'Inter_700Bold',
-                  color: scoreColor(result.score),
-                }}>
+                <Text style={{ fontSize: 24, fontFamily: 'Inter_700Bold', color: scoreColor(result.score) }}>
                   {Math.round(result.score * 100)}%
                 </Text>
                 {result.graduated && (
-                  <View style={{
-                    flexDirection: 'row', alignItems: 'center', gap: 4,
-                    paddingHorizontal: 8, paddingVertical: 4, borderRadius: 20,
-                    backgroundColor: '#dcfce7',
-                  }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 20, backgroundColor: '#dcfce7' }}>
                     <Feather name="award" size={12} color="#16a34a" />
                     <Text style={{ fontSize: 11, color: '#16a34a', fontFamily: 'Inter_600SemiBold' }}>Graduated!</Text>
                   </View>
                 )}
               </View>
+
+              {/* Interleaved concept reveal — bound to session's recorded mode, not toggle state */}
+              {session?.session_mode === 'interleaved' && session && (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 10, paddingVertical: 8, borderRadius: 8, backgroundColor: '#8b5cf610', borderWidth: 1, borderColor: '#8b5cf633' }}>
+                  <Feather name="shuffle" size={12} color="#7c3aed" />
+                  <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: colors.mutedForeground }}>This tested: </Text>
+                  <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: colors.foreground, flex: 1 }} numberOfLines={1}>
+                    {session.subject}
+                  </Text>
+                </View>
+              )}
 
               {/* ── careless_slip ─── amber retry card */}
               {result.error_type === 'careless_slip' && (
@@ -3065,7 +3233,14 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
                     </View>
                   </View>
                   <Pressable
-                    onPress={() => loadQuestion(session?.concept_id)}
+                    onPress={() => {
+                      // In interleaved mode, pick any concept (not retry the same one)
+                      if (session?.session_mode === 'interleaved') {
+                        loadQuestion(null, true);
+                      } else {
+                        loadQuestion(session?.concept_id);
+                      }
+                    }}
                     style={({ pressed }) => ({
                       flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
                       gap: 6, paddingVertical: 10, borderRadius: 8,
@@ -3173,7 +3348,7 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
                         </Text>
                       </View>
                       <Pressable
-                        onPress={() => loadQuestion(result.suggested_prereq_id)}
+                        onPress={() => loadQuestion(result.suggested_prereq_id, false)}  // exit interleaved to drill specific prereq
                         style={({ pressed }) => ({
                           flexDirection: 'row', alignItems: 'center', gap: 4,
                           paddingHorizontal: 10, paddingVertical: 7, borderRadius: 8,

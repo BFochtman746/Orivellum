@@ -21,6 +21,7 @@ class AssessBody(BaseModel):
     question: str
     answer: str
     question_type: str = "recall"   # "recall" | "transfer" — echoed from the question endpoint
+    session_mode: str = "blocked"   # "blocked" | "interleaved" — echoed from the session
 
 
 # ─── Endpoints ─────────────────────────────────────────────────────────────────
@@ -63,6 +64,7 @@ async def learning_question(
     work_id: str,
     concept_id: str | None = None,
     type: str = "auto",
+    mode: str = "blocked",
 ):
     """Generate a Socratic question for the given concept (or the next unmastered one).
 
@@ -70,18 +72,40 @@ async def learning_question(
       - recall   — Socratic question grounded in source material (classic mode)
       - transfer — Application question using a novel scenario not in the notes
       - auto     — recall until streak ≥ 2 consecutive passes, then transfer
+
+    ?mode=blocked|interleaved  (default: blocked)
+      - blocked     — standard mode; studies one concept at a time
+      - interleaved — picks from 2-4 in-progress concepts randomly (weighted by urgency
+                      and mastery weakness); requires ≥ 3 in-progress concepts
     """
     import asyncio
     db = get_db()
     if not db.get_work(work_id):
         raise HTTPException(404, f"Work {work_id!r} not found")
-    from orivellum.capabilities.learning import next_concept_id, get_question, _VALID_QUESTION_TYPES
+    from orivellum.capabilities.learning import (
+        next_concept_id, get_question, select_interleaved_concept,
+        _VALID_QUESTION_TYPES, _VALID_SESSION_MODES, _INTERLEAVED_MIN_CONCEPTS,
+    )
     if type not in _VALID_QUESTION_TYPES:
         raise HTTPException(422, f"Invalid type {type!r}. Must be one of: recall, transfer, auto")
-    if not concept_id:
-        concept_id = next_concept_id(db, work_id)
-    if not concept_id:
-        raise HTTPException(422, "No ungraduated concepts — all mastered or none seeded yet.")
+    if mode not in _VALID_SESSION_MODES:
+        raise HTTPException(422, f"Invalid mode {mode!r}. Must be one of: blocked, interleaved")
+
+    if mode == "interleaved":
+        # Ignore caller-supplied concept_id; let weighted selection choose
+        concept_id = select_interleaved_concept(db, work_id)
+        if concept_id is None:
+            raise HTTPException(
+                422,
+                f"Interleaved mode requires at least {_INTERLEAVED_MIN_CONCEPTS} in-progress "
+                "concepts. Keep studying in blocked mode until more concepts are underway.",
+            )
+    else:
+        if not concept_id:
+            concept_id = next_concept_id(db, work_id)
+        if not concept_id:
+            raise HTTPException(422, "No ungraduated concepts — all mastered or none seeded yet.")
+
     # Validate concept belongs to this work (prevents cross-Work access)
     with db._lock:
         row = db._conn.execute(
@@ -91,9 +115,11 @@ async def learning_question(
         raise HTTPException(404, f"Concept {concept_id!r} not found in work {work_id!r}")
     base_url, model = _cfg()
     result = await asyncio.to_thread(get_question, db, concept_id, base_url, model, type)
-    result["concept_id"]  = concept_id
-    result["subject"]     = row["subject"]
-    result["description"] = row["description"] or ""
+    result["concept_id"]   = concept_id
+    result["concept_name"] = row["subject"]     # always present so UI can reveal post-answer
+    result["subject"]      = row["subject"]
+    result["description"]  = row["description"] or ""
+    result["session_mode"] = mode
     return result
 
 
@@ -217,14 +243,17 @@ async def learning_assess(work_id: str, body: AssessBody):
     base_url, model = _cfg()
     from orivellum.capabilities.learning import (
         assess_answer, next_concept_id, get_mastery_summary, _resolve_question_type,
+        _VALID_SESSION_MODES,
     )
     # Re-derive question_type server-side from the concept's current streak using
     # the same "auto" logic as get_question.  This prevents clients from forging a
     # transfer question_type to obtain +2 mastery bonus on a recall question.
     # A concept at streak ≥ _TRANSFER_STREAK_THRESHOLD gets "transfer"; below → "recall".
     qt = _resolve_question_type(db, body.concept_id, "auto")
+    smode = body.session_mode if body.session_mode in _VALID_SESSION_MODES else "blocked"
     result = await asyncio.to_thread(
-        assess_answer, db, body.concept_id, body.question, body.answer, base_url, model, qt
+        assess_answer, db, body.concept_id, body.question, body.answer,
+        base_url, model, qt, smode,
     )
     # Attach summary + next concept hint
     result["summary"]         = get_mastery_summary(db, work_id)
