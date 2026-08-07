@@ -36,6 +36,7 @@ import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useQuery } from '@tanstack/react-query';
 import { useColors } from '@/hooks/useColors';
+import { useVellumTokens } from '@/lib/tokens';
 import { Feather } from '@expo/vector-icons';
 import { mobileFetch } from '@/lib/api';
 
@@ -356,6 +357,23 @@ export function KnowledgeGraphView({
   style,
 }: KnowledgeGraphViewProps) {
   const colors = useColors();
+  const T      = useVellumTokens();
+
+  /**
+   * Map the static VELLUM_LIGHT hex constants used in ENTITY_KINDS to their
+   * scheme-aware token counterparts.  Without this, dark-mode chip labels show
+   * e.g. #3C6A4B (dark forest green) on a near-black background — ~2.5:1
+   * contrast, which fails WCAG AA for small text.  The VELLUM_DARK equivalents
+   * (T.green = #8FC2A1, T.gilt = #C9A25A, T.rust = #D46A43) pass comfortably.
+   * '#527A8A' (person/slate) has no token; it sits at ~3:1 in dark mode and
+   * is left as-is.
+   */
+  const chipColor = (staticColor: string): string => {
+    if (staticColor === '#9A7B2E') return T.gilt;
+    if (staticColor === '#3C6A4B') return T.green;
+    if (staticColor === '#B2431E') return T.rust;
+    return staticColor; // '#527A8A' slate — no VELLUM_DARK equivalent
+  };
 
   const [hiddenKinds,  setHiddenKinds]  = useState<Set<string>>(new Set());
   const [selectedNode, setSelectedNode] = useState<GNode | null>(null);
@@ -518,17 +536,20 @@ export function KnowledgeGraphView({
         >
           {ENTITY_KINDS.map(({ value, label, color }) => {
             const active = !hiddenKinds.has(value);
+            // chipColor() maps static VELLUM_LIGHT hex values to scheme-aware
+            // tokens so labels are readable in dark mode (see definition above).
+            const cc = chipColor(color);
             return (
               <Pressable
                 key={value}
                 onPress={() => toggleKind(value)}
                 style={[kgStyles.chip, {
-                  backgroundColor: active ? color + '22' : colors.muted,
-                  borderColor:     active ? color : 'transparent',
+                  backgroundColor: active ? cc + '22' : colors.muted,
+                  borderColor:     active ? cc : 'transparent',
                 }]}
               >
-                <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: active ? color : colors.mutedForeground }} />
-                <Text style={{ fontSize: 11, fontFamily: 'Inter_500Medium', color: active ? color : colors.mutedForeground }}>
+                <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: active ? cc : colors.mutedForeground }} />
+                <Text style={{ fontSize: 11, fontFamily: 'Inter_500Medium', color: active ? cc : colors.mutedForeground }}>
                   {label}
                 </Text>
               </Pressable>
