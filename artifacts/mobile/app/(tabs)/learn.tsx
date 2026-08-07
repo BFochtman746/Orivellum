@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
+  Animated,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -17,7 +18,7 @@ import Svg, { Circle } from 'react-native-svg';
 import { useVellumTokens } from '@/lib/tokens';
 import { SkeletonItem } from '@/components/SkeletonItem';
 import { EmptyState } from '@/components/EmptyState';
-import { font } from '@/lib/typography';
+import { font, fontSerif } from '@/lib/typography';
 
 interface LearnWork {
   id: string;
@@ -27,6 +28,24 @@ interface LearnWork {
   graduated_count: number;
   mastery_pct: number;
   knowledge_count?: number;
+}
+
+function MasteryBar({ percent, color }: { percent: number; color: string }) {
+  const anim = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    Animated.timing(anim, { toValue: percent / 100, duration: 600, useNativeDriver: false }).start();
+  }, [percent]);
+  return (
+    <View style={{ height: 5, backgroundColor: 'rgba(0,0,0,0.08)', borderRadius: 3, overflow: 'hidden' }}>
+      <Animated.View
+        style={{
+          position: 'absolute', left: 0, top: 0, bottom: 0, borderRadius: 3,
+          backgroundColor: color,
+          width: anim.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] }),
+        }}
+      />
+    </View>
+  );
 }
 
 function MasteryRing({ pct, size = 44 }: { pct: number; size?: number }) {
@@ -144,6 +163,7 @@ function WorkCard({ work }: { work: LearnWork }) {
   const labelColor = work.mastery_pct >= 80 ? T.green
     : work.mastery_pct >= 50 ? T.gilt
     : T.rust;
+  const barColor = work.mastery_pct >= 80 ? T.green : T.gilt;
 
   return (
     <Pressable
@@ -179,9 +199,14 @@ function WorkCard({ work }: { work: LearnWork }) {
             {label}
           </Text>
           {hasC && (
-            <Text style={[styles.cardStats, { color: colors.mutedForeground }]}>
-              {work.graduated_count}/{work.concept_count} concepts graduated
-            </Text>
+            <>
+              <Text style={[styles.cardStats, { color: colors.mutedForeground }]}>
+                {work.graduated_count}/{work.concept_count} concepts graduated
+              </Text>
+              <View style={{ marginTop: 4 }}>
+                <MasteryBar percent={work.mastery_pct} color={barColor} />
+              </View>
+            </>
           )}
         </View>
 
@@ -193,6 +218,7 @@ function WorkCard({ work }: { work: LearnWork }) {
 
 export default function LearnScreen() {
   const colors = useColors();
+  const T = useVellumTokens();
   const insets = useSafeAreaInsets();
   const queryClient = useQueryClient();
 
@@ -318,14 +344,14 @@ const styles = StyleSheet.create({
   root: { flex: 1 },
   content: { paddingHorizontal: 16, paddingTop: 16 },
   headerRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 4 },
-  pageTitle: { fontSize: 26, lineHeight: 32, ...font('bold') },
+  pageTitle: { fontSize: 26, lineHeight: 32, ...fontSerif('bold') },
   pageSubtitle: { fontSize: 15, lineHeight: 22, marginBottom: 16, ...font('regular') },
   statsCard: {
     flexDirection: 'row', borderRadius: 12, borderWidth: 1,
     marginBottom: 20, overflow: 'hidden',
   },
   statCell: { flex: 1, padding: 14, alignItems: 'center', gap: 2 },
-  statValue: { fontSize: 22, lineHeight: 28, ...font('bold') },
+  statValue: { fontSize: 22, lineHeight: 28, ...fontSerif('bold') },
   statLabel: { fontSize: 11, letterSpacing: 0.6, textTransform: 'uppercase', ...font('regular') },
   sectionLabel: {
     fontSize: 11, letterSpacing: 0.6,
