@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { mobileFetch } from '@/lib/api';
 import {
   Animated,
+  Easing,
   Modal,
   Platform,
   Pressable,
@@ -11,6 +12,7 @@ import {
   View,
   useColorScheme,
 } from 'react-native';
+import { useAudiobookJobActive } from '@/hooks/useAudiobookJobActive';
 import { useColors } from '@/hooks/useColors';
 import { Feather } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
@@ -25,6 +27,45 @@ import {
 
 const HEADER_HEIGHT = 56;
 const SHEET_CONTENT_HEIGHT = 500;
+
+// ── Audiobook generation pulsing dot ─────────────────────────────────────────
+
+/**
+ * A small animated dot shown next to the Studio nav item while an audiobook
+ * job is in progress. Pulses between full and half opacity on a 900 ms loop.
+ */
+function PulsingDot() {
+  const opacity = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    const anim = Animated.loop(
+      Animated.sequence([
+        Animated.timing(opacity, {
+          toValue: 0.25,
+          duration: 450,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+        Animated.timing(opacity, {
+          toValue: 1,
+          duration: 450,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+    anim.start();
+    return () => anim.stop();
+  }, [opacity]);
+
+  return (
+    <Animated.View
+      style={[styles.pulsingDot, { opacity }]}
+      accessibilityElementsHidden
+      importantForAccessibility="no"
+    />
+  );
+}
 
 // ── Review queue badge ──────────────────────────────────────────────────────
 
@@ -236,9 +277,11 @@ function currentRoute(path: string): string {
 interface NavBottomSheetProps {
   visible: boolean;
   onClose: () => void;
+  /** True while a background audiobook job exists — shows a pulsing dot on Studio. */
+  audiobookActive?: boolean;
 }
 
-function NavBottomSheet({ visible, onClose }: NavBottomSheetProps) {
+function NavBottomSheet({ visible, onClose, audiobookActive = false }: NavBottomSheetProps) {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const router = useRouter();
@@ -327,6 +370,7 @@ function NavBottomSheet({ visible, onClose }: NavBottomSheetProps) {
 
         {NAV_ITEMS.map((item) => {
           const isActive = item.route === active;
+          const showAudiobookDot = audiobookActive && item.key === 'studio';
           return (
             <Pressable
               key={item.key}
@@ -342,25 +386,32 @@ function NavBottomSheet({ visible, onClose }: NavBottomSheetProps) {
                 },
               ]}
               accessibilityRole="menuitem"
-              accessibilityLabel={item.label}
+              accessibilityLabel={
+                showAudiobookDot
+                  ? `${item.label} (audiobook generating)`
+                  : item.label
+              }
               accessibilityState={{ selected: isActive }}
             >
-              {/* Icon container */}
-              <View
-                style={[
-                  styles.navIconWrap,
-                  {
-                    backgroundColor: isActive
-                      ? `${colors.primary}1A`
-                      : colors.muted,
-                  },
-                ]}
-              >
-                <Feather
-                  name={item.icon as any}
-                  size={20}
-                  color={isActive ? colors.primary : colors.mutedForeground}
-                />
+              {/* Icon container — with optional pulsing dot overlay */}
+              <View style={{ position: 'relative' }}>
+                <View
+                  style={[
+                    styles.navIconWrap,
+                    {
+                      backgroundColor: isActive
+                        ? `${colors.primary}1A`
+                        : colors.muted,
+                    },
+                  ]}
+                >
+                  <Feather
+                    name={item.icon as any}
+                    size={20}
+                    color={isActive ? colors.primary : colors.mutedForeground}
+                  />
+                </View>
+                {showAudiobookDot && <PulsingDot />}
               </View>
 
               {/* Label */}
@@ -376,11 +427,16 @@ function NavBottomSheet({ visible, onClose }: NavBottomSheetProps) {
                 {item.label}
               </Text>
 
-              {isActive && (
+              {/* Right side: check (active) or "generating" label (audiobook) */}
+              {isActive ? (
                 <View style={styles.navCheck}>
                   <Feather name="check" size={15} color={colors.primary} />
                 </View>
-              )}
+              ) : showAudiobookDot ? (
+                <Text style={[styles.audiobookBadgeLabel, { color: '#f97316' }]}>
+                  Generating
+                </Text>
+              ) : null}
             </Pressable>
           );
         })}
@@ -393,7 +449,8 @@ function NavBottomSheet({ visible, onClose }: NavBottomSheetProps) {
 
 function NativeAppLayout() {
   const [menuOpen, setMenuOpen] = useState(false);
-  const reviewCount = useReviewCount();
+  const reviewCount    = useReviewCount();
+  const audiobookActive = useAudiobookJobActive();
 
   return (
     <View style={{ flex: 1 }}>
@@ -417,7 +474,11 @@ function NativeAppLayout() {
         <Tabs.Screen name="write" />
         <Tabs.Screen name="actions" />
       </Tabs>
-      <NavBottomSheet visible={menuOpen} onClose={() => setMenuOpen(false)} />
+      <NavBottomSheet
+        visible={menuOpen}
+        onClose={() => setMenuOpen(false)}
+        audiobookActive={audiobookActive}
+      />
     </View>
   );
 }
@@ -656,5 +717,24 @@ const styles = StyleSheet.create({
     fontSize: 9,
     fontFamily: 'Inter_700Bold',
     lineHeight: 10,
+  },
+
+  // Audiobook generation badge — pulsing orange dot on the Studio nav icon
+  pulsingDot: {
+    position: 'absolute',
+    top: -3,
+    right: -3,
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#f97316',
+    borderWidth: 1.5,
+    borderColor: 'transparent',
+  },
+  // "Generating" label shown to the right of the Studio nav item label
+  audiobookBadgeLabel: {
+    fontSize: 10,
+    fontFamily: 'Inter_600SemiBold',
+    letterSpacing: 0.3,
   },
 });
