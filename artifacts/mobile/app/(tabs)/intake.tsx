@@ -21,6 +21,8 @@ import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import { mobileFetch } from '@/lib/api';
 import { getApiToken } from '@/lib/token';
+import { useVellumTokens } from '@/lib/tokens';
+import { font } from '@/lib/typography';
 
 const DOMAIN = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
 const API_BASE = `https://${DOMAIN}`;
@@ -69,8 +71,9 @@ function tierColor(tier: string): string {
 // ── Confidence bar ─────────────────────────────────────────────────────────────
 
 function ConfidenceBar({ value, colors }: { value: number; colors: any }) {
+  const T = useVellumTokens();
   const pct = Math.round(value * 100);
-  const barColor = pct >= 80 ? '#22c55e' : pct >= 50 ? '#f59e0b' : '#ef4444';
+  const barColor = pct >= 80 ? T.green : pct >= 50 ? T.gilt : T.rust;
   return (
     <View style={styles.confRow}>
       <View style={[styles.confTrack, { backgroundColor: colors.muted }]}>
@@ -107,6 +110,7 @@ function ActionChip({
   busy?: boolean;
   done?: boolean;
 }) {
+  const T = useVellumTokens();
   const icon = done ? 'check' : (ACTION_ICONS[action.kind] ?? 'activity');
   return (
     <Pressable
@@ -115,14 +119,14 @@ function ActionChip({
         styles.chip,
         {
           backgroundColor: colors.card,
-          borderColor: done ? '#22c55e' : colors.border,
-          opacity: (pressed && !busy && !done) ? 0.7 : (busy ? 0.5 : 1),
+          borderColor: done ? T.green : colors.border,
+          opacity: (pressed && !busy && !done) ? 0.7 : (busy ? 0.38 : 1),
         },
       ]}
       accessibilityLabel={action.label}
       accessibilityHint={action.description}
     >
-      <Feather name={icon as any} size={13} color={done ? '#22c55e' : colors.primary} />
+      <Feather name={icon as any} size={13} color={done ? T.green : colors.primary} />
       <Text style={[styles.chipText, { color: colors.foreground }]}>
         {busy ? '…' : action.label}
       </Text>
@@ -143,6 +147,7 @@ function ProfileCard({
   router: any;
   onProfileUpdate?: (p: IntakeProfile) => void;
 }) {
+  const T = useVellumTokens();
   const tc = tierColor(profile.tier);
   const [actionBusy, setActionBusy] = useState<string | null>(null);
   const [archived, setArchived] = useState(false);
@@ -424,9 +429,9 @@ function ProfileCard({
         </View>
       )}
       {archived && (
-        <View style={[styles.archivedNote, { borderColor: '#22c55e44' }]}>
-          <Feather name="check" size={14} color="#22c55e" />
-          <Text style={{ color: '#22c55e', fontSize: 12, fontFamily: 'Inter_400Regular' }}>
+        <View style={[styles.archivedNote, { backgroundColor: T.greenSoft, borderColor: T.green }]}>
+          <Feather name="check" size={14} color={T.green} />
+          <Text style={[styles.archivedText, { color: T.green }]}>
             Document archived
           </Text>
         </View>
@@ -441,6 +446,7 @@ import { useRouter } from 'expo-router';
 
 export default function IntakeScreen() {
   const colors = useColors();
+  const T = useVellumTokens();
   const insets = useSafeAreaInsets();
   const router = useRouter();
 
@@ -620,10 +626,16 @@ export default function IntakeScreen() {
     }
   };
 
+  // Progress bar color based on phase
+  const progressBarColor =
+    phase === 'error' ? T.rust :
+    phase === 'done'  ? T.green :
+    T.gilt;
+
   return (
     <ScrollView
       style={[styles.root, { backgroundColor: colors.background }]}
-      contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 32 }]}
+      contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 24 }]}
     >
       {/* Header */}
       <View style={styles.headerRow}>
@@ -652,7 +664,7 @@ export default function IntakeScreen() {
               {
                 backgroundColor: colors.card,
                 borderColor: colors.border,
-                opacity: isCapturing ? 0.5 : pressed ? 0.75 : 1,
+                opacity: isCapturing ? 0.38 : pressed ? 0.75 : 1,
               },
             ]}
           >
@@ -675,7 +687,7 @@ export default function IntakeScreen() {
               styles.pickBtn,
               {
                 backgroundColor: colors.card,
-                borderColor: isCapturing ? '#7c3aed44' : colors.border,
+                borderColor: isCapturing ? T.giltLine : colors.border,
                 opacity: pressed ? 0.75 : 1,
               },
             ]}
@@ -703,15 +715,15 @@ export default function IntakeScreen() {
               styles.pickBtn,
               {
                 backgroundColor: colors.card,
-                borderColor: isCapturing ? '#05961944' : colors.border,
+                borderColor: isCapturing ? T.giltLine : colors.border,
                 opacity: pressed ? 0.75 : 1,
               },
             ]}
           >
-            <View style={[styles.pickBtnIcon, { backgroundColor: '#0596191A' }]}>
+            <View style={[styles.pickBtnIcon, { backgroundColor: T.greenSoft }]}>
               {isCapturing
-                ? <ActivityIndicator size="small" color="#059619" />
-                : <Feather name="camera" size={22} color="#059619" />}
+                ? <ActivityIndicator size="small" color={T.green} />
+                : <Feather name="camera" size={22} color={T.green} />}
             </View>
             <View style={{ flex: 1 }}>
               <Text style={[styles.pickBtnTitle, { color: colors.foreground }]}>
@@ -728,10 +740,8 @@ export default function IntakeScreen() {
 
       {/* Scanning / uploading / profiling */}
       {(phase === 'scanning' || phase === 'uploading' || phase === 'profiling') && (
-        <View style={styles.loadingBox}>
-          <ActivityIndicator size="large" color={
-            phase === 'scanning' ? '#7c3aed' : colors.primary
-          } />
+        <View style={[styles.loadingBox, { backgroundColor: T.giltSoft, borderColor: T.giltLine, borderWidth: 1, borderRadius: 12 }]}>
+          <ActivityIndicator size="large" color={T.gilt} />
           <Text style={[styles.loadingTitle, { color: colors.foreground }]}>
             {phase === 'scanning' ? 'Scanning…'
               : phase === 'uploading' ? 'Uploading…'
@@ -742,6 +752,18 @@ export default function IntakeScreen() {
               {fileName}
             </Text>
           ) : null}
+          {/* Progress indicator bar */}
+          <View style={[styles.progressTrack, { backgroundColor: colors.muted }]}>
+            <View
+              style={[
+                styles.progressFill,
+                {
+                  backgroundColor: T.gilt,
+                  width: phase === 'scanning' ? '33%' : phase === 'uploading' ? '66%' : '90%',
+                },
+              ]}
+            />
+          </View>
           <Text style={[styles.loadingHint, { color: colors.mutedForeground }]}>
             {phase === 'scanning'
               ? 'Extracting text from your image — this can take up to 60 s'
@@ -754,13 +776,13 @@ export default function IntakeScreen() {
 
       {/* Error */}
       {phase === 'error' && (
-        <View style={[styles.errorBox, { backgroundColor: '#fef2f2', borderColor: '#fca5a5' }]}>
-          <Feather name="alert-circle" size={24} color="#ef4444" />
-          <Text style={styles.errorTitle}>Something went wrong</Text>
-          <Text style={styles.errorMsg}>{errorMsg}</Text>
+        <View style={[styles.errorBox, { backgroundColor: T.rustSoft, borderColor: T.rust }]}>
+          <Feather name="alert-circle" size={24} color={T.rust} />
+          <Text style={[styles.errorTitle, { color: T.rust }]}>Something went wrong</Text>
+          <Text style={[styles.errorMsg, { color: T.rust }]}>{errorMsg}</Text>
           <Pressable
             onPress={reset}
-            style={[styles.retryBtn, { backgroundColor: colors.primary }]}
+            style={[styles.retryBtn, { backgroundColor: T.rust }]}
           >
             <Text style={styles.retryBtnText}>Try Again</Text>
           </Pressable>
@@ -794,63 +816,69 @@ export default function IntakeScreen() {
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
-  content: { padding: 16 },
+  content: { paddingHorizontal: 16, paddingTop: 16 },
   headerRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 14, marginBottom: 24 },
   headerIcon: { width: 52, height: 52, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
-  pageTitle: { fontSize: 22, fontFamily: 'Merriweather_700Bold' },
-  pageSubtitle: { fontSize: 13, fontFamily: 'Inter_400Regular', lineHeight: 18, marginTop: 2 },
+  pageTitle: { fontSize: 20, lineHeight: 26, fontFamily: 'Merriweather_700Bold' },
+  pageSubtitle: { fontSize: 12, lineHeight: 18, marginTop: 2, ...font('regular') },
   pickSection: { gap: 10 },
-  pickHint: { fontSize: 12, fontFamily: 'Inter_400Regular', marginBottom: 4 },
+  pickHint: { fontSize: 12, lineHeight: 18, marginBottom: 4, ...font('regular') },
   pickBtn: {
     flexDirection: 'row', alignItems: 'center', gap: 14, padding: 14,
-    borderRadius: 12, borderWidth: 1,
+    borderRadius: 12, borderWidth: 1, minHeight: 44,
   },
   pickBtnIcon: { width: 44, height: 44, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
-  pickBtnTitle: { fontSize: 15, fontFamily: 'Inter_600SemiBold', marginBottom: 2 },
-  pickBtnSub: { fontSize: 12, fontFamily: 'Inter_400Regular' },
-  loadingBox: { alignItems: 'center', paddingVertical: 60, gap: 14 },
-  loadingTitle: { fontSize: 18, fontFamily: 'Inter_600SemiBold' },
-  loadingFile: { fontSize: 12, fontFamily: 'Inter_400Regular', maxWidth: 260 },
-  loadingHint: { fontSize: 12, fontFamily: 'Inter_400Regular', textAlign: 'center', maxWidth: 280 },
+  pickBtnTitle: { fontSize: 15, lineHeight: 22, marginBottom: 2, ...font('semibold') },
+  pickBtnSub: { fontSize: 12, lineHeight: 18, ...font('regular') },
+  loadingBox: { alignItems: 'center', paddingVertical: 40, paddingHorizontal: 20, gap: 14, marginTop: 8 },
+  loadingTitle: { fontSize: 18, lineHeight: 24, ...font('semibold') },
+  loadingFile: { fontSize: 12, lineHeight: 18, maxWidth: 260, ...font('regular') },
+  loadingHint: { fontSize: 12, lineHeight: 18, textAlign: 'center', maxWidth: 280, ...font('regular') },
+  progressTrack: { width: '100%', height: 4, borderRadius: 2, overflow: 'hidden' },
+  progressFill: { height: '100%', borderRadius: 2 },
   errorBox: {
     alignItems: 'center', borderRadius: 12, borderWidth: 1,
     padding: 24, gap: 10, marginTop: 16,
   },
-  errorTitle: { fontSize: 16, fontFamily: 'Inter_600SemiBold', color: '#dc2626' },
-  errorMsg: { fontSize: 13, fontFamily: 'Inter_400Regular', color: '#ef4444', textAlign: 'center' },
-  retryBtn: { marginTop: 8, paddingHorizontal: 24, paddingVertical: 10, borderRadius: 8 },
-  retryBtnText: { color: '#fff', fontFamily: 'Inter_600SemiBold', fontSize: 14 },
+  errorTitle: { fontSize: 16, lineHeight: 22, ...font('semibold') },
+  errorMsg: { fontSize: 13, lineHeight: 18, textAlign: 'center', ...font('regular') },
+  retryBtn: {
+    marginTop: 8, paddingHorizontal: 24, paddingVertical: 10,
+    borderRadius: 8, minHeight: 44, alignItems: 'center', justifyContent: 'center',
+  },
+  retryBtnText: { color: '#fff', fontSize: 14, lineHeight: 20, ...font('semibold') },
   profileCard: { borderRadius: 14, borderWidth: 1, padding: 16, gap: 14 },
   profileHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
   tierBadge: { borderRadius: 6, borderWidth: 1, paddingHorizontal: 8, paddingVertical: 3 },
-  tierBadgeText: { fontSize: 9, fontFamily: 'Inter_600SemiBold', letterSpacing: 0.8 },
-  kindText: { fontSize: 9, fontFamily: 'Inter_400Regular', letterSpacing: 0.5, textTransform: 'uppercase' },
-  whatText: { fontSize: 15, fontFamily: 'Inter_600SemiBold', lineHeight: 20 },
-  filedTo: { fontSize: 12, fontFamily: 'Inter_400Regular' },
+  tierBadgeText: { fontSize: 9, letterSpacing: 0.8, ...font('semibold') },
+  kindText: { fontSize: 9, letterSpacing: 0.5, textTransform: 'uppercase', ...font('regular') },
+  whatText: { fontSize: 15, lineHeight: 22, ...font('semibold') },
+  filedTo: { fontSize: 12, lineHeight: 18, ...font('regular') },
   confSection: { gap: 6 },
-  sectionLabel: { fontSize: 9, fontFamily: 'Inter_600SemiBold', letterSpacing: 1, textTransform: 'uppercase' },
+  sectionLabel: { fontSize: 11, letterSpacing: 0.6, textTransform: 'uppercase', ...font('semibold') },
   confRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   confTrack: { flex: 1, height: 5, borderRadius: 3, overflow: 'hidden' },
   confFill: { height: '100%', borderRadius: 3 },
-  confPct: { fontSize: 10, fontFamily: 'Inter_400Regular', minWidth: 28, textAlign: 'right' },
+  confPct: { fontSize: 10, lineHeight: 14, minWidth: 28, textAlign: 'right', ...font('regular') },
   summarySection: { gap: 6 },
-  summaryText: { fontSize: 12, fontFamily: 'Inter_400Regular', lineHeight: 18 },
+  summaryText: { fontSize: 12, lineHeight: 18, ...font('regular') },
   actionsSection: { gap: 8 },
   chipsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   chip: {
     flexDirection: 'row', alignItems: 'center', gap: 6,
-    paddingHorizontal: 10, paddingVertical: 7,
-    borderRadius: 8, borderWidth: 1, minHeight: 34,
+    paddingHorizontal: 12, paddingVertical: 10,
+    borderRadius: 8, borderWidth: 1, minHeight: 44,
   },
-  chipText: { fontSize: 12, fontFamily: 'Inter_400Regular' },
+  chipText: { fontSize: 12, lineHeight: 18, ...font('regular') },
   loadAnotherBtn: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
     gap: 8, marginTop: 16, paddingVertical: 12,
-    borderRadius: 10, borderWidth: 1,
+    borderRadius: 10, borderWidth: 1, minHeight: 44,
   },
-  loadAnotherText: { fontSize: 14, fontFamily: 'Inter_500Medium' },
+  loadAnotherText: { fontSize: 14, lineHeight: 20, ...font('medium') },
   archivedNote: {
     flexDirection: 'row' as const, alignItems: 'center' as const, gap: 6,
     padding: 10, borderRadius: 8, borderWidth: 1,
   },
+  archivedText: { fontSize: 12, lineHeight: 18, ...font('regular') },
 });
