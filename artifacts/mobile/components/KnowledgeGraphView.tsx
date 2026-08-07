@@ -558,16 +558,19 @@ export function KnowledgeGraphView({
             ].map(({ label, color }) => (
               <View key={label} style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                 <View style={{ width: 16, height: 2, backgroundColor: color, borderRadius: 1, opacity: 0.8 }} />
-                <Text style={{ fontSize: 10, fontFamily: 'Inter_400Regular', color: '#8A9BA8' }}>{label}</Text>
+                <Text style={{ fontSize: 10, fontFamily: 'Inter_400Regular', color: colors.mutedForeground }}>{label}</Text>
               </View>
             ))}
           </View>
         )}
       </View>
 
-      {/* Graph canvas */}
+      {/* Graph canvas — backgroundColor: colors.card gives the canvas a distinct
+          themed surface in both light and dark mode.  In light mode this is a
+          warm off-white; in dark mode it is a slightly elevated dark surface
+          that lifts the graph away from the screen background. */}
       <View
-        style={{ flex: 1, overflow: 'hidden' }}
+        style={{ flex: 1, overflow: 'hidden', backgroundColor: colors.card }}
         onLayout={e => {
           const { width, height } = e.nativeEvent.layout;
           if (width > 0 && height > 0) setCanvasDims({ w: width, h: height });
