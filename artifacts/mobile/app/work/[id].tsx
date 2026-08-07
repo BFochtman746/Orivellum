@@ -1825,7 +1825,7 @@ function GenerateSection({ workId, colors }: { workId: string; colors: any }) {
   );
 }
 
-function OverviewTab({ workId, onStartDiscussion, starting, onNavigateToTab, bookIntel, onOpenBook, onTargetsSaved, pipeline, pipelineLoading, onStartPipeline }: {
+function OverviewTab({ workId, onStartDiscussion, starting, onNavigateToTab, bookIntel, onOpenBook, onTargetsSaved, pipeline, pipelineLoading, onStartPipeline, onAdvancePipeline, advancingPipeline }: {
   workId: string;
   onStartDiscussion: () => void;
   starting: boolean;
@@ -1836,6 +1836,8 @@ function OverviewTab({ workId, onStartDiscussion, starting, onNavigateToTab, boo
   pipeline?: any;
   pipelineLoading?: boolean;
   onStartPipeline?: () => void;
+  onAdvancePipeline?: () => void;
+  advancingPipeline?: boolean;
 }) {
   const colors = useColors();
   const { data: workData, isLoading, isError, refetch } = useGetWork(workId);
@@ -2133,8 +2135,84 @@ function OverviewTab({ workId, onStartDiscussion, starting, onNavigateToTab, boo
         );
       })()}
 
-      {/* ── Start Book Pipeline CTA — shown when no pipeline exists yet ── */}
-      {!pipeline && !pipelineLoading && onStartPipeline && (
+      {/* ── Book Pipeline card — two states: active stage or "start" CTA ── */}
+      {pipelineLoading ? (
+        <View style={{
+          marginTop: 16, borderWidth: 1, borderRadius: 10,
+          borderColor: '#d97706' + '55', backgroundColor: '#fef3c7' + '22',
+          padding: 14, alignItems: 'center',
+        }}>
+          <ActivityIndicator size="small" color="#d97706" />
+        </View>
+      ) : pipeline ? (
+        /* ── Active pipeline: compact stage + Advance button ── */
+        <View style={{
+          marginTop: 16, borderWidth: 1, borderRadius: 10,
+          borderColor: '#d97706' + '55', overflow: 'hidden',
+          backgroundColor: '#fef3c7' + '22',
+        }}>
+          {/* Header row */}
+          <View style={{
+            flexDirection: 'row', alignItems: 'center', gap: 8,
+            paddingHorizontal: 14, paddingVertical: 10,
+            backgroundColor: '#d97706' + '18',
+            borderBottomWidth: StyleSheet.hairlineWidth,
+            borderBottomColor: '#d97706' + '44',
+          }}>
+            <Feather name="book-open" size={14} color="#d97706" />
+            <Text style={{ fontSize: 12, color: '#92400e', flex: 1, fontFamily: 'Inter_600SemiBold' }}>
+              Book Pipeline
+            </Text>
+            {/* Tapping the header navigates to the full Book tab */}
+            <Pressable
+              onPress={() => onNavigateToTab?.('book')}
+              hitSlop={12}
+              accessibilityLabel="Open Book tab"
+            >
+              <Feather name="external-link" size={13} color="#b45309" />
+            </Pressable>
+          </View>
+
+          {/* Stage row + Advance button */}
+          <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 12, gap: 10 }}>
+            {/* Badge: current stage code */}
+            <View style={{ backgroundColor: '#d97706' + '30', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 4 }}>
+              <Text style={{ fontSize: 13, fontFamily: 'Inter_700Bold', color: '#92400e' }}>
+                {pipeline.status ?? 'B0'}
+              </Text>
+            </View>
+            {/* Stage label */}
+            <Text style={{ flex: 1, fontSize: 13, fontFamily: 'Inter_400Regular', color: '#78350f' }} numberOfLines={2}>
+              {pipeline.stage_label ?? pipeline.status ?? 'In progress'}
+            </Text>
+            {/* Advance button — only shown when there is a next stage */}
+            {pipeline.next_status && onAdvancePipeline && (
+              <Pressable
+                onPress={onAdvancePipeline}
+                disabled={advancingPipeline}
+                style={({ pressed }) => ({
+                  flexDirection: 'row', alignItems: 'center', gap: 5,
+                  paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8,
+                  backgroundColor: pressed || advancingPipeline ? '#b45309' : '#d97706',
+                  opacity: advancingPipeline ? 0.7 : 1,
+                })}
+                accessibilityRole="button"
+                accessibilityLabel={`Advance to ${pipeline.next_status}`}
+              >
+                {advancingPipeline
+                  ? <ActivityIndicator size="small" color="#fff" />
+                  : <>
+                      <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: '#fff' }}>
+                        {`→ ${pipeline.next_status}`}
+                      </Text>
+                    </>
+                }
+              </Pressable>
+            )}
+          </View>
+        </View>
+      ) : onStartPipeline ? (
+        /* ── No pipeline yet: "Start" CTA ── */
         <View style={{
           marginTop: 16, borderWidth: 1, borderRadius: 10,
           borderColor: '#d97706' + '55', overflow: 'hidden',
@@ -2173,7 +2251,7 @@ function OverviewTab({ workId, onStartDiscussion, starting, onNavigateToTab, boo
             </Pressable>
           </View>
         </View>
-      )}
+      ) : null}
 
       {/* ── Completeness targets card ─────────────────────────────────── */}
       <View style={{
@@ -5137,6 +5215,8 @@ export default function WorkDetailScreen() {
             pipeline={pipeline}
             pipelineLoading={pipelineLoading}
             onStartPipeline={startPipeline}
+            onAdvancePipeline={advancePipeline}
+            advancingPipeline={advancingPipeline}
           />
         );
       case 'docs':
