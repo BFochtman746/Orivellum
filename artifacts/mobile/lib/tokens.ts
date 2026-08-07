@@ -26,6 +26,8 @@ export const VELLUM_LIGHT = {
   /** Error / destructive — terracotta rust. */
   rust:      '#B2431E',
   rustSoft:  'rgba(178, 67, 30, 0.10)',
+  /** Person / people entity kind — slate blue. */
+  slate:     '#527A8A',
   /** Muted label / secondary text. */
   inkSoft:   '#5C5443',
 } as const;
@@ -38,6 +40,8 @@ export const VELLUM_DARK = {
   giltLine:  'rgba(201, 162, 90, 0.36)',
   rust:      '#D46A43',
   rustSoft:  'rgba(212, 106, 67, 0.14)',
+  /** Brightened from light #527A8A to pass WCAG AA on dark backgrounds (~5:1). */
+  slate:     '#89BDD3',
   inkSoft:   '#B9B09B',
 } as const;
 
@@ -49,6 +53,7 @@ export interface VellumTokens {
   giltLine:  string;
   rust:      string;
   rustSoft:  string;
+  slate:     string;
   inkSoft:   string;
 }
 

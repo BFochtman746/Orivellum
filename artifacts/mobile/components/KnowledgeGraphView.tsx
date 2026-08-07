@@ -363,16 +363,19 @@ export function KnowledgeGraphView({
    * Map the static VELLUM_LIGHT hex constants used in ENTITY_KINDS to their
    * scheme-aware token counterparts.  Without this, dark-mode chip labels show
    * e.g. #3C6A4B (dark forest green) on a near-black background — ~2.5:1
-   * contrast, which fails WCAG AA for small text.  The VELLUM_DARK equivalents
-   * (T.green = #8FC2A1, T.gilt = #C9A25A, T.rust = #D46A43) pass comfortably.
-   * '#527A8A' (person/slate) has no token; it sits at ~3:1 in dark mode and
-   * is left as-is.
+   * contrast, which fails WCAG AA for small text.  All five ENTITY_KINDS now
+   * have explicit VELLUM_DARK equivalents:
+   *   #9A7B2E (gilt)  → T.gilt  = #C9A25A  (~6:1 on dark)
+   *   #3C6A4B (green) → T.green = #8FC2A1  (~7:1 on dark)
+   *   #B2431E (rust)  → T.rust  = #D46A43  (~5:1 on dark)
+   *   #527A8A (slate) → T.slate = #89BDD3  (~5:1 on dark)
    */
   const chipColor = (staticColor: string): string => {
     if (staticColor === '#9A7B2E') return T.gilt;
     if (staticColor === '#3C6A4B') return T.green;
     if (staticColor === '#B2431E') return T.rust;
-    return staticColor; // '#527A8A' slate — no VELLUM_DARK equivalent
+    if (staticColor === '#527A8A') return T.slate;
+    return staticColor;
   };
 
   const [hiddenKinds,  setHiddenKinds]  = useState<Set<string>>(new Set());
