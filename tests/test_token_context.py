@@ -243,9 +243,9 @@ class TestHistoryTrimming:
 
 class TestContextWindowConfig:
     def test_default_value(self):
-        """Default context_window is 8192."""
+        """Default context_window is 32768 (covers 7B–32B models; see config.py)."""
         from orivellum.configuration.config import ServingConfig
-        assert ServingConfig.context_window == 8192
+        assert ServingConfig.context_window == 32768
 
     def test_yaml_override(self):
         """context_window in YAML is picked up by load_config."""
