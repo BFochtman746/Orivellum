@@ -89,6 +89,7 @@ function useSectionLabel(): string {
   if (path.includes('/system')) return 'System';
   if (path.includes('/studio')) return 'Studio';
   if (path.includes('/write')) return 'Write';
+  if (path.includes('/actions')) return 'Actions';
   if (path.includes('/works')) return 'Works';
   if (path.includes('/library')) return 'Library';
   return 'Orivellum';
@@ -204,6 +205,7 @@ const NAV_ITEMS: NavItem[] = [
   { key: 'library',       label: 'Library',   icon: 'folder',         route: '/library'       },
   { key: 'studio',        label: 'Studio',    icon: 'mic',            route: '/studio'        },
   { key: 'write',         label: 'Write',     icon: 'edit-3',         route: '/write'         },
+  { key: 'actions',       label: 'Actions',   icon: 'zap',            route: '/actions'       },
   { key: 'graph',         label: 'Graph',     icon: 'share-2',        route: '/graph'         },
   { key: 'review',        label: 'Review',    icon: 'shield',         route: '/review'        },
   { key: 'topics',        label: 'Topics',    icon: 'layers',         route: '/topics'        },
@@ -220,6 +222,7 @@ function currentRoute(path: string): string {
   if (path.includes('/review')) return '/review';
   if (path.includes('/studio')) return '/studio';
   if (path.includes('/write')) return '/write';
+  if (path.includes('/actions')) return '/actions';
   if (path.includes('/graph')) return '/graph';
   if (path.includes('/topics')) return '/topics';
   if (path.includes('/governance')) return '/governance';
@@ -412,6 +415,7 @@ function NativeAppLayout() {
         <Tabs.Screen name="learn" />
         <Tabs.Screen name="library" />
         <Tabs.Screen name="write" />
+        <Tabs.Screen name="actions" />
       </Tabs>
       <NavBottomSheet visible={menuOpen} onClose={() => setMenuOpen(false)} />
     </View>
@@ -498,6 +502,13 @@ function WebTabLayout() {
         options={{
           title: 'Write',
           tabBarIcon: ({ color }) => <Feather name="edit-3" size={22} color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="actions"
+        options={{
+          title: 'Actions',
+          tabBarIcon: ({ color }) => <Feather name="zap" size={22} color={color} />,
         }}
       />
     </Tabs>
