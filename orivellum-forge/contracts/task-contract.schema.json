@@ -199,7 +199,7 @@
     },
     "model_used": {
       "type": ["string", "null"],
-      "description": "LM Studio model identifier used for the plan. Set automatically."
+      "description": "Lemonade model identifier used for the plan. Set automatically."
     },
     "planner_evidence": {
       "type": ["string", "null"],

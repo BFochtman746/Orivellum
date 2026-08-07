@@ -1,6 +1,6 @@
 #!/usr/bin/env pwsh
 # inspect-a01.ps1 — Forge Phase 0 Authority Inventory (Windows / PowerShell)
-# Records actual hardware, OS, WSL, LM Studio, and network facts.
+# Records actual hardware, OS, WSL, Lemonade, and network facts.
 # Unknown items are labeled "unknown", never inferred.
 #
 # Usage: .\scripts\inspect-a01.ps1 -OutputDir forge-jobs\PHASE0
@@ -9,7 +9,7 @@
 param(
     [Parameter(Mandatory=$true)]
     [string]$OutputDir,
-    [string]$LMStudioUrl = "http://127.0.0.1:8080"
+    [string]$LemonadeUrl = "http://127.0.0.1:8080"
 )
 
 Set-StrictMode -Version Latest
@@ -94,30 +94,30 @@ try {
 }
 
 # ---------------------------------------------------------------------------
-# 5. LM Studio
+# 5. Lemonade
 # ---------------------------------------------------------------------------
-Write-Host "[5/8] LM Studio ($LMStudioUrl)..." -ForegroundColor Yellow
-$lmStudio = [ordered]@{ url = $LMStudioUrl }
+Write-Host "[5/8] Lemonade ($LemonadeUrl)..." -ForegroundColor Yellow
+$lemonade = [ordered]@{ url = $LemonadeUrl }
 
 try {
-    $healthResp = Invoke-WebRequest -Uri "$LMStudioUrl/v1/models" -TimeoutSec 5 -ErrorAction Stop
+    $healthResp = Invoke-WebRequest -Uri "$LemonadeUrl/v1/models" -TimeoutSec 5 -ErrorAction Stop
     $models = ($healthResp.Content | ConvertFrom-Json).data
-    $lmStudio["reachable"] = $true
-    $lmStudio["http_status"] = $healthResp.StatusCode
-    $lmStudio["models_loaded"] = $models.Count
-    $lmStudio["models"] = $models | ForEach-Object {
+    $lemonade["reachable"] = $true
+    $lemonade["http_status"] = $healthResp.StatusCode
+    $lemonade["models_loaded"] = $models.Count
+    $lemonade["models"] = $models | ForEach-Object {
         [ordered]@{ id = $_.id; object = $_.object }
     }
 } catch {
-    $lmStudio["reachable"] = $false
-    $lmStudio["error"] = $_.Exception.Message
-    Write-Host "  WARNING: LM Studio not reachable. Is it running with a model loaded?" -ForegroundColor Red
+    $lemonade["reachable"] = $false
+    $lemonade["error"] = $_.Exception.Message
+    Write-Host "  WARNING: Lemonade not reachable. Is it running with a model loaded?" -ForegroundColor Red
 }
 
-# LM Studio process
-$lmProcess = Get-Process -Name "LM Studio" -ErrorAction SilentlyContinue
-$lmStudio["process_running"] = ($null -ne $lmProcess)
-$inventory["lm_studio"] = $lmStudio
+# Lemonade process
+$lmProcess = Get-Process -Name "lemonade-server" -ErrorAction SilentlyContinue
+$lemonade["process_running"] = ($null -ne $lmProcess)
+$inventory["lemonade"] = $lemonade
 
 # ---------------------------------------------------------------------------
 # 6. Network
@@ -153,9 +153,9 @@ Write-Host "[8/8] Completeness check..." -ForegroundColor Yellow
 $complete = $true
 $issues = @()
 
-if (-not $inventory["lm_studio"]["reachable"]) {
+if (-not $inventory["lemonade"]["reachable"]) {
     $complete = $false
-    $issues += "LM Studio not reachable on $LMStudioUrl"
+    $issues += "Lemonade not reachable on $LemonadeUrl"
 }
 if ($inventory["hardware"]["ram_gb"] -lt 64) {
     $issues += "WARNING: Less than 64 GB RAM detected — large models may not load"

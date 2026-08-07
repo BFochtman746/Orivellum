@@ -130,7 +130,7 @@ if os.path.exists(inv_path):
     with open(inv_path) as f:
         try:
             inv = json.load(f)
-            models = inv.get("lm_studio", {}).get("models", [])
+            models = inv.get("lemonade", {}).get("models", [])
             if models:
                 model_info["builder_model"] = models[0].get("id", "unknown")
         except Exception:

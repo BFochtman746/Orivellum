@@ -19,7 +19,7 @@ This document defines what Forge can access, what it cannot access, and why. It 
 │  │  • /home/user/forge/projects/  (WSL, coding projects only)   │  │
 │  │  • /tmp/forge-*/               (temp build artifacts)        │  │
 │  │  • forge-jobs/                 (evidence, within repo)       │  │
-│  │  • 127.0.0.1:8080              (LM Studio — read only)       │  │
+│  │  • 127.0.0.1:8080              (Lemonade — read only)        │  │
 │  │  • 127.0.0.1:4096              (OpenCode server — self)      │  │
 │  └───────────────────────────────────────────────────────────────┘  │
 │                                                                     │
@@ -29,7 +29,7 @@ This document defines what Forge can access, what it cannot access, and why. It 
 │  │  • /mnt/d/Orivellum/           (knowledge vault)             │  │
 │  │  • /mnt/c/Users/               (Windows user profile)        │  │
 │  │  • ~/.ssh/, ~/.gnupg/          (credentials)                 │  │
-│  │  • ~/.config/lmstudio/         (LM Studio config)            │  │
+│  │  • ~/.config/lemonade/         (Lemonade config)             │  │
 │  │  • Any file matching .env, .env.*, secrets.*                 │  │
 │  │  • Production databases        (never direct access)         │  │
 │  │  • External internet           (except explicitly approved)  │  │
@@ -63,7 +63,7 @@ This document defines what Forge can access, what it cannot access, and why. It 
 ### Network
 | Access | Endpoint | Purpose |
 |---|---|---|
-| Read | `127.0.0.1:8080/v1/*` | LM Studio inference — loopback only |
+| Read | `127.0.0.1:8080/v1/*` | Lemonade inference — loopback only |
 | Self | `127.0.0.1:4096` | OpenCode server API |
 | Approved | Package registries (npm, PyPI) | Only with explicit job approval |
 
@@ -87,7 +87,7 @@ This document defines what Forge can access, what it cannot access, and why. It 
 
 3. **The Windows user profile** (`/mnt/c/Users/`). Personal documents, browser data, and Windows application settings are out of scope.
 
-4. **LM Studio's own configuration** (`~/.config/lmstudio/`). Forge uses LM Studio as a black-box inference endpoint. It does not configure, reconfigure, or inspect LM Studio internals.
+4. **Lemonade's own configuration** (`~/.config/lemonade/`). Forge uses Lemonade as a black-box inference endpoint. It does not configure, reconfigure, or inspect Lemonade internals.
 
 5. **The public internet, except with explicit approval.** All AI work (plan, build, repair, review) runs offline. Web search is a separately approved capability gated per job, not automatic. No AI-generated code may open an outbound connection during build or test.
 
@@ -107,7 +107,7 @@ When a Docker Engine is in use (for test isolation):
 | No `--net=host` | Containers have their own network namespace |
 | Mounts are read-only except the worktree | `--volume /worktree:/workspace:rw`, everything else `:ro` |
 | Containers are ephemeral | Removed after the gate step completes |
-| No access to host's LM Studio port from within container | The model server is never exposed to containers |
+| No access to host's Lemonade port from within container | The model server is never exposed to containers |
 
 Docker Engine in WSL is treated as **privileged infrastructure**, not an ordinary agent tool. The docker group on Linux grants effective root-level access. Only the gate runner script invokes Docker, never the AI agent directly.
 
@@ -121,7 +121,7 @@ Docker Engine in WSL is treated as **privileged infrastructure**, not an ordinar
 
 ### What is NOT exposed to the VPN
 - OpenCode server (`127.0.0.1:4096`) — loopback only
-- LM Studio server (`127.0.0.1:8080`) — loopback only
+- Lemonade server (`127.0.0.1:8080`) — loopback only
 - Any test service started by the build/gate process
 
 ### What is NOT exposed to the public internet

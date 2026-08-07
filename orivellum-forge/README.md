@@ -2,7 +2,7 @@
 
 **Version:** 0.1.0 (Phase 1 — Local Quality Factory)  
 **Host:** A-01 · AMD Ryzen AI Max+ 395 · 128 GB unified memory · Windows 11 + WSL  
-**Inference:** LM Studio on `127.0.0.1:8080` · Model: Qwen3-Coder-30B-A3B-Instruct  
+**Inference:** Lemonade on `127.0.0.1:8080` · Model: Qwen3-Coder-30B-A3B-Instruct  
 **Engine:** OpenCode in Ubuntu WSL  
 **Mobile UI:** Through existing Orivellum gateway over WireGuard/Tailscale only
 
@@ -32,10 +32,10 @@ Run these steps once on A-01. They verify the environment before any real projec
 bash scripts/inspect-a01.sh forge-jobs/PHASE0
 ```
 
-### 2. Confirm LM Studio is reachable
+### 2. Confirm Lemonade is reachable
 
 ```bash
-# In WSL — LM Studio must be running with a model loaded
+# In WSL — Lemonade must be running with a model loaded
 curl -s http://127.0.0.1:8080/v1/models | python3 -m json.tool
 ```
 
@@ -83,7 +83,7 @@ tmux new-session -d -s forge "opencode serve --hostname 127.0.0.1 --port 4096"
 # In a new terminal: submit a plan job
 JOB_ID="JOB-$(date +%Y%m%d-%H%M%S)"
 mkdir -p forge-jobs/$JOB_ID
-# OpenCode connects to LM Studio via opencode/opencode.json
+# OpenCode connects to Lemonade via opencode/opencode.json
 opencode --config opencode/opencode.json --agent plan \
   "Inspect the project at /path/to/project and produce a task contract for: <your request>"
 ```
@@ -183,8 +183,8 @@ forge-jobs/                        ← created at runtime, one dir per job
 | Component | Version | Source |
 |---|---|---|
 | OpenCode | ≥ 1.17.9 | `curl -fsSL https://opencode.ai/install \| bash` |
-| LM Studio | Existing | Already installed on A-01 |
-| Qwen3-Coder-30B-A3B-Instruct | Latest GGUF | Load in LM Studio |
+| Lemonade | Existing | Already installed on A-01 |
+| Qwen3-Coder-30B-A3B-Instruct | AMD Quark-quantized | Load in Lemonade |
 | Playwright | ≥ 1.45 | `npm install -D @playwright/test && npx playwright install` |
 | Semgrep CE | ≥ 1.75 | `pip install semgrep` |
 | Gitleaks | ≥ 8.18 | Download from github.com/gitleaks/gitleaks/releases |

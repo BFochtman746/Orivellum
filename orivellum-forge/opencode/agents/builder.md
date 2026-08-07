@@ -41,7 +41,7 @@ Work through the `tasks` array in order. For each task:
 - You may run formatters, linters, type checkers, and test runners.
 - You may install project-scoped packages (venv, node_modules) without approval.
 - You must not run `sudo`, `apt-get install`, `npm install -g`, or any system-scope installer without explicit approval.
-- You must not open network connections except to 127.0.0.1:8080 (LM Studio) during build.
+- You must not open network connections except to 127.0.0.1:8080 (Lemonade) during build.
 
 **Scope:**
 - If you discover a bug or improvement outside the task contract, record it as a note — do not fix it.

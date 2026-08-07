@@ -81,9 +81,9 @@ Only use Aider if OpenCode's repair loop has been exhausted:
 # Install Aider (if not already installed)
 pip install aider-chat
 
-# Point Aider at LM Studio
+# Point Aider at Lemonade
 aider --openai-api-base http://127.0.0.1:8080/v1 \
-      --openai-api-key lm-studio \
+      --openai-api-key lemonade \
       --model qwen3-coder-30b-a3b-instruct \
       --no-auto-commit \
       /path/to/project-JOB-YYYYMMDD-HHMMSS/src/failing_file.py
@@ -144,19 +144,18 @@ done
 
 ---
 
-## Scenario 5 — LM Studio is not responding
+## Scenario 5 — Lemonade is not responding
 
-**Symptom:** OpenCode hangs or returns errors; LM Studio health check fails.
+**Symptom:** OpenCode hangs or returns errors; Lemonade health check fails.
 
 ```bash
-# Check LM Studio from WSL
+# Check Lemonade from WSL
 curl -s --connect-timeout 5 http://127.0.0.1:8080/v1/models | python3 -m json.tool
 
 # If not responding:
-# 1. Restart LM Studio on Windows
-# 2. Verify the server is enabled (in LM Studio UI: Developer → Start Server)
-# 3. Verify the model is loaded (not just downloaded)
-# 4. Re-run smoke test after restart
+# 1. Restart Lemonade on Windows (lemonade-server.exe)
+# 2. Verify the model is loaded and the server is running
+# 3. Re-run smoke test after restart
 bash orivellum-forge/scripts/smoke-test-build-mode.sh forge-jobs/LM-RESTART-$(date +%Y%m%d)
 ```
 

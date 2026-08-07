@@ -47,10 +47,10 @@ A single passing run is not sufficient. Both runs must use the same model checkp
 | `manual_interventions` | Times a human had to intervene mid-task |
 | `time_to_first_action` | Seconds from prompt to first file edit |
 | `time_to_gate` | Seconds from start to gate runner invocation |
-| `tokens_per_second` | LM Studio reported throughput |
-| `peak_memory_gb` | LM Studio reported peak memory |
+| `tokens_per_second` | Lemonade reported throughput |
+| `peak_memory_gb` | Lemonade reported peak memory |
 | `context_used_tokens` | Estimated tokens used in conversation |
-| `model_id` | Exact model identifier from LM Studio |
+| `model_id` | Exact model identifier from Lemonade |
 | `quantization` | e.g. Q8_0, Q4_K_M |
 | `opencode_version` | OpenCode version string |
 
@@ -132,7 +132,7 @@ After all 10 tasks, fill in `evals/results-<model-id>-<date>.json`:
   "quantization": "Q8_0",
   "context_length": 65536,
   "opencode_version": "1.17.9",
-  "lm_studio_version": "0.3.x",
+  "lemonade_version": "latest",
   "run_date": "2026-08-07",
   "tasks": [
     {

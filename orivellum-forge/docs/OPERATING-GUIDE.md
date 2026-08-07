@@ -8,7 +8,7 @@
 ## Daily startup
 
 ```bash
-# 1. Start LM Studio on Windows — load Qwen3-Coder-30B-A3B-Instruct
+# 1. Start Lemonade on Windows — load Qwen3-Coder-30B-A3B-Instruct
 #    Server must be running on 127.0.0.1:8080
 
 # 2. In WSL — start OpenCode server in a persistent tmux session
@@ -263,11 +263,11 @@ bash orivellum-forge/scripts/smoke-test-build-mode.sh forge-jobs/UPDATE-$(date +
 
 ---
 
-## Updating the model in LM Studio
+## Updating the model in Lemonade
 
-1. Load the new model in LM Studio (do not start the server yet)
-2. Update `opencode/opencode.json` — change the `id` under `providers.lmstudio.models`
-3. Start the LM Studio server with the new model
+1. Load the new model in Lemonade (do not start the server yet)
+2. Update `opencode/opencode.json` — change the `id` under `providers.lemonade.models`
+3. Start the Lemonade server with the new model
 4. Re-run the smoke test: `bash scripts/smoke-test-build-mode.sh forge-jobs/MODEL-UPDATE-$(date +%Y%m%d)`
 5. Run the eval mini-corpus (T01–T10) before using the new model for real jobs
 
@@ -275,7 +275,7 @@ bash orivellum-forge/scripts/smoke-test-build-mode.sh forge-jobs/UPDATE-$(date +
 
 ## Checklist before any real job
 
-- [ ] LM Studio server is running with a model loaded
+- [ ] Lemonade server is running with a model loaded
 - [ ] `curl http://127.0.0.1:8080/v1/models` returns at least one model
 - [ ] OpenCode server is running in tmux (`tmux ls` shows `forge`)
 - [ ] Phase 0 smoke test was PASS for the current OpenCode version

@@ -54,7 +54,7 @@
       "properties": {
         "builder_model": { "type": "string" },
         "reviewer_model": { "type": ["string", "null"] },
-        "lm_studio_version": { "type": ["string", "null"] },
+        "lemonade_version": { "type": ["string", "null"] },
         "opencode_version": { "type": "string" }
       }
     },

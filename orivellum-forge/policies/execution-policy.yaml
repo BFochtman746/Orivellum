@@ -16,7 +16,7 @@ worktree:
   absolute_prohibitions:
     - "$HOME/.ssh"
     - "$HOME/.gnupg"
-    - "$HOME/.config/lmstudio"
+    - "$HOME/.config/lemonade"
     - "/mnt/c/Users"           # Windows profile (cross-FS)
     - "/mnt/d/Orivellum"       # knowledge vault — never touched
     - "/mnt/*/Documents"
@@ -97,7 +97,7 @@ shell:
 network:
   default: DENY
   permitted_during_build:
-    - "127.0.0.1:8080"     # LM Studio inference only
+    - "127.0.0.1:8080"     # Lemonade inference only
     - "127.0.0.1:4096"     # OpenCode server (self)
   permitted_with_approval:
     - "package_registry"   # npm, PyPI, crates.io — require explicit approval per job

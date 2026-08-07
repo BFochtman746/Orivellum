@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # smoke-test-build-mode.sh — Phase 0 mandatory gate
-# Confirms OpenCode's write tool works with the local LM Studio model.
+# Confirms OpenCode's write tool works with the local Lemonade model.
 # This test must PASS before any real project uses Forge.
 #
 # Usage: bash scripts/smoke-test-build-mode.sh <output-dir>

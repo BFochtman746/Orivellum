@@ -2,6 +2,7 @@
 # inspect-a01.sh — Forge Phase 0 Authority Inventory (WSL / Ubuntu)
 # Records actual WSL, toolchain, Git, and network facts from the Linux side.
 # Run after inspect-a01.ps1 to complete the authority inventory.
+# Lemonade inference server is checked on 127.0.0.1:8080 (same port used throughout the project).
 #
 # Usage: bash scripts/inspect-a01.sh <output-dir>
 #   e.g. bash scripts/inspect-a01.sh forge-jobs/PHASE0
@@ -9,7 +10,7 @@
 set -euo pipefail
 
 OUTPUT_DIR="${1:?Usage: $0 <output-dir>}"
-LM_STUDIO_URL="${LM_STUDIO_URL:-http://127.0.0.1:8080}"
+LEMONADE_URL="${LEMONADE_URL:-http://127.0.0.1:8080}"
 TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
 mkdir -p "$OUTPUT_DIR"
@@ -81,12 +82,12 @@ jq_str() { echo -n "$1" | python3 -c "import sys,json; print(json.dumps(sys.stdi
   GIT_WORKTREE=$(git worktree list 2>/dev/null | wc -l || echo "unknown")
   echo "  \"git\": {\"version\": $(jq_str "$GIT_VER"), \"worktree_count\": \"$GIT_WORKTREE\"},"
 
-  # 9. LM Studio reachability from WSL
+  # 9. Lemonade reachability from WSL
   LM_STATUS="unreachable"
   LM_MODELS="[]"
   if command -v curl &>/dev/null; then
     HTTP_CODE=$(curl -s -o /tmp/lm-models.json -w "%{http_code}" \
-      --connect-timeout 4 "$LM_STUDIO_URL/v1/models" 2>/dev/null || echo "000")
+      --connect-timeout 4 "$LEMONADE_URL/v1/models" 2>/dev/null || echo "000")
     if [[ "$HTTP_CODE" == "200" ]]; then
       LM_STATUS="reachable"
       LM_MODELS=$(cat /tmp/lm-models.json 2>/dev/null | python3 -c \
@@ -94,7 +95,7 @@ jq_str() { echo -n "$1" | python3 -c "import sys,json; print(json.dumps(sys.stdi
         2>/dev/null || echo "[]")
     fi
   fi
-  echo "  \"lm_studio_from_wsl\": {\"url\": $(jq_str "$LM_STUDIO_URL"), \"status\": $(jq_str "$LM_STATUS"), \"models\": $LM_MODELS},"
+  echo "  \"lemonade_from_wsl\": {\"url\": $(jq_str "$LEMONADE_URL"), \"status\": $(jq_str "$LM_STATUS"), \"models\": $LM_MODELS},"
 
   # 10. Security tools
   SG=$(semgrep --version 2>/dev/null || echo "not installed")
@@ -123,7 +124,7 @@ jq_str() { echo -n "$1" | python3 -c "import sys,json; print(json.dumps(sys.stdi
   fi
   if [[ "$LM_STATUS" == "unreachable" ]]; then
     ISSUES=$(echo "$ISSUES" | python3 -c \
-      "import sys,json; l=json.load(sys.stdin); l.append('LM Studio unreachable from WSL at $LM_STUDIO_URL'); print(json.dumps(l))")
+      "import sys,json; l=json.load(sys.stdin); l.append('Lemonade unreachable from WSL at $LEMONADE_URL'); print(json.dumps(l))")
   fi
 
   echo "  \"completeness\": {\"issues\": $ISSUES},"

@@ -2,11 +2,11 @@
   "$schema": "https://opencode.ai/config.schema.json",
 
   "providers": {
-    "lmstudio": {
-      "name": "LM Studio (A-01)",
+    "lemonade": {
+      "name": "Lemonade (A-01)",
       "type": "openai",
       "baseURL": "http://127.0.0.1:8080/v1",
-      "apiKey": "lm-studio",
+      "apiKey": "lemonade",
       "models": [
         {
           "id": "qwen3-coder-30b-a3b-instruct",
@@ -19,12 +19,12 @@
     }
   },
 
-  "model": "lmstudio/qwen3-coder-30b-a3b-instruct",
+  "model": "lemonade/qwen3-coder-30b-a3b-instruct",
 
   "agents": {
     "plan": {
       "name": "Forge Planner",
-      "model": "lmstudio/qwen3-coder-30b-a3b-instruct",
+      "model": "lemonade/qwen3-coder-30b-a3b-instruct",
       "system": {
         "file": "agents/planner.md"
       },
@@ -39,7 +39,7 @@
 
     "build": {
       "name": "Forge Builder",
-      "model": "lmstudio/qwen3-coder-30b-a3b-instruct",
+      "model": "lemonade/qwen3-coder-30b-a3b-instruct",
       "system": {
         "file": "agents/builder.md"
       },
@@ -54,7 +54,7 @@
 
     "repair": {
       "name": "Forge Repairer",
-      "model": "lmstudio/qwen3-coder-30b-a3b-instruct",
+      "model": "lemonade/qwen3-coder-30b-a3b-instruct",
       "system": {
         "file": "agents/repairer.md"
       },
@@ -69,7 +69,7 @@
 
     "review": {
       "name": "Forge Reviewer",
-      "model": "lmstudio/qwen3-coder-30b-a3b-instruct",
+      "model": "lemonade/qwen3-coder-30b-a3b-instruct",
       "system": {
         "file": "agents/reviewer.md"
       },
@@ -85,7 +85,7 @@
 
   "rules": [
     "You are running on A-01 (AMD Ryzen AI Max+ 395, 128 GB unified memory, Windows 11 + WSL).",
-    "The inference endpoint is LM Studio on 127.0.0.1:8080. Never suggest installing another model server.",
+    "The inference endpoint is Lemonade on 127.0.0.1:8080. Never suggest installing another model server.",
     "All work happens in the assigned worktree. Never access paths outside the worktree except for the task-contract.json and authority-inventory.json in forge-jobs/.",
     "Never call git push. Never reset --hard without explicit user approval.",
     "Never read or log environment variables that contain keys, tokens, or passwords.",
