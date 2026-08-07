@@ -17,7 +17,9 @@
       "supportsTablet": false,
       "infoPlist": {
         "NSPhotoLibraryAddUsageDescription": "Orivellum saves generated images to your photo library when you tap Save to Photos.",
-        "NSCameraUsageDescription": "Orivellum uses your camera so you can photograph a document, whiteboard, or diagram and ask the AI about it."
+        "NSCameraUsageDescription": "Orivellum uses your camera so you can photograph a document, whiteboard, or diagram and ask the AI about it.",
+        "UIFileSharingEnabled": true,
+        "LSSupportsOpeningDocumentsInPlace": true
       }
     },
     "android": {},

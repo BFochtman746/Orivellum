@@ -266,6 +266,108 @@ async function shareAudioFile(uri: string, name = `orivellum_${Date.now()}.mp3`)
   FileSystem.deleteAsync(dest, { idempotent: true }).catch(() => {});
 }
 
+/**
+ * Save an authenticated audio URL directly to the device's Files app (iOS) or
+ * app-files directory (Android) without opening the share sheet.
+ *
+ * iOS: copies to `documentDirectory`, which appears in the Files app when
+ * UIFileSharingEnabled + LSSupportsOpeningDocumentsInPlace are set (see app.json).
+ * Android: copies to `documentDirectory` (app-private; accessible via Files apps
+ * that support "Internal Storage / Android/data/…").
+ * Web: triggers a browser download, same as shareAudioFile.
+ */
+async function saveAudioToFiles(uri: string, name = `orivellum_${Date.now()}.mp3`) {
+  if (Platform.OS === 'web') {
+    const resp = await mobileFetch(uri);
+    if (!resp.ok) throw new Error(`Download failed (HTTP ${resp.status})`);
+    const href = URL.createObjectURL(await resp.blob());
+    const a = document.createElement('a');
+    a.href = href;
+    a.download = name;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(href), 10_000);
+    return;
+  }
+
+  const FileSystem = await import('expo-file-system/legacy');
+  const token = getApiToken();
+
+  // Sanitize so neither the cache path nor the Files path break on iOS/Android.
+  const safeName = name.replace(/[^a-zA-Z0-9._-]/g, '_');
+  const cacheDest = `${FileSystem.cacheDirectory}${safeName}`;
+  const filesDest = `${FileSystem.documentDirectory}${safeName}`;
+
+  // Wipe stale copies so an incomplete previous attempt can't be served.
+  await FileSystem.deleteAsync(cacheDest, { idempotent: true });
+  await FileSystem.deleteAsync(filesDest, { idempotent: true });
+
+  const dl = await FileSystem.downloadAsync(uri, cacheDest, {
+    headers: token ? { authorization: `Bearer ${token}` } : undefined,
+  });
+  if (dl.status !== 200) throw new Error(`Download failed (HTTP ${dl.status})`);
+
+  // Verify the file has content before copying.
+  const info = await FileSystem.getInfoAsync(dl.uri);
+  if (!info.exists) throw new Error('Audio file not found after download — please try again');
+  const size = (info as { size?: number }).size ?? -1;
+  if (size === 0) throw new Error('Downloaded audio file is empty — server may not have finished exporting');
+
+  // Copy from cache → documentDirectory (Files-visible on iOS).
+  await FileSystem.copyAsync({ from: cacheDest, to: filesDest });
+
+  // Clean up the cache copy (best-effort).
+  FileSystem.deleteAsync(cacheDest, { idempotent: true }).catch(() => {});
+}
+
+/** Full-width "Save to Files" button with busy / saved feedback matching SavePhotoButton. */
+function SaveAudioFilesButton({ uri, name }: { uri: string; name?: string }) {
+  const colors = useColors();
+  const [state, setState] = useState<'idle' | 'saving' | 'done'>('idle');
+
+  const handleSave = async () => {
+    if (state === 'saving') return;
+    setState('saving');
+    try {
+      await saveAudioToFiles(uri, name);
+      setState('done');
+      setTimeout(() => setState('idle'), 2500);
+    } catch (e: any) {
+      setState('idle');
+      Alert.alert('Could not save to Files', e?.message ?? 'Saving failed');
+    }
+  };
+
+  return (
+    <Pressable
+      onPress={handleSave}
+      disabled={state === 'saving'}
+      style={({ pressed }) => [
+        styles.saveButton,
+        { borderColor: colors.border, opacity: pressed ? 0.7 : 1 },
+      ]}
+    >
+      {state === 'saving' ? (
+        <ActivityIndicator size="small" color={colors.primary} />
+      ) : (
+        <Feather
+          name={state === 'done' ? 'check' : 'folder'}
+          size={15}
+          color={state === 'done' ? '#22c55e' : colors.primary}
+        />
+      )}
+      <Text style={[styles.saveButtonText, { color: state === 'done' ? '#22c55e' : colors.primary }]}>
+        {state === 'saving'
+          ? 'Saving…'
+          : state === 'done'
+          ? 'Saved ✓'
+          : Platform.OS === 'web'
+          ? 'Download audio'
+          : 'Save to Files'}
+      </Text>
+    </Pressable>
+  );
+}
+
 /** Small share icon button for audio rows — busy/done feedback matches SavePhotoButton. */
 function ShareAudioButton({ uri, name, compact }: { uri: string; name?: string; compact?: boolean }) {
   const colors = useColors();
@@ -3496,6 +3598,9 @@ function AudiobookPanel({
           </Pressable>
 
           {/* Actions */}
+          {/* "Save to Files" — direct copy to Files app, no share sheet */}
+          <SaveAudioFilesButton uri={serveUrl(result.path)} name={result.filename} />
+
           <View style={{ flexDirection: 'row', gap: 8 }}>
             <Pressable
               onPress={handleShare}
@@ -3509,7 +3614,7 @@ function AudiobookPanel({
                 : <Feather name="share-2" size={14} color={colors.primary} />
               }
               <Text style={{ color: colors.primary, fontSize: 13, fontFamily: 'Inter_500Medium' }}>
-                {sharing ? 'Preparing…' : 'Save / Share'}
+                {sharing ? 'Preparing…' : 'Share'}
               </Text>
             </Pressable>
             <Pressable
