@@ -77,7 +77,7 @@ function ProfileCard() {
   };
 
   return (
-    <Card className="border-primary/20 bg-primary/5">
+    <Card className="vellum-card" style={{ background: 'var(--green-soft)' }}>
       <CardContent className="p-6 space-y-4">
         <div className="flex items-center gap-2 mb-2">
           <User className="w-4 h-4 text-primary" />
@@ -154,11 +154,11 @@ type DiagResult = {
 };
 
 const STATUS_ICON: Record<string, string> = { ok: "✅", warn: "⚠️", error: "❌", info: "ℹ️" };
-const STATUS_CLS: Record<string, string> = {
-  ok:    "text-emerald-600",
-  warn:  "text-amber-600",
-  error: "text-destructive",
-  info:  "text-muted-foreground",
+const STATUS_STYLE: Record<string, string> = {
+  ok:    'var(--green-2)',
+  warn:  'var(--gilt)',
+  error: 'var(--rust)',
+  info:  'var(--ink-soft)',
 };
 
 function DiagnosticsCard() {
@@ -205,7 +205,7 @@ function DiagnosticsCard() {
   const issues = result?.all_checks.filter(c => c.status === "error" || c.status === "warn") ?? [];
 
   return (
-    <Card>
+    <Card className="vellum-card">
       <CardContent className="p-5 space-y-4">
         <div className="flex items-start justify-between gap-3">
           <div className="flex items-center gap-3">
@@ -253,7 +253,8 @@ function DiagnosticsCard() {
               </span>
               <div className="flex items-center gap-3 ml-auto">
                 {(["ok", "warn", "error", "info"] as const).map(s => (
-                  <span key={s} className={`text-xs font-mono font-semibold ${STATUS_CLS[s]}`}>
+                  <span key={s} className="text-xs font-mono font-semibold"
+                        style={{ color: STATUS_STYLE[s] }}>
                     {STATUS_ICON[s]} {result.summary[s]}
                   </span>
                 ))}
@@ -270,11 +271,10 @@ function DiagnosticsCard() {
                 </div>
                 {issues.map((c, i) => (
                   <div key={i}
-                    className={`flex items-start gap-2 text-xs px-3 py-2 rounded-lg border ${
-                      c.status === "error"
-                        ? "border-destructive/30 bg-destructive/5 text-destructive"
-                        : "border-amber-200 bg-amber-50/50 text-amber-800"
-                    }`}>
+                    className="flex items-start gap-2 text-xs px-3 py-2 rounded-lg border"
+                    style={c.status === "error"
+                      ? { borderColor: 'var(--rust)', background: 'var(--rust-soft)', color: 'var(--rust)' }
+                      : { borderColor: 'var(--gilt-line)', background: 'var(--gilt-soft)', color: 'var(--gilt)' }}>
                     <span className="shrink-0">{STATUS_ICON[c.status]}</span>
                     <div className="min-w-0">
                       <span className="font-medium">{c.name}:</span>{" "}
@@ -286,7 +286,8 @@ function DiagnosticsCard() {
               </div>
             )}
             {issues.length === 0 && (
-              <div className="flex items-center gap-2 text-xs text-emerald-700 px-3 py-2 rounded-lg border border-emerald-200 bg-emerald-50/50">
+              <div className="flex items-center gap-2 text-xs px-3 py-2 rounded-lg border"
+                   style={{ color: 'var(--green-2)', borderColor: 'var(--green-2)', background: 'var(--green-soft)' }}>
                 <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
                 All {result.summary.total} checks passed — system is healthy
               </div>
@@ -305,7 +306,8 @@ function DiagnosticsCard() {
                       <span className="text-xs font-mono font-medium flex items-center gap-2">
                         {sec.title}
                         {secIssues > 0 && (
-                          <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-amber-100 text-amber-700 leading-none">
+                          <span className="px-1.5 py-0.5 rounded-full text-[10px] leading-none"
+                                style={{ background: 'var(--gilt-soft)', color: 'var(--gilt)' }}>
                             {secIssues}
                           </span>
                         )}
@@ -319,7 +321,8 @@ function DiagnosticsCard() {
                         {sec.checks.map((c, i) => (
                           <div key={i} className="flex items-start gap-3 px-3 py-1.5 text-xs hover:bg-muted/10">
                             <span className="shrink-0 mt-px">{STATUS_ICON[c.status]}</span>
-                            <span className={`shrink-0 w-28 font-mono text-[10px] mt-0.5 ${STATUS_CLS[c.status]}`}>
+                            <span className="shrink-0 w-28 font-mono text-[10px] mt-0.5"
+                                  style={{ color: STATUS_STYLE[c.status] }}>
                               {c.status.toUpperCase()}
                             </span>
                             <span className="font-medium min-w-0 flex-1">{c.name}</span>
@@ -421,11 +424,11 @@ function MaintenanceCard() {
   const docsRecovered = md.match(/re-queued (\d+) stuck document/)?.[1] ?? null;
 
   return (
-    <Card>
+    <Card className="vellum-card">
       <CardContent className="p-6 space-y-5">
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <Moon className="w-5 h-5 text-primary" />
+            <Moon className="w-5 h-5" style={{ color: 'var(--green-raw)' }} />
             <h2 className="text-lg font-serif font-medium">Maintenance</h2>
           </div>
           <Button
@@ -555,11 +558,11 @@ function UserMemoryCard() {
   const busy = del.isPending || clearAll.isPending;
 
   return (
-    <Card>
+    <Card className="vellum-card">
       <CardContent className="p-6">
         <div className="flex items-center justify-between gap-3 mb-4">
           <div className="flex items-center gap-3">
-            <Brain className="w-5 h-5 text-primary" />
+            <Brain className="w-5 h-5" style={{ color: 'var(--green-raw)' }} />
             <h2 className="text-lg font-serif font-medium">My Memory</h2>
             <span className="text-xs text-muted-foreground">— facts Orivellum remembers about you</span>
           </div>
@@ -629,10 +632,10 @@ function VersionCard() {
     staleTime: Infinity,
   });
   return (
-    <Card>
+    <Card className="vellum-card">
       <CardContent className="p-6">
         <div className="flex items-center gap-3 mb-3">
-          <Terminal className="w-5 h-5 text-primary" />
+          <Terminal className="w-5 h-5" style={{ color: 'var(--green-raw)' }} />
           <h2 className="text-lg font-serif font-medium">About</h2>
         </div>
         {isLoading ? <Skeleton className="h-8 w-40" /> : (
@@ -737,7 +740,7 @@ function AutoDedupCard() {
   const pending = stats?.pending ?? 0;
 
   return (
-    <Card>
+    <Card className="vellum-card">
       <CardContent className="p-6 space-y-5">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -762,13 +765,14 @@ function AutoDedupCard() {
         {stats && (
           <div className="grid grid-cols-4 gap-3">
             {[
-              { label: "Pending",    value: stats.pending,    cls: pending > 0 ? "text-amber-600" : "text-muted-foreground" },
-              { label: "Superseded", value: stats.superseded, cls: "text-muted-foreground" },
-              { label: "Versioned",  value: stats.versioned,  cls: "text-muted-foreground" },
-              { label: "Dismissed",  value: stats.dismissed,  cls: "text-muted-foreground" },
-            ].map(({ label, value, cls }) => (
+              { label: "Pending",    value: stats.pending },
+              { label: "Superseded", value: stats.superseded },
+              { label: "Versioned",  value: stats.versioned },
+              { label: "Dismissed",  value: stats.dismissed },
+            ].map(({ label, value }) => (
               <div key={label} className="rounded-md bg-muted/40 px-3 py-2 text-center">
-                <p className={`text-xl font-mono font-semibold ${cls}`}>{value}</p>
+                <p className="text-xl font-mono font-semibold"
+                   style={{ color: label === "Pending" && pending > 0 ? 'var(--gilt)' : undefined }}>{value}</p>
                 <p className="text-[10px] uppercase tracking-wider text-muted-foreground mt-0.5">{label}</p>
               </div>
             ))}
@@ -778,7 +782,7 @@ function AutoDedupCard() {
         {/* How it works */}
         <div className="rounded-md bg-muted/30 border border-border/40 px-4 py-3 space-y-1.5 text-xs text-muted-foreground">
           <p className="font-medium text-foreground/70 font-mono uppercase text-[10px] tracking-wider mb-1">Resolution rules</p>
-          <div className="flex items-start gap-2"><Archive className="w-3 h-3 mt-0.5 shrink-0 text-amber-500" /><span><strong>Near-duplicate (≥ 85% similar):</strong> the canonical/newer/richer document survives; the other is marked <em>superseded</em>.</span></div>
+          <div className="flex items-start gap-2"><Archive className="w-3 h-3 mt-0.5 shrink-0" style={{ color: 'var(--gilt)' }} /><span><strong>Near-duplicate (≥ 85% similar):</strong> the canonical/newer/richer document survives; the other is marked <em>superseded</em>.</span></div>
           <div className="flex items-start gap-2"><GitMerge className="w-3 h-3 mt-0.5 shrink-0 text-primary/60" /><span><strong>Likely revision (60–85% similar):</strong> a DERIVED_FROM version chain is created; both documents are kept.</span></div>
           <div className="flex items-start gap-2"><AlertTriangle className="w-3 h-3 mt-0.5 shrink-0 text-muted-foreground" /><span>If both documents are already set to <em>canonical</em> the pair is left in the Review Queue for you to decide.</span></div>
         </div>
@@ -900,7 +904,7 @@ function WatchedFoldersCard() {
   const dirs = data?.dirs ?? [];
 
   return (
-    <Card>
+    <Card className="vellum-card">
       <CardContent className="p-6 space-y-4">
         <div className="flex items-start justify-between gap-3">
           <div className="flex items-start gap-3">
@@ -1001,12 +1005,12 @@ function WatchedFoldersCard() {
                       </span>
                     )}
                     {dir.last_scan_error ? (
-                      <span className="flex items-center gap-1 text-[11px] text-red-600">
+                      <span className="flex items-center gap-1 text-[11px]" style={{ color: 'var(--rust)' }}>
                         <XCircle className="w-3 h-3" />
                         {dir.last_scan_error}
                       </span>
                     ) : dir.last_scan_files_imported !== undefined && dir.last_scan_files_imported > 0 ? (
-                      <span className="flex items-center gap-1 text-[11px] text-emerald-700">
+                      <span className="flex items-center gap-1 text-[11px]" style={{ color: 'var(--green-2)' }}>
                         <CheckCircle2 className="w-3 h-3" />
                         {dir.last_scan_files_imported} imported last scan
                       </span>
@@ -1171,7 +1175,7 @@ function ExtractionTemplatesCard() {
   const templates = data?.templates ?? [];
 
   return (
-    <Card>
+    <Card className="vellum-card">
       <CardContent className="p-6 space-y-4">
         <div className="flex items-start justify-between gap-3">
           <div className="flex items-start gap-3">
@@ -1389,11 +1393,11 @@ function AudioEnhancementCard() {
   const setEnhance = useSetAudioEnhanceSetting();
 
   return (
-    <Card>
+    <Card className="vellum-card">
       <CardContent className="p-6">
         <div className="flex items-start justify-between gap-4">
           <div className="flex items-start gap-3">
-            <Mic2 className="w-5 h-5 text-primary mt-0.5 shrink-0" />
+            <Mic2 className="w-5 h-5 mt-0.5 shrink-0" style={{ color: 'var(--green-raw)' }} />
             <div className="space-y-1">
               <div className="flex items-center gap-2 flex-wrap">
                 <h3 className="font-medium text-sm">Audio Enhancement (DeepFilterNet3)</h3>
@@ -1414,7 +1418,7 @@ function AudioEnhancementCard() {
                 Runs on CPU at ~0.2× real-time with no GPU required.
               </p>
               {data && !data.installed && (
-                <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">
+                <p className="text-xs mt-1" style={{ color: 'var(--gilt)' }}>
                   Package not installed. Run:{" "}
                   <code className="font-mono bg-muted px-1 rounded text-[11px]">
                     {data.install_hint}
@@ -1422,7 +1426,7 @@ function AudioEnhancementCard() {
                 </p>
               )}
               {data?.installed && data.enabled && (
-                <p className="text-xs text-emerald-600 dark:text-emerald-400 mt-1">
+                <p className="text-xs mt-1" style={{ color: 'var(--green-2)' }}>
                   Active — audio files will be enhanced before transcription.
                 </p>
               )}
@@ -1610,10 +1614,10 @@ function SemanticSearchCard() {
     : null;
 
   return (
-    <Card>
+    <Card className="vellum-card">
       <CardContent className="p-6">
         <div className="flex items-start gap-3">
-          <Brain className="w-5 h-5 text-primary mt-0.5 shrink-0" />
+          <Brain className="w-5 h-5 mt-0.5 shrink-0" style={{ color: 'var(--green-raw)' }} />
           <div className="flex-1 space-y-3">
             {/* Header row */}
             <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -1656,7 +1660,8 @@ function SemanticSearchCard() {
 
             {/* Dimension mismatch warning */}
             {rx?.mismatch && !rx.running && (
-              <div className="flex items-start gap-2 rounded-lg px-3 py-2 bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-400">
+              <div className="flex items-start gap-2 rounded-lg px-3 py-2 border"
+                   style={{ background: 'var(--gilt-soft)', borderColor: 'var(--gilt-line)', color: 'var(--gilt)' }}>
                 <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
                 <span className="text-xs">
                   <span className="font-semibold">Vector dimension mismatch</span> — stored vectors
@@ -1694,11 +1699,7 @@ function SemanticSearchCard() {
                   {rx.counts.done.toLocaleString()} / {rx.counts.total.toLocaleString()} items vectorized
                 </span>
                 {coverage != null && (
-                  <span className={coverage === 100
-                    ? "text-emerald-600 dark:text-emerald-400"
-                    : coverage > 80 ? "text-amber-600 dark:text-amber-400"
-                    : "text-destructive"
-                  }>
+                  <span style={{ color: coverage === 100 ? 'var(--green-2)' : coverage > 80 ? 'var(--gilt)' : 'var(--rust)' }}>
                     ({coverage}%)
                   </span>
                 )}
@@ -1708,7 +1709,8 @@ function SemanticSearchCard() {
             {/* Circuit breaker / probe result */}
             {!probeResult && !rx?.running && (
               circuitOpen ? (
-                <div className="flex items-start gap-2 rounded-lg px-3 py-2 bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-400">
+                <div className="flex items-start gap-2 rounded-lg px-3 py-2 border"
+                     style={{ background: 'var(--gilt-soft)', borderColor: 'var(--gilt-line)', color: 'var(--gilt)' }}>
                   <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
                   <span className="text-xs">
                     Embedding endpoint is in cooldown after a recent failure.
@@ -1717,7 +1719,7 @@ function SemanticSearchCard() {
                   </span>
                 </div>
               ) : (
-                <p className="text-xs text-emerald-700 dark:text-emerald-400 font-mono flex items-center gap-1.5">
+                <p className="text-xs font-mono flex items-center gap-1.5" style={{ color: 'var(--green-2)' }}>
                   <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
                   Circuit breaker closed — semantic search active
                 </p>
@@ -1725,11 +1727,10 @@ function SemanticSearchCard() {
             )}
 
             {probeResult && (
-              <div className={`flex items-start gap-2 text-xs rounded-lg px-3 py-2 ${
-                probeResult.ok
-                  ? "bg-emerald-500/10 border border-emerald-500/30 text-emerald-700 dark:text-emerald-400"
-                  : "bg-destructive/10 border border-destructive/30 text-destructive"
-              }`}>
+              <div className="flex items-start gap-2 text-xs rounded-lg px-3 py-2 border"
+                   style={probeResult.ok
+                     ? { background: 'var(--green-soft)', borderColor: 'var(--green-2)', color: 'var(--green-2)' }
+                     : { background: 'var(--rust-soft)', borderColor: 'var(--rust)', color: 'var(--rust)' }}>
                 {probeResult.ok
                   ? <CheckCircle2 className="w-3.5 h-3.5 mt-0.5 shrink-0" />
                   : <XCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />}
@@ -1769,10 +1770,10 @@ function DatabaseStatsCard() {
   };
 
   return (
-    <Card>
+    <Card className="vellum-card">
       <CardContent className="p-6">
         <div className="flex items-start gap-3">
-          <Database className="w-5 h-5 text-primary mt-0.5 shrink-0" />
+          <Database className="w-5 h-5 mt-0.5 shrink-0" style={{ color: 'var(--green-raw)' }} />
           <div className="flex-1 space-y-2">
             <h3 className="font-medium text-sm">Database</h3>
             {isLoading ? (
@@ -1863,10 +1864,10 @@ function VisionModelCard() {
   const effectiveModel = data?.model;
 
   return (
-    <Card>
+    <Card className="vellum-card">
       <CardContent className="p-6">
         <div className="flex items-start gap-3">
-          <Eye className="w-5 h-5 text-primary mt-0.5 shrink-0" />
+          <Eye className="w-5 h-5 mt-0.5 shrink-0" style={{ color: 'var(--green-raw)' }} />
           <div className="flex-1 space-y-2">
             <div className="flex items-center justify-between gap-3 flex-wrap">
               <div>
@@ -1906,7 +1907,8 @@ function VisionModelCard() {
               ) : effectiveModel ? (
                 <p className="text-xs font-mono bg-muted/40 rounded px-2 py-1 truncate">{effectiveModel}</p>
               ) : (
-                <div className="flex items-start gap-2 rounded-lg px-3 py-2 bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-400">
+                <div className="flex items-start gap-2 rounded-lg px-3 py-2 border"
+                     style={{ background: 'var(--gilt-soft)', borderColor: 'var(--gilt-line)', color: 'var(--gilt)' }}>
                   <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
                   <div className="text-xs leading-snug">
                     <span className="font-medium">No vision model configured.</span>{" "}
@@ -1937,11 +1939,10 @@ function VisionModelCard() {
 
             {/* Probe result */}
             {probeResult && (
-              <div className={`flex items-start gap-2 text-xs rounded-lg px-3 py-2 mt-1 ${
-                probeResult.ok
-                  ? "bg-emerald-500/10 border border-emerald-500/30 text-emerald-700 dark:text-emerald-400"
-                  : "bg-destructive/10 border border-destructive/30 text-destructive"
-              }`}>
+              <div className="flex items-start gap-2 text-xs rounded-lg px-3 py-2 mt-1 border"
+                   style={probeResult.ok
+                     ? { background: 'var(--green-soft)', borderColor: 'var(--green-2)', color: 'var(--green-2)' }
+                     : { background: 'var(--rust-soft)', borderColor: 'var(--rust)', color: 'var(--rust)' }}>
                 {probeResult.ok
                   ? <CheckCircle2 className="w-3.5 h-3.5 mt-0.5 shrink-0" />
                   : <XCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />}
@@ -2029,11 +2030,11 @@ function ImageGenUrlCard() {
   const backends = statusData?.backends ?? [];
 
   return (
-    <Card>
+    <Card className="vellum-card">
       <CardContent className="p-6 space-y-5">
         {/* ── Header ──────────────────────────────────────────────────────────── */}
         <div className="flex items-center gap-3">
-          <ImageIcon className="w-5 h-5 text-primary shrink-0" />
+          <ImageIcon className="w-5 h-5 shrink-0" style={{ color: 'var(--green-raw)' }} />
           <div className="flex-1 min-w-0">
             <h3 className="font-mono text-sm uppercase tracking-wider">Image Generation Backend</h3>
             <p className="text-xs text-muted-foreground mt-0.5">
@@ -2129,7 +2130,7 @@ function ImageGenUrlCard() {
                   }`}
                 >
                   {b.online ? (
-                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                    <CheckCircle2 className="w-3.5 h-3.5 shrink-0" style={{ color: 'var(--green-2)' }} />
                   ) : (
                     <XCircle className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
                   )}
@@ -2139,11 +2140,8 @@ function ImageGenUrlCard() {
                   </span>
                   <Badge
                     variant={b.online ? "default" : "secondary"}
-                    className={`text-[10px] shrink-0 ${
-                      b.online
-                        ? "bg-emerald-500/15 text-emerald-700 border-emerald-500/20 hover:bg-emerald-500/15"
-                        : ""
-                    }`}
+                    className="text-[10px] shrink-0"
+                    style={b.online ? { background: 'var(--green-soft)', color: 'var(--green-2)', borderColor: 'var(--green-2)' } : undefined}
                   >
                     {b.online ? "Online" : "Offline"}
                   </Badge>
@@ -2153,7 +2151,7 @@ function ImageGenUrlCard() {
           )}
 
           {statusData && !statusData.any_online && (
-            <p className="text-xs text-amber-600 flex items-center gap-1.5">
+            <p className="text-xs flex items-center gap-1.5" style={{ color: 'var(--gilt)' }}>
               <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
               No image backend is reachable. Image generation will be unavailable until at least one is online.
             </p>
@@ -2293,7 +2291,7 @@ export default function System() {
                   afterwards and does not delay access to your files.
                 </p>
                 {!aiOnline && (
-                  <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">
+                  <p className="text-xs mt-1" style={{ color: 'var(--gilt)' }}>
                     Requires the local AI engine to be running. Enable it now and it will activate
                     automatically once the AI service is available.
                   </p>
@@ -2317,7 +2315,7 @@ export default function System() {
       </Card>
 
       {/* AI Re-ranking Setting */}
-      <Card>
+      <Card className="vellum-card">
         <CardContent className="p-6">
           <div className="flex items-start justify-between gap-4">
             <div className="flex items-start gap-3">
@@ -2331,7 +2329,7 @@ export default function System() {
                   top&nbsp;10 candidates. Adds roughly 1–3&nbsp;s to first response time.
                 </p>
                 {!aiOnline && (
-                  <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">
+                  <p className="text-xs mt-1" style={{ color: 'var(--gilt)' }}>
                     Requires the local AI engine to be running. Enable it now and it will activate
                     automatically once the AI service is available.
                   </p>
@@ -2356,11 +2354,11 @@ export default function System() {
 
       {/* AI offline setup guide */}
       {!loadingHealth && !aiOnline && (
-        <Card className="border-amber-500/30 bg-amber-500/5">
+        <Card className="vellum-card" style={{ borderColor: 'var(--gilt-line)', background: 'var(--gilt-soft)' }}>
           <CardContent className="p-6 space-y-4">
             <div className="flex items-center gap-2">
-              <Terminal className="w-4 h-4 text-amber-600" />
-              <h3 className="font-mono text-sm font-semibold text-amber-700 dark:text-amber-400 uppercase tracking-wider">
+              <Terminal className="w-4 h-4" style={{ color: 'var(--gilt)' }} />
+              <h3 className="font-mono text-sm font-semibold uppercase tracking-wider" style={{ color: 'var(--gilt)' }}>
                 Local AI Setup
               </h3>
             </div>
@@ -2624,11 +2622,11 @@ function HardwareCard() {
 
   function bar(pct: number | null | undefined) {
     const p = pct ?? 0;
-    const cls = p > 90 ? "bg-destructive" : p > 70 ? "bg-amber-500" : "bg-emerald-500";
+    const color = p > 90 ? 'var(--rust)' : p > 70 ? 'var(--gilt)' : 'var(--green-2)';
     return (
       <div className="h-1.5 w-full bg-muted rounded-full overflow-hidden">
-        <div className={`h-full rounded-full transition-all duration-700 ${cls}`}
-             style={{ width: `${Math.min(p, 100)}%` }} />
+        <div className="h-full rounded-full transition-all duration-700"
+             style={{ width: `${Math.min(p, 100)}%`, background: color }} />
       </div>
     );
   }
@@ -2653,8 +2651,9 @@ function HardwareCard() {
           )}
           {/* LIVE badge — shown while generation is running and poll is accelerated */}
           {isGenerating && (
-            <span className="flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-emerald-500/12 border border-emerald-500/25 text-[10px] font-mono font-medium text-emerald-600">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+            <span className="flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-mono font-medium border"
+                  style={{ background: 'var(--green-soft)', borderColor: 'var(--green-2)', color: 'var(--green-2)' }}>
+              <span className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: 'var(--green-2)' }} />
               LIVE 2s
             </span>
           )}
@@ -2750,7 +2749,7 @@ function HardwareCard() {
                         <span className="text-muted-foreground">{utilPct}% util</span>
                       )}
                       {gpu.temp_c != null && (
-                        <span className={gpu.temp_c > 85 ? "text-destructive" : gpu.temp_c > 70 ? "text-amber-600" : "text-muted-foreground"}>
+                        <span style={{ color: gpu.temp_c > 85 ? 'var(--rust)' : gpu.temp_c > 70 ? 'var(--gilt)' : undefined }}>
                           {gpu.temp_c}°C
                         </span>
                       )}
@@ -2870,11 +2869,9 @@ function JobsCard() {
             return (
               <div key={j.id} className="flex items-center gap-3 px-4 py-2.5 hover:bg-muted/20 transition-colors">
                 {/* State dot */}
-                <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-                  j.state === "done"    ? "bg-emerald-500" :
-                  j.state === "failed"  ? "bg-destructive" :
-                  "bg-amber-400 animate-pulse"
-                }`} />
+                <span className="w-1.5 h-1.5 rounded-full shrink-0"
+                      style={{ background: j.state === "done" ? 'var(--green-2)' : j.state === "failed" ? 'var(--rust)' : 'var(--gilt)',
+                               animation: j.state !== "done" && j.state !== "failed" ? "pulse 1.5s ease-in-out infinite" : undefined }} />
 
                 {/* Kind badge */}
                 <span className="shrink-0 font-mono text-[9px] uppercase px-1.5 py-0.5 rounded bg-muted/60 text-muted-foreground">
@@ -2893,11 +2890,10 @@ function JobsCard() {
 
                 {/* Right side: state + elapsed + retry */}
                 <div className="flex items-center gap-2 shrink-0">
-                  <span className={`text-[10px] font-mono ${
-                    j.state === "done"   ? "text-emerald-600" :
-                    j.state === "failed" ? "text-red-600" :
-                    "text-amber-600"
-                  }`}>{j.state}</span>
+                  <span className="text-[10px] font-mono"
+                        style={{ color: j.state === "done" ? 'var(--green-2)' : j.state === "failed" ? 'var(--rust)' : 'var(--gilt)' }}>
+                    {j.state}
+                  </span>
 
                   {elapsed && (
                     <span className="text-[10px] font-mono text-muted-foreground/50">{elapsed}</span>
@@ -2947,7 +2943,7 @@ function LlmHealthCard() {
     staleTime: 30_000,
   });
 
-  const overallColor = data?.overall === "ok" ? "text-emerald-600" : data?.overall === "degraded" ? "text-amber-600" : "text-destructive";
+  const overallColor = data?.overall === "ok" ? 'var(--green-2)' : data?.overall === "degraded" ? 'var(--gilt)' : 'var(--rust)';
 
   return (
     <div className="space-y-4">
@@ -2955,7 +2951,7 @@ function LlmHealthCard() {
         <h2 className="text-xl font-serif font-medium flex items-center gap-2">
           <Brain className="w-5 h-5 text-muted-foreground" />
           LLM Health
-          {data && <span className={`text-sm font-mono ${overallColor}`}>{data.overall}</span>}
+          {data && <span className="text-sm font-mono" style={{ color: overallColor }}>{data.overall}</span>}
         </h2>
         <button onClick={() => refetch()} disabled={isFetching}
           className="text-xs font-mono text-muted-foreground hover:text-foreground transition-colors">
@@ -2973,7 +2969,8 @@ function LlmHealthCard() {
             </div>
             <div className="flex items-center gap-3">
               <span className="text-[10px] font-mono text-muted-foreground">{data.primary.latency_ms}ms</span>
-              <span className={`text-[10px] font-mono ${data.primary.ok ? "text-emerald-600" : "text-destructive"}`}>
+              <span className="text-[10px] font-mono"
+                    style={{ color: data.primary.ok ? 'var(--green-2)' : 'var(--rust)' }}>
                 {data.primary.ok ? "ok" : "down"}
               </span>
             </div>
@@ -2986,7 +2983,8 @@ function LlmHealthCard() {
               </div>
               <div className="flex items-center gap-3">
                 <span className="text-[10px] font-mono text-muted-foreground">{data.fallback.latency_ms}ms</span>
-                <span className={`text-[10px] font-mono ${data.fallback.ok ? "text-emerald-600" : "text-destructive"}`}>
+                <span className="text-[10px] font-mono"
+                      style={{ color: data.fallback.ok ? 'var(--green-2)' : 'var(--rust)' }}>
                   {data.fallback.ok ? "ok" : "down"}
                 </span>
               </div>
@@ -3065,9 +3063,9 @@ function ActionHistoryCard() {
             return (
               <div key={run.id} className="flex items-center gap-3 px-4 py-2.5 hover:bg-muted/20 transition-colors">
                 <span
-                  className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-                    isOk ? "bg-emerald-500" : isErr ? "bg-destructive" : "bg-amber-400 animate-pulse"
-                  }`}
+                  className="w-1.5 h-1.5 rounded-full shrink-0"
+                  style={{ background: isOk ? 'var(--green-2)' : isErr ? 'var(--rust)' : 'var(--gilt)',
+                           animation: !isOk && !isErr ? "pulse 1.5s ease-in-out infinite" : undefined }}
                 />
                 <div className="flex-1 min-w-0">
                   <span className="text-xs font-mono font-medium">
@@ -3092,7 +3090,8 @@ function ActionHistoryCard() {
                       Download
                     </Button>
                   )}
-                  <span className={`text-[10px] font-mono ${isOk ? "text-emerald-600" : isErr ? "text-red-600" : "text-amber-600"}`}>
+                  <span className="text-[10px] font-mono"
+                        style={{ color: isOk ? 'var(--green-2)' : isErr ? 'var(--rust)' : 'var(--gilt)' }}>
                     {run.status}
                   </span>
                   <span className="text-[10px] font-mono text-muted-foreground/50">
@@ -3173,7 +3172,8 @@ function AuditLogCard() {
                   )}
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
-                  <span className={`text-[10px] font-mono ${isOk ? "text-emerald-600" : "text-red-600"}`}>
+                  <span className="text-[10px] font-mono"
+                        style={{ color: isOk ? 'var(--green-2)' : 'var(--rust)' }}>
                     {e.result}
                   </span>
                   <span className="text-[10px] font-mono text-muted-foreground/50">
