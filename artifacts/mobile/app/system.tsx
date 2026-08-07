@@ -207,19 +207,21 @@ function ToggleRow({
   value,
   onToggle,
   loading,
+  disabled,
 }: {
   label: string;
   description: string;
   value: boolean;
   onToggle: (v: boolean) => void;
   loading?: boolean;
+  disabled?: boolean;
 }) {
   const colors = useColors();
   return (
-    <View style={[s.toggleRow, { borderTopColor: colors.border }]}>
+    <View style={[s.toggleRow, { borderTopColor: colors.border, opacity: disabled ? 0.5 : 1 }]}>
       <View style={{ flex: 1, marginRight: 12 }}>
         <Text style={[s.toggleLabel, { color: colors.foreground }]}>{label}</Text>
-        <Text style={[s.toggleDesc, { color: colors.mutedForeground }]} numberOfLines={2}>
+        <Text style={[s.toggleDesc, { color: colors.mutedForeground }]} numberOfLines={3}>
           {description}
         </Text>
       </View>
@@ -228,7 +230,8 @@ function ToggleRow({
       ) : (
         <Switch
           value={value}
-          onValueChange={onToggle}
+          onValueChange={disabled ? undefined : onToggle}
+          disabled={disabled}
           trackColor={{ false: colors.border, true: colors.primary + '88' }}
           thumbColor={value ? colors.primary : colors.mutedForeground}
         />
@@ -269,6 +272,17 @@ export default function SystemScreen() {
   const { data: aiReranking, isLoading: aiRrLoading, refetch: refetchAiRr } = useQuery<{ enabled: boolean }>({
     queryKey: ['sys-ai-reranking'],
     queryFn: () => fetchJson('/system/settings/ai-reranking'),
+    staleTime: 30_000,
+  });
+
+  const { data: audioEnhance, isLoading: audioEnhLoading, refetch: refetchAudioEnh } = useQuery<{
+    enabled: boolean;
+    installed: boolean;
+    model: string;
+    install_hint: string | null;
+  }>({
+    queryKey: ['sys-audio-enhance'],
+    queryFn: () => fetchJson('/system/settings/audio-enhance'),
     staleTime: 30_000,
   });
 
@@ -326,6 +340,24 @@ export default function SystemScreen() {
     }
   };
 
+  const [audioEnhToggling, setAudioEnhToggling] = useState(false);
+  const toggleAudioEnhancement = async (val: boolean) => {
+    setAudioEnhToggling(true);
+    try {
+      const r = await mobileFetch(`${API}/system/settings/audio-enhance`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: val }),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      await refetchAudioEnh();
+    } catch {
+      Alert.alert('Error', 'Could not update audio enhancement setting');
+    } finally {
+      setAudioEnhToggling(false);
+    }
+  };
+
   const handleProbeEmbeddings = async () => {
     setProbing(true);
     setProbeResult(null);
@@ -358,7 +390,7 @@ export default function SystemScreen() {
     setRefreshing(true);
     try {
       await Promise.all([
-        refetchHealth(), refetchAiEx(), refetchAiRr(),
+        refetchHealth(), refetchAiEx(), refetchAiRr(), refetchAudioEnh(),
         refetchNightshift(), refetchDedup(),
       ]);
     } finally {
@@ -442,6 +474,44 @@ export default function SystemScreen() {
             onToggle={toggleAiReranking}
             loading={aiRrLoading || aiRrToggling}
           />
+          <ToggleRow
+            label="Audio Enhancement (DeepFilterNet3)"
+            description="Denoise audio before Whisper transcription — removes background noise, reverb, and crosstalk. Runs on CPU at ~0.2× real-time, no GPU needed."
+            value={!!audioEnhance?.enabled}
+            onToggle={toggleAudioEnhancement}
+            loading={audioEnhLoading || audioEnhToggling}
+            disabled={audioEnhance !== undefined && !audioEnhance.installed && !audioEnhance.enabled}
+          />
+          {/* Installed badge + status / install hint */}
+          {audioEnhance !== undefined && (
+            <View style={{ marginTop: 2, marginBottom: 4, gap: 4 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <View style={[
+                  audioEnhBadge.badge,
+                  audioEnhance.installed
+                    ? { backgroundColor: '#22c55e18', borderColor: '#22c55e55' }
+                    : { backgroundColor: colors.muted, borderColor: colors.border },
+                ]}>
+                  <Text style={[
+                    audioEnhBadge.badgeText,
+                    { color: audioEnhance.installed ? '#22c55e' : colors.mutedForeground },
+                  ]}>
+                    {audioEnhance.installed ? 'installed' : 'not installed'}
+                  </Text>
+                </View>
+                {audioEnhance.installed && audioEnhance.enabled && (
+                  <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: '#22c55e' }}>
+                    Active — audio will be denoised before transcription
+                  </Text>
+                )}
+              </View>
+              {!audioEnhance.installed && audioEnhance.install_hint && (
+                <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: '#f59e0b', lineHeight: 16 }}>
+                  To install: <Text style={{ fontFamily: 'Inter_600SemiBold' }}>{audioEnhance.install_hint}</Text>
+                </Text>
+              )}
+            </View>
+          )}
         </Section>
 
         {/* Embeddings */}
@@ -576,4 +646,9 @@ const s = StyleSheet.create({
     borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 7, marginTop: 4,
   },
   actionBtnText: { fontSize: 13, fontFamily: 'Inter_500Medium' },
+});
+
+const audioEnhBadge = StyleSheet.create({
+  badge:     { borderWidth: 1, borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2 },
+  badgeText: { fontSize: 10, fontFamily: 'Inter_600SemiBold' },
 });
