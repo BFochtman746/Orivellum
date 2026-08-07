@@ -2190,83 +2190,77 @@ export default function System() {
 
       <div className="grid md:grid-cols-3 gap-4">
         {/* Overall */}
-        <Card className="bg-primary/5 border-primary/20">
-          <CardContent className="p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="font-mono text-sm uppercase tracking-wider">Overall Status</h3>
-              <Activity className="w-5 h-5 text-primary" />
+        <div className="vellum-card p-6" style={{ background: 'var(--green-soft)' }}>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="font-mono text-sm uppercase tracking-wider" style={{ color: 'var(--ink-soft)' }}>Overall Status</h3>
+            <Activity className="w-5 h-5" style={{ color: 'var(--green-raw)' }} />
+          </div>
+          {loadingHealth ? (
+            <Skeleton className="h-8 w-24 rounded-lg" />
+          ) : (
+            <div className="flex items-center gap-2">
+              {health?.status === "ok" ? (
+                <CheckCircle2 className="w-6 h-6" style={{ color: 'var(--green-2)' }} />
+              ) : (
+                <AlertCircle className="w-6 h-6" style={{ color: 'var(--gilt)' }} />
+              )}
+              <span className="text-2xl font-serif font-semibold capitalize">
+                {health?.status || "Unknown"}
+              </span>
             </div>
-            {loadingHealth ? (
-              <Skeleton className="h-8 w-24" />
-            ) : (
-              <div className="flex items-center gap-2">
-                {health?.status === "ok" ? (
-                  <CheckCircle2 className="w-6 h-6 text-emerald-500" />
-                ) : (
-                  <AlertCircle className="w-6 h-6 text-amber-500" />
-                )}
-                <span className="text-2xl font-serif font-semibold capitalize">
-                  {health?.status || "Unknown"}
-                </span>
-              </div>
-            )}
-          </CardContent>
-        </Card>
+          )}
+        </div>
 
         {/* Database */}
-        <Card>
-          <CardContent className="p-6">
-            <div className="flex items-center justify-between mb-4 text-muted-foreground">
-              <h3 className="font-mono text-sm uppercase tracking-wider">Database</h3>
-              <Database className="w-5 h-5" />
+        <div className="vellum-card p-6">
+          <div className="flex items-center justify-between mb-4" style={{ color: 'var(--ink-soft)' }}>
+            <h3 className="font-mono text-sm uppercase tracking-wider">Database</h3>
+            <Database className="w-5 h-5" />
+          </div>
+          {loadingHealth ? (
+            <Skeleton className="h-8 w-24 rounded-lg" />
+          ) : (
+            <div className="flex items-center gap-2">
+              {dbStatus === "ok" ? (
+                <CheckCircle2 className="w-5 h-5" style={{ color: 'var(--green-2)' }} />
+              ) : (
+                <XCircle className="w-5 h-5" style={{ color: 'var(--rust)' }} />
+              )}
+              <span className="text-xl font-medium">
+                {dbStatus === "ok" ? "Connected" : "Offline"}
+              </span>
             </div>
-            {loadingHealth ? (
-              <Skeleton className="h-8 w-24" />
-            ) : (
-              <div className="flex items-center gap-2">
-                {dbStatus === "ok" ? (
-                  <CheckCircle2 className="w-5 h-5 text-emerald-500" />
-                ) : (
-                  <XCircle className="w-5 h-5 text-destructive" />
-                )}
-                <span className="text-xl font-medium">
-                  {dbStatus === "ok" ? "Connected" : "Offline"}
-                </span>
-              </div>
-            )}
-          </CardContent>
-        </Card>
+          )}
+        </div>
 
         {/* AI Engine */}
-        <Card className={aiOnline ? "" : "border-amber-500/30 bg-amber-500/5"}>
-          <CardContent className="p-6">
-            <div className="flex items-center justify-between mb-4 text-muted-foreground">
-              <h3 className="font-mono text-sm uppercase tracking-wider">Local AI Engine</h3>
-              <Cpu className="w-5 h-5" />
-            </div>
-            {loadingHealth ? (
-              <Skeleton className="h-8 w-24" />
-            ) : (
-              <div className="space-y-1.5">
-                <div className="flex items-center gap-2">
-                  {aiOnline ? (
-                    <CheckCircle2 className="w-5 h-5 text-emerald-500" />
-                  ) : (
-                    <XCircle className="w-5 h-5 text-amber-500" />
-                  )}
-                  <span className="text-xl font-medium">
-                    {aiOnline ? "Connected" : "Unavailable"}
-                  </span>
-                </div>
-                {aiEndpoint && (
-                  <p className="text-[11px] font-mono text-muted-foreground truncate" title={aiEndpoint}>
-                    {aiEndpoint}
-                  </p>
+        <div className="vellum-card p-6" style={aiOnline ? {} : { borderColor: 'var(--gilt-line)', background: 'var(--gilt-soft)' }}>
+          <div className="flex items-center justify-between mb-4" style={{ color: 'var(--ink-soft)' }}>
+            <h3 className="font-mono text-sm uppercase tracking-wider">Local AI Engine</h3>
+            <Cpu className="w-5 h-5" />
+          </div>
+          {loadingHealth ? (
+            <Skeleton className="h-8 w-24 rounded-lg" />
+          ) : (
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-2">
+                {aiOnline ? (
+                  <CheckCircle2 className="w-5 h-5" style={{ color: 'var(--green-2)' }} />
+                ) : (
+                  <XCircle className="w-5 h-5" style={{ color: 'var(--gilt)' }} />
                 )}
+                <span className="text-xl font-medium">
+                  {aiOnline ? "Connected" : "Unavailable"}
+                </span>
               </div>
-            )}
-          </CardContent>
-        </Card>
+              {aiEndpoint && (
+                <p className="text-[11px] font-mono truncate" style={{ color: 'var(--ink-faint)' }} title={aiEndpoint}>
+                  {aiEndpoint}
+                </p>
+              )}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Database statistics */}
