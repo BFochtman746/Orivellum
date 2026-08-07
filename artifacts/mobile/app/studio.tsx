@@ -4094,6 +4094,7 @@ function useSavedAudiobookFiles() {
     if (Platform.OS === 'web') return;
     const FileSystem = await import('expo-file-system/legacy');
     await FileSystem.deleteAsync(uri, { idempotent: true });
+    invalidateDurationCache(uri);
     setFiles(prev => prev.filter(f => f.uri !== uri));
   }, []);
 
@@ -4104,6 +4105,7 @@ function useSavedAudiobookFiles() {
     if (!dir) return;
     const newUri = `${dir}${newName}`;
     await FileSystem.moveAsync({ from: uri, to: newUri });
+    invalidateDurationCache(uri);
     setFiles(prev => prev.map(f =>
       f.uri === uri ? { ...f, uri: newUri, name: newName } : f,
     ));
@@ -4156,21 +4158,64 @@ function ShareLocalFileButton({ uri, name }: { uri: string; name: string }) {
 const _SWIPE_REVEAL_PX  = 72;
 const _SWIPE_THRESHOLD  = 36; // how far left before snapping open
 
+// ── Duration cache ─────────────────────────────────────────────────────────────
+// Module-level in-memory cache keyed by file URI. Persisted to AsyncStorage so
+// durations survive app restarts — the panel never re-probes a known file.
+
+const _durationCache = new Map<string, number>();
+const _DURATION_CACHE_KEY = '@orivellum/duration_cache';
+
+// Hydrate the in-memory cache from AsyncStorage once at module load.
+// Any parse error is silently swallowed — the probe path is the safe fallback.
+AsyncStorage.getItem(_DURATION_CACHE_KEY)
+  .then((raw) => {
+    if (!raw) return;
+    const parsed = JSON.parse(raw) as Record<string, number>;
+    for (const [uri, dur] of Object.entries(parsed)) {
+      if (typeof dur === 'number' && dur > 0) _durationCache.set(uri, dur);
+    }
+  })
+  .catch(() => {});
+
+/** Flush the in-memory cache to AsyncStorage (fire-and-forget). */
+function _persistDurationCache() {
+  const obj: Record<string, number> = {};
+  _durationCache.forEach((dur, uri) => { obj[uri] = dur; });
+  AsyncStorage.setItem(_DURATION_CACHE_KEY, JSON.stringify(obj)).catch(() => {});
+}
+
+/**
+ * Remove a URI from the duration cache.
+ * Call whenever a file is deleted or renamed so the old entry doesn't linger.
+ */
+function invalidateDurationCache(uri: string) {
+  if (_durationCache.has(uri)) {
+    _durationCache.delete(uri);
+    _persistDurationCache();
+  }
+}
+
 /**
  * Lazily probe the play duration of a local mp3 file without starting playback.
  *
- * Creates a temporary AudioPlayer, polls `currentStatus.duration` until the
- * decoder reports a non-zero value (typically < 500 ms for a local file), then
- * releases the player immediately.  Returns null while loading or on failure
- * so callers can fall back to file size.
+ * Returns the cached value immediately if the URI has been seen before, creating
+ * no AudioPlayer at all.  On a cache miss it creates a temporary AudioPlayer,
+ * polls `currentStatus.duration` until the decoder reports a non-zero value
+ * (typically < 500 ms for a local file), writes the result to the cache, then
+ * releases the player.  Returns null while probing or on failure so callers can
+ * fall back to file size.
  *
  * MAX_ATTEMPTS × 100 ms = 3 s ceiling; most local files resolve in 1–3 polls.
  */
 function useDuration(uri: string): number | null {
-  const [duration, setDuration] = useState<number | null>(null);
+  // Initialise from the module-level cache so a cached hit never triggers a
+  // re-render — the value is already correct on the first render.
+  const [duration, setDuration] = useState<number | null>(() => _durationCache.get(uri) ?? null);
 
   useEffect(() => {
     if (Platform.OS === 'web' || !uri) return;
+    // Cache hit — no player needed; state was already seeded in useState.
+    if (_durationCache.has(uri)) return;
 
     let player: AudioPlayer | null = null;
     let poll: ReturnType<typeof setInterval> | null = null;
@@ -4193,7 +4238,11 @@ function useDuration(uri: string): number | null {
         attempts++;
         if (d > 0) {
           cleanup();
-          if (!cancelled) setDuration(d);
+          if (!cancelled) {
+            _durationCache.set(uri, d);
+            _persistDurationCache();
+            setDuration(d);
+          }
         } else if (attempts >= MAX_ATTEMPTS) {
           cleanup(); // silent fallback — duration stays null → shows file size
         }
