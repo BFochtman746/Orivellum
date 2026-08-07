@@ -161,7 +161,7 @@ function TextSearchableContent({ text }: { text: string }) {
         <pre className="text-sm font-mono whitespace-pre-wrap leading-relaxed text-foreground/80">
           {highlighted.map((part: { text: string; match: boolean }, i: number) =>
             part.match ? (
-              <mark key={i} className="bg-yellow-300/60 text-foreground rounded-[2px]">{part.text}</mark>
+              <mark key={i} className="text-foreground rounded-[2px]" style={{ background: "color-mix(in srgb, var(--gilt) 28%, transparent)" }}>{part.text}</mark>
             ) : (
               <span key={i}>{part.text}</span>
             )
@@ -1499,7 +1499,7 @@ export default function DocumentDetail() {
   const lifecycleOptions = [
     { value: "draft",      label: "Draft",      className: "text-muted-foreground" },
     { value: "canonical",  label: "Canonical",  className: "font-semibold", style: { color: "var(--gilt)" } as React.CSSProperties },
-    { value: "reference",  label: "Reference",  className: "text-blue-700" },
+    { value: "reference",  label: "Reference",  className: "" },
     { value: "superseded", label: "Superseded", className: "text-muted-foreground" },
   ] as const;
 

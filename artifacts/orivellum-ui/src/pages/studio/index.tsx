@@ -1008,7 +1008,7 @@ function OutputsGallery() {
                           <Download className="w-3 h-3" />
                         </a>
                         <button
-                          className="rounded bg-black/50 hover:bg-red-600/80 p-1.5 text-white"
+                          className="rounded bg-black/50 hover:bg-black/70 p-1.5 text-white"
                           onClick={e => handleArchive(out, e)}
                         >
                           <Trash2 className="w-3 h-3" />

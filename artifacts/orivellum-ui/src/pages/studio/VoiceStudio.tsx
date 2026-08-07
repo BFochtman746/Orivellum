@@ -162,8 +162,8 @@ function DimensionBar({ label, value, color }: { label: string; value: number; c
       <span className="text-[10px] font-mono text-muted-foreground w-16 shrink-0 capitalize">{label}</span>
       <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden">
         <div
-          className={`h-full rounded-full transition-all ${color}`}
-          style={{ width: `${(value / 10) * 100}%` }}
+          className="h-full rounded-full transition-all"
+          style={{ width: `${(value / 10) * 100}%`, background: color || "var(--gilt)" }}
         />
       </div>
       <span className="text-[10px] font-mono text-muted-foreground w-4 text-right">{value}</span>
@@ -172,12 +172,12 @@ function DimensionBar({ label, value, color }: { label: string; value: number; c
 }
 
 const DIMENSION_COLORS: Record<string, string> = {
-  warmth:    "",
-  authority: "bg-blue-500",
-  gravitas:  "",
-  pace:      "",
-  brightness:"bg-yellow-400",
-  age:       "bg-stone-400",
+  warmth:    "var(--gilt)",
+  authority: "var(--green-2)",
+  gravitas:  "var(--rust)",
+  pace:      "var(--green-2)",
+  brightness:"var(--gilt)",
+  age:       "#8A7A6A",
 };
 
 // ── Voice Card ────────────────────────────────────────────────────────────────
@@ -212,7 +212,7 @@ function VoiceCard({
     sampleEngines[voice.id] === "espeak" || voice.sample_engine === "espeak";
 
   const accentColor = voice.accent === "british"
-    ? "border-blue-200 bg-blue-50/30 dark:bg-blue-950/20"
+    ? "border-border/60 bg-muted/20"
     : "";
 
   const genderIcon = voice.gender === "feminine" ? "♀" : voice.gender === "masculine" ? "♂" : "◆";
@@ -940,7 +940,7 @@ function DesignTab({
             {/* Interpretation */}
             <div className="rounded-xl border border-border/50 bg-muted/10 p-4">
               <div className="flex items-center gap-2 mb-2">
-                <Info className="w-4 h-4 text-blue-500" />
+                <Info className="w-4 h-4" style={{ color: "var(--gilt)" }} />
                 <span className="text-xs font-mono uppercase text-muted-foreground">Interpretation</span>
               </div>
               <p className="text-sm text-muted-foreground">{result.interpretation}</p>
@@ -965,7 +965,7 @@ function DesignTab({
                     idx === 0 ? "border-primary/30 bg-primary/5" : "border-border/50 bg-card"
                   }`}>
                   <div className="flex items-center gap-2">
-                    {idx === 0 && <Star className="w-3.5 h-3.5 text-amber-500 fill-amber-500" />}
+                    {idx === 0 && <Star className="w-3.5 h-3.5" style={{ color: "var(--gilt)", fill: "var(--gilt)" }} />}
                     <span className="font-semibold text-sm">{match.voice?.name ?? match.voice_id}</span>
                     {match.voice?.accent && (
                       <span className="text-[10px] text-muted-foreground capitalize">{match.voice.accent}</span>
