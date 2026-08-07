@@ -46,28 +46,28 @@ const DOMAIN = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
 const API    = `https://${DOMAIN}/api`;
 
 export const NODE_COLORS: Record<string, string> = {
-  person:    '#6366f1',
-  place:     '#10b981',
-  concept:   '#8b5cf6',
-  theme:     '#f59e0b',
-  scripture: '#ef4444',
-  document:  '#64748b',
-  file:      '#64748b',
-  default:   '#a855f7',
+  person:    '#527A8A',
+  place:     '#3C6A4B',
+  concept:   '#9A7B2E',
+  theme:     '#9A7B2E',
+  scripture: '#B2431E',
+  document:  '#5C5443',
+  file:      '#5C5443',
+  default:   '#9A7B2E',
 };
 
 export const EDGE_COLORS: Record<string, string> = {
-  supports:    '#22c55e',
-  contradicts: '#ef4444',
-  related:     '#94a3b8',
+  supports:    '#3C6A4B',
+  contradicts: '#B2431E',
+  related:     '#8A9BA8',
 };
 
 export const ENTITY_KINDS = [
-  { value: 'concept',   label: 'Concepts',  color: '#8b5cf6' },
-  { value: 'person',    label: 'People',    color: '#6366f1' },
-  { value: 'place',     label: 'Places',    color: '#10b981' },
-  { value: 'theme',     label: 'Themes',    color: '#f59e0b' },
-  { value: 'scripture', label: 'Scripture', color: '#ef4444' },
+  { value: 'concept',   label: 'Concepts',  color: '#9A7B2E' },
+  { value: 'person',    label: 'People',    color: '#527A8A' },
+  { value: 'place',     label: 'Places',    color: '#3C6A4B' },
+  { value: 'theme',     label: 'Themes',    color: '#9A7B2E' },
+  { value: 'scripture', label: 'Scripture', color: '#B2431E' },
 ];
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -543,6 +543,21 @@ export function KnowledgeGraphView({
             <Text style={{ fontSize: 10, fontFamily: 'Inter_400Regular', color: colors.mutedForeground }}>
               {data.node_count} nodes · {data.edge_count} edges
             </Text>
+          </View>
+        )}
+        {/* Edge type legend */}
+        {data && !isLoading && data.edge_count > 0 && (
+          <View style={{ paddingHorizontal: 14, paddingBottom: 6, flexDirection: 'row', gap: 12 }}>
+            {[
+              { label: 'Supports', color: '#3C6A4B' },
+              { label: 'Contradicts', color: '#B2431E' },
+              { label: 'Related', color: '#8A9BA8' },
+            ].map(({ label, color }) => (
+              <View key={label} style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                <View style={{ width: 16, height: 2, backgroundColor: color, borderRadius: 1, opacity: 0.8 }} />
+                <Text style={{ fontSize: 10, fontFamily: 'Inter_400Regular', color: '#8A9BA8' }}>{label}</Text>
+              </View>
+            ))}
           </View>
         )}
       </View>
