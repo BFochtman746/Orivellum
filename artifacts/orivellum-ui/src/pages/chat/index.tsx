@@ -2168,7 +2168,11 @@ export default function Chat() {
                   </div>
                 ))}
             {!loadingList && !filteredConvs?.length && (
-              <p className="text-xs text-muted-foreground text-center py-6">{search ? "No conversations match" : "No conversations yet"}</p>
+              <div className="py-8 text-center px-4">
+                <p className="text-[11px] font-mono" style={{ color: 'var(--ink-faint)' }}>
+                  {search ? "No conversations match" : "No conversations yet"}
+                </p>
+              </div>
             )}
             </>
             )}
@@ -2191,7 +2195,7 @@ export default function Chat() {
                 <ChevronLeft className="w-5 h-5" />
               </button>
               <div className="min-w-0 flex-1">
-                <h2 className="font-serif text-lg font-medium leading-tight truncate">{conv?.title || "Conversation"}</h2>
+                <h2 className="font-serif text-lg font-medium leading-tight truncate text-balance">{conv?.title || "Conversation"}</h2>
                 <div className="flex items-center gap-2 mt-0.5">
                   <span className="text-xs font-mono text-muted-foreground">{displayMessages.length} messages</span>
                   {convWorkId && (
@@ -2239,13 +2243,15 @@ export default function Chat() {
               <div className="max-w-3xl mx-auto space-y-6">
                 {loadingActive && !localOverride ? (
                   <div className="space-y-6">
-                    <Skeleton className="h-16 w-2/3 ml-auto rounded-lg" />
-                    <Skeleton className="h-24 w-2/3 rounded-lg" />
+                    <Skeleton className="h-16 w-2/3 ml-auto rounded-xl" />
+                    <Skeleton className="h-24 w-2/3 rounded-xl" />
                   </div>
                 ) : displayMessages.length === 0 ? (
-                  <div className="text-center py-16 text-muted-foreground">
-                    <Bot className="w-10 h-10 mx-auto mb-3 opacity-20" />
-                    <p className="text-sm">{aiOnline ? "Send a message to start the conversation." : "AI is offline — start Lemonade or Ollama to enable responses."}</p>
+                  <div className="text-center py-16">
+                    <Bot className="w-10 h-10 mx-auto mb-3" style={{ opacity: 0.2, color: 'var(--green-raw)' }} />
+                    <p className="text-[13px] font-serif italic" style={{ color: 'var(--ink-soft)' }}>
+                      {aiOnline ? "Send a message to start the conversation." : "AI is offline — start Lemonade or Ollama to enable responses."}
+                    </p>
                   </div>
                 ) : (
                   <ErrorBoundary label="message list">
