@@ -1347,6 +1347,15 @@ def _run_nightshift_passes(db: "OrivellumDB", cfg: "OrivellumConfig") -> None:
         logger.warning("Custodian pass failed (non-fatal): %s", _cex)
         report.append(f"Custodian: skipped ({_cex})")
 
+    # 18b — Working memory TTL expiry
+    logger.info("Nightshift pass 18b: working-memory TTL expiry")
+    try:
+        expired = db.cleanup_working_memory_ttl()
+        if expired:
+            report.append(f"Working memory TTL: expired {expired} row(s)")
+    except Exception as _wex:
+        logger.debug("Working memory TTL pass failed (non-fatal): %s", _wex)
+
     # 17 — Automatic near-duplicate resolution
     # Gated by auto_dedup_enabled=true; silently skips when disabled so the
     # nightshift run time is not affected for users who prefer manual review.

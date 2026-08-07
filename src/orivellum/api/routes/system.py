@@ -606,9 +606,18 @@ def list_user_memory():
     db = get_db()
     try:
         with db._lock:
-            rows = db._conn.execute(
-                "SELECT id, key, value, source_conv_id, created_at FROM user_memory ORDER BY created_at DESC"
-            ).fetchall()
+            try:
+                # v98+ bi-temporal schema
+                rows = db._conn.execute(
+                    """SELECT id, key, value, memory_type, valid_from, valid_to,
+                              txn_time, source_conv_id, created_at
+                       FROM user_memory ORDER BY created_at DESC"""
+                ).fetchall()
+            except Exception:
+                # Pre-v98 fallback
+                rows = db._conn.execute(
+                    "SELECT id, key, value, source_conv_id, created_at FROM user_memory ORDER BY created_at DESC"
+                ).fetchall()
         return {"memories": [dict(r) for r in rows]}
     except Exception:
         return {"memories": []}

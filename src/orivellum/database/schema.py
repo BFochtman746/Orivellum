@@ -1621,4 +1621,27 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         ALTER TABLE work_mastery ADD COLUMN session_mode TEXT NOT NULL DEFAULT 'blocked';
         CREATE INDEX IF NOT EXISTS work_mastery_smode ON work_mastery(concept_id, session_mode);
     """),
+
+    # v98 — Bi-temporal memory + five memory types on user_memory.
+    # Replaces the single-row-per-key overwrite design with an append-only bi-temporal log:
+    #   valid_from  — when the fact was true in the world (backfilled from created_at)
+    #   valid_to    — when the fact was superseded or expired (NULL = still current)
+    #   txn_time    — when the system first recorded it (backfilled from created_at)
+    #   memory_type — episodic | semantic | procedural | working | zettelkasten
+    # The UNIQUE index um_key is dropped — multiple rows per key are now allowed.
+    # Existing rows migrate to memory_type='semantic' with valid_from = txn_time = created_at.
+    (98, "Bi-temporal memory: valid_from/valid_to/txn_time + five memory types", """
+        DROP INDEX IF EXISTS um_key;
+        ALTER TABLE user_memory ADD COLUMN memory_type TEXT NOT NULL DEFAULT 'semantic';
+        ALTER TABLE user_memory ADD COLUMN valid_from   TEXT;
+        ALTER TABLE user_memory ADD COLUMN valid_to     TEXT;
+        ALTER TABLE user_memory ADD COLUMN txn_time     TEXT;
+        UPDATE user_memory SET
+            valid_from = created_at,
+            txn_time   = created_at
+        WHERE valid_from IS NULL;
+        CREATE INDEX IF NOT EXISTS um_key_current ON user_memory(key, valid_to);
+        CREATE INDEX IF NOT EXISTS um_type        ON user_memory(memory_type);
+        CREATE INDEX IF NOT EXISTS um_valid_from  ON user_memory(valid_from);
+    """),
 ]

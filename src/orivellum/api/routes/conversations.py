@@ -3391,8 +3391,15 @@ def _infer_memory_facts(
             "  (c) Durable — worth knowing in future conversations weeks from now.\n"
             "Do NOT extract: general knowledge, temporary context, what the AI said,\n"
             "or anything the user only implied rather than stated.\n\n"
+            "For each fact also classify its memory_type:\n"
+            "  semantic     — a factual attribute, preference, or identity trait (most common)\n"
+            "  episodic     — a specific past event or experience the user describes\n"
+            "  procedural   — a skill, workflow, or recurring process the user follows\n"
+            "  working      — short-lived context relevant only for this session\n"
+            "  zettelkasten — an explicit connection or link between two concepts/ideas\n\n"
             "Return ONLY valid JSON (no code fences):\n"
-            '{"facts": [{"key": "snake_case_key", "value": "fact text", "confidence": 0.0}]}\n'
+            '{"facts": [{"key": "snake_case_key", "value": "fact text", '
+            '"confidence": 0.0, "memory_type": "semantic"}]}\n'
             "Include only facts with confidence ≥ 0.75. Max 3 facts.\n"
             'Return {"facts": []} if nothing qualifies.\n\n'
             f"Exchange:\n{exchange}"
@@ -3410,6 +3417,9 @@ def _infer_memory_facts(
             clean = clean[4:].strip()
         parsed = json.loads(clean)
         facts = parsed.get("facts", [])
+        _VALID_TYPES = frozenset(
+            {"episodic", "semantic", "procedural", "working", "zettelkasten"}
+        )
         written = 0
         for fact in facts[:3]:
             key   = str(fact.get("key") or "").strip()[:80]
@@ -3420,7 +3430,9 @@ def _infer_memory_facts(
                 confidence = 0.0
             if not key or not value or confidence < 0.75 or len(key) < 3:
                 continue
-            if db.upsert_memory_fact(key, value, conv_id):
+            raw_type    = str(fact.get("memory_type") or "semantic").strip()
+            memory_type = raw_type if raw_type in _VALID_TYPES else "semantic"
+            if db.upsert_memory_fact(key, value, conv_id, memory_type=memory_type):
                 written += 1
         if written:
             db.audit("user_memory.inferred", object_id=None, object_type="user_memory",

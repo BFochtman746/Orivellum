@@ -1,8 +1,10 @@
-"""Tests for Memory + Recall (Task #329).
+"""Tests for Memory + Recall.
 
 Covers:
- - Schema v65 migration (conversation_chunks table, user_memory temporal columns)
- - upsert_memory_fact — single-row-per-key with prev_value versioning
+ - Schema v98 migration (bi-temporal columns + five memory types on user_memory)
+ - upsert_memory_fact — append-only bi-temporal design, at-most-one current row per key
+ - update_memory_fact — historical-ID safety, current-row invariant
+ - cleanup_working_memory_ttl — soft-expires working rows, leaves other types alone
  - add_conversation_chunk + search_conversation_chunks
  - backfill_embeddings covers conv_chunk type
  - recall intent fast-path classification
@@ -27,9 +29,11 @@ def _make_db(path: str) -> "OrivellumDB":
     return OrivellumDB(path)
 
 
-# ─── Schema v65 ───────────────────────────────────────────────────────────────
+# ─── Schema v98 ───────────────────────────────────────────────────────────────
 
 class TestSchemaMigration(unittest.TestCase):
+    """v98 adds bi-temporal columns and drops the unique-key constraint."""
+
     def setUp(self):
         self.tmp = tempfile.mktemp(suffix=".db")
         self.db = _make_db(self.tmp)
@@ -47,14 +51,16 @@ class TestSchemaMigration(unittest.TestCase):
             ).fetchall()
         }
         self.assertIn("conversation_chunks", tables,
-                      "conversation_chunks table must be created by schema v65")
+                      "conversation_chunks table must exist (schema v65+)")
 
-    def test_user_memory_has_superseded_at(self):
+    def test_user_memory_has_bitemporal_columns(self):
+        """v98 adds memory_type, valid_from, valid_to, txn_time."""
         cols = {r[1] for r in self.db._conn.execute(
             "PRAGMA table_info(user_memory)"
         ).fetchall()}
-        self.assertIn("superseded_at", cols)
-        self.assertIn("prev_value", cols)
+        for col in ("memory_type", "valid_from", "valid_to", "txn_time"):
+            self.assertIn(col, cols,
+                          f"Column '{col}' must be present after v98 migration")
 
     def test_conversation_chunks_index_exists(self):
         indexes = {
@@ -67,10 +73,22 @@ class TestSchemaMigration(unittest.TestCase):
             f"Expected index on conversation_chunks; found: {indexes}"
         )
 
+    def test_um_key_unique_index_dropped(self):
+        """um_key unique index must be gone — multiple rows per key are now allowed."""
+        indexes = {
+            r[0] for r in self.db._conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='index'"
+            ).fetchall()
+        }
+        self.assertNotIn("um_key", indexes,
+                         "um_key UNIQUE index must be dropped by v98 migration")
+
 
 # ─── upsert_memory_fact ───────────────────────────────────────────────────────
 
 class TestUpsertMemoryFact(unittest.TestCase):
+    """Bi-temporal append-only design: each update creates a new row."""
+
     def setUp(self):
         self.tmp = tempfile.mktemp(suffix=".db")
         self.db = _make_db(self.tmp)
@@ -79,44 +97,80 @@ class TestUpsertMemoryFact(unittest.TestCase):
         Path(self.tmp).unlink(missing_ok=True)
 
     def test_first_insert_returns_true(self):
-        result = self.db.upsert_memory_fact("my_name", "Alice")
-        self.assertTrue(result)
+        self.assertTrue(self.db.upsert_memory_fact("my_name", "Alice"))
 
     def test_same_value_is_noop(self):
         self.db.upsert_memory_fact("my_name", "Alice")
-        result = self.db.upsert_memory_fact("my_name", "Alice")
-        self.assertFalse(result, "Identical value should return False (no-op)")
+        self.assertFalse(self.db.upsert_memory_fact("my_name", "Alice"),
+                         "Identical value must return False (no-op)")
 
-    def test_changed_value_returns_true_and_carries_prev(self):
+    def test_changed_value_returns_true(self):
         self.db.upsert_memory_fact("my_name", "Alice")
-        result = self.db.upsert_memory_fact("my_name", "Bob")
-        self.assertTrue(result)
+        self.assertTrue(self.db.upsert_memory_fact("my_name", "Bob"))
+
+    def test_current_row_has_correct_new_value(self):
+        self.db.upsert_memory_fact("my_name", "Alice")
+        self.db.upsert_memory_fact("my_name", "Bob")
         facts = self.db.get_current_memory_facts(limit=5)
-        fact = next((f for f in facts if f["key"] == "my_name"), None)
-        self.assertIsNotNone(fact)
-        self.assertEqual(fact["value"], "Bob")
-        self.assertEqual(fact["prev_value"], "Alice",
-                         "prev_value must carry the old value on update")
+        current = next((f for f in facts if f["key"] == "my_name"), None)
+        self.assertIsNotNone(current)
+        self.assertEqual(current["value"], "Bob")
 
-    def test_superseded_at_set_when_value_changes(self):
-        self.db.upsert_memory_fact("pref", "dark")
-        self.db.upsert_memory_fact("pref", "light")
-        row = self.db._conn.execute(
-            "SELECT superseded_at FROM user_memory WHERE key=?", ("pref",)
-        ).fetchone()
-        self.assertIsNotNone(row["superseded_at"],
-                             "superseded_at must be set when value changes")
-
-    def test_one_row_per_key(self):
-        """UNIQUE constraint must be respected — only one row per key."""
+    def test_at_most_one_current_row_per_key(self):
+        """valid_to IS NULL must hold for exactly one row per key after updates."""
         self.db.upsert_memory_fact("lang", "Python")
         self.db.upsert_memory_fact("lang", "Rust")
-        count = self.db._conn.execute(
+        self.db.upsert_memory_fact("lang", "Go")
+        live = self.db._conn.execute(
+            "SELECT COUNT(*) AS n FROM user_memory WHERE key='lang' AND valid_to IS NULL"
+        ).fetchone()["n"]
+        self.assertEqual(live, 1, "Exactly one live row per key (valid_to IS NULL)")
+
+    def test_multiple_rows_accumulate_in_history(self):
+        """Append-only: each update adds a new row, historical rows are preserved."""
+        self.db.upsert_memory_fact("lang", "Python")
+        self.db.upsert_memory_fact("lang", "Rust")
+        self.db.upsert_memory_fact("lang", "Go")
+        total = self.db._conn.execute(
             "SELECT COUNT(*) AS n FROM user_memory WHERE key='lang'"
         ).fetchone()["n"]
-        self.assertEqual(count, 1, "Only one row per key allowed")
+        self.assertEqual(total, 3, "Three upserts must produce three rows (append-only)")
 
-    def test_get_current_memory_facts_returns_all(self):
+    def test_superseded_rows_have_valid_to_set(self):
+        self.db.upsert_memory_fact("pref", "dark")
+        self.db.upsert_memory_fact("pref", "light")
+        superseded = self.db._conn.execute(
+            "SELECT value FROM user_memory WHERE key='pref' AND valid_to IS NOT NULL"
+        ).fetchall()
+        self.assertEqual(len(superseded), 1)
+        self.assertEqual(superseded[0]["value"], "dark",
+                         "Old value must be the superseded row")
+
+    def test_memory_type_stored_correctly(self):
+        self.db.upsert_memory_fact("event", "Visited Paris", memory_type="episodic")
+        facts = self.db.get_current_memory_facts()
+        fact = next((f for f in facts if f["key"] == "event"), None)
+        self.assertIsNotNone(fact)
+        self.assertEqual(fact["memory_type"], "episodic")
+
+    def test_invalid_memory_type_falls_back_to_semantic(self):
+        self.db.upsert_memory_fact("k", "v", memory_type="invalid_type")
+        facts = self.db.get_current_memory_facts()
+        fact = next((f for f in facts if f["key"] == "k"), None)
+        self.assertIsNotNone(fact)
+        self.assertEqual(fact["memory_type"], "semantic",
+                         "Invalid memory_type must fall back to 'semantic'")
+
+    def test_all_five_types_accepted(self):
+        for mtype in ("episodic", "semantic", "procedural", "working", "zettelkasten"):
+            key = f"t_{mtype}"
+            self.db.upsert_memory_fact(key, "value", memory_type=mtype)
+            facts = self.db.get_current_memory_facts()
+            fact = next((f for f in facts if f["key"] == key), None)
+            self.assertEqual(fact["memory_type"], mtype,
+                             f"Type '{mtype}' must be stored unchanged")
+
+    def test_get_current_memory_facts_returns_multiple_keys(self):
         self.db.upsert_memory_fact("k1", "v1")
         self.db.upsert_memory_fact("k2", "v2")
         facts = self.db.get_current_memory_facts(limit=50)
@@ -124,13 +178,160 @@ class TestUpsertMemoryFact(unittest.TestCase):
         self.assertIn("k1", keys)
         self.assertIn("k2", keys)
 
+    def test_get_current_excludes_superseded_rows(self):
+        self.db.upsert_memory_fact("name", "Old")
+        self.db.upsert_memory_fact("name", "New")
+        facts = self.db.get_current_memory_facts()
+        name_facts = [f for f in facts if f["key"] == "name"]
+        self.assertEqual(len(name_facts), 1,
+                         "get_current_memory_facts must return only live rows per key")
+        self.assertEqual(name_facts[0]["value"], "New")
+
     def test_empty_key_is_rejected(self):
-        result = self.db.upsert_memory_fact("", "value")
-        self.assertFalse(result)
+        self.assertFalse(self.db.upsert_memory_fact("", "value"))
 
     def test_empty_value_is_rejected(self):
-        result = self.db.upsert_memory_fact("key", "")
-        self.assertFalse(result)
+        self.assertFalse(self.db.upsert_memory_fact("key", ""))
+
+    def test_valid_from_and_txn_time_are_set(self):
+        self.db.upsert_memory_fact("ts_test", "value")
+        row = self.db._conn.execute(
+            "SELECT valid_from, txn_time FROM user_memory WHERE key='ts_test'"
+        ).fetchone()
+        self.assertIsNotNone(row["valid_from"])
+        self.assertIsNotNone(row["txn_time"])
+
+
+# ─── update_memory_fact ───────────────────────────────────────────────────────
+
+class TestUpdateMemoryFact(unittest.TestCase):
+    """update_memory_fact must preserve the current-row invariant even when
+    a historical (superseded) row ID is passed."""
+
+    def setUp(self):
+        self.tmp = tempfile.mktemp(suffix=".db")
+        self.db = _make_db(self.tmp)
+
+    def tearDown(self):
+        Path(self.tmp).unlink(missing_ok=True)
+
+    def _current_rows(self, key: str) -> list:
+        return self.db._conn.execute(
+            "SELECT id, value FROM user_memory WHERE key=? AND valid_to IS NULL",
+            (key,),
+        ).fetchall()
+
+    def test_update_current_row(self):
+        self.db.upsert_memory_fact("name", "Alice")
+        current_id = self._current_rows("name")[0]["id"]
+        result = self.db.update_memory_fact(current_id, "Corrected")
+        self.assertTrue(result)
+        live = self._current_rows("name")
+        self.assertEqual(len(live), 1)
+        self.assertEqual(live[0]["value"], "Corrected")
+
+    def test_update_from_historical_id_still_closes_current(self):
+        """Passing a historical row ID must close the CURRENT row, not the historical one."""
+        self.db.upsert_memory_fact("name", "Alice")   # row 1 (becomes historical)
+        self.db.upsert_memory_fact("name", "Bob")     # row 2 (current)
+        # Get the historical row's ID
+        hist = self.db._conn.execute(
+            "SELECT id FROM user_memory WHERE key='name' AND valid_to IS NOT NULL"
+        ).fetchone()
+        self.assertIsNotNone(hist, "A historical row must exist before editing")
+        # Update using the historical ID
+        result = self.db.update_memory_fact(hist["id"], "Corrected from history")
+        self.assertTrue(result)
+        # Invariant: exactly one live row
+        live = self._current_rows("name")
+        self.assertEqual(len(live), 1,
+                         "Exactly one live row must exist after update from historical ID")
+        self.assertEqual(live[0]["value"], "Corrected from history")
+
+    def test_historical_rows_unchanged_after_update(self):
+        """Historical rows (valid_to IS NOT NULL) must never be mutated."""
+        self.db.upsert_memory_fact("name", "Alice")
+        self.db.upsert_memory_fact("name", "Bob")
+        hist_before = self.db._conn.execute(
+            "SELECT id, value, valid_to FROM user_memory WHERE key='name' AND valid_to IS NOT NULL"
+        ).fetchone()
+        # Update via the historical ID
+        self.db.update_memory_fact(hist_before["id"], "Corrected")
+        hist_after = self.db._conn.execute(
+            "SELECT id, value, valid_to FROM user_memory WHERE id=?",
+            (hist_before["id"],),
+        ).fetchone()
+        self.assertEqual(hist_after["value"], hist_before["value"],
+                         "Historical row value must not change")
+        self.assertEqual(hist_after["valid_to"], hist_before["valid_to"],
+                         "Historical row valid_to must not change")
+
+    def test_update_nonexistent_id_returns_false(self):
+        self.assertFalse(self.db.update_memory_fact("nonexistent-uuid", "value"))
+
+    def test_update_empty_value_returns_false(self):
+        self.db.upsert_memory_fact("name", "Alice")
+        current_id = self._current_rows("name")[0]["id"]
+        self.assertFalse(self.db.update_memory_fact(current_id, ""))
+
+
+# ─── cleanup_working_memory_ttl ───────────────────────────────────────────────
+
+class TestCleanupWorkingMemoryTTL(unittest.TestCase):
+    """Working-memory rows older than TTL must be soft-expired; other types must not."""
+
+    def setUp(self):
+        self.tmp = tempfile.mktemp(suffix=".db")
+        self.db = _make_db(self.tmp)
+
+    def tearDown(self):
+        Path(self.tmp).unlink(missing_ok=True)
+
+    def _back_date(self, key: str, minutes: int) -> None:
+        """Move the valid_from of the current row for key back by `minutes`."""
+        from datetime import datetime, timedelta, timezone
+        past = (datetime.now(timezone.utc) - timedelta(minutes=minutes)).isoformat()
+        self.db._conn.execute(
+            "UPDATE user_memory SET valid_from=? WHERE key=? AND valid_to IS NULL",
+            (past, key),
+        )
+        self.db._conn.commit()
+
+    def test_working_row_older_than_ttl_is_expired(self):
+        self.db.upsert_memory_fact("ctx", "temp", memory_type="working")
+        self._back_date("ctx", 60)  # 60 min old, TTL = 30
+        expired = self.db.cleanup_working_memory_ttl(ttl_minutes=30)
+        self.assertEqual(expired, 1, "One working-memory row must be soft-expired")
+        live = self.db._conn.execute(
+            "SELECT valid_to FROM user_memory WHERE key='ctx' AND valid_to IS NULL"
+        ).fetchone()
+        self.assertIsNone(live, "Expired working row must have valid_to set (not live)")
+
+    def test_working_row_within_ttl_is_preserved(self):
+        self.db.upsert_memory_fact("ctx_new", "temp", memory_type="working")
+        # Row was just created — within 30-min TTL
+        expired = self.db.cleanup_working_memory_ttl(ttl_minutes=30)
+        self.assertEqual(expired, 0, "Young working-memory row must not be expired")
+
+    def test_semantic_row_older_than_ttl_is_never_expired(self):
+        self.db.upsert_memory_fact("pref", "dark mode", memory_type="semantic")
+        self._back_date("pref", 120)  # 2 hours old
+        expired = self.db.cleanup_working_memory_ttl(ttl_minutes=30)
+        self.assertEqual(expired, 0, "Semantic rows must never be expired by TTL cleanup")
+        live = self.db._conn.execute(
+            "SELECT id FROM user_memory WHERE key='pref' AND valid_to IS NULL"
+        ).fetchone()
+        self.assertIsNotNone(live, "Semantic row must still be live after TTL cleanup")
+
+    def test_only_working_type_is_affected(self):
+        """All five types: only 'working' rows older than TTL are expired."""
+        for mtype in ("episodic", "semantic", "procedural", "zettelkasten"):
+            self.db.upsert_memory_fact(f"k_{mtype}", "val", memory_type=mtype)
+            self._back_date(f"k_{mtype}", 60)
+        self.db.upsert_memory_fact("k_working", "val", memory_type="working")
+        self._back_date("k_working", 60)
+        expired = self.db.cleanup_working_memory_ttl(ttl_minutes=30)
+        self.assertEqual(expired, 1, "Only the 'working' row must be expired")
 
 
 # ─── Conversation chunks ──────────────────────────────────────────────────────

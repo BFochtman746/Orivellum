@@ -1005,11 +1005,24 @@ function CompassFooter({ workId }: { workId: string }) {
 // ─── Memory panel ─────────────────────────────────────────────────────────────
 
 type MemoryFact = {
+  id: string;
   key: string;
   value: string;
+  memory_type?: string | null;
+  valid_from?: string | null;
+  valid_to?: string | null;
+  txn_time?: string | null;
   prev_value?: string | null;
   source_conv_id?: string | null;
   created_at: string;
+};
+
+const MEMORY_TYPE_STYLE: Record<string, { label: string; cls: string }> = {
+  episodic:     { label: "episodic",     cls: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400" },
+  semantic:     { label: "semantic",     cls: "bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400" },
+  procedural:   { label: "procedural",   cls: "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400" },
+  working:      { label: "working",      cls: "bg-gray-100 text-gray-500 dark:bg-gray-800/50 dark:text-gray-400" },
+  zettelkasten: { label: "zettelkasten", cls: "bg-teal-100 text-teal-700 dark:bg-teal-900/30 dark:text-teal-400" },
 };
 
 function MemoryPanel({ apiBase }: { apiBase: string }) {
@@ -1060,20 +1073,28 @@ function MemoryPanel({ apiBase }: { apiBase: string }) {
         </div>
       ) : (
         <div className="px-4 pb-3 space-y-1.5 max-h-52 overflow-y-auto">
-          {facts.map((f) => (
-            <div key={f.key} className="text-[11px] leading-snug">
-              <span className="font-mono text-violet-600/80 dark:text-violet-400/80 mr-1">
-                {f.key}:
-              </span>
-              <span className="text-foreground/80">{f.value}</span>
-              {f.prev_value && (
-                <div className="flex items-center gap-1 mt-0.5 text-muted-foreground/50">
-                  <History className="w-2.5 h-2.5 shrink-0" />
-                  <span className="line-through">{f.prev_value}</span>
+          {facts.map((f) => {
+            const typeStyle = MEMORY_TYPE_STYLE[f.memory_type ?? "semantic"] ?? MEMORY_TYPE_STYLE.semantic;
+            return (
+              <div key={f.id ?? f.key} className="text-[11px] leading-snug">
+                <div className="flex items-center gap-1 flex-wrap">
+                  <span className={`text-[9px] font-mono font-semibold px-1 py-0.5 rounded shrink-0 ${typeStyle.cls}`}>
+                    {typeStyle.label}
+                  </span>
+                  <span className="font-mono text-violet-600/80 dark:text-violet-400/80">
+                    {f.key}:
+                  </span>
+                  <span className="text-foreground/80">{f.value}</span>
                 </div>
-              )}
-            </div>
-          ))}
+                {f.valid_from && (
+                  <div className="text-[9px] text-muted-foreground/40 mt-0.5 font-mono">
+                    valid from {f.valid_from.slice(0, 10)}
+                    {f.valid_to ? ` → ${f.valid_to.slice(0, 10)}` : ""}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
     </div>

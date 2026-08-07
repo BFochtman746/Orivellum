@@ -17,7 +17,7 @@ import sqlite3
 import threading
 import uuid
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Generator
 
@@ -3947,97 +3947,188 @@ class OrivellumDB:
     # User memory — temporal versioning (v65+)
     # -------------------------------------------------------------------------
 
-    def upsert_memory_fact(self, key: str, value: str,
-                           source_conv_id: str | None = None) -> bool:
-        """Insert or update a durable fact (one row per key).
+    #: Valid memory-type labels (v98+).
+    _MEMORY_TYPES = frozenset(
+        {"episodic", "semantic", "procedural", "working", "zettelkasten"}
+    )
 
-        Single-row-per-key design: when the value changes the existing row is
-        updated, the old value is preserved in ``prev_value``, and
-        ``superseded_at`` records the timestamp of the change.
+    def upsert_memory_fact(
+        self,
+        key: str,
+        value: str,
+        source_conv_id: str | None = None,
+        memory_type: str = "semantic",
+    ) -> bool:
+        """Append a durable fact to the bi-temporal memory log (v98+).
 
-        Returns True if a change was written, False if the fact was a no-op
-        (value identical to the stored one).
+        Append-only design: the existing current row (valid_to IS NULL) is
+        soft-deleted by setting valid_to=now(), then a new row is inserted
+        with the updated value.  Old rows are never overwritten — they form
+        an immutable timeline.
+
+        Returns True if a change was written, False if the value is unchanged.
         """
         key   = str(key).strip()[:80]
         value = str(value).strip()[:500]
+        if memory_type not in self._MEMORY_TYPES:
+            memory_type = "semantic"
         if not key or not value:
             return False
         now = _now()
         with self._lock:
             existing = self._conn.execute(
-                "SELECT id, value FROM user_memory WHERE key=?",
+                "SELECT id, value FROM user_memory WHERE key=? AND valid_to IS NULL",
                 (key,),
             ).fetchone()
             if existing:
                 if existing["value"] == value:
                     return False  # no-op — fact unchanged
-                # Update in-place, carrying the old value as prev_value
+                # Soft-delete the current row (bi-temporal "supersede")
                 self._conn.execute(
-                    """UPDATE user_memory
-                       SET value=?, prev_value=?, superseded_at=?,
-                           source_conv_id=?, created_at=?
-                       WHERE id=?""",
-                    (value, existing["value"], now, source_conv_id, now,
-                     existing["id"]),
+                    "UPDATE user_memory SET valid_to=? WHERE id=?",
+                    (now, existing["id"]),
                 )
-            else:
-                self._conn.execute(
-                    """INSERT INTO user_memory(id, key, value, prev_value,
-                           source_conv_id, created_at)
-                       VALUES(?,?,?,?,?,?)""",
-                    (_uuid(), key, value, None, source_conv_id, now),
-                )
+            # Insert the new current row
+            self._conn.execute(
+                """INSERT INTO user_memory
+                       (id, key, value, memory_type, valid_from, valid_to,
+                        txn_time, source_conv_id, created_at)
+                   VALUES (?,?,?,?,?,NULL,?,?,?)""",
+                (_uuid(), key, value, memory_type, now, now, source_conv_id, now),
+            )
             self._conn.commit()
         return True
 
     def update_memory_fact(self, memory_id: str, value: str) -> bool:
-        """Update an existing memory fact by id (user-initiated correction).
+        """Correct a memory fact by id (user-initiated); appends a new bi-temporal row.
 
-        Preserves the old value in ``prev_value`` and clears ``source_conv_id``
-        to indicate the fact was manually corrected (not AI-captured).
-        Returns True if the row was found and updated, False if not found.
+        Resolves the referenced row by ID to obtain the key and memory_type, then:
+        1. Soft-deletes the *current* row for that key (WHERE key=? AND valid_to IS NULL),
+           regardless of whether the referenced ID is current or historical.
+        2. Inserts a new current row with the corrected value.
+
+        Historical rows (valid_to IS NOT NULL) are NEVER modified — they remain
+        part of the immutable timeline.  Passing a historical ID corrects the key,
+        not the old row; the new row becomes the new current version.
+
+        Returns True if a new current row was written, False if memory_id not found
+        or value is empty.
         """
         value = str(value).strip()[:500]
         if not value:
             return False
         now = _now()
         with self._lock:
+            # Resolve the target row — may be historical or current
             row = self._conn.execute(
-                "SELECT id, value FROM user_memory WHERE id=?", (memory_id,)
+                "SELECT key, memory_type FROM user_memory WHERE id=?",
+                (memory_id,),
             ).fetchone()
             if not row:
                 return False
+            key   = row["key"]
+            mtype = (
+                row["memory_type"]
+                if row["memory_type"] in self._MEMORY_TYPES
+                else "semantic"
+            )
+            # Soft-delete the CURRENT row for this key (preserves historical rows)
             self._conn.execute(
-                """UPDATE user_memory
-                   SET value=?, prev_value=?, source_conv_id=NULL, created_at=?
-                   WHERE id=?""",
-                (value, row["value"], now, memory_id),
+                "UPDATE user_memory SET valid_to=? WHERE key=? AND valid_to IS NULL",
+                (now, key),
+            )
+            # Insert corrected row as the new current version
+            self._conn.execute(
+                """INSERT INTO user_memory
+                       (id, key, value, memory_type, valid_from, valid_to,
+                        txn_time, source_conv_id, created_at)
+                   VALUES (?,?,?,?,?,NULL,?,NULL,?)""",
+                (_uuid(), key, value, mtype, now, now, now),
             )
             self._conn.commit()
         return True
 
-    def get_current_memory_facts(self, limit: int = 20) -> list[dict]:
-        """Return all memory facts (one per key), newest-updated first."""
+    def get_current_memory_facts(self, limit: int = 50) -> list[dict]:
+        """Return all current (non-superseded) memory facts, newest first.
+
+        Filters by valid_to IS NULL so only live bi-temporal rows are returned.
+        Falls back gracefully when running on a pre-v98 schema.
+        """
         with self._lock:
-            rows = self._conn.execute(
-                """SELECT id, key, value, prev_value, source_conv_id, created_at
-                   FROM user_memory
-                   ORDER BY created_at DESC LIMIT ?""",
-                (limit,),
-            ).fetchall()
+            try:
+                rows = self._conn.execute(
+                    """SELECT id, key, value, memory_type, valid_from, valid_to,
+                              txn_time, source_conv_id, created_at
+                       FROM user_memory
+                       WHERE valid_to IS NULL
+                       ORDER BY created_at DESC LIMIT ?""",
+                    (limit,),
+                ).fetchall()
+            except Exception:
+                # Pre-v98 fallback — columns not yet added
+                rows = self._conn.execute(
+                    """SELECT id, key, value, source_conv_id, created_at
+                       FROM user_memory
+                       ORDER BY created_at DESC LIMIT ?""",
+                    (limit,),
+                ).fetchall()
         return [dict(r) for r in rows]
 
     def get_memory_history(self, key: str) -> list[dict]:
-        """Return the single stored fact for a key (with prev_value for history)."""
+        """Return all rows for a key (current + historical), newest-txn first.
+
+        In the bi-temporal schema (v98+) every row is returned — current
+        (valid_to IS NULL) and superseded (valid_to IS NOT NULL) — providing
+        a full audit trail of how a fact evolved over time.
+        """
         with self._lock:
-            rows = self._conn.execute(
-                """SELECT id, key, value, prev_value, source_conv_id,
-                          created_at, superseded_at
-                   FROM user_memory WHERE key=?
-                   ORDER BY created_at DESC""",
-                (key,),
-            ).fetchall()
+            try:
+                rows = self._conn.execute(
+                    """SELECT id, key, value, memory_type, valid_from, valid_to,
+                              txn_time, source_conv_id, created_at
+                       FROM user_memory WHERE key=?
+                       ORDER BY created_at DESC""",
+                    (key,),
+                ).fetchall()
+            except Exception:
+                rows = self._conn.execute(
+                    """SELECT id, key, value, source_conv_id, created_at
+                       FROM user_memory WHERE key=?
+                       ORDER BY created_at DESC""",
+                    (key,),
+                ).fetchall()
         return [dict(r) for r in rows]
+
+    def cleanup_working_memory_ttl(self, ttl_minutes: int | None = None) -> int:
+        """Soft-expire working-memory rows that have exceeded their TTL.
+
+        Sets valid_to=now() on rows where memory_type='working', valid_to IS NULL,
+        and valid_from is older than the configured TTL (default 30 minutes, or the
+        'working_memory_ttl_minutes' setting).  Returns the count of rows expired.
+        """
+        default_ttl = 30
+        try:
+            setting = self.get_setting("working_memory_ttl_minutes", str(default_ttl))
+            ttl = int(setting)
+        except Exception:
+            ttl = ttl_minutes if ttl_minutes is not None else default_ttl
+        now_dt = datetime.now(timezone.utc)
+        cutoff  = (now_dt - timedelta(minutes=ttl)).isoformat()
+        now_str = now_dt.isoformat()
+        with self._lock:
+            try:
+                result = self._conn.execute(
+                    """UPDATE user_memory
+                       SET valid_to = ?
+                       WHERE memory_type = 'working'
+                         AND valid_to IS NULL
+                         AND valid_from < ?""",
+                    (now_str, cutoff),
+                )
+                self._conn.commit()
+                return result.rowcount
+            except Exception:
+                return 0
 
     # -------------------------------------------------------------------------
     # Conversation chunks (v65+) — for semantic recall
