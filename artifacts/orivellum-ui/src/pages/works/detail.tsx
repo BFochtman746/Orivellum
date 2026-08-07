@@ -2699,6 +2699,19 @@ const DIM_BAR_COLOR: Record<string, string> = {
 function CompletenessTab({ workId }: { workId: string }) {
   const queryClient = useQueryClient();
 
+  // Subscribe to the pipeline cache that WorkDetail already keeps alive so we
+  // can derive whether polling is needed — no extra network request.
+  const { data: pipelineData } = useQuery<{ pipeline: any | null }>({
+    queryKey: ["pipeline", workId],
+    queryFn: () =>
+      apiFetch(`${WORK_API_BASE}/works/${workId}/pipeline`).then((r) => r.json()),
+    enabled: !!workId,
+    staleTime: 30_000,
+  });
+  // A pipeline is "active" when it exists and hasn't reached the terminal B17 gate.
+  const pipelineActive =
+    !!pipelineData?.pipeline && pipelineData.pipeline.status !== "B17";
+
   const { data, isLoading, error, refetch, isFetching } = useQuery<ComplReport>({
     queryKey: ["work-completeness", workId],
     queryFn: () =>
@@ -2707,6 +2720,9 @@ function CompletenessTab({ workId }: { workId: string }) {
         return r.json();
       }),
     staleTime: 60_000,
+    // Poll every 10 s while the pipeline is advancing so progress bars stay live.
+    // Stops automatically when the pipeline reaches B17 or when no pipeline exists.
+    refetchInterval: pipelineActive ? 10_000 : false,
   });
 
   // Fetch the work to read/write meta.completeness_targets
