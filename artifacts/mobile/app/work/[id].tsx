@@ -5495,6 +5495,17 @@ export default function WorkDetailScreen() {
     fetchBookIntel();
   }, [fetchBookIntel]);
 
+  // Poll bookIntel every 10 s while the pipeline is in a non-terminal state so
+  // word-count and chapter progress bars update live as chapters are extracted.
+  // `pipeline.next_status` being truthy means there are still stages ahead;
+  // when it is falsy (B17 / no further stages) polling stops automatically.
+  const pipelineActive = !!(pipeline && pipeline.next_status);
+  useEffect(() => {
+    if (!pipelineActive) return;
+    const iv = setInterval(fetchBookIntel, 10_000);
+    return () => clearInterval(iv);
+  }, [pipelineActive, fetchBookIntel]);
+
   // Eagerly fetch pipeline on mount so the Overview CTA knows whether one exists.
   useEffect(() => { if (id) fetchPipeline(); }, [id, fetchPipeline]);
 
