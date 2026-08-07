@@ -1,4 +1,4 @@
-import { useState } from "react";
+import React, { useState } from "react";
 import { Link } from "wouter";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/auth";
@@ -117,22 +117,22 @@ const GAUGES: { key: keyof BookIntelligence["completeness"]; label: string; hint
   { key: "editorial_pct", label: "Editorial", hint: "knowledge items reviewed" },
 ];
 
-function gaugeColor(pct: number) {
-  if (pct >= 75) return "bg-emerald-500/70";
-  if (pct >= 40) return "bg-amber-500/70";
-  return "bg-red-500/60";
+function gaugeColor(pct: number): React.CSSProperties {
+  if (pct >= 75) return { background: "var(--green-2)", opacity: 0.75 };
+  if (pct >= 40) return { background: "var(--gilt)", opacity: 0.75 };
+  return { background: "var(--rust)", opacity: 0.65 };
 }
 
-const STATUS_CHIP: Record<OutlineChapter["chapter_status"], { label: string; cls: string; Icon: typeof CheckCircle2 }> = {
-  present: { label: "Present", cls: "bg-emerald-50 text-emerald-700 border-emerald-200", Icon: CheckCircle2 },
-  incomplete: { label: "Incomplete", cls: "bg-amber-50 text-amber-700 border-amber-200", Icon: CircleDashed },
-  missing: { label: "Missing", cls: "bg-red-50 text-red-700 border-red-200", Icon: CircleAlert },
+const STATUS_CHIP: Record<OutlineChapter["chapter_status"], { label: string; style: React.CSSProperties; Icon: typeof CheckCircle2 }> = {
+  present:    { label: "Present",    style: { color: "var(--green-2)", background: "var(--green-soft)", borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)" }, Icon: CheckCircle2 },
+  incomplete: { label: "Incomplete", style: { color: "var(--gilt)",   background: "var(--gilt-soft)",  borderColor: "var(--gilt-line)" }, Icon: CircleDashed },
+  missing:    { label: "Missing",    style: { color: "var(--rust)",   background: "var(--rust-soft)",  borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)" }, Icon: CircleAlert },
 };
 
-const SEV_CLS: Record<BookGap["severity"], string> = {
-  high: "border-red-200 bg-red-50/60 text-red-800",
-  medium: "border-amber-200 bg-amber-50/60 text-amber-800",
-  low: "border-border/60 bg-muted/30 text-muted-foreground",
+const SEV_STYLE: Record<BookGap["severity"], React.CSSProperties> = {
+  high:   { color: "var(--rust)", background: "var(--rust-soft)",  borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)" },
+  medium: { color: "var(--gilt)", background: "var(--gilt-soft)",  borderColor: "var(--gilt-line)" },
+  low:    {},
 };
 
 /** Human-readable labels for gate metric keys returned by the backend. */
@@ -247,7 +247,7 @@ function ArtifactSummary({ type, content }: { type: string; content: Record<stri
     const issues = (content.issues as unknown[] | undefined) ?? [];
     return (
       <div className="space-y-1.5 pt-2">
-        <div className={issues.length > 0 ? "text-destructive" : "text-emerald-600"}>
+        <div className={issues.length > 0 ? "text-destructive" : ""} style={issues.length === 0 ? { color: "var(--green-2)" } : undefined}>
           {issues.length === 0 ? "✓ No continuity issues found" : `${issues.length} issue${issues.length !== 1 ? "s" : ""} detected`}
         </div>
         {content.summary && <div className="normal-case font-sans opacity-80">{String(content.summary)}</div>}
@@ -262,7 +262,7 @@ function ArtifactSummary({ type, content }: { type: string; content: Record<stri
           <div><span className="opacity-60">Confidence: </span>{String(content.overall_confidence)}</div>
         )}
         {claims.length > 0 && (
-          <div className="text-amber-600">{claims.length} unverified claim{claims.length !== 1 ? "s" : ""}</div>
+          <div style={{ color: "var(--gilt)" }}>{claims.length} unverified claim{claims.length !== 1 ? "s" : ""}</div>
         )}
         {content.summary && <div className="normal-case font-sans opacity-80">{String(content.summary)}</div>}
       </div>
@@ -306,7 +306,7 @@ function ArtifactDisplay({ artifact }: { artifact: PipelineArtifact }) {
         className="w-full flex items-center justify-between px-3 py-2 text-left hover:bg-muted/30 transition-colors"
         onClick={() => setOpen(!open)}
       >
-        <span className="flex items-center gap-1.5 text-emerald-700 uppercase tracking-widest text-[10px]">
+        <span className="flex items-center gap-1.5 uppercase tracking-widest text-[10px]" style={{ color: "var(--green-2)" }}>
           <CheckCircle2 className="w-3 h-3" />
           {typeLabel}
         </span>
@@ -345,11 +345,11 @@ function FindingsList({ findings, workId }: { findings: PipelineFinding[]; workI
     }
   };
 
-  const SEV: Record<string, string> = {
-    critical: "border-red-300 bg-red-50/70 text-red-800",
-    high:     "border-red-200 bg-red-50/50 text-red-700",
-    medium:   "border-amber-200 bg-amber-50/50 text-amber-700",
-    low:      "border-border/50 bg-muted/20 text-muted-foreground",
+  const SEV: Record<string, React.CSSProperties> = {
+    critical: { color: "var(--rust)", background: "var(--rust-soft)", borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)" },
+    high:     { color: "var(--rust)", background: "var(--rust-soft)", borderColor: "color-mix(in srgb, var(--rust) 22%, transparent)" },
+    medium:   { color: "var(--gilt)", background: "var(--gilt-soft)", borderColor: "var(--gilt-line)" },
+    low:      {},
   };
 
   return (
@@ -361,7 +361,8 @@ function FindingsList({ findings, workId }: { findings: PipelineFinding[]; workI
       {findings.map((f) => (
         <div
           key={f.id}
-          className={`flex items-start gap-2 px-2.5 py-2 rounded-lg border text-xs ${SEV[f.severity] ?? SEV.medium}`}
+          className="flex items-start gap-2 px-2.5 py-2 rounded-lg border text-xs"
+          style={SEV[f.severity] ?? SEV.medium}
         >
           <span className="flex-1 leading-snug">{f.description}</span>
           <button
@@ -541,7 +542,10 @@ function PipelinePanel({ workId }: { workId: string }) {
               </Button>
             )}
             {isTerminal && (
-              <Badge className="bg-emerald-500/10 text-emerald-700 border-emerald-300">Complete</Badge>
+              <Badge
+                className="border"
+                style={{ color: "var(--green-2)", background: "var(--green-soft)", borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)" }}
+              >Complete</Badge>
             )}
           </div>
         </div>
@@ -1113,7 +1117,7 @@ export function BookTab({ workId }: { workId: string }) {
                   <span className="text-lg font-semibold font-mono">{pct}%</span>
                 </div>
                 <div className="mt-2 h-1.5 bg-muted rounded-full overflow-hidden">
-                  <div className={`h-full rounded-full transition-all duration-700 ${gaugeColor(pct)}`} style={{ width: `${pct}%` }} />
+                  <div className="h-full rounded-full transition-all duration-700" style={{ width: `${pct}%`, ...gaugeColor(pct) }} />
                 </div>
                 <div className="mt-1.5 text-[10px] text-muted-foreground/70 leading-tight">{hint}</div>
               </CardContent>
@@ -1145,7 +1149,7 @@ export function BookTab({ workId }: { workId: string }) {
                     className="flex items-center gap-3 py-2 px-3 rounded-lg border border-border/40 bg-card/50"
                     style={{ marginLeft: `${Math.min(c.level - 1, 2) * 16}px` }}
                   >
-                    <chip.Icon className={`w-4 h-4 shrink-0 ${c.chapter_status === "present" ? "text-emerald-500" : c.chapter_status === "incomplete" ? "text-amber-500" : "text-red-400"}`} />
+                    <chip.Icon className="w-4 h-4 shrink-0" style={{ color: chip.style.color as string }} />
                     <span className="font-serif text-sm truncate flex-1" title={c.title ?? undefined}>
                       {c.title || "Untitled section"}
                     </span>
@@ -1153,12 +1157,17 @@ export function BookTab({ workId }: { workId: string }) {
                       {c.word_count.toLocaleString()} w
                     </span>
                     <span
-                      className={`text-[10px] font-mono shrink-0 px-1.5 py-0.5 rounded border ${c.knowledge_count === 0 ? "bg-red-50 text-red-600 border-red-200" : c.knowledge_count < 3 ? "bg-amber-50 text-amber-700 border-amber-200" : "bg-muted/40 text-muted-foreground border-border/50"}`}
+                      className="text-[10px] font-mono shrink-0 px-1.5 py-0.5 rounded border"
+                      style={c.knowledge_count === 0
+                        ? { color: "var(--rust)", background: "var(--rust-soft)", borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)" }
+                        : c.knowledge_count < 3
+                        ? { color: "var(--gilt)", background: "var(--gilt-soft)", borderColor: "var(--gilt-line)" }
+                        : {}}
                       title="Knowledge items supporting this chapter"
                     >
                       {c.knowledge_count} research
                     </span>
-                    <span className={`text-[10px] font-mono shrink-0 px-1.5 py-0.5 rounded border ${chip.cls}`}>{chip.label}</span>
+                    <span className="text-[10px] font-mono shrink-0 px-1.5 py-0.5 rounded border" style={chip.style}>{chip.label}</span>
                   </div>
                 );
               })}
@@ -1226,7 +1235,7 @@ export function BookTab({ workId }: { workId: string }) {
             ) : (
               <div className="space-y-1.5">
                 {gaps.map((g, i) => (
-                  <div key={i} className={`py-2 px-3 rounded-lg border text-sm ${SEV_CLS[g.severity]}`}>
+                  <div key={i} className="py-2 px-3 rounded-lg border text-sm" style={SEV_STYLE[g.severity]}>
                     <div className="font-medium font-serif leading-snug">{g.title}</div>
                     <div className="text-xs opacity-80 mt-0.5 leading-snug">{g.description}</div>
                   </div>

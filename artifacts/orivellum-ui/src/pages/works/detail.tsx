@@ -741,12 +741,12 @@ function DocumentsTab({ workId }: { workId: string }) {
           {/* Summary line */}
           {hasNonReady ? (
             <div className="flex items-center gap-2 text-[11px] font-mono text-muted-foreground">
-              <span className="text-emerald-700 font-semibold">{readyCnt} ready</span>
+              <span className="font-semibold" style={{ color: "var(--green-2)" }}>{readyCnt} ready</span>
               {processingCnt > 0 && (
                 <>
                   <span className="text-muted-foreground/40">·</span>
-                  <span className="flex items-center gap-1 text-amber-600">
-                    <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse inline-block" />
+                  <span className="flex items-center gap-1" style={{ color: "var(--gilt)" }}>
+                    <span className="w-1.5 h-1.5 rounded-full animate-pulse inline-block" style={{ background: "var(--gilt)" }} />
                     {processingCnt} processing
                   </span>
                 </>
@@ -754,12 +754,12 @@ function DocumentsTab({ workId }: { workId: string }) {
               {errorCnt > 0 && (
                 <>
                   <span className="text-muted-foreground/40">·</span>
-                  <span className="text-red-600">{errorCnt} error{errorCnt !== 1 ? "s" : ""}</span>
+                  <span style={{ color: "var(--rust)" }}>{errorCnt} error{errorCnt !== 1 ? "s" : ""}</span>
                 </>
               )}
             </div>
           ) : (
-            <div className="text-[11px] font-mono text-emerald-700">
+            <div className="text-[11px] font-mono" style={{ color: "var(--green-2)" }}>
               {readyCnt} document{readyCnt !== 1 ? "s" : ""} ready
             </div>
           )}
@@ -787,51 +787,54 @@ function DocumentsTab({ workId }: { workId: string }) {
       {/* ── Version-relationship suggestions ──────────────────────────── */}
       {dupePairs.length > 0 && (
         <div className="space-y-2">
-          <div className="flex items-center gap-2 text-sm font-medium text-amber-700">
+          <div className="flex items-center gap-2 text-sm font-medium" style={{ color: "var(--gilt)" }}>
             <GitBranch className="w-4 h-4" />
             <span>Version relationships detected</span>
-            <span className="text-[10px] font-mono text-amber-600/70 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5">
+            <span className="text-[10px] font-mono rounded px-1.5 py-0.5 border" style={{ color: "var(--gilt)", background: "var(--gilt-soft)", borderColor: "var(--gilt-line)", opacity: 0.8 }}>
               {dupePairs.length} pair{dupePairs.length !== 1 ? "s" : ""}
             </span>
           </div>
           {dupePairs.map((pair: any) => (
             <div
               key={pair.id}
-              className="bg-amber-50/60 border border-amber-200/80 rounded-lg p-3 space-y-2"
+              className="rounded-lg p-3 space-y-2 border"
+              style={{ background: "var(--gilt-soft)", borderColor: "var(--gilt-line)" }}
             >
-              <p className="text-xs text-amber-800 leading-relaxed">
-                <span className="font-semibold">{pair.doc_a_title || "Untitled"}</span>
-                <span className="mx-1.5 text-amber-500">&amp;</span>
-                <span className="font-semibold">{pair.doc_b_title || "Untitled"}</span>
-                <span className="ml-1.5 text-amber-600/80">
+              <p className="text-xs leading-relaxed" style={{ color: "var(--gilt)" }}>
+                <span className="font-semibold text-foreground">{pair.doc_a_title || "Untitled"}</span>
+                <span className="mx-1.5" style={{ color: "var(--gilt)" }}>&amp;</span>
+                <span className="font-semibold text-foreground">{pair.doc_b_title || "Untitled"}</span>
+                <span className="ml-1.5 opacity-80">
                   ({pair.kind === "near_duplicate" ? "near duplicates" : "likely revisions"} · {Math.round(pair.similarity * 100)}% similar)
                 </span>
               </p>
-              <p className="text-[11px] text-amber-700/80">
+              <p className="text-[11px] text-muted-foreground">
                 Declare one as canonical — the other will be marked as superseded.
               </p>
               <div className="flex items-center gap-2 flex-wrap">
                 <button
                   disabled={resolvingDupe === pair.id}
                   onClick={() => handleDeclareCanonicaL(pair.id, pair.doc_a_id)}
-                  className="text-[11px] px-2.5 py-1 rounded border border-amber-300 bg-white text-amber-800 hover:bg-amber-100 transition-colors disabled:opacity-50 font-mono"
+                  className="text-[11px] px-2.5 py-1 rounded border bg-background hover:bg-muted/40 transition-colors disabled:opacity-50 font-mono"
+                  style={{ borderColor: "var(--gilt-line)", color: "var(--gilt)" }}
                 >
                   {pair.doc_a_title || "Doc A"} is canonical
                 </button>
                 <button
                   disabled={resolvingDupe === pair.id}
                   onClick={() => handleDeclareCanonicaL(pair.id, pair.doc_b_id)}
-                  className="text-[11px] px-2.5 py-1 rounded border border-amber-300 bg-white text-amber-800 hover:bg-amber-100 transition-colors disabled:opacity-50 font-mono"
+                  className="text-[11px] px-2.5 py-1 rounded border bg-background hover:bg-muted/40 transition-colors disabled:opacity-50 font-mono"
+                  style={{ borderColor: "var(--gilt-line)", color: "var(--gilt)" }}
                 >
                   {pair.doc_b_title || "Doc B"} is canonical
                 </button>
                 <button
                   onClick={() => setDismissedDupes((prev) => new Set([...prev, pair.id]))}
-                  className="text-[11px] px-2 py-1 rounded text-amber-600/70 hover:text-amber-800 transition-colors font-mono"
+                  className="text-[11px] px-2 py-1 rounded text-muted-foreground hover:text-foreground transition-colors font-mono"
                 >
                   Dismiss
                 </button>
-                {resolvingDupe === pair.id && <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-600" />}
+                {resolvingDupe === pair.id && <Loader2 className="w-3.5 h-3.5 animate-spin" style={{ color: "var(--gilt)" }} />}
               </div>
             </div>
           ))}
@@ -858,19 +861,21 @@ function DocumentsTab({ workId }: { workId: string }) {
                       <Badge variant="secondary" className="text-[10px] uppercase font-mono">{doc.kind}</Badge>
                       <Badge
                         variant="outline"
-                        className={`text-[10px] uppercase font-mono ${
-                          isError
-                            ? "border-red-200 bg-red-50 text-red-700"
-                            : isProcessing
-                            ? "border-amber-200 bg-amber-50 text-amber-700"
-                            : "border-emerald-200 bg-emerald-50 text-emerald-700"
-                        }`}
+                        className="text-[10px] uppercase font-mono"
+                        style={isError
+                          ? { color: "var(--rust)", background: "var(--rust-soft)", borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)" }
+                          : isProcessing
+                          ? { color: "var(--gilt)", background: "var(--gilt-soft)", borderColor: "var(--gilt-line)" }
+                          : { color: "var(--green-2)", background: "var(--green-soft)", borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)" }}
                       >
-                        {isProcessing && <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse mr-1 inline-block" />}
+                        {isProcessing && <span className="w-1.5 h-1.5 rounded-full animate-pulse mr-1 inline-block" style={{ background: "var(--gilt)" }} />}
                         {doc.readiness}
                       </Badge>
                       {(doc as any).lifecycle === "canonical" && (
-                        <span className="text-[10px] font-mono flex items-center gap-0.5 bg-amber-50 border border-amber-300 text-amber-800 rounded px-1.5 py-0.5">
+                        <span
+                          className="text-[10px] font-mono flex items-center gap-0.5 rounded px-1.5 py-0.5 border"
+                          style={{ color: "var(--gilt)", background: "var(--gilt-soft)", borderColor: "var(--gilt-line)" }}
+                        >
                           <Star className="w-2.5 h-2.5" />canonical
                         </span>
                       )}
@@ -880,7 +885,7 @@ function DocumentsTab({ workId }: { workId: string }) {
                         </span>
                       )}
                       {(doc as any).lifecycle === "reference" && (
-                        <span className="text-[10px] font-mono bg-blue-50 border border-blue-200 text-blue-700 rounded px-1.5 py-0.5">
+                        <span className="text-[10px] font-mono rounded px-1.5 py-0.5 border" style={{ color: "var(--ink-soft)", borderColor: "var(--line)" }}>
                           reference
                         </span>
                       )}
@@ -897,7 +902,8 @@ function DocumentsTab({ workId }: { workId: string }) {
                       onClick={(e) => handleRetry(e, doc.id!)}
                       disabled={retrying === doc.id}
                       title="Retry extraction"
-                      className="opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded text-amber-600 hover:text-amber-700 hover:bg-amber-50 disabled:opacity-40"
+                      className="opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded disabled:opacity-40 hover:bg-muted/40"
+                      style={{ color: "var(--gilt)" }}
                     >
                       {retrying === doc.id
                         ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -1414,15 +1420,15 @@ function KnowledgeTab({ workId }: { workId: string }) {
                         {item.kind}
                       </Badge>
                       {item.review_status === "ai_auto" ? (
-                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold border border-violet-200 bg-violet-50 text-violet-700">
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold border" style={{ color: "var(--gilt)", background: "var(--gilt-soft)", borderColor: "var(--gilt-line)" }}>
                           <Sparkles className="w-2.5 h-2.5" /> AI
                         </span>
                       ) : item.review_status === "approved" ? (
-                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold border border-emerald-200 bg-emerald-50 text-emerald-700">
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold border" style={{ color: "var(--green-2)", background: "var(--green-soft)", borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)" }}>
                           ✓ approved
                         </span>
                       ) : item.review_status === "rejected" ? (
-                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold border border-red-200 bg-red-50 text-red-700">
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold border" style={{ color: "var(--rust)", background: "var(--rust-soft)", borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)" }}>
                           ✕ rejected
                         </span>
                       ) : (
@@ -1454,18 +1460,18 @@ function KnowledgeTab({ workId }: { workId: string }) {
                     {item.confidence !== undefined && item.confidence !== null && (() => {
                       const pct = item.confidence * 100;
                       const tier =
-                        pct >= 80 ? { label: "High", color: "text-emerald-700 bg-emerald-50 border-emerald-200" }
-                        : pct >= 50 ? { label: "Med", color: "text-amber-700 bg-amber-50 border-amber-200" }
-                        : { label: "Low", color: "text-red-700 bg-red-50 border-red-200" };
+                        pct >= 80 ? { label: "High", style: { color: "var(--green-2)", background: "var(--green-soft)", borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)" } as React.CSSProperties, bar: { background: "var(--green-2)" } as React.CSSProperties }
+                        : pct >= 50 ? { label: "Med",  style: { color: "var(--gilt)",   background: "var(--gilt-soft)",  borderColor: "var(--gilt-line)" } as React.CSSProperties, bar: { background: "var(--gilt)" } as React.CSSProperties }
+                        : { label: "Low",  style: { color: "var(--rust)",  background: "var(--rust-soft)", borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)" } as React.CSSProperties, bar: { background: "var(--rust)" } as React.CSSProperties };
                       return (
                         <div className="flex flex-col items-end gap-0.5" title={`Confidence: ${pct.toFixed(1)}% (estimated) — ${tier.label === "High" ? "Well-evidenced: corroborated by multiple sources, recent, reviewed" : tier.label === "Med" ? "Partially evidenced: some corroboration or review present" : "Thin evidence: single source, unreviewed, or old — verify before relying on this"}`}>
-                          <span className={`text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded border ${tier.color}`}>
+                          <span className="text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded border" style={tier.style}>
                             {pct.toFixed(0)}% {tier.label}
                           </span>
                           <div className="w-12 h-1 rounded-full bg-muted overflow-hidden">
                             <div
-                              className={`h-full rounded-full transition-all ${pct >= 80 ? "bg-emerald-500" : pct >= 50 ? "bg-amber-500" : "bg-red-500"}`}
-                              style={{ width: `${pct}%` }}
+                              className="h-full rounded-full transition-all"
+                              style={{ width: `${pct}%`, ...tier.bar }}
                             />
                           </div>
                         </div>
@@ -1477,11 +1483,8 @@ function KnowledgeTab({ workId }: { workId: string }) {
                           disabled={isReviewing || isApproved}
                           onClick={() => handleReview(item.id!, "approved", isRejected)}
                           title="Approve"
-                          className={`p-1.5 rounded transition-colors ${
-                            isApproved
-                              ? "text-emerald-600 bg-emerald-50"
-                              : "text-muted-foreground hover:text-emerald-600 hover:bg-emerald-50"
-                          } disabled:opacity-40`}
+                          className="p-1.5 rounded transition-colors disabled:opacity-40"
+                          style={isApproved ? { color: "var(--green-2)", background: "var(--green-soft)" } : undefined}
                         >
                           <ThumbsUp className="w-3.5 h-3.5" />
                         </button>
@@ -1489,11 +1492,8 @@ function KnowledgeTab({ workId }: { workId: string }) {
                           disabled={isReviewing || isRejected}
                           onClick={() => handleReview(item.id!, "rejected", isApproved)}
                           title="Dismiss"
-                          className={`p-1.5 rounded transition-colors ${
-                            isRejected
-                              ? "text-red-600 bg-red-50"
-                              : "text-muted-foreground hover:text-red-600 hover:bg-red-50"
-                          } disabled:opacity-40`}
+                          className="p-1.5 rounded transition-colors disabled:opacity-40"
+                          style={isRejected ? { color: "var(--rust)", background: "var(--rust-soft)" } : undefined}
                         >
                           <ThumbsDown className="w-3.5 h-3.5" />
                         </button>
@@ -1700,11 +1700,13 @@ function TasksTab({ workId }: { workId: string }) {
               >
                 <Badge
                   variant="outline"
-                  className={`text-[9px] uppercase font-mono cursor-pointer hover:bg-primary/10 ${
-                    task.priority === 1 ? "border-red-400 text-red-600" :
-                    task.priority === 2 ? "border-amber-400 text-amber-600" :
-                    task.priority === 3 ? "border-blue-400 text-blue-600" : ""
-                  }`}
+                  className="text-[9px] uppercase font-mono cursor-pointer hover:bg-primary/10"
+                  style={
+                    task.priority === 1 ? { borderColor: "color-mix(in srgb, var(--rust) 55%, transparent)", color: "var(--rust)" } :
+                    task.priority === 2 ? { borderColor: "var(--gilt-line)", color: "var(--gilt)" } :
+                    task.priority === 3 ? { borderColor: "var(--ink-soft)", color: "var(--ink-soft)" } :
+                    undefined
+                  }
                 >
                   P{task.priority || 0}
                 </Badge>

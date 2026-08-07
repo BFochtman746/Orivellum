@@ -69,7 +69,7 @@ interface StageDetail {
 
 function GateIcon({ status, size = 4 }: { status: string; size?: number }) {
   const cls = `w-${size} h-${size} shrink-0`;
-  if (status === "PASSED") return <CheckCircle className={`${cls} text-emerald-600`} />;
+  if (status === "PASSED") return <CheckCircle className={cls} style={{ color: "var(--green-2)" }} />;
   if (status === "FAILED") return <XCircle className={`${cls} text-destructive`} />;
   return <Clock className={`${cls} text-muted-foreground`} />;
 }
@@ -147,7 +147,7 @@ function CodexDrawer({
       <DialogContent className="max-w-xl max-h-[80vh] overflow-hidden flex flex-col">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 font-serif">
-            <Lightbulb className="w-4 h-4 text-amber-500" />
+            <Lightbulb className="w-4 h-4" style={{ color: "var(--gilt)" }} />
             Brainstorm Codex — {stageCode}
           </DialogTitle>
         </DialogHeader>
@@ -315,7 +315,7 @@ function GateDialog({
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-w-sm">
         <DialogHeader>
-          <DialogTitle className={`flex items-center gap-2 font-serif ${isPass ? "text-emerald-700" : "text-destructive"}`}>
+          <DialogTitle className={`flex items-center gap-2 font-serif ${isPass ? "" : "text-destructive"}`} style={isPass ? { color: "var(--green-2)" } : undefined}>
             {isPass ? <CheckSquare className="w-4 h-4" /> : <XSquare className="w-4 h-4" />}
             {isPass ? "Pass" : "Fail"} Gate {code}
           </DialogTitle>
@@ -399,7 +399,7 @@ function SealDialog({
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-w-sm">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2 font-serif text-emerald-700">
+          <DialogTitle className="flex items-center gap-2 font-serif" style={{ color: "var(--green-2)" }}>
             <ShieldCheck className="w-4 h-4" />
             Seal the Origination Package
           </DialogTitle>
@@ -425,7 +425,8 @@ function SealDialog({
           <Button
             onClick={() => sealMutation.mutate()}
             disabled={sealMutation.isPending || !author.trim()}
-            className="bg-emerald-700 hover:bg-emerald-800 text-white"
+            className="text-white hover:opacity-90"
+            style={{ background: "var(--green-2)" }}
           >
             {sealMutation.isPending ? "Sealing…" : "Seal Package"}
           </Button>
@@ -523,7 +524,10 @@ function StageEditor({
             <span className="font-mono text-xs text-muted-foreground">{code}</span>
             <span className="font-serif font-semibold">{stageInfo?.name}</span>
             {status === "PASSED" && (
-              <span className="flex items-center gap-1 text-[10px] font-mono text-emerald-600 bg-emerald-50/80 border border-emerald-200 rounded-full px-2 py-0.5">
+              <span
+                className="flex items-center gap-1 text-[10px] font-mono rounded-full px-2 py-0.5 border"
+                style={{ color: "var(--green-2)", background: "var(--green-soft)", borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)" }}
+              >
                 <CheckCircle className="w-3 h-3" /> PASSED
               </span>
             )}
@@ -544,17 +548,19 @@ function StageEditor({
           className="gap-1.5 h-7 text-xs"
           onClick={() => setCodexOpen(true)}
         >
-          <Lightbulb className="w-3 h-3 text-amber-500" />
+          <Lightbulb className="w-3 h-3" style={{ color: "var(--gilt)" }} />
           Codex
         </Button>
       </div>
 
       {/* Fill warning */}
       {hasPlaceholders && (
-        <div className="flex items-start gap-2 px-3 py-2 rounded border border-amber-300/50 bg-amber-50/50 text-xs text-amber-800">
+        <div
+          className="flex items-start gap-2 px-3 py-2 rounded border text-xs"
+          style={{ borderColor: "var(--gilt-line)", background: "var(--gilt-soft)", color: "var(--gilt)" }}
+        >
           <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-          This artifact still has <code className="font-mono text-amber-900">{"<<FILL>>"}
-          </code> placeholders. Replace all of them before passing the gate.
+          This artifact still has <code className="font-mono" style={{ color: "var(--gilt)" }}>{"<<FILL>>"}</code> placeholders. Replace all of them before passing the gate.
         </div>
       )}
 
@@ -568,7 +574,8 @@ function StageEditor({
           rows={24}
           className={`font-mono text-xs leading-relaxed resize-y ${
             sealed ? "opacity-60" : ""
-          } ${hasPlaceholders ? "border-amber-300/60" : ""}`}
+          }`}
+          style={hasPlaceholders ? { borderColor: "var(--gilt-line)" } : undefined}
           placeholder="Write your artifact content here…"
           spellCheck={false}
         />
@@ -646,7 +653,8 @@ function StageEditor({
               </Button>
               <Button
                 size="sm"
-                className="gap-1.5 h-7 text-xs bg-emerald-700 hover:bg-emerald-800 text-white"
+                className="gap-1.5 h-7 text-xs text-white hover:opacity-90"
+                style={{ background: "var(--green-2)" }}
                 disabled={hasPlaceholders}
                 onClick={() => setPassOpen(true)}
               >
@@ -779,7 +787,7 @@ export function GenesisTab({ workId }: { workId: string }) {
           <div className="flex items-center gap-3 mt-1 text-xs font-mono text-muted-foreground flex-wrap">
             <span className="uppercase">{b.mode}</span>
             <span>{b.length} chapters · {b.acts} acts</span>
-            <span className={`font-semibold ${b.sealed ? "text-emerald-700" : "text-foreground"}`}>
+            <span className={b.sealed ? "" : "text-foreground font-semibold"} style={b.sealed ? { color: "var(--green-2)", fontWeight: 600 } : undefined}>
               {b.sealed ? "🔒 READY_FOR_B0" : b.state}
             </span>
             <span>{b.ledger_entries} ledger entries</span>
@@ -803,7 +811,8 @@ export function GenesisTab({ workId }: { workId: string }) {
           {!b.sealed && allGatesPassed && (
             <Button
               size="sm"
-              className="gap-1.5 h-7 text-xs bg-emerald-700 hover:bg-emerald-800 text-white"
+              className="gap-1.5 h-7 text-xs text-white hover:opacity-90"
+              style={{ background: "var(--green-2)" }}
               onClick={() => setSealOpen(true)}
             >
               <ShieldCheck className="w-3 h-3" />
@@ -815,11 +824,12 @@ export function GenesisTab({ workId }: { workId: string }) {
 
       {/* Ledger verify result */}
       {verifyQuery.data && (
-        <div className={`flex items-center gap-2 px-3 py-2 rounded border text-xs font-mono ${
-          verifyQuery.data.ok
-            ? "border-emerald-200 bg-emerald-50/50 text-emerald-800"
-            : "border-destructive/30 bg-destructive/5 text-destructive"
-        }`}>
+        <div
+          className="flex items-center gap-2 px-3 py-2 rounded border text-xs font-mono"
+          style={verifyQuery.data.ok
+            ? { borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)", background: "var(--green-soft)", color: "var(--green-2)" }
+            : undefined}
+        >
           {verifyQuery.data.ok
             ? <CheckCircle className="w-3.5 h-3.5 shrink-0" />
             : <AlertCircle className="w-3.5 h-3.5 shrink-0" />}
@@ -835,8 +845,8 @@ export function GenesisTab({ workId }: { workId: string }) {
         </div>
         <div className="h-1.5 bg-muted rounded-full overflow-hidden">
           <div
-            className="h-full bg-emerald-600/60 rounded-full transition-all duration-700"
-            style={{ width: `${passedCount * 10}%` }}
+            className="h-full rounded-full transition-all duration-700"
+            style={{ background: "var(--green-2)", opacity: 0.65, width: `${passedCount * 10}%` }}
           />
         </div>
       </div>
@@ -886,8 +896,8 @@ export function GenesisTab({ workId }: { workId: string }) {
 
       {/* Sealed manifest */}
       {b.sealed && b.manifest && (
-        <div className="border-t border-emerald-200/50 pt-4">
-          <div className="text-[10px] font-mono uppercase tracking-widest text-emerald-700 mb-2">
+        <div className="border-t pt-4" style={{ borderColor: "color-mix(in srgb, var(--green-2) 20%, transparent)" }}>
+          <div className="text-[10px] font-mono uppercase tracking-widest mb-2" style={{ color: "var(--green-2)" }}>
             Sealed Manifest
           </div>
           <pre className="text-[10px] font-mono bg-muted/40 rounded-lg p-3 overflow-x-auto text-muted-foreground max-h-48">

@@ -70,14 +70,14 @@ const N_DOMAINS_OPTIONS = [3, 5, 7, 10] as const;
 
 function OriginalityBar({ value }: { value: number }) {
   const pct = Math.round(value * 100);
-  const color =
-    pct >= 70 ? "bg-violet-500" :
-    pct >= 45 ? "bg-amber-500"  :
-                "bg-muted-foreground/40";
+  const barStyle: React.CSSProperties =
+    pct >= 70 ? { background: "var(--green-2)" } :
+    pct >= 45 ? { background: "var(--gilt)" }    :
+                { background: "var(--ink-faint)", opacity: 0.6 };
   return (
     <div className="flex items-center gap-1.5 min-w-0">
       <div className="flex-1 h-1 bg-muted rounded-full overflow-hidden">
-        <div className={`h-full rounded-full ${color}`} style={{ width: `${pct}%` }} />
+        <div className="h-full rounded-full" style={{ width: `${pct}%`, ...barStyle }} />
       </div>
       <span className="text-[10px] font-mono text-muted-foreground tabular-nums w-6 text-right">
         {pct}%
@@ -92,7 +92,8 @@ function UsefulnessStars({ value }: { value: number }) {
       {[1,2,3,4,5].map(n => (
         <Star
           key={n}
-          className={`w-2.5 h-2.5 ${n <= value ? "text-amber-400 fill-amber-400" : "text-muted-foreground/30"}`}
+          className="w-2.5 h-2.5"
+          style={n <= value ? { color: "var(--gilt)", fill: "var(--gilt)" } : undefined}
         />
       ))}
     </div>
@@ -181,7 +182,11 @@ function IdeaCard({
           orig {Math.round(idea.originality * 100)}% · useful {idea.usefulness}/5
         </span>
         {approved ? (
-          <Badge variant="outline" className="h-5 text-[10px] text-emerald-600 border-emerald-300">
+          <Badge
+            variant="outline"
+            className="h-5 text-[10px]"
+            style={{ color: "var(--green-2)", borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)" }}
+          >
             ✓ In knowledge
           </Badge>
         ) : (
@@ -321,11 +326,12 @@ function PastSessions({
           </span>
           <Badge
             variant="outline"
-            className={`h-4 text-[9px] px-1 shrink-0 ${
-              s.status === "done"    ? "text-emerald-600 border-emerald-300" :
-              s.status === "failed"  ? "text-destructive border-destructive/30" :
-                                       "text-amber-600 border-amber-300"
-            }`}
+            className="h-4 text-[9px] px-1 shrink-0"
+            style={
+              s.status === "done"   ? { color: "var(--green-2)", borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)" } :
+              s.status === "failed" ? {} :
+                                      { color: "var(--gilt)", borderColor: "var(--gilt-line)" }
+            }
           >
             {s.status}
           </Badge>
@@ -491,8 +497,8 @@ export function BrainstormTab({ workId, initialSeed = "", initialContext = "gene
       {/* Empty state (no active session, no history) */}
       {!activeSession && history.length === 0 && !runMutation.isPending && (
         <div className="flex flex-col items-center gap-3 py-12 text-center">
-          <div className="w-12 h-12 rounded-full bg-amber-500/10 flex items-center justify-center">
-            <Lightbulb className="w-6 h-6 text-amber-500" />
+          <div className="w-12 h-12 rounded-full flex items-center justify-center" style={{ background: "var(--gilt-soft)" }}>
+            <Lightbulb className="w-6 h-6" style={{ color: "var(--gilt)" }} />
           </div>
           <div className="space-y-1">
             <p className="text-sm font-medium">No brainstorm sessions yet</p>
@@ -574,12 +580,12 @@ export function BrainstormB3Panel({ workId, workTitle }: { workId: string; workT
   });
 
   return (
-    <div className="rounded-lg border border-amber-300/50 bg-amber-500/5 overflow-hidden">
+    <div className="rounded-lg border overflow-hidden" style={{ borderColor: "var(--gilt-line)", background: "var(--gilt-soft)" }}>
       <button
-        className="w-full flex items-center gap-2 p-3 text-left hover:bg-amber-500/5 transition-colors"
+        className="w-full flex items-center gap-2 p-3 text-left hover:opacity-80 transition-opacity"
         onClick={() => setExpanded(v => !v)}
       >
-        <Lightbulb className="w-4 h-4 text-amber-500 shrink-0" />
+        <Lightbulb className="w-4 h-4 shrink-0" style={{ color: "var(--gilt)" }} />
         <div className="flex-1 min-w-0">
           <p className="text-xs font-medium">Explore architecture approaches first</p>
           <p className="text-[10px] text-muted-foreground">
@@ -592,7 +598,7 @@ export function BrainstormB3Panel({ workId, workTitle }: { workId: string; workT
       </button>
 
       {expanded && (
-        <div className="px-3 pb-3 space-y-3 border-t border-amber-300/30">
+        <div className="px-3 pb-3 space-y-3 border-t" style={{ borderColor: "var(--gilt-line)" }}>
           {!sessionResult ? (
             <>
               <Textarea
@@ -604,7 +610,8 @@ export function BrainstormB3Panel({ workId, workTitle }: { workId: string; workT
               <Button
                 size="sm"
                 variant="outline"
-                className="h-7 gap-1.5 text-xs w-full border-amber-400/50 text-amber-700 hover:bg-amber-500/10"
+                className="h-7 gap-1.5 text-xs w-full"
+                style={{ borderColor: "var(--gilt-line)", color: "var(--gilt)" }}
                 onClick={() => runMutation.mutate()}
                 disabled={runMutation.isPending}
               >
