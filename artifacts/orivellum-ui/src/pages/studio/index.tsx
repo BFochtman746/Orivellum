@@ -1570,7 +1570,7 @@ export default function Studio() {
               key={tab.id}
               onClick={() => setMainTab(tab.id)}
               className={`
-                flex items-center gap-1.5 px-4 py-3 text-sm border-b-2 transition-colors whitespace-nowrap
+                flex items-center gap-1.5 px-4 py-3 text-sm border-b-2 transition-colors whitespace-nowrap min-h-[44px] touch-manipulation
                 ${mainTab === tab.id
                   ? "border-primary text-primary font-medium"
                   : "border-transparent text-muted-foreground hover:text-foreground"
