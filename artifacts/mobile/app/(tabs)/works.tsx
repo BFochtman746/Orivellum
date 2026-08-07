@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
+  Animated,
   FlatList,
   Platform,
   Pressable,
@@ -18,7 +19,7 @@ import { useListWorks, useCreateConversation, useDeleteWork } from '@workspace/a
 import { useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { font } from '@/lib/typography';
+import { font, fontSerif } from '@/lib/typography';
 import * as Haptics from 'expo-haptics';
 import type { Work } from '@workspace/api-client-react';
 import { OfflineBanner, ErrorScreen } from '@/components/OfflineBanner';
@@ -52,26 +53,38 @@ function WorkCard({ work, onStartChat, onDelete }: { work: Work; onStartChat: ()
   const swipeRef = useRef<Swipeable>(null);
   const isWeb = Platform.OS === 'web';
 
+  // Scale animation for the chat button pulse on full reveal
+  const chatBtnScale = useRef(new Animated.Value(1)).current;
+
   const triggerHaptic = () => {
     if (!isWeb) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+  };
+
+  const triggerChatBtnPulse = () => {
+    Animated.sequence([
+      Animated.timing(chatBtnScale, { toValue: 1.08, duration: 120, useNativeDriver: true }),
+      Animated.timing(chatBtnScale, { toValue: 1.0,  duration: 100, useNativeDriver: true }),
+    ]).start();
   };
 
   // Left-swipe reveals the Chat action (rendered on the right edge)
   const renderRightActions = () => (
     <View style={{ flexDirection: 'row', alignItems: 'center', paddingRight: 12, paddingLeft: 8, marginVertical: 6 }}>
-      <Pressable
-        onPress={() => { swipeRef.current?.close(); triggerHaptic(); onStartChat(); }}
-        style={{
-          backgroundColor: colors.primary, borderRadius: 10,
-          paddingHorizontal: 18, paddingVertical: 10,
-          alignItems: 'center', justifyContent: 'center', gap: 4,
-          minHeight: 52,
-        }}
-        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-      >
-        <Feather name="message-circle" size={18} color="#fff" />
-        <Text style={{ color: '#fff', fontSize: 12, ...font('semibold') }}>Chat</Text>
-      </Pressable>
+      <Animated.View style={{ transform: [{ scale: chatBtnScale }] }}>
+        <Pressable
+          onPress={() => { swipeRef.current?.close(); triggerHaptic(); onStartChat(); }}
+          style={{
+            backgroundColor: colors.primary, borderRadius: 10,
+            paddingHorizontal: 18, paddingVertical: 10,
+            alignItems: 'center', justifyContent: 'center', gap: 4,
+            minHeight: 52,
+          }}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+        >
+          <Feather name="message-circle" size={18} color="#fff" />
+          <Text style={{ color: '#fff', fontSize: 12, ...font('semibold') }}>Chat</Text>
+        </Pressable>
+      </Animated.View>
     </View>
   );
 
@@ -201,7 +214,11 @@ function WorkCard({ work, onStartChat, onDelete }: { work: Work; onStartChat: ()
       ref={swipeRef}
       renderRightActions={renderRightActions}
       overshootRight={false}
-      friction={2}
+      friction={1.5}
+      leftThreshold={50}
+      rightThreshold={50}
+      overshootFriction={6}
+      onSwipeableWillOpen={() => triggerChatBtnPulse()}
     >
       {cardInner}
     </Swipeable>
@@ -390,7 +407,7 @@ const styles = StyleSheet.create({
     paddingBottom: 14,
     borderBottomWidth: 1,
   },
-  title: { fontSize: 26, ...font('bold'), letterSpacing: -0.3 },
+  title: { fontSize: 26, ...fontSerif('bold'), letterSpacing: -0.3 },
   count: { fontSize: 13, ...font('regular'), lineHeight: 18 },
   searchBar: {
     flexDirection: 'row',
