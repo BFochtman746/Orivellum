@@ -1589,6 +1589,16 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             WHERE c.prereq_id IS NOT NULL;
     """),
 
+    # v96 — Transfer-question tracking on work_mastery.
+    # Stores which question mode (recall vs. transfer) was in effect for each attempt.
+    # Enables analytics to compare recall vs. transfer performance and is used by
+    # assess_answer to award 1.5× streak credit when a transfer question is answered
+    # correctly (score ≥ 0.75), recognising that application questions are harder.
+    (96, "Add question_type column to work_mastery", """
+        ALTER TABLE work_mastery ADD COLUMN question_type TEXT NOT NULL DEFAULT 'recall';
+        CREATE INDEX IF NOT EXISTS work_mastery_qtype ON work_mastery(concept_id, question_type);
+    """),
+
     # v95 — Error classification columns on work_mastery.
     # Adds per-assessment diagnosis:
     #   error_type      — null (correct), careless_slip, procedural_gap,

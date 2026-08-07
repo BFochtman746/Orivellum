@@ -61,7 +61,9 @@ def _make_db():
             review_session_count INTEGER NOT NULL DEFAULT 0,
             -- v95 error classification columns
             error_type TEXT,
-            remediation_hint TEXT
+            remediation_hint TEXT,
+            -- v96 transfer-question tracking
+            question_type TEXT NOT NULL DEFAULT 'recall'
         );
         -- v94 multi-prerequisite graph
         CREATE TABLE IF NOT EXISTS work_concept_prereqs (

@@ -2224,6 +2224,7 @@ interface LearningSession {
   description: string;
   question: string;
   context_snippet: string;
+  question_type: "recall" | "transfer";
 }
 
 type ErrorType = "careless_slip" | "procedural_gap" | "conceptual_misconception" | "knowledge_gap" | null;
@@ -2242,6 +2243,7 @@ interface AssessResult {
   socratic_followup: string | null;
   suggested_prereq_id: string | null;
   suggested_prereq_subject: string | null;
+  question_type: "recall" | "transfer";
 }
 
 // ─── Error-type feedback sub-components ──────────────────────────────────────
@@ -2909,9 +2911,9 @@ function LearnTab({ workId }: { workId: string }) {
     setResult(null);
     setPhase("question");
     try {
-      const url = conceptId
-        ? `${apiBase}/works/${workId}/learning/question?concept_id=${conceptId}`
-        : `${apiBase}/works/${workId}/learning/question`;
+      const params = new URLSearchParams({ type: "auto" });
+      if (conceptId) params.set("concept_id", conceptId);
+      const url = `${apiBase}/works/${workId}/learning/question?${params}`;
       const r = await apiFetch(url);
       if (r.status === 422) {
         setPhase("all_done");
@@ -2925,6 +2927,7 @@ function LearnTab({ workId }: { workId: string }) {
         description:     data.description ?? "",
         question:        data.question,
         context_snippet: data.context_snippet ?? "",
+        question_type:   data.question_type ?? "recall",
       });
     } catch (e: any) {
       setError(e.message ?? "Could not load question");
@@ -2977,9 +2980,10 @@ function LearnTab({ workId }: { workId: string }) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          concept_id: session.concept_id,
-          question:   session.question,
-          answer:     answer.trim(),
+          concept_id:    session.concept_id,
+          question:      session.question,
+          answer:        answer.trim(),
+          question_type: session.question_type ?? "recall",
         }),
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -3117,6 +3121,20 @@ function LearnTab({ workId }: { workId: string }) {
       {/* Question */}
       {(phase === "question" || phase === "assessing" || phase === "feedback") && session && (
         <Card className="p-6 space-y-4">
+          {/* Transfer question badge */}
+          {session.question_type === "transfer" && (
+            <div className="flex items-center gap-2">
+              <span
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-mono font-semibold bg-amber-100 text-amber-700 border border-amber-300/70 dark:bg-amber-950/50 dark:text-amber-400 dark:border-amber-700/60"
+                title="Transfer questions test whether you can apply the concept to a novel situation — not just recall what you read."
+              >
+                <Zap className="w-3 h-3" /> Application question
+              </span>
+              <span className="text-[10px] text-muted-foreground/60 font-mono">
+                Novel scenario — apply what you know
+              </span>
+            </div>
+          )}
           {session.context_snippet && (
             <div className="text-xs font-mono text-muted-foreground/70 pl-3 border-l-2 border-border/50 italic leading-relaxed">
               {session.context_snippet}

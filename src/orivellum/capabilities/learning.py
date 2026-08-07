@@ -32,6 +32,11 @@ _HLR_MIN_HALF_LIFE     = 0.5    # floor: 12 h (never schedule sooner than this)
 _HLR_DURABLE_HALF_LIFE = 7.0   # a concept is "durably mastered" only when HL > 7 days
 _HLR_DURABLE_SESSIONS  = 3     # …AND reviewed on ≥ 3 distinct calendar days
 
+# ── Transfer question routing ─────────────────────────────────────────────────
+_TRANSFER_STREAK_THRESHOLD = 2  # consecutive passes before "auto" mode switches to transfer
+_MAX_TRANSFER_STREAK_CREDIT = 2  # max consecutive_passes increment for a correct transfer answer
+_VALID_QUESTION_TYPES = frozenset({"recall", "transfer", "auto"})
+
 # ── Error classification ──────────────────────────────────────────────────────
 _VALID_ERROR_TYPES = frozenset({
     "careless_slip",          # mostly correct; minor arithmetic / wording slip
@@ -485,53 +490,108 @@ def next_concept_id(db: Any, work_id: str) -> str | None:
     return pool[0]["id"]
 
 
-def get_question(db: Any, concept_id: str, base_url: str, model: str) -> dict:
+def _resolve_question_type(db: Any, concept_id: str, question_type: str) -> str:
+    """Resolve 'auto' to 'recall' or 'transfer' based on the concept's current streak.
+
+    - 'auto': switch to 'transfer' when consecutive_passes >= _TRANSFER_STREAK_THRESHOLD.
+    - 'recall' / 'transfer': returned unchanged.
+    """
+    if question_type != "auto":
+        return question_type if question_type in _VALID_QUESTION_TYPES else "recall"
+    m = _get_mastery(db, concept_id)
+    if m["consecutive_passes"] >= _TRANSFER_STREAK_THRESHOLD:
+        return "transfer"
+    return "recall"
+
+
+def get_question(
+    db: Any,
+    concept_id: str,
+    base_url: str,
+    model: str,
+    question_type: str = "auto",
+) -> dict:
     """Generate a Socratic question for the concept, grounded in knowledge.
 
-    Returns {"question": "...", "context_snippet": "..."}
-    Falls back to a generic question when AI is unavailable.
+    question_type: 'recall' (default), 'transfer', or 'auto'.
+      - 'recall' — asks the student to explain or apply what they read (current behaviour).
+      - 'transfer' — asks the student to apply the concept to a NOVEL scenario that is
+        NOT stated in the source material; explicitly instructs the LLM not to quote or
+        paraphrase the source.
+      - 'auto' — uses 'recall' until consecutive_passes >= _TRANSFER_STREAK_THRESHOLD,
+        then switches to 'transfer' automatically.
+
+    Returns {"question": "...", "context_snippet": "...", "question_type": "recall|transfer"}
+    Falls back to a generic recall question when AI is unavailable.
     """
     concept = _get_concept(db, concept_id)
     if not concept:
-        return {"question": f"What do you understand about this concept so far?", "context_snippet": ""}
+        return {"question": "What do you understand about this concept so far?",
+                "context_snippet": "", "question_type": "recall"}
 
     subject = concept["subject"]
     work_id = concept["work_id"]
     items   = _knowledge_for_concept(db, work_id, subject)
     ctx     = "\n".join(f"- {it.get('text','')[:200]}" for it in items[:_MAX_KN_CONTEXT])
 
+    resolved_type = _resolve_question_type(db, concept_id, question_type)
+
     if not base_url or not ctx:
+        # No LLM or no source material — always recall; never label a generic
+        # "explain in your own words" question as a transfer application question.
         return {
             "question": f"In your own words, explain the key idea behind '{subject}' and give a concrete example.",
             "context_snippet": ctx,
+            "question_type": "recall",
         }
 
-    prompt = (
-        f"You are a Socratic tutor. The student is studying '{subject}'.\n\n"
-        f"Relevant knowledge from their notes:\n{ctx}\n\n"
-        "Generate ONE clear, open-ended Socratic question that:\n"
-        "- Tests genuine understanding (not surface recall)\n"
-        "- Is grounded in the notes above\n"
-        "- Is answerable in 2–4 sentences\n\n"
-        "Respond ONLY with valid JSON, no fences:\n"
-        '{"question":"...","context_snippet":"<1-sentence excerpt from notes that inspired the question>"}'
-    )
+    if resolved_type == "transfer":
+        prompt = (
+            f"You are a transfer-testing tutor. The student is studying '{subject}'.\n\n"
+            f"Background knowledge from their notes (DO NOT quote or paraphrase these in your question):\n{ctx}\n\n"
+            "Generate ONE application question that:\n"
+            "- Presents a NOVEL scenario the notes do NOT describe\n"
+            "- Requires applying the concept to reason through the scenario (not recalling a fact)\n"
+            "- Could be an analogy, a 'what-if', a real-world situation, or a problem to diagnose\n"
+            "- Is answerable in 2–4 sentences by someone who truly understands the concept\n"
+            "- Does NOT quote, paraphrase, or hint at the source material above\n\n"
+            "Respond ONLY with valid JSON, no fences:\n"
+            '{"question":"...","context_snippet":"<concept being tested, in ≤10 words>"}'
+        )
+        purpose = "learning.transfer_question"
+    else:
+        prompt = (
+            f"You are a Socratic tutor. The student is studying '{subject}'.\n\n"
+            f"Relevant knowledge from their notes:\n{ctx}\n\n"
+            "Generate ONE clear, open-ended Socratic question that:\n"
+            "- Tests genuine understanding (not surface recall)\n"
+            "- Is grounded in the notes above\n"
+            "- Is answerable in 2–4 sentences\n\n"
+            "Respond ONLY with valid JSON, no fences:\n"
+            '{"question":"...","context_snippet":"<1-sentence excerpt from notes that inspired the question>"}'
+        )
+        purpose = "learning.question"
+
     raw = _call([{"role": "user", "content": prompt}], base_url, model,
-                timeout=20, purpose="learning.question", db=db)
+                timeout=20, purpose=purpose, db=db)
     if raw:
         try:
             parsed = json.loads(_strip_fences(raw))
             return {
                 "question": parsed.get("question", ""),
                 "context_snippet": parsed.get("context_snippet", ""),
+                "question_type": resolved_type,
             }
         except Exception:
             pass
 
-    # Offline fallback
+    # LLM call failed / JSON unparseable — fall back to a generic recall question.
+    # NEVER label this fallback as "transfer": it isn't a novel application scenario,
+    # so it must not display the ⚡ badge or grant the +2 mastery bonus.
     return {
         "question": f"In your own words, explain the key idea behind '{subject}' and give a concrete example.",
         "context_snippet": ctx[:120] if ctx else "",
+        "question_type": "recall",
     }
 
 
@@ -580,8 +640,14 @@ def assess_answer(
     answer: str,
     base_url: str,
     model: str,
+    question_type: str = "recall",
 ) -> dict:
     """Score the user's answer, classify the error type, and return targeted remediation.
+
+    question_type: the mode the question was generated in ('recall' or 'transfer').
+      When 'transfer' and score ≥ _GRAD_THRESHOLD, the consecutive_passes streak is
+      incremented by 2 (capped at _MAX_TRANSFER_STREAK_CREDIT) to reward genuine
+      deep understanding on a harder question.
 
     Returns:
         score             — float 0–1
@@ -592,13 +658,17 @@ def assess_answer(
         remediation_hint  — 1-sentence targeted suggestion, or None
         deep_review_needed— True when same misconception appears ≥ _DEEP_REVIEW_THRESHOLD
         socratic_followup — Socratic follow-up question for conceptual_misconception, else None
+        question_type     — echoes the question_type that was assessed
 
     Falls back to score=0.5, route=STAY_HERE, error_type=None when AI unavailable.
     """
+    resolved_qt = question_type if question_type in ("recall", "transfer") else "recall"
+
     _empty = {
         "score": 0.5, "feedback": "Could not assess.", "route": "STAY_HERE", "graduated": False,
         "error_type": None, "remediation_hint": None,
         "deep_review_needed": False, "socratic_followup": None,
+        "question_type": resolved_qt,
     }
 
     concept = _get_concept(db, concept_id)
@@ -613,13 +683,27 @@ def assess_answer(
     offline_result = {**_empty, "feedback": "AI unavailable — keeping score neutral."}
 
     if not base_url:
-        _record_mastery(db, concept_id, 0.5, "STAY_HERE", "AI unavailable")
+        _record_mastery(db, concept_id, 0.5, "STAY_HERE", "AI unavailable",
+                        question_type=resolved_qt)
         return offline_result
 
+    # Transfer questions get a richer critic preamble so the LLM knows it is
+    # evaluating an application question (no direct recall expected).
+    if resolved_qt == "transfer":
+        critic_preamble = (
+            f"You are an Assessment Critic for an APPLICATION question on '{subject}'.\n"
+            "The student was asked to apply the concept to a NOVEL scenario — not to recall the source material.\n"
+            "Evaluate whether they demonstrate genuine understanding of the underlying principle.\n"
+        )
+    else:
+        critic_preamble = (
+            f"You are an Assessment Critic for the topic '{subject}'.\n"
+        )
+
     critic_prompt = (
-        f"You are an Assessment Critic for the topic '{subject}'.\n\n"
+        critic_preamble + "\n"
         f"Knowledge context:\n{ctx}\n\n"
-        f"Socratic question: {question}\n"
+        f"Question: {question}\n"
         f"Student answer: {answer}\n\n"
         "Evaluate strictly. Score 0.0–1.0:\n"
         "  ≥0.75 = genuine understanding with accurate detail\n"
@@ -628,12 +712,9 @@ def assess_answer(
         "Identify WHY the answer was wrong (error_type):\n"
         '  "null"                     — score ≥ 0.75 (correct answer)\n'
         '  "careless_slip"            — mostly correct but a minor slip\n'
-        '                               (dropped sign, arithmetic error, misread)\n'
-        '  "procedural_gap"           — understands the concept but cannot\n'
-        '                               execute a step (derivation, calculation)\n'
+        '  "procedural_gap"           — understands the concept but cannot execute a step\n'
         '  "conceptual_misconception" — holds a false belief about the underlying concept\n'
-        '  "knowledge_gap"            — shows no prior knowledge; answer is blank,\n'
-        '                               "I don\'t know", or reveals missing prerequisites\n\n'
+        '  "knowledge_gap"            — shows no prior knowledge or cannot apply it at all\n\n'
         "Respond ONLY with valid JSON, no markdown fences:\n"
         '{"score":0.0,"feedback":"1-2 sentence constructive feedback",'
         '"error_type":"null","remediation_hint":"1 sentence on what to review or do next"}'
@@ -641,7 +722,8 @@ def assess_answer(
     raw = _call([{"role": "user", "content": critic_prompt}], base_url, model,
                 timeout=25, purpose="learning.assess", db=db)
     if not raw:
-        _record_mastery(db, concept_id, 0.5, "STAY_HERE", "AI unavailable")
+        _record_mastery(db, concept_id, 0.5, "STAY_HERE", "AI unavailable",
+                        question_type=resolved_qt)
         return offline_result
 
     try:
@@ -655,10 +737,13 @@ def assess_answer(
             error_type = None
         remediation_hint: str | None = str(parsed.get("remediation_hint", "")).strip() or None
     except Exception:
-        _record_mastery(db, concept_id, 0.5, "STAY_HERE", "Could not parse assessment")
+        _record_mastery(db, concept_id, 0.5, "STAY_HERE", "Could not parse assessment",
+                        question_type=resolved_qt)
         return offline_result
 
-    route = _compute_route(db, concept_id, score)
+    # Compute streak increment: transfer + correct → +2, everything else → +1
+    _streak_inc = _MAX_TRANSFER_STREAK_CREDIT if (resolved_qt == "transfer" and score >= _GRAD_THRESHOLD) else 1
+    route = _compute_route(db, concept_id, score, streak_increment=_streak_inc)
 
     # Knowledge-gap consistency guard: if the critic identified a knowledge gap
     # but _compute_route chose STAY_HERE, check if there are unstarted prereqs
@@ -671,14 +756,18 @@ def assess_answer(
         ):
             route = "STEP_BACKWARD"
 
+    # ── Transfer streak bonus ─────────────────────────────────────────────────
+    # When the student correctly answers a transfer question (harder, novel scenario),
+    # _record_mastery will award +2 consecutive passes instead of +1.
+    # We pass this intent via the question_type; _record_mastery reads consecutive_passes
+    # from the prev record and applies the multiplier internally.
     _record_mastery(db, concept_id, score, route, feedback,
-                    error_type=error_type, remediation_hint=remediation_hint)
+                    error_type=error_type, remediation_hint=remediation_hint,
+                    question_type=resolved_qt)
 
     graduated = _is_graduated(db, concept_id)
 
     # ── Deep review flag ─────────────────────────────────────────────────────
-    # Flag when the same misconception has appeared ≥ _DEEP_REVIEW_THRESHOLD times
-    # (counted across all mastery records for this concept).
     deep_review_needed = False
     if error_type == "conceptual_misconception":
         with db._lock:
@@ -707,6 +796,7 @@ def assess_answer(
         "remediation_hint":   remediation_hint,
         "deep_review_needed": deep_review_needed,
         "socratic_followup":  socratic_followup,
+        "question_type":      resolved_qt,
     }
 
 
@@ -793,8 +883,15 @@ def get_blocking_concepts(db: Any, concept_id: str) -> list[str]:
 
 # ─── Private helpers ──────────────────────────────────────────────────────────
 
-def _compute_route(db: Any, concept_id: str, score: float) -> str:
+def _compute_route(
+    db: Any, concept_id: str, score: float, streak_increment: int = 1
+) -> str:
     """Determine routing: STEP_FORWARD / STEP_BACKWARD / STAY_HERE.
+
+    streak_increment: how many consecutive passes this assessment will award (normally 1;
+    2 for a correctly-answered transfer question).  This lets the route correctly reflect
+    graduation when the +2 bonus would push the learner past _PASSES_TO_GRAD even though
+    the current record shows one fewer pass.
 
     Uses the multi-prerequisite graph (work_concept_prereqs) to determine whether
     to route backward.  If the student failed AND any prerequisite is not yet
@@ -811,7 +908,7 @@ def _compute_route(db: Any, concept_id: str, score: float) -> str:
 
     # Score is a pass — are we now graduated (durable)?
     mastery = _get_mastery(db, concept_id)
-    if mastery["consecutive_passes"] + 1 >= _PASSES_TO_GRAD:
+    if mastery["consecutive_passes"] + streak_increment >= _PASSES_TO_GRAD:
         return "STEP_FORWARD"
     return "STAY_HERE"
 
@@ -825,6 +922,7 @@ def _record_mastery(
     *,
     error_type: str | None = None,
     remediation_hint: str | None = None,
+    question_type: str = "recall",
 ) -> None:
     """Insert a mastery record, update the consecutive-pass streak, and apply HLR update.
 
@@ -848,8 +946,15 @@ def _record_mastery(
     prev = _get_mastery(db, concept_id)
 
     # ── consecutive passes ───────────────────────────────────────────────────
+    # Transfer questions answered correctly award +2 (capped by _MAX_TRANSFER_STREAK_CREDIT)
+    # to reward genuine deep understanding on a harder, novel-scenario question.
     if score >= _GRAD_THRESHOLD:
-        cons = prev["consecutive_passes"] + 1
+        increment = (
+            _MAX_TRANSFER_STREAK_CREDIT
+            if question_type == "transfer"
+            else 1
+        )
+        cons = prev["consecutive_passes"] + increment
     else:
         cons = 0  # reset streak on failure
 
@@ -879,20 +984,23 @@ def _record_mastery(
                    brief_feedback, routed_to, created_at,
                    last_reviewed_at, next_review_at,
                    half_life_days, review_session_count,
-                   error_type, remediation_hint)
-               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                   error_type, remediation_hint,
+                   question_type)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (mid, concept_id, score, cons,
              feedback, route, now,
              now, next_review_at,
              new_hl, new_session_count,
-             error_type, remediation_hint),
+             error_type, remediation_hint,
+             question_type if question_type in ("recall", "transfer") else "recall"),
         )
         db._conn.commit()
     try:
         db.audit("learning.mastery_recorded", object_id=concept_id,
                  object_type="learning_concept", actor="system",
                  detail=f"score={score:.2f} hl={new_hl:.2f}d next={next_review_at[:10]}"
-                        + (f" err={error_type}" if error_type else ""))
+                        + (f" err={error_type}" if error_type else "")
+                        + (f" qtype={question_type}" if question_type == "transfer" else ""))
     except Exception:
         pass
 

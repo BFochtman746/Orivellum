@@ -2360,6 +2360,7 @@ interface MobileSession {
   description: string;
   question: string;
   context_snippet: string;
+  question_type: "recall" | "transfer";
 }
 
 type MobileErrorType = "careless_slip" | "procedural_gap" | "conceptual_misconception" | "knowledge_gap" | null;
@@ -2378,6 +2379,7 @@ interface MobileAssessResult {
   socratic_followup: string | null;
   suggested_prereq_id: string | null;
   suggested_prereq_subject: string | null;
+  question_type: "recall" | "transfer";
 }
 
 function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
@@ -2409,9 +2411,9 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
     setAnswer('');
     setResult(null);
     setPhase('question');
-    const url = conceptId
-      ? `${apiBase}/works/${workId}/learning/question?concept_id=${conceptId}`
-      : `${apiBase}/works/${workId}/learning/question`;
+    const params = new URLSearchParams({ type: 'auto' });
+    if (conceptId) params.set('concept_id', conceptId);
+    const url = `${apiBase}/works/${workId}/learning/question?${params}`;
     const r = await mobileFetch(url);
     if (r.status === 422) { setPhase('all_done'); return; }
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -2422,6 +2424,7 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
       description:     d.description ?? '',
       question:        d.question,
       context_snippet: d.context_snippet ?? '',
+      question_type:   d.question_type ?? 'recall',
     });
   };
 
@@ -2513,9 +2516,10 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          concept_id: session.concept_id,
-          question:   session.question,
-          answer:     answer.trim(),
+          concept_id:    session.concept_id,
+          question:      session.question,
+          answer:        answer.trim(),
+          question_type: session.question_type ?? 'recall',
         }),
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -2939,6 +2943,27 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
           borderWidth: 1, borderColor: colors.border, borderRadius: 12,
           padding: 16, marginBottom: 16, backgroundColor: colors.background,
         }}>
+          {/* Transfer question badge */}
+          {session.question_type === 'transfer' && (
+            <View style={{
+              flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 10,
+            }}>
+              <View style={{
+                flexDirection: 'row', alignItems: 'center', gap: 4,
+                paddingHorizontal: 8, paddingVertical: 4, borderRadius: 20,
+                backgroundColor: '#fef3c7', borderWidth: 1, borderColor: '#fde68a',
+              }}>
+                <Feather name="zap" size={11} color="#d97706" />
+                <Text style={{ fontSize: 11, fontFamily: 'Inter_600SemiBold', color: '#d97706' }}>
+                  Application question
+                </Text>
+              </View>
+              <Text style={{ fontSize: 10, color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }}>
+                Novel scenario
+              </Text>
+            </View>
+          )}
+
           {session.context_snippet ? (
             <Text style={[styles.itemMeta, {
               color: colors.mutedForeground, fontStyle: 'italic',

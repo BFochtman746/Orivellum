@@ -20,6 +20,7 @@ class AssessBody(BaseModel):
     concept_id: str
     question: str
     answer: str
+    question_type: str = "recall"   # "recall" | "transfer" — echoed from the question endpoint
 
 
 # ─── Endpoints ─────────────────────────────────────────────────────────────────
@@ -58,13 +59,25 @@ async def learning_seed(work_id: str):
 
 
 @router.get("/works/{work_id}/learning/question")
-async def learning_question(work_id: str, concept_id: str | None = None):
-    """Generate a Socratic question for the given concept (or the next unmastered one)."""
+async def learning_question(
+    work_id: str,
+    concept_id: str | None = None,
+    type: str = "auto",
+):
+    """Generate a Socratic question for the given concept (or the next unmastered one).
+
+    ?type=recall|transfer|auto  (default: auto)
+      - recall   — Socratic question grounded in source material (classic mode)
+      - transfer — Application question using a novel scenario not in the notes
+      - auto     — recall until streak ≥ 2 consecutive passes, then transfer
+    """
     import asyncio
     db = get_db()
     if not db.get_work(work_id):
         raise HTTPException(404, f"Work {work_id!r} not found")
-    from orivellum.capabilities.learning import next_concept_id, get_question
+    from orivellum.capabilities.learning import next_concept_id, get_question, _VALID_QUESTION_TYPES
+    if type not in _VALID_QUESTION_TYPES:
+        raise HTTPException(422, f"Invalid type {type!r}. Must be one of: recall, transfer, auto")
     if not concept_id:
         concept_id = next_concept_id(db, work_id)
     if not concept_id:
@@ -77,7 +90,7 @@ async def learning_question(work_id: str, concept_id: str | None = None):
     if not row or row["work_id"] != work_id:
         raise HTTPException(404, f"Concept {concept_id!r} not found in work {work_id!r}")
     base_url, model = _cfg()
-    result = await asyncio.to_thread(get_question, db, concept_id, base_url, model)
+    result = await asyncio.to_thread(get_question, db, concept_id, base_url, model, type)
     result["concept_id"]  = concept_id
     result["subject"]     = row["subject"]
     result["description"] = row["description"] or ""
@@ -183,9 +196,16 @@ async def learning_assess(work_id: str, body: AssessBody):
     if not concept_row or concept_row["work_id"] != work_id:
         raise HTTPException(404, f"Concept {body.concept_id!r} not found in work {work_id!r}")
     base_url, model = _cfg()
-    from orivellum.capabilities.learning import assess_answer, next_concept_id, get_mastery_summary
+    from orivellum.capabilities.learning import (
+        assess_answer, next_concept_id, get_mastery_summary, _resolve_question_type,
+    )
+    # Re-derive question_type server-side from the concept's current streak using
+    # the same "auto" logic as get_question.  This prevents clients from forging a
+    # transfer question_type to obtain +2 mastery bonus on a recall question.
+    # A concept at streak ≥ _TRANSFER_STREAK_THRESHOLD gets "transfer"; below → "recall".
+    qt = _resolve_question_type(db, body.concept_id, "auto")
     result = await asyncio.to_thread(
-        assess_answer, db, body.concept_id, body.question, body.answer, base_url, model
+        assess_answer, db, body.concept_id, body.question, body.answer, base_url, model, qt
     )
     # Attach summary + next concept hint
     result["summary"]         = get_mastery_summary(db, work_id)
