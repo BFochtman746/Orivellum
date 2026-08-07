@@ -14,6 +14,32 @@ import { Platform } from 'react-native';
 
 type Weight = 'regular' | 'medium' | 'semibold' | 'bold';
 
+// ── Fraunces editorial serif ───────────────────────────────────────────────────
+
+type SerifWeight = 'semibold' | 'bold';
+
+const SERIF_FAMILIES: Record<SerifWeight, string> = {
+  semibold: 'Fraunces_600SemiBold',
+  bold:     'Fraunces_700Bold',
+};
+
+const SERIF_WEIGHTS: Record<SerifWeight, '600' | '700'> = {
+  semibold: '600',
+  bold:     '700',
+};
+
+/**
+ * Returns Fraunces serif font style for editorial screen titles and hero headings.
+ * Always specifies fontFamily explicitly — fonts must be loaded via useFonts().
+ * Use on large display text only (≥20px); body copy stays Inter.
+ */
+export function fontSerif(weight: SerifWeight = 'bold'): {
+  fontFamily: string;
+  fontWeight: '600' | '700';
+} {
+  return { fontFamily: SERIF_FAMILIES[weight], fontWeight: SERIF_WEIGHTS[weight] };
+}
+
 const FAMILIES: Record<Weight, string> = {
   regular: 'Inter_400Regular',
   medium: 'Inter_500Medium',
