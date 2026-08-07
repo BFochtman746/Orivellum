@@ -2623,22 +2623,39 @@ function GapsTab({ workId, onBrainstorm }: { workId: string; onBrainstorm?: (see
           <h4 className="text-[11px] font-mono uppercase tracking-widest text-muted-foreground flex items-center gap-2">
             <Lightbulb className="w-3.5 h-3.5" /> Suggested research queries
           </h4>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-col gap-2">
             {data.suggested_queries.map((q, i) => (
-              <button
+              <div
                 key={i}
-                onClick={() => onBrainstorm?.(q)}
-                className="px-3 py-1.5 rounded-full text-xs font-mono border border-border/60 bg-muted/20 text-muted-foreground hover:text-foreground hover:border-primary/40 hover:bg-primary/5 transition-colors cursor-pointer flex items-center gap-1.5 group"
-                title="Brainstorm this query"
+                className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border/60 bg-muted/10 text-xs font-mono"
               >
-                <Lightbulb className="w-3 h-3 opacity-50 group-hover:opacity-100 group-hover:text-primary transition-colors" />
-                {q}
-              </button>
+                <Lightbulb className="w-3 h-3 text-muted-foreground/50 shrink-0" />
+                <span className="flex-1 text-muted-foreground leading-snug">{q}</span>
+                {/* Brainstorm → opens Ideas tab with this query as seed */}
+                {onBrainstorm && (
+                  <button
+                    onClick={() => onBrainstorm(q)}
+                    className="shrink-0 text-[10px] font-mono text-primary/80 hover:text-primary border border-primary/25 rounded px-2 py-0.5 hover:bg-primary/5 transition-colors whitespace-nowrap"
+                    title="Brainstorm this query in the Ideas tab"
+                  >
+                    Brainstorm →
+                  </button>
+                )}
+                {/* Discuss → creates a work-linked chat conversation */}
+                <button
+                  onClick={() => createResearchChat(q)}
+                  disabled={actionPending === q}
+                  className="shrink-0 text-[10px] font-mono text-muted-foreground hover:text-foreground border border-border/50 rounded px-2 py-0.5 hover:bg-muted/50 transition-colors whitespace-nowrap disabled:opacity-40"
+                  title="Discuss this query in Chat"
+                >
+                  {actionPending === q ? '…' : 'Discuss →'}
+                </button>
+              </div>
             ))}
           </div>
-          {onBrainstorm && (
-            <p className="text-[10px] text-muted-foreground/60 font-mono">Tap a query to brainstorm it in the Ideas tab</p>
-          )}
+          <p className="text-[10px] text-muted-foreground/60 font-mono">
+            Brainstorm opens the Ideas tab · Discuss opens a work-linked chat
+          </p>
         </div>
       )}
     </div>

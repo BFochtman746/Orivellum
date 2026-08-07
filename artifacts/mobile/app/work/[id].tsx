@@ -1083,10 +1083,10 @@ function GapsTab({
       )}
 
       {/* ── Suggested research queries ────────────────────────────────────────
-          Rendered whenever the API returns suggested_queries, regardless of
-          whether gaps are present. Each chip launches a brainstorm session in
-          the Ideas tab with context_type="research_planning" pre-set so users
-          can act on suggestions in one tap.
+          Each card shows the query text and two action buttons:
+          • Brainstorm → opens the Ideas tab with research_planning context
+          • Discuss →   creates a work-linked chat conversation with a draft
+                        message so users can research the query via AI chat
       ── */}
       {Array.isArray(data?.suggested_queries) && (data.suggested_queries as string[]).length > 0 && (
         <View style={{ marginTop: 24 }}>
@@ -1103,42 +1103,74 @@ function GapsTab({
             Suggested Research Queries
           </Text>
           <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: colors.mutedForeground, marginBottom: 10, opacity: 0.7 }}>
-            Tap to brainstorm in the Ideas tab
+            Brainstorm ideas or discuss each query in chat
           </Text>
           {(data.suggested_queries as string[]).map((q: string, i: number) => (
-            <Pressable
+            <View
               key={i}
-              onPress={() => onBrainstorm(q)}
-              style={({ pressed }) => ({
-                flexDirection: 'row',
-                alignItems: 'center',
-                gap: 10,
-                paddingHorizontal: 12,
-                paddingVertical: 11,
+              style={{
                 borderRadius: 8,
                 borderWidth: 1,
                 borderColor: colors.border,
-                backgroundColor: pressed ? colors.muted : colors.card,
+                backgroundColor: colors.card,
                 marginBottom: 8,
-              })}
-              accessibilityRole="button"
-              accessibilityLabel={`Brainstorm: ${q}`}
+                overflow: 'hidden',
+              }}
             >
-              <Feather name="zap" size={13} color={colors.primary} />
-              <Text
-                style={{
-                  flex: 1,
-                  fontSize: 13,
-                  fontFamily: 'Inter_400Regular',
-                  color: colors.foreground,
-                  lineHeight: 18,
-                }}
-                numberOfLines={3}
-              >
-                {q}
-              </Text>
-              <Feather name="arrow-right" size={13} color={colors.mutedForeground} />
-            </Pressable>
+              {/* Query text */}
+              <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10, paddingHorizontal: 12, paddingVertical: 10 }}>
+                <Feather name="zap" size={13} color={colors.primary} style={{ marginTop: 2 }} />
+                <Text
+                  style={{
+                    flex: 1,
+                    fontSize: 13,
+                    fontFamily: 'Inter_400Regular',
+                    color: colors.foreground,
+                    lineHeight: 18,
+                  }}
+                  numberOfLines={3}
+                >
+                  {q}
+                </Text>
+              </View>
+
+              {/* Action row: Brainstorm | Discuss */}
+              <View style={{ flexDirection: 'row', borderTopWidth: 1, borderTopColor: colors.border }}>
+                <Pressable
+                  onPress={() => onBrainstorm(q)}
+                  style={({ pressed }) => ({
+                    flex: 1,
+                    alignItems: 'center',
+                    paddingVertical: 9,
+                    backgroundColor: pressed ? colors.muted : 'transparent',
+                  })}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Brainstorm: ${q}`}
+                >
+                  <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: colors.primary }}>
+                    Brainstorm →
+                  </Text>
+                </Pressable>
+
+                <View style={{ width: 1, backgroundColor: colors.border }} />
+
+                <Pressable
+                  onPress={() => onResearch(q)}
+                  style={({ pressed }) => ({
+                    flex: 1,
+                    alignItems: 'center',
+                    paddingVertical: 9,
+                    backgroundColor: pressed ? colors.muted : 'transparent',
+                  })}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Discuss: ${q}`}
+                >
+                  <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: colors.mutedForeground }}>
+                    Discuss →
+                  </Text>
+                </Pressable>
+              </View>
+            </View>
           ))}
         </View>
       )}
