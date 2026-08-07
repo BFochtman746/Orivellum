@@ -100,6 +100,18 @@ function fmtOutputDuration(sec: number): string {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
+/** Format total seconds as H:MM:SS (≥1 h) or M:SS (< 1 h) for the file browser. */
+function fmtDuration(sec: number): string {
+  const total = Math.round(sec);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  if (h > 0) {
+    return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  }
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
+
 function serveUrl(path: string) {
   return `${API}/studio/outputs/serve?path=${encodeURIComponent(path)}`;
 }
@@ -4070,6 +4082,61 @@ const _SWIPE_REVEAL_PX  = 72;
 const _SWIPE_THRESHOLD  = 36; // how far left before snapping open
 
 /**
+ * Lazily probe the play duration of a local mp3 file without starting playback.
+ *
+ * Creates a temporary AudioPlayer, polls `currentStatus.duration` until the
+ * decoder reports a non-zero value (typically < 500 ms for a local file), then
+ * releases the player immediately.  Returns null while loading or on failure
+ * so callers can fall back to file size.
+ *
+ * MAX_ATTEMPTS × 100 ms = 3 s ceiling; most local files resolve in 1–3 polls.
+ */
+function useDuration(uri: string): number | null {
+  const [duration, setDuration] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (Platform.OS === 'web' || !uri) return;
+
+    let player: AudioPlayer | null = null;
+    let poll: ReturnType<typeof setInterval> | null = null;
+    let cancelled = false;
+    let attempts = 0;
+    const MAX_ATTEMPTS = 30; // 3 s ceiling
+
+    const cleanup = () => {
+      if (poll) { clearInterval(poll); poll = null; }
+      if (player) { try { player.remove(); } catch {} player = null; }
+    };
+
+    try {
+      // Local file:// URI — no auth headers needed
+      player = createAudioPlayer({ uri });
+      // Do NOT call play() — we only need the decoder to read the header
+      poll = setInterval(() => {
+        if (cancelled) { cleanup(); return; }
+        const d = player?.currentStatus?.duration ?? 0;
+        attempts++;
+        if (d > 0) {
+          cleanup();
+          if (!cancelled) setDuration(d);
+        } else if (attempts >= MAX_ATTEMPTS) {
+          cleanup(); // silent fallback — duration stays null → shows file size
+        }
+      }, 100);
+    } catch {
+      cleanup(); // silent — duration stays null
+    }
+
+    return () => {
+      cancelled = true;
+      cleanup();
+    };
+  }, [uri]);
+
+  return duration;
+}
+
+/**
  * A single row in the Saved-to-Files list.
  *
  * Gesture: swipe left to reveal the delete button underneath; swipe right (or
@@ -4095,6 +4162,7 @@ function SavedFileRow({
   const isOpenRef  = useRef(false);
   const playKey    = `saved-file-${file.uri}`;
   const isPlaying  = audio.playingKey === playKey;
+  const duration   = useDuration(file.uri);
 
   // Inline rename state
   const [isRenaming, setIsRenaming] = useState(false);
@@ -4290,7 +4358,8 @@ function SavedFileRow({
           <Text style={{
             fontSize: 11, fontFamily: 'Inter_400Regular', color: colors.mutedForeground,
           }}>
-            {fmtSize(file.size)}{file.modTime ? ` · ${fmtDate(file.modTime)}` : ''}
+            {duration != null ? fmtDuration(duration) : fmtSize(file.size)}
+            {file.modTime ? ` · ${fmtDate(file.modTime)}` : ''}
           </Text>
         </View>
 
