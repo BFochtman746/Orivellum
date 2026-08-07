@@ -3208,6 +3208,9 @@ function AudiobookPanel({
   // mount-restoration effect can restart polling without recreating a closure.
   const pollJobRef    = useRef<string | null>(null);
   const totalChapsRef = useRef(0);
+  // Captured when a job starts or is restored from AsyncStorage so the polling
+  // closure can write it back to AsyncStorage with progress updates.
+  const workTitleRef  = useRef('');
 
   // Load works list
   useEffect(() => {
@@ -3339,12 +3342,27 @@ function AudiobookPanel({
         }
 
         setStatusReceived(true);
-        setChapIdx(status.chapter_idx ?? 0);
+        const newChapIdx = status.chapter_idx ?? 0;
+        const newTotal   = status.total_chapters ?? totalChapsRef.current;
+        setChapIdx(newChapIdx);
         if (status.total_chapters) {
-          setTotalChaps(status.total_chapters);
-          totalChapsRef.current = status.total_chapters;
+          setTotalChaps(newTotal);
+          totalChapsRef.current = newTotal;
         }
         setChapTitle(status.chapter_title ?? '');
+
+        // Write progress back to AsyncStorage so useAudiobookJobActive (polled
+        // from _layout.tsx) can display the chapter banner without the Studio
+        // screen being visible.
+        AsyncStorage.setItem(
+          AUDIOBOOK_JOB_KEY,
+          JSON.stringify({
+            job_id:         jid,
+            work_title:     workTitleRef.current,
+            chapter_idx:    newChapIdx,
+            total_chapters: newTotal,
+          }),
+        ).catch(() => {});
 
         if (status.state === 'done') {
           if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
@@ -3384,8 +3402,11 @@ function AudiobookPanel({
     AsyncStorage.getItem(AUDIOBOOK_JOB_KEY)
       .then((raw) => {
         if (!raw) return;
-        const saved: { job_id: string } = JSON.parse(raw);
+        const saved: { job_id: string; work_title?: string } = JSON.parse(raw);
         if (!saved?.job_id) return;
+        // Restore workTitleRef so the polling closure can write it back
+        // to AsyncStorage with progress updates.
+        workTitleRef.current = saved.work_title ?? '';
         setJobId(saved.job_id);
         setPhase('generating');
         setStatusReceived(false);
@@ -3456,8 +3477,11 @@ function AudiobookPanel({
       setJobId(job_id);
       setTotalChaps(total_chapters);
 
-      // Persist job_id so generation survives app kill / cold-start-after-lock
+      // Persist job_id so generation survives app kill / cold-start-after-lock.
+      // Also capture workTitle in a ref so the polling closure can write it
+      // back to AsyncStorage with chapter-progress updates.
       const workTitle = works.find(w => w.id === workId)?.title ?? 'Untitled';
+      workTitleRef.current = workTitle;
       AsyncStorage.setItem(
         AUDIOBOOK_JOB_KEY,
         JSON.stringify({ job_id, work_title: workTitle }),

@@ -445,12 +445,77 @@ function NavBottomSheet({ visible, onClose, audiobookActive = false }: NavBottom
   );
 }
 
+// ── Audiobook progress banner ─────────────────────────────────────────────────
+
+const PROGRESS_ORANGE = '#f97316';
+
+/**
+ * Compact banner rendered below the AppHeader while an audiobook is generating.
+ * Shows a thin orange progress bar and "Narrating chapter N of M — WorkTitle" text.
+ * Tapping it navigates to /studio.
+ */
+function AudiobookProgressBanner({
+  chapterIdx,
+  totalChapters,
+  workTitle,
+  onPress,
+}: {
+  chapterIdx: number;
+  totalChapters: number;
+  workTitle: string;
+  onPress: () => void;
+}) {
+  const colors  = useColors();
+  // chapterIdx is the count of chapters *completed*; display it as the chapter
+  // currently being narrated (1-based) until all are done.
+  const current = Math.min(chapterIdx + 1, Math.max(totalChapters, 1));
+  const pct     = totalChapters > 0
+    ? Math.min(100, Math.max(2, (chapterIdx / totalChapters) * 100))
+    : 2; // indeterminate — show a thin sliver
+
+  const label = totalChapters > 0
+    ? `Narrating chapter ${current} of ${totalChapters}${workTitle ? ` — ${workTitle}` : ''}`
+    : `Narrating${workTitle ? ` — ${workTitle}` : ''}…`;
+
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`${label}. Tap to open Studio.`}
+      style={[
+        styles.progressBanner,
+        { backgroundColor: colors.background, borderBottomColor: colors.border },
+      ]}
+    >
+      {/* Thin progress track */}
+      <View style={[styles.progressTrack, { backgroundColor: `${PROGRESS_ORANGE}22` }]}>
+        <View
+          style={[styles.progressFill, { width: `${pct}%`, backgroundColor: PROGRESS_ORANGE }]}
+        />
+      </View>
+
+      {/* Text row */}
+      <View style={styles.progressTextRow}>
+        <Feather name="mic" size={11} color={PROGRESS_ORANGE} />
+        <Text
+          style={[styles.progressLabel, { color: colors.mutedForeground }]}
+          numberOfLines={1}
+        >
+          {label}
+        </Text>
+        <Feather name="chevron-right" size={11} color={colors.mutedForeground} />
+      </View>
+    </Pressable>
+  );
+}
+
 // ── Native layout (iOS / Android) — no tab bar ────────────────────────────────
 
 function NativeAppLayout() {
   const [menuOpen, setMenuOpen] = useState(false);
-  const reviewCount    = useReviewCount();
-  const audiobookActive = useAudiobookJobActive();
+  const reviewCount       = useReviewCount();
+  const audiobookProgress = useAudiobookJobActive();
+  const router            = useRouter();
 
   return (
     <View style={{ flex: 1 }}>
@@ -458,6 +523,17 @@ function NativeAppLayout() {
         onMenuPress={() => setMenuOpen(true)}
         reviewCount={reviewCount}
       />
+
+      {/* Progress banner — visible only while a background audiobook job is active */}
+      {audiobookProgress.active && (
+        <AudiobookProgressBanner
+          chapterIdx={audiobookProgress.chapterIdx}
+          totalChapters={audiobookProgress.totalChapters}
+          workTitle={audiobookProgress.workTitle}
+          onPress={() => router.navigate('/studio' as any)}
+        />
+      )}
+
       <Tabs
         screenOptions={{
           headerShown: false,
@@ -477,7 +553,7 @@ function NativeAppLayout() {
       <NavBottomSheet
         visible={menuOpen}
         onClose={() => setMenuOpen(false)}
-        audiobookActive={audiobookActive}
+        audiobookActive={audiobookProgress.active}
       />
     </View>
   );
@@ -736,5 +812,31 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontFamily: 'Inter_600SemiBold',
     letterSpacing: 0.3,
+  },
+
+  // Audiobook progress banner (below AppHeader during background generation)
+  progressBanner: {
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  progressTrack: {
+    height: 3,
+    width: '100%',
+    overflow: 'hidden',
+  },
+  progressFill: {
+    height: 3,
+    borderRadius: 2,
+  },
+  progressTextRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+  },
+  progressLabel: {
+    flex: 1,
+    fontSize: 11,
+    fontFamily: 'Inter_400Regular',
   },
 });
