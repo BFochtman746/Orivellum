@@ -287,6 +287,9 @@ export default function LibraryDocDetail() {
   // audiobookUri is set after a successful download and cleared on unmount.
   // It persists across dlState resets so the Play button stays available.
   const [audiobookUri, setAudiobookUri] = useState<string | null>(null);
+  // Persists the downloaded file URI while dlState === 'done' so the Share
+  // button remains usable after the confirmation alert is dismissed.
+  const [savedUri, setSavedUri] = useState<string | null>(null);
   type AbState = 'idle' | 'loading' | 'playing' | 'paused';
   const [abState, setAbState] = useState<AbState>('idle');
   const [abPosition, setAbPosition] = useState(0); // seconds
@@ -325,6 +328,7 @@ export default function LibraryDocDetail() {
 
     setDlState('generating');
     setDlProgress(null);
+    setSavedUri(null); // clear any previous download's share URI
     dlJobRef.current = null;
     setDlJobId(null);
 
@@ -492,8 +496,14 @@ export default function LibraryDocDetail() {
       if (dlRunRef.current !== runId) return;
       // Store the local URI so the in-app player can pick it up
       setAudiobookUri(dlResult.uri);
+      setSavedUri(dlResult.uri);
       setDlState('done');
-      setTimeout(() => { if (dlRunRef.current === runId) setDlState('idle'); }, 5_000);
+      setTimeout(() => {
+        if (dlRunRef.current === runId) {
+          setDlState('idle');
+          setSavedUri(null);
+        }
+      }, 5_000);
     } catch (e: any) {
       if (dlRunRef.current !== runId) return; // cancelled; don't show error
       Alert.alert('Error', (e as any)?.message ?? 'Could not download audiobook');
@@ -1305,6 +1315,34 @@ export default function LibraryDocDetail() {
                     : 'Download MP3'}
                 </Text>
               </Pressable>
+
+              {/* Share button — visible while dlState==='done' so users can share
+                  after dismissing the initial confirmation alert */}
+              {dlState === 'done' && savedUri !== null && (
+                <Pressable
+                  onPress={() => {
+                    Sharing.shareAsync(savedUri, {
+                      mimeType: 'audio/mpeg',
+                      dialogTitle: `Share audiobook`,
+                      UTI: 'public.mp3',
+                    }).catch(() => {});
+                  }}
+                  style={({ pressed }) => ({
+                    paddingHorizontal: 12,
+                    paddingVertical: 10,
+                    borderRadius: 8,
+                    borderWidth: 1,
+                    borderColor: T.green + '55',
+                    backgroundColor: pressed ? T.greenSoft : 'transparent',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  })}
+                  accessibilityLabel="Share audiobook file"
+                  accessibilityRole="button"
+                >
+                  <Feather name="share-2" size={14} color={T.green} />
+                </Pressable>
+              )}
 
               {/* Cancel button — only shown once the server has confirmed the job ID,
                   preventing a cancel-before-POST race where no job exists to delete */}
