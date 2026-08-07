@@ -275,12 +275,22 @@ body {
 @layer base {
   * {
     @apply border-border;
+    /* VELLUM focus ring — 2px brand-green outline at 2px offset (WCAG 2.5.8) */
+    outline-offset: 2px;
+  }
+  *:focus-visible {
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: 2px;
+    border-radius: 4px;
   }
   body {
     @apply font-sans antialiased bg-background text-foreground;
+    text-wrap: pretty; /* avoid orphaned last-line words in body copy */
   }
   h1, h2, h3, h4, h5, h6 {
     @apply font-serif tracking-tight;
+    text-wrap: balance; /* prevent awkward single-word last lines */
+    font-optical-sizing: auto; /* activates opsz axis on Fraunces */
   }
 }
 
