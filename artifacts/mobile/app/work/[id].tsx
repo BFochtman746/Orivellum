@@ -3595,51 +3595,67 @@ function BookIntelTab({
   loading,
   colors,
   onDiscuss,
+  chapters,
+  chaptersLoading,
 }: {
   bookIntel: any;
   loading: boolean;
   colors: ReturnType<typeof useColors>;
   onDiscuss: (seed: string) => void;
+  chapters?: any[];
+  chaptersLoading?: boolean;
 }) {
-  if (loading && !bookIntel) {
-    return (
-      <ActivityIndicator color={colors.primary} style={{ marginTop: 48 }} />
-    );
-  }
-
-  if (!bookIntel) {
-    return (
-      <View style={{ alignItems: 'center', paddingVertical: 48, paddingHorizontal: 24, gap: 12 }}>
-        <Feather name="book-open" size={36} color={colors.mutedForeground} />
-        <Text style={{ fontSize: 15, fontFamily: 'Inter_600SemiBold', color: colors.foreground, textAlign: 'center' }}>
-          No intelligence yet
-        </Text>
-        <Text style={{ fontSize: 13, fontFamily: 'Inter_400Regular', color: colors.mutedForeground, textAlign: 'center', maxWidth: 280, lineHeight: 20 }}>
-          Link documents to this Work and process them to build the Book Intelligence view.
-        </Text>
-      </View>
-    );
-  }
-
-  const c = bookIntel.completeness ?? {};
+  // Derive bookIntel sections so they can be conditionally included inside a
+  // single ScrollView — avoids early returns that would suppress the chapter
+  // outline when bookIntel hasn't loaded yet.
+  const hasIntel = !!bookIntel;
+  const c = bookIntel?.completeness ?? {};
   const dims = [
     { key: 'structural_pct', label: 'Structural', icon: 'layers' as const },
     { key: 'content_pct',    label: 'Content',    icon: 'file-text' as const },
     { key: 'research_pct',   label: 'Research',   icon: 'search' as const },
     { key: 'editorial_pct',  label: 'Editorial',  icon: 'check-circle' as const },
   ];
-  const outline: any[] = bookIntel.outline ?? [];
-  const gaps: any[] = bookIntel.gaps ?? [];
+  const outline: any[] = bookIntel?.outline ?? [];
+  const gaps: any[] = bookIntel?.gaps ?? [];
   const topGaps = gaps.slice(0, 5);
 
   const barColor = (pct: number) =>
     pct >= 70 ? '#16a34a' : pct >= 40 ? '#d97706' : '#dc2626';
 
+  // Show a full-screen spinner only while both book-intel AND chapters are
+  // still loading and there is nothing to show yet.
+  const chaptersReady = !chaptersLoading && chapters !== undefined;
+  if (loading && !hasIntel && !chaptersReady) {
+    return (
+      <ActivityIndicator color={colors.primary} style={{ marginTop: 48 }} />
+    );
+  }
+
   return (
     <ScrollView contentContainerStyle={{ padding: 16, gap: 16 }}>
 
+      {/* ── "No intelligence yet" placeholder — shown inline when bookIntel
+           hasn't loaded, so the chapter outline below still renders ──── */}
+      {!hasIntel && (
+        <View style={{ alignItems: 'center', paddingVertical: 32, paddingHorizontal: 24, gap: 8 }}>
+          <Feather name="book-open" size={32} color={colors.mutedForeground} />
+          {loading
+            ? <ActivityIndicator color={colors.primary} style={{ marginTop: 4 }} />
+            : <>
+                <Text style={{ fontSize: 15, fontFamily: 'Inter_600SemiBold', color: colors.foreground, textAlign: 'center' }}>
+                  No intelligence yet
+                </Text>
+                <Text style={{ fontSize: 13, fontFamily: 'Inter_400Regular', color: colors.mutedForeground, textAlign: 'center', maxWidth: 280, lineHeight: 20 }}>
+                  Link documents to this Work and process them to build the Book Intelligence view.
+                </Text>
+              </>
+          }
+        </View>
+      )}
+
       {/* ── Next action card ─────────────────────────────────── */}
-      {bookIntel.next_action ? (
+      {hasIntel && bookIntel.next_action ? (
         <View style={{
           borderRadius: 12, overflow: 'hidden',
           backgroundColor: colors.primary + '0c',
@@ -3682,6 +3698,7 @@ function BookIntelTab({
       ) : null}
 
       {/* ── Completeness ─────────────────────────────────────── */}
+      {hasIntel && (
       <View style={{
         borderRadius: 12, borderWidth: 1, borderColor: colors.border,
         backgroundColor: colors.card, overflow: 'hidden',
@@ -3742,9 +3759,10 @@ function BookIntelTab({
           )}
         </View>
       </View>
+      )}
 
       {/* ── Top gaps ─────────────────────────────────────────── */}
-      {topGaps.length > 0 && (
+      {hasIntel && topGaps.length > 0 && (
         <View style={{
           borderRadius: 12, borderWidth: 1, borderColor: colors.border,
           backgroundColor: colors.card, overflow: 'hidden',
@@ -3819,7 +3837,7 @@ function BookIntelTab({
       )}
 
       {/* ── Outline ──────────────────────────────────────────── */}
-      {outline.length > 0 && (
+      {hasIntel && outline.length > 0 && (
         <View style={{
           borderRadius: 12, borderWidth: 1, borderColor: colors.border,
           backgroundColor: colors.card, overflow: 'hidden',
@@ -3921,6 +3939,127 @@ function BookIntelTab({
           </View>
         </View>
       )}
+
+      {/* ── Chapter outline — always rendered so the empty state is reachable.
+           The card shows a spinner while loading, rows when populated, and an
+           instructional message when the fetch returns an empty list. ─────── */}
+      <View style={{
+          borderRadius: 12, borderWidth: 1, borderColor: colors.border,
+          backgroundColor: colors.card, overflow: 'hidden',
+        }}>
+          {/* Header */}
+          <View style={{
+            paddingHorizontal: 14, paddingVertical: 10,
+            borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border,
+            backgroundColor: colors.muted + '44',
+            flexDirection: 'row', alignItems: 'center', gap: 8,
+          }}>
+            <Feather name="align-left" size={14} color={colors.mutedForeground} />
+            <Text style={{ fontSize: 11, fontFamily: 'Inter_600SemiBold', color: colors.mutedForeground, letterSpacing: 0.8, textTransform: 'uppercase', flex: 1 }}>
+              Chapter Outline{chapters && chapters.length > 0 ? ` (${chapters.length})` : ''}
+            </Text>
+            {chaptersLoading && <ActivityIndicator size="small" color={colors.primary} />}
+          </View>
+
+          {/* Chapter rows */}
+          {chapters && chapters.length > 0 ? (
+            <View style={{ paddingVertical: 4 }}>
+              {chapters.map((ch: any, i: number) => {
+                const words: number = ch.word_count ?? 0;
+                const scenes: number = ch.scene_count ?? 0;
+                const readiness: string = ch.readiness ?? 'unknown';
+                const readinessColor =
+                  readiness === 'ready'    ? '#16a34a' :
+                  readiness === 'imported' ? '#d97706' :
+                  readiness === 'error'    ? '#dc2626' :
+                  readiness === 'no_text'  ? '#dc2626' :
+                  colors.mutedForeground;
+
+                return (
+                  <Pressable
+                    key={ch.id ?? i}
+                    onLongPress={() => {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      Alert.alert(
+                        ch.title ?? `Chapter ${i + 1}`,
+                        'Open a work-scoped chat about this chapter?',
+                        [
+                          { text: 'Cancel', style: 'cancel' },
+                          { text: 'Discuss →', onPress: () => onDiscuss(ch.title ?? `Chapter ${i + 1}`) },
+                        ],
+                      );
+                    }}
+                    delayLongPress={450}
+                    style={({ pressed }) => ({
+                      flexDirection: 'row', alignItems: 'center', gap: 10,
+                      paddingHorizontal: 14, paddingVertical: 10,
+                      borderBottomWidth: i < chapters.length - 1 ? StyleSheet.hairlineWidth : 0,
+                      borderBottomColor: colors.border,
+                      backgroundColor: pressed ? colors.muted + '55' : 'transparent',
+                    })}
+                  >
+                    {/* Chapter number */}
+                    <View style={{
+                      width: 24, height: 24, borderRadius: 5,
+                      backgroundColor: colors.muted, alignItems: 'center', justifyContent: 'center',
+                      flexShrink: 0,
+                    }}>
+                      <Text style={{ fontSize: 10, fontFamily: 'Inter_700Bold', color: colors.mutedForeground }}>
+                        {i + 1}
+                      </Text>
+                    </View>
+
+                    {/* Title + meta */}
+                    <View style={{ flex: 1, gap: 2 }}>
+                      <Text
+                        style={{ fontSize: 13, fontFamily: 'Inter_500Medium', color: colors.foreground, lineHeight: 18 }}
+                        numberOfLines={2}
+                      >
+                        {ch.title ?? `Chapter ${i + 1}`}
+                      </Text>
+                      <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: colors.mutedForeground }}>
+                        {words > 0 ? `${words.toLocaleString()} words` : 'no words'}
+                        {scenes > 0 ? ` · ${scenes} scene${scenes !== 1 ? 's' : ''}` : ''}
+                        {ch.doc_title ? ` · ${ch.doc_title}` : ''}
+                      </Text>
+                    </View>
+
+                    {/* Readiness badge */}
+                    <View style={{
+                      paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4,
+                      backgroundColor: readinessColor + '18',
+                      borderWidth: 1, borderColor: readinessColor + '44',
+                      flexShrink: 0,
+                    }}>
+                      <Text style={{ fontSize: 10, fontFamily: 'Inter_600SemiBold', color: readinessColor }}>
+                        {readiness}
+                      </Text>
+                    </View>
+                  </Pressable>
+                );
+              })}
+            </View>
+          ) : !chaptersLoading ? (
+            <View style={{ paddingHorizontal: 14, paddingVertical: 16, alignItems: 'center', gap: 6 }}>
+              <Text style={{ fontSize: 13, fontFamily: 'Inter_400Regular', color: colors.mutedForeground, textAlign: 'center' }}>
+                No chapters detected yet. Process documents linked to this Work to see the outline.
+              </Text>
+            </View>
+          ) : null}
+
+          {/* Footer hint */}
+          {chapters && chapters.length > 0 && (
+            <View style={{
+              paddingHorizontal: 14, paddingVertical: 8,
+              borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border,
+              backgroundColor: colors.muted + '28',
+            }}>
+              <Text style={{ fontSize: 10, fontFamily: 'Inter_400Regular', color: colors.mutedForeground }}>
+                Hold a chapter to open a work-scoped chat about it
+              </Text>
+            </View>
+          )}
+        </View>
 
     </ScrollView>
   );
@@ -5474,6 +5613,8 @@ export default function WorkDetailScreen() {
               loading={bookIntelLoading}
               colors={colors}
               onDiscuss={handleResearchGap}
+              chapters={chapters}
+              chaptersLoading={chaptersLoading}
             />
 
             {/* ── Pipeline section (collapsible footer) ─────────── */}
