@@ -1618,6 +1618,8 @@ function useStreamingTTS() {
   // Set from the 'done' SSE event's concat_path; falls back to the last segment.
   // Available when phase === 'done' so the share button can offer the whole reading.
   const [fullAudioUri, setFullAudioUri] = useState<string | null>(null);
+  // null = not yet determined, true = concat succeeded, false = using last-segment fallback
+  const [concatOk, setConcatOk] = useState<boolean | null>(null);
 
   // All mutable playback state lives in refs so closure captures stay fresh.
   const playerRef       = useRef<AudioPlayer | null>(null);
@@ -1630,6 +1632,9 @@ function useStreamingTTS() {
   const pollRef         = useRef<ReturnType<typeof setInterval> | null>(null);
   const abortRef        = useRef<AbortController | null>(null);
   const mountedRef      = useRef(true);
+  // Tracks whether the server sent a 'concat' event (full merged audio) so the
+  // done handler knows whether fullAudioUri is the complete file or a fallback.
+  const concatReceivedRef = useRef(false);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -1714,6 +1719,8 @@ function useStreamingTTS() {
     setSegCurrent(0);
     setSegTotal(0);
     setFullAudioUri(null);
+    setConcatOk(null);
+    concatReceivedRef.current = false;
     setErrorMsg('');
 
     // Local variable tracks last successful segment path as a share fallback.
@@ -1797,7 +1804,11 @@ function useStreamingTTS() {
               const concatUri = (evt.uri as string | undefined)
                 ? `${API.replace('/api', '')}${evt.uri}`
                 : serveUrl(evt.path as string);
-              if (mountedRef.current) setFullAudioUri(concatUri);
+              concatReceivedRef.current = true;
+              if (mountedRef.current) {
+                setFullAudioUri(concatUri);
+                setConcatOk(true);
+              }
 
             } else if (evt.type === 'segment_error') {
               segErrorRef.current += 1;
@@ -1822,6 +1833,11 @@ function useStreamingTTS() {
                   (evt.concat_path as string | undefined) ?? lastSegPath;
                 if (fallbackPath) {
                   setFullAudioUri(prev => (prev !== null ? prev : serveUrl(fallbackPath)));
+                  // If we reach here via fallback (no concat event was received),
+                  // flag as partial so the UI can show a distinct "last segment only" label.
+                  if (!concatReceivedRef.current) {
+                    setConcatOk(false);
+                  }
                 }
               }
 
@@ -1899,6 +1915,8 @@ function useStreamingTTS() {
       setSegCurrent(0);
       setSegTotal(0);
       setFullAudioUri(null);
+      setConcatOk(null);
+      concatReceivedRef.current = false;
       setErrorMsg('');
     }
   }
@@ -1909,6 +1927,7 @@ function useStreamingTTS() {
     segTotal,
     errorMsg,
     fullAudioUri,
+    concatOk,
     startStream,
     stop,
     isActive: phase === 'loading' || phase === 'playing',
@@ -2169,10 +2188,21 @@ function TTSPanel({
             )}
             {tts.phase === 'done' && (
               <>
-                <Feather name="check-circle" size={13} color="#22c55e" />
-                <Text style={[ttsStreamStyles.statusText, { color: '#22c55e' }]}>
-                  Done{tts.segTotal > 1 ? ` — ${tts.segTotal} segments` : ''}
-                </Text>
+                {tts.concatOk === false && tts.segTotal > 1 ? (
+                  <>
+                    <Feather name="alert-triangle" size={13} color="#f59e0b" />
+                    <Text style={[ttsStreamStyles.statusText, { color: '#f59e0b' }]}>
+                      Partial — last segment only
+                    </Text>
+                  </>
+                ) : (
+                  <>
+                    <Feather name="check-circle" size={13} color="#22c55e" />
+                    <Text style={[ttsStreamStyles.statusText, { color: '#22c55e' }]}>
+                      Done{tts.segTotal > 1 ? ` — ${tts.segTotal} segments` : ''}
+                    </Text>
+                  </>
+                )}
                 <Pressable
                   onPress={tts.stop}
                   hitSlop={10}
