@@ -372,6 +372,62 @@ async def get_memory(include_evidence: bool = False) -> dict:
     return {"facts": facts, "total": len(facts)}
 
 
+@router.get("/memory/conflicts")
+async def list_memory_conflicts(resolved: bool = False) -> dict:
+    """Return detected memory conflicts (v100+).
+
+    By default returns only *unresolved* conflicts (``?resolved=false``).
+    Pass ``?resolved=true`` to list already-resolved pairs instead.
+
+    Each item in ``conflicts`` has:
+        id, memory_id_a, memory_id_b, detected_at,
+        resolved, resolution, resolved_at,
+        key_a, value_a, memory_type_a,
+        key_b, value_b, memory_type_b
+    """
+    db = get_db()
+    try:
+        conflicts = db.get_memory_conflicts(resolved=resolved, limit=50)
+    except Exception:
+        conflicts = []
+    return {
+        "conflicts": conflicts,
+        "total": len(conflicts),
+        "resolved_filter": resolved,
+    }
+
+
+class _ConflictResolveBody(BaseModel):
+    resolution: str  # 'keep_a' | 'keep_b' | 'merged' | 'dismissed'
+
+
+@router.post("/memory/conflicts/{conflict_id}/resolve")
+async def resolve_memory_conflict(conflict_id: str,
+                                  body: _ConflictResolveBody) -> dict:
+    """Mark a detected memory conflict as resolved.
+
+    *resolution* must be one of: ``keep_a``, ``keep_b``, ``merged``,
+    ``dismissed``.  When ``keep_a`` or ``keep_b`` is chosen, the losing
+    memory row is soft-deleted atomically in the same transaction as the
+    conflict-resolved update — so the mutation is all-or-nothing and retryable
+    through the unresolved UI if it fails.
+
+    Returns ``{"ok": true}`` on success, raises 404 if the conflict id is
+    not found or is already resolved, 400 on an invalid resolution string.
+    """
+    db = get_db()
+    resolution = str(body.resolution or "dismissed").strip()
+    _VALID = {"keep_a", "keep_b", "merged", "dismissed"}
+    if resolution not in _VALID:
+        raise HTTPException(400, f"resolution must be one of: {', '.join(sorted(_VALID))}")
+
+    ok, reason = db.resolve_memory_conflict_atomic(conflict_id, resolution)
+    if not ok:
+        raise HTTPException(404, reason or "Conflict not found or already resolved")
+
+    return {"ok": True, "conflict_id": conflict_id, "resolution": resolution}
+
+
 @router.post("/conversations/{conv_id}/messages")
 async def send_message(conv_id: str, body: MessageSend):
     db = get_db()

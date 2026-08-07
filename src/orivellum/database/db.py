@@ -4223,6 +4223,216 @@ class OrivellumDB:
                 return 0
 
     # -------------------------------------------------------------------------
+    # Memory conflict registry (v100+) — dedup / promote flagging
+    # -------------------------------------------------------------------------
+
+    def record_memory_conflict(
+        self,
+        memory_id_a: str,
+        memory_id_b: str,
+    ) -> str | None:
+        """Record a contradiction between two memory rows.
+
+        The pair is stored in **caller-provided order** so that A and B carry
+        meaningful semantic identity (e.g. the dedup pass always passes
+        ``(newer_id, older_id)`` so memory_id_a is the newer fact).  The UI
+        can therefore label each side using its actual key/value rather than an
+        arbitrary alphabetic-UUID position.
+
+        Idempotency: checks for the pair in both orderings before inserting;
+        returns the existing conflict id if the pair is already recorded.  The
+        schema UNIQUE(memory_id_a, memory_id_b) constraint acts as a safety net
+        for exact-order concurrent writes only.
+        """
+        conflict_id = _uuid()
+        now = _now()
+        try:
+            with self._lock:
+                # Check for existing pair in either order (app-level dedup)
+                existing = self._conn.execute(
+                    """SELECT id FROM memory_conflicts
+                       WHERE (memory_id_a=? AND memory_id_b=?)
+                          OR (memory_id_a=? AND memory_id_b=?)""",
+                    (memory_id_a, memory_id_b, memory_id_b, memory_id_a),
+                ).fetchone()
+                if existing:
+                    return existing["id"]
+
+                # Store in caller-provided order — preserves semantic meaning
+                self._conn.execute(
+                    """INSERT OR IGNORE INTO memory_conflicts
+                           (id, memory_id_a, memory_id_b, detected_at, resolved)
+                       VALUES (?,?,?,?,0)""",
+                    (conflict_id, memory_id_a, memory_id_b, now),
+                )
+                self._conn.commit()
+                # Fetch what was actually stored (INSERT OR IGNORE may have been
+                # a no-op if a concurrent write beat us)
+                row = self._conn.execute(
+                    """SELECT id FROM memory_conflicts
+                       WHERE (memory_id_a=? AND memory_id_b=?)
+                          OR (memory_id_a=? AND memory_id_b=?)""",
+                    (memory_id_a, memory_id_b, memory_id_b, memory_id_a),
+                ).fetchone()
+            return row["id"] if row else None
+        except Exception as exc:
+            logger.debug("record_memory_conflict failed: %s", exc)
+            return None
+
+    def get_memory_conflicts(
+        self,
+        resolved: bool = False,
+        limit: int = 50,
+    ) -> list[dict]:
+        """Return conflict pairs with memory fact details joined.
+
+        Each item in the list is a dict with:
+            id, memory_id_a, memory_id_b, detected_at, resolved,
+            resolution, resolved_at,
+            key_a, value_a, memory_type_a,
+            key_b, value_b, memory_type_b
+        """
+        resolved_int = 1 if resolved else 0
+        try:
+            with self._lock:
+                rows = self._conn.execute(
+                    """SELECT
+                           mc.id, mc.memory_id_a, mc.memory_id_b,
+                           mc.detected_at, mc.resolved,
+                           mc.resolution, mc.resolved_at,
+                           a.key  AS key_a,  a.value  AS value_a,
+                           a.memory_type AS memory_type_a,
+                           b.key  AS key_b,  b.value  AS value_b,
+                           b.memory_type AS memory_type_b
+                       FROM memory_conflicts mc
+                       LEFT JOIN user_memory a ON a.id = mc.memory_id_a
+                       LEFT JOIN user_memory b ON b.id = mc.memory_id_b
+                       WHERE mc.resolved = ?
+                       ORDER BY mc.detected_at DESC
+                       LIMIT ?""",
+                    (resolved_int, limit),
+                ).fetchall()
+            return [dict(r) for r in rows]
+        except Exception:
+            return []
+
+    def resolve_memory_conflict(
+        self,
+        conflict_id: str,
+        resolution: str,
+    ) -> bool:
+        """Mark a conflict resolved.
+
+        *resolution* must be one of: 'keep_a', 'keep_b', 'merged', 'dismissed'.
+        Returns True if the row was updated, False if not found or already resolved.
+
+        For keep_a / keep_b resolutions, use ``resolve_memory_conflict_atomic``
+        instead — it soft-deletes the losing memory row in the same transaction
+        so the mutation is reliable and retryable.
+        """
+        _VALID = frozenset({"keep_a", "keep_b", "merged", "dismissed"})
+        if resolution not in _VALID:
+            resolution = "dismissed"
+        now = _now()
+        try:
+            with self._lock:
+                result = self._conn.execute(
+                    """UPDATE memory_conflicts
+                       SET resolved=1, resolution=?, resolved_at=?
+                       WHERE id=? AND resolved=0""",
+                    (resolution, now, conflict_id),
+                )
+                self._conn.commit()
+            return result.rowcount > 0
+        except Exception as exc:
+            logger.debug("resolve_memory_conflict failed: %s", exc)
+            return False
+
+    def resolve_memory_conflict_atomic(
+        self,
+        conflict_id: str,
+        resolution: str,
+    ) -> tuple[bool, str]:
+        """Atomically resolve a memory conflict and apply the chosen keep-side.
+
+        All mutations happen inside a single ``db._lock`` acquisition so the
+        operation is all-or-nothing:
+        1. Fetch the conflict row (must be unresolved).
+        2. If *resolution* is ``'keep_a'`` or ``'keep_b'``, soft-delete the
+           *losing* memory row (set ``valid_to = now()``).  The losing row is
+           identified from the conflict's ``memory_id_a`` / ``memory_id_b``
+           columns.  If the losing row no longer exists (already expired /
+           previously deleted), the resolution still succeeds — the intent is
+           satisfied.
+        3. Mark the conflict as resolved (``resolved=1``).
+
+        The conflict is only marked resolved when steps 1–2 succeed.  If any
+        step fails the entire operation rolls back and returns ``(False, reason)``
+        so the caller can retry through the unresolved UI.
+
+        Returns ``(True, '')`` on success, ``(False, reason)`` on failure.
+        *reason* is a human-readable string suitable for an HTTP error detail.
+        """
+        _VALID = frozenset({"keep_a", "keep_b", "merged", "dismissed"})
+        if resolution not in _VALID:
+            resolution = "dismissed"
+
+        now = _now()
+        try:
+            with self._lock:
+                # 1. Fetch the unresolved conflict row
+                conflict = self._conn.execute(
+                    """SELECT id, memory_id_a, memory_id_b, resolved
+                       FROM memory_conflicts WHERE id=?""",
+                    (conflict_id,),
+                ).fetchone()
+
+                if conflict is None:
+                    return False, "Conflict not found"
+                if conflict["resolved"]:
+                    return False, "Conflict already resolved"
+
+                # 2. Soft-delete the losing memory row (if keep_a or keep_b)
+                if resolution == "keep_a":
+                    drop_id = conflict["memory_id_b"]
+                elif resolution == "keep_b":
+                    drop_id = conflict["memory_id_a"]
+                else:
+                    drop_id = None
+
+                if drop_id:
+                    # Soft-delete: only touch rows that are still current
+                    # (valid_to IS NULL).  A missing or already-expired row is
+                    # not an error — the intent (remove that belief) is satisfied.
+                    self._conn.execute(
+                        "UPDATE user_memory SET valid_to=? WHERE id=? AND valid_to IS NULL",
+                        (now, drop_id),
+                    )
+
+                # 3. Mark conflict resolved — only reached if no exception above
+                result = self._conn.execute(
+                    """UPDATE memory_conflicts
+                       SET resolved=1, resolution=?, resolved_at=?
+                       WHERE id=? AND resolved=0""",
+                    (resolution, now, conflict_id),
+                )
+                if result.rowcount == 0:
+                    # Race: another request resolved it between fetch and update
+                    self._conn.rollback()
+                    return False, "Conflict already resolved (race)"
+
+                self._conn.commit()
+            return True, ""
+
+        except Exception as exc:
+            try:
+                self._conn.rollback()
+            except Exception:
+                pass
+            logger.warning("resolve_memory_conflict_atomic failed: %s", exc)
+            return False, f"Internal error: {exc}"
+
+    # -------------------------------------------------------------------------
     # Conversation chunks (v65+) — for semantic recall
     # -------------------------------------------------------------------------
 

@@ -32,6 +32,7 @@ class TestSchemaV99(unittest.TestCase):
         self.db = _make_db(self.tmp)
 
     def tearDown(self):
+        self.db._conn.close()
         Path(self.tmp).unlink(missing_ok=True)
 
     def test_memory_evidence_table_exists(self):
@@ -72,6 +73,7 @@ class TestCreateMemoryEvidence(unittest.TestCase):
         self.db = _make_db(self.tmp)
 
     def tearDown(self):
+        self.db._conn.close()
         Path(self.tmp).unlink(missing_ok=True)
 
     def test_returns_non_empty_id(self):
@@ -121,6 +123,7 @@ class TestUpsertWithEvidence(unittest.TestCase):
         self.db = _make_db(self.tmp)
 
     def tearDown(self):
+        self.db._conn.close()
         Path(self.tmp).unlink(missing_ok=True)
 
     def test_source_evidence_id_stored_in_row(self):
@@ -163,6 +166,7 @@ class TestGetCurrentWithEvidence(unittest.TestCase):
         self.db = _make_db(self.tmp)
 
     def tearDown(self):
+        self.db._conn.close()
         Path(self.tmp).unlink(missing_ok=True)
 
     def test_include_evidence_returns_evidence_fields(self):
@@ -222,6 +226,7 @@ class TestEvidenceBeliefOrdering(unittest.TestCase):
         self.db = _make_db(self.tmp)
 
     def tearDown(self):
+        self.db._conn.close()
         Path(self.tmp).unlink(missing_ok=True)
 
     def _run_infer(self, user_text: str, assistant_text: str,
@@ -333,6 +338,7 @@ class TestDeleteMemoryEvidence(unittest.TestCase):
         self.db = _make_db(self.tmp)
 
     def tearDown(self):
+        self.db._conn.close()
         Path(self.tmp).unlink(missing_ok=True)
 
     def test_delete_existing_row_returns_true(self):
@@ -357,6 +363,7 @@ class TestNoFactEvidenceCleanup(unittest.TestCase):
         self.db = _make_db(self.tmp)
 
     def tearDown(self):
+        self.db._conn.close()
         Path(self.tmp).unlink(missing_ok=True)
 
     def _run_infer(self, user_text: str, llm_response: str):
@@ -447,6 +454,7 @@ class TestHandleRememberEvidenceOrdering(unittest.TestCase):
         self.db = _make_db(self.tmp)
 
     def tearDown(self):
+        self.db._conn.close()
         Path(self.tmp).unlink(missing_ok=True)
 
     def _run_remember(self, user_text: str,

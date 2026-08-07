@@ -94,6 +94,7 @@ class TestUpsertMemoryFact(unittest.TestCase):
         self.db = _make_db(self.tmp)
 
     def tearDown(self):
+        self.db._conn.close()
         Path(self.tmp).unlink(missing_ok=True)
 
     def test_first_insert_returns_true(self):
@@ -213,6 +214,7 @@ class TestUpdateMemoryFact(unittest.TestCase):
         self.db = _make_db(self.tmp)
 
     def tearDown(self):
+        self.db._conn.close()
         Path(self.tmp).unlink(missing_ok=True)
 
     def _current_rows(self, key: str) -> list:
@@ -285,6 +287,7 @@ class TestCleanupWorkingMemoryTTL(unittest.TestCase):
         self.db = _make_db(self.tmp)
 
     def tearDown(self):
+        self.db._conn.close()
         Path(self.tmp).unlink(missing_ok=True)
 
     def _back_date(self, key: str, minutes: int) -> None:
@@ -344,6 +347,7 @@ class TestEmbedConversationExchangeAlwaysPersists(unittest.TestCase):
         self.db = _make_db(self.tmp)
 
     def tearDown(self):
+        self.db._conn.close()
         Path(self.tmp).unlink(missing_ok=True)
 
     def test_short_exchange_is_still_stored(self):
@@ -426,6 +430,7 @@ class TestConversationChunks(unittest.TestCase):
         self.db = _make_db(self.tmp)
 
     def tearDown(self):
+        self.db._conn.close()
         Path(self.tmp).unlink(missing_ok=True)
 
     def test_add_returns_non_empty_id(self):
@@ -470,6 +475,7 @@ class TestBackfillIncludesConvChunk(unittest.TestCase):
         self.db = _make_db(self.tmp)
 
     def tearDown(self):
+        self.db._conn.close()
         Path(self.tmp).unlink(missing_ok=True)
 
     def test_backfill_processes_conversation_chunks(self):
@@ -557,6 +563,7 @@ class TestHandleRecallAlwaysCombines(unittest.TestCase):
         self.db = _make_db(self.tmp)
 
     def tearDown(self):
+        self.db._conn.close()
         Path(self.tmp).unlink(missing_ok=True)
 
     def test_keyword_hits_included_even_when_semantic_returns_results(self):

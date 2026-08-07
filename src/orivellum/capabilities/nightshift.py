@@ -1356,6 +1356,14 @@ def _run_nightshift_passes(db: "OrivellumDB", cfg: "OrivellumConfig") -> None:
     except Exception as _wex:
         logger.debug("Working memory TTL pass failed (non-fatal): %s", _wex)
 
+    # 19a — Memory deduplication
+    logger.info("Nightshift pass 19a: memory deduplication")
+    _pass_memory_dedup(db, report)
+
+    # 19b — Episodic-to-semantic promotion
+    logger.info("Nightshift pass 19b: episodic memory promotion")
+    _pass_memory_promote(db, report)
+
     # 17 — Automatic near-duplicate resolution
     # Gated by auto_dedup_enabled=true; silently skips when disabled so the
     # nightshift run time is not affected for users who prefer manual review.
@@ -1386,6 +1394,269 @@ def _run_nightshift_passes(db: "OrivellumDB", cfg: "OrivellumConfig") -> None:
     report_path = _write_report(Path(cfg.data_dir), date_str, report)
     _record_run(db, len(_get_docs_needing_work(db)), items_added, report_path)
     logger.info("Nightshift complete in %.0fs — %d report lines", elapsed, len(report))
+
+
+def _memory_text_similarity(a: str, b: str) -> float:
+    """Word-set Jaccard similarity for short memory fact values.
+
+    Uses a character-normalised word-tokenisation so punctuation differences
+    don't inflate dissimilarity.  Fast enough for pairwise comparison of the
+    ~100 memory rows typical in a single user session.
+    """
+    import re as _re
+    def _tokens(s: str) -> set[str]:
+        return set(_re.sub(r"[^\w\s]", "", s.lower()).split())
+
+    ta, tb = _tokens(a), _tokens(b)
+    if not ta and not tb:
+        return 1.0
+    if not ta or not tb:
+        return 0.0
+    return len(ta & tb) / len(ta | tb)
+
+
+def _pass_memory_dedup(db: "OrivellumDB", report: list[str]) -> None:
+    """Deduplicate current memory facts; flag contradictions in memory_conflicts.
+
+    Algorithm
+    ---------
+    1. Load all *current* user_memory rows (valid_to IS NULL).
+    2. Group by key:
+       a. Exact-duplicate values (sim ≥ 0.95) within the same key → keep the
+          most recently created row; soft-delete the others (set valid_to=now()).
+       b. Contradictory values (sim < 0.50) within the same key → record a
+          conflict in memory_conflicts without touching either row.
+    3. Cross-key near-duplicates (sim ≥ 0.85 on *value*, different keys) →
+       soft-delete the older row; keep the newer.  No conflict is recorded
+       because these are phrasing variants, not contradictions.
+
+    Idempotency
+    -----------
+    - Soft-deleted rows are excluded from the next load (valid_to IS NULL only).
+    - Conflict pairs use INSERT OR IGNORE on UNIQUE(memory_id_a, memory_id_b).
+    Running twice produces the same result.
+    """
+    _EXACT_THRESH     = 0.95   # same-key same-value → dedup
+    _CONFLICT_THRESH  = 0.50   # same-key different-value → flag as conflict
+    _CROSS_NEAR_THRESH= 0.85   # cross-key near-dup → merge
+
+    try:
+        now = datetime.now(timezone.utc).isoformat()
+
+        with db._lock:
+            rows = db._conn.execute(
+                """SELECT id, key, value, memory_type, created_at
+                   FROM user_memory
+                   WHERE valid_to IS NULL
+                   ORDER BY created_at ASC"""
+            ).fetchall()
+
+        if not rows:
+            return
+
+        facts = [dict(r) for r in rows]
+
+        # ── Stage 1: same-key dedup / conflict detection ───────────────────
+        from collections import defaultdict as _dd
+        by_key: dict[str, list[dict]] = _dd(list)
+        for f in facts:
+            by_key[f["key"]].append(f)
+
+        merged = 0
+        conflicts = 0
+
+        for key, group in by_key.items():
+            if len(group) < 2:
+                continue
+            # Sort newest-first so the newest row is always memory_id_a (the
+            # "preferred" side when the user resolves a conflict via "Keep A").
+            group_sorted = sorted(group, key=lambda x: x["created_at"], reverse=True)
+            keep = group_sorted[0]  # newest = memory_id_a
+            for old in group_sorted[1:]:  # older = memory_id_b
+                sim = _memory_text_similarity(keep["value"], old["value"])
+                if sim >= _EXACT_THRESH:
+                    # Near-identical: soft-delete the older row — safe because
+                    # the two rows are essentially the same fact.
+                    try:
+                        with db._lock:
+                            db._conn.execute(
+                                "UPDATE user_memory SET valid_to=? WHERE id=? AND valid_to IS NULL",
+                                (now, old["id"]),
+                            )
+                            db._conn.commit()
+                        merged += 1
+                        logger.debug(
+                            "Memory dedup: merged duplicate key=%s id=%s→%s",
+                            key, old["id"][:8], keep["id"][:8],
+                        )
+                    except Exception as exc:
+                        logger.debug("Memory dedup merge failed: %s", exc)
+                elif sim < _CONFLICT_THRESH:
+                    # Contradictory values: register (newer first = memory_id_a)
+                    # without touching either row.  The user resolves via the UI.
+                    db.record_memory_conflict(keep["id"], old["id"])
+                    conflicts += 1
+                    logger.debug(
+                        "Memory conflict: key=%s newer=%s older=%s (sim=%.2f)",
+                        key, keep["id"][:8], old["id"][:8], sim,
+                    )
+                # sim in [_CONFLICT_THRESH, _EXACT_THRESH) → benign restatement;
+                # keep both silently.
+
+        # ── Stage 2: cross-key value near-duplicates ───────────────────────
+        # Different keys may encode distinct facts even when their text looks
+        # similar — auto-deletion would silently erase valid beliefs.  Instead,
+        # register each near-duplicate pair as a conflict for user review.
+        # The newer row is stored as memory_id_a (the "keep" default in the UI).
+        with db._lock:
+            current_rows = db._conn.execute(
+                "SELECT id, key, value, created_at FROM user_memory WHERE valid_to IS NULL"
+            ).fetchall()
+        current = [dict(r) for r in current_rows]
+
+        cross_conflicts = 0
+        # Compare each pair once (upper-triangle)
+        for i in range(len(current)):
+            for j in range(i + 1, len(current)):
+                fa, fb = current[i], current[j]
+                if fa["key"] == fb["key"]:
+                    continue   # already handled in Stage 1
+                sim = _memory_text_similarity(fa["value"], fb["value"])
+                if sim >= _CROSS_NEAR_THRESH:
+                    # Newer = memory_id_a, older = memory_id_b for meaningful
+                    # A/B labeling in the conflict UI.
+                    newer = fa if fa["created_at"] >= fb["created_at"] else fb
+                    older  = fb if newer is fa else fa
+                    cid = db.record_memory_conflict(newer["id"], older["id"])
+                    if cid:
+                        cross_conflicts += 1
+                        logger.debug(
+                            "Cross-key near-dup flagged for review: %s vs %s (sim=%.2f)",
+                            fa["key"], fb["key"], sim,
+                        )
+
+        total_merged = merged
+        total_conflicts = conflicts + cross_conflicts
+        msg = (
+            f"Memory dedup: {total_merged} exact duplicate(s) merged, "
+            f"{total_conflicts} conflict(s) flagged for review "
+            f"({conflicts} same-key, {cross_conflicts} cross-key)"
+        )
+        if total_merged or total_conflicts:
+            report.append(msg)
+            logger.info(msg)
+        else:
+            logger.debug("Memory dedup: nothing to do (%d fact(s) checked)", len(facts))
+
+    except Exception as exc:
+        logger.warning("Memory dedup pass failed: %s", exc)
+        report.append(f"⚠ Memory dedup: {exc}")
+
+
+def _pass_memory_promote(db: "OrivellumDB", report: list[str]) -> None:
+    """Promote episodic memories to semantic after ≥ 3 observations.
+
+    An episodic memory key that has been observed 3 or more times (counting
+    all historical rows, not just the current one) represents a recurring
+    pattern and should be promoted to ``memory_type='semantic'`` — a more
+    durable, preference-level belief.
+
+    Promotion uses the bi-temporal soft-delete + insert pattern: the current
+    episodic row is soft-deleted (valid_to = now) and a new semantic row is
+    inserted in the same transaction.  This is done directly via SQL rather
+    than through ``upsert_memory_fact`` because that helper is a no-op when
+    the value is unchanged — it does not check memory_type.
+
+    Idempotency
+    -----------
+    Once the current row is promoted to semantic, the key no longer appears
+    in the "episodic with ≥ 3 occurrences" query on the next run (the current
+    row's memory_type is now 'semantic', so the HAVING clause is not met),
+    making the pass naturally idempotent.
+    """
+    _MIN_OBSERVATIONS = 3
+
+    try:
+        with db._lock:
+            rows = db._conn.execute(
+                """SELECT key,
+                          SUM(CASE WHEN memory_type = 'episodic' THEN 1 ELSE 0 END) AS episodic_count
+                   FROM user_memory
+                   GROUP BY key
+                   HAVING episodic_count >= ?""",
+                (_MIN_OBSERVATIONS,),
+            ).fetchall()
+
+        if not rows:
+            return
+
+        now = datetime.now(timezone.utc).isoformat()
+        promoted = 0
+
+        for row in rows:
+            key = row["key"]
+            episodic_count = row["episodic_count"]
+
+            # Only promote if the *current* row is still episodic.
+            # Fetch all provenance fields so the promoted semantic row
+            # preserves its evidence chain (v99 Evidence-Before-Belief contract).
+            with db._lock:
+                current = db._conn.execute(
+                    """SELECT id, value, source_conv_id, source_evidence_id
+                       FROM user_memory
+                       WHERE key=? AND valid_to IS NULL
+                         AND memory_type='episodic'""",
+                    (key,),
+                ).fetchone()
+
+            if not current:
+                continue   # already promoted or no current row
+
+            current_id        = current["id"]
+            value             = current["value"]
+            source_conv_id    = current["source_conv_id"]
+            source_evidence_id = current["source_evidence_id"]
+
+            try:
+                with db._lock:
+                    # Soft-delete the current episodic row
+                    db._conn.execute(
+                        "UPDATE user_memory SET valid_to=? WHERE id=? AND valid_to IS NULL",
+                        (now, current_id),
+                    )
+                    # Insert a new semantic row — same key, value, and provenance,
+                    # but memory_type upgraded to 'semantic'.  Preserving
+                    # source_conv_id and source_evidence_id keeps the Evidence-
+                    # Before-Belief guarantee intact after promotion.
+                    db._conn.execute(
+                        """INSERT INTO user_memory
+                               (id, key, value, memory_type,
+                                valid_from, valid_to, txn_time, created_at,
+                                source_conv_id, source_evidence_id)
+                           VALUES (?,?,?,?,?,NULL,?,?,?,?)""",
+                        (str(uuid.uuid4()), key, value, "semantic",
+                         now, now, now,
+                         source_conv_id, source_evidence_id),
+                    )
+                    db._conn.commit()
+                promoted += 1
+                logger.debug(
+                    "Memory promote: key=%s episodic_count=%d → semantic",
+                    key, episodic_count,
+                )
+            except Exception as exc:
+                logger.debug("Memory promote failed for key=%s: %s", key, exc)
+
+        if promoted:
+            msg = f"Memory promote: {promoted} episodic fact(s) promoted to semantic"
+            report.append(msg)
+            logger.info(msg)
+        else:
+            logger.debug("Memory promote: no keys met the threshold")
+
+    except Exception as exc:
+        logger.warning("Memory promote pass failed: %s", exc)
+        report.append(f"⚠ Memory promote: {exc}")
 
 
 def start_nightshift_daemon(db: "OrivellumDB",

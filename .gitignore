@@ -82,3 +82,9 @@ data/nightshift/
 data/backups/
 data/remediation_archive/
 PROGRESS.json
+
+# Test DB sidecars
+tmp*.db
+tmp*.db-wal
+tmp*.db-shm
+tmp*/

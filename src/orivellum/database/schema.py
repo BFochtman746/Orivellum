@@ -1667,4 +1667,37 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         ALTER TABLE user_memory ADD COLUMN source_evidence_id TEXT;
         CREATE INDEX IF NOT EXISTS um_evidence ON user_memory(source_evidence_id);
     """),
+
+    # v100 — Memory conflict registry.
+    # When the nightly dedup pass detects two memory rows that contradict each
+    # other (same key or near-duplicate text but different values), it records
+    # the pair here instead of silently discarding either row.  Resolution is
+    # user-assisted: the UI shows unresolved conflicts and allows the user to
+    # keep one side, keep both, or dismiss the conflict.
+    #
+    # Columns:
+    #   memory_id_a / memory_id_b — the two conflicting user_memory row IDs
+    #   detected_at — when the conflict was first detected (ISO-8601 UTC)
+    #   resolved    — 0 = open, 1 = resolved
+    #   resolution  — 'keep_a' | 'keep_b' | 'merged' | 'dismissed' (NULL until resolved)
+    #   resolved_at — timestamp of resolution (NULL until resolved)
+    #
+    # The UNIQUE(memory_id_a, memory_id_b) constraint prevents duplicate pairs;
+    # INSERT OR IGNORE is used so re-running the pass is idempotent.
+    (100, "Memory conflict registry for nightly dedup + promote passes", """
+        CREATE TABLE IF NOT EXISTS memory_conflicts (
+            id           TEXT PRIMARY KEY,
+            memory_id_a  TEXT NOT NULL,
+            memory_id_b  TEXT NOT NULL,
+            detected_at  TEXT NOT NULL,
+            resolved     INTEGER NOT NULL DEFAULT 0,
+            resolution   TEXT,
+            resolved_at  TEXT,
+            UNIQUE(memory_id_a, memory_id_b)
+        );
+        CREATE INDEX IF NOT EXISTS mc_resolved ON memory_conflicts(resolved);
+        CREATE INDEX IF NOT EXISTS mc_detected ON memory_conflicts(detected_at);
+        CREATE INDEX IF NOT EXISTS mc_mem_a    ON memory_conflicts(memory_id_a);
+        CREATE INDEX IF NOT EXISTS mc_mem_b    ON memory_conflicts(memory_id_b);
+    """),
 ]

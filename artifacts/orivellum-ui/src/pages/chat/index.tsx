@@ -1032,8 +1032,28 @@ const MEMORY_TYPE_STYLE: Record<string, { label: string; cls: string }> = {
   zettelkasten: { label: "zettelkasten", cls: "bg-teal-100 text-teal-700 dark:bg-teal-900/30 dark:text-teal-400" },
 };
 
+// ─── Memory conflict types ────────────────────────────────────────────────────
+
+interface MemoryConflict {
+  id: string;
+  memory_id_a: string;
+  memory_id_b: string;
+  detected_at: string;
+  resolved: number;
+  resolution: string | null;
+  resolved_at: string | null;
+  key_a: string | null;
+  value_a: string | null;
+  memory_type_a: string | null;
+  key_b: string | null;
+  value_b: string | null;
+  memory_type_b: string | null;
+}
+
 function MemoryPanel({ apiBase }: { apiBase: string }) {
   const [expandedEvidence, setExpandedEvidence] = useState<Set<string>>(new Set());
+  const [showConflicts, setShowConflicts] = useState(false);
+  const [resolvingId, setResolvingId] = useState<string | null>(null);
 
   const { data, isLoading, refetch, isRefetching } = useQuery<{ facts: MemoryFact[]; total: number }>({
     queryKey: ["memory-facts"],
@@ -1046,6 +1066,20 @@ function MemoryPanel({ apiBase }: { apiBase: string }) {
     staleTime: 30_000,
   });
 
+  const { data: conflictsData, refetch: refetchConflicts } = useQuery<{
+    conflicts: MemoryConflict[];
+    total: number;
+  }>({
+    queryKey: ["memory-conflicts"],
+    queryFn: async () => {
+      const { buildAuthHeaders } = await import("@/lib/auth");
+      const r = await fetch(`${apiBase}/memory/conflicts`, { headers: buildAuthHeaders() });
+      if (!r.ok) return { conflicts: [], total: 0 };
+      return r.json();
+    },
+    staleTime: 60_000,
+  });
+
   const toggleEvidence = (id: string) =>
     setExpandedEvidence(prev => {
       const next = new Set(prev);
@@ -1053,7 +1087,28 @@ function MemoryPanel({ apiBase }: { apiBase: string }) {
       return next;
     });
 
+  const resolveConflict = async (conflictId: string, resolution: string) => {
+    setResolvingId(conflictId);
+    try {
+      const { buildAuthHeaders } = await import("@/lib/auth");
+      const r = await fetch(`${apiBase}/memory/conflicts/${conflictId}/resolve`, {
+        method: "POST",
+        headers: { ...buildAuthHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({ resolution }),
+      });
+      if (!r.ok) throw new Error("Failed");
+      refetchConflicts();
+      refetch();
+    } catch {
+      toast.error("Could not resolve conflict");
+    } finally {
+      setResolvingId(null);
+    }
+  };
+
   const facts = data?.facts ?? [];
+  const conflicts = conflictsData?.conflicts ?? [];
+  const conflictCount = conflicts.length;
 
   return (
     <div className="border-b border-border/50 bg-violet-500/5">
@@ -1068,9 +1123,19 @@ function MemoryPanel({ apiBase }: { apiBase: string }) {
               {facts.length}
             </span>
           )}
+          {conflictCount > 0 && (
+            <button
+              onClick={() => setShowConflicts(v => !v)}
+              title={`${conflictCount} unresolved conflict${conflictCount !== 1 ? "s" : ""} — click to review`}
+              className="flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-orange-100 dark:bg-orange-900/30 text-orange-600 dark:text-orange-400 hover:bg-orange-200 dark:hover:bg-orange-900/50 transition-colors"
+            >
+              <AlertTriangle className="w-2.5 h-2.5" />
+              <span className="text-[9px] font-semibold">{conflictCount}</span>
+            </button>
+          )}
         </div>
         <button
-          onClick={() => refetch()}
+          onClick={() => { refetch(); refetchConflicts(); }}
           disabled={isRefetching}
           title="Refresh"
           className="p-1 rounded text-muted-foreground/50 hover:text-muted-foreground transition-colors disabled:opacity-40"
@@ -1078,6 +1143,62 @@ function MemoryPanel({ apiBase }: { apiBase: string }) {
           <RefreshCw className={`w-3 h-3 ${isRefetching ? "animate-spin" : ""}`} />
         </button>
       </div>
+
+      {/* ── Conflicts panel ── */}
+      {showConflicts && conflictCount > 0 && (
+        <div className="px-4 pb-3 space-y-2 border-b border-orange-200/40 dark:border-orange-800/30">
+          <div className="text-[9px] font-semibold uppercase tracking-wide text-orange-500/80 mb-1.5">
+            Conflicting memories ({conflictCount})
+          </div>
+          {conflicts.map(c => (
+            <div
+              key={c.id}
+              className="rounded border border-orange-200/60 dark:border-orange-800/40 bg-orange-50/40 dark:bg-orange-950/20 p-2 space-y-1.5"
+            >
+              <div className="flex gap-2 text-[10px]">
+                {/* Side A — memory_id_a (newer by convention when set by dedup) */}
+                <div className="flex-1 space-y-0.5">
+                  <div className="text-[9px] text-muted-foreground/50 font-mono uppercase">Newer</div>
+                  <div className="font-mono text-violet-600/80 dark:text-violet-400/80 truncate">{c.key_a ?? "—"}:</div>
+                  <div className="text-foreground/70 line-clamp-2">{c.value_a ?? "—"}</div>
+                </div>
+                <div className="w-px bg-orange-200/60 dark:bg-orange-800/40 self-stretch" />
+                {/* Side B — memory_id_b (older by convention) */}
+                <div className="flex-1 space-y-0.5">
+                  <div className="text-[9px] text-muted-foreground/50 font-mono uppercase">Older</div>
+                  <div className="font-mono text-violet-600/80 dark:text-violet-400/80 truncate">{c.key_b ?? "—"}:</div>
+                  <div className="text-foreground/70 line-clamp-2">{c.value_b ?? "—"}</div>
+                </div>
+              </div>
+              <div className="flex gap-1 justify-end flex-wrap">
+                <button
+                  disabled={resolvingId === c.id}
+                  onClick={() => resolveConflict(c.id, "keep_a")}
+                  title={`Keep: ${c.key_a ?? "this"} = ${(c.value_a ?? "").slice(0, 60)}`}
+                  className="text-[9px] px-1.5 py-0.5 rounded border border-border/50 bg-background/60 hover:bg-muted/60 transition-colors disabled:opacity-40"
+                >
+                  Keep newer
+                </button>
+                <button
+                  disabled={resolvingId === c.id}
+                  onClick={() => resolveConflict(c.id, "keep_b")}
+                  title={`Keep: ${c.key_b ?? "this"} = ${(c.value_b ?? "").slice(0, 60)}`}
+                  className="text-[9px] px-1.5 py-0.5 rounded border border-border/50 bg-background/60 hover:bg-muted/60 transition-colors disabled:opacity-40"
+                >
+                  Keep older
+                </button>
+                <button
+                  disabled={resolvingId === c.id}
+                  onClick={() => resolveConflict(c.id, "dismissed")}
+                  className="text-[9px] px-1.5 py-0.5 rounded border border-border/50 bg-background/60 hover:bg-muted/60 transition-colors disabled:opacity-40"
+                >
+                  Dismiss
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {isLoading ? (
         <div className="px-4 pb-3 space-y-1.5">
