@@ -295,6 +295,10 @@ export default function WorkIntelligenceScreen() {
   const [chapterQuery, setChapterQuery] = useState('');
   const normalizedQuery = chapterQuery.trim().toLowerCase();
 
+  // Tracks how many background chapter-knowledge fetches are currently in
+  // flight so the search bar can show an ActivityIndicator while they run.
+  const [searchFetchingCount, setSearchFetchingCount] = useState(0);
+
   // When the query changes, auto-expand any chapter whose already-loaded
   // knowledge contains a match so the user immediately sees the items.
   useEffect(() => {
@@ -317,6 +321,53 @@ export default function WorkIntelligenceScreen() {
       });
     }
   }, [normalizedQuery, chapterKnowledge]);
+
+  // ── Debounced background fetch for search ──────────────────────────────────
+  // When the user types a query and pauses for 400 ms, fetch knowledge for
+  // every chapter that hasn't been loaded yet in parallel so the filter can
+  // reflect the entire book, not just already-expanded chapters.
+  useEffect(() => {
+    if (!normalizedQuery || !chapters) return;
+
+    const timer = setTimeout(() => {
+      // Collect every chapter id across all documents that hasn't been fetched
+      const allChapterIds: string[] = [];
+      for (const doc of (chapters.documents as any[])) {
+        for (const ch of (doc.chapters as any[])) {
+          if (!fetchedChaptersRef.current.has(ch.id)) {
+            allChapterIds.push(ch.id);
+          }
+        }
+      }
+      if (allChapterIds.length === 0) return;
+
+      // Claim slots up-front so toggleChapter knows they're in-flight
+      for (const cid of allChapterIds) {
+        fetchedChaptersRef.current.add(cid);
+      }
+      setSearchFetchingCount(prev => prev + allChapterIds.length);
+
+      // Fire all fetches in parallel; update state as each resolves
+      for (const cid of allChapterIds) {
+        setLoadingChapterKnowledge(prev => ({ ...prev, [cid]: true }));
+        mobileFetch(`${base}/works/${id}/chapters/${cid}/knowledge`)
+          .then(res => res.ok ? res.json() : null)
+          .then(data => {
+            setChapterKnowledge(prev => ({ ...prev, [cid]: data?.knowledge ?? [] }));
+          })
+          .catch(() => {
+            setChapterKnowledge(prev => ({ ...prev, [cid]: [] }));
+          })
+          .finally(() => {
+            setLoadingChapterKnowledge(prev => ({ ...prev, [cid]: false }));
+            setSearchFetchingCount(prev => Math.max(0, prev - 1));
+          });
+      }
+    }, 400);
+
+    return () => clearTimeout(timer);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [normalizedQuery, chapters]);
 
   // Returns true when a chapter row should be visible for the current query.
   const chapterMatchesQuery = (ch: any): boolean => {
@@ -734,7 +785,10 @@ export default function WorkIntelligenceScreen() {
               clearButtonMode="while-editing"
               autoCorrect={false}
             />
-            {chapterQuery.length > 0 && (
+            {searchFetchingCount > 0 && (
+              <ActivityIndicator size="small" color={colors.primary} style={{ marginRight: 2 }} />
+            )}
+            {chapterQuery.length > 0 && searchFetchingCount === 0 && (
               <Pressable onPress={() => setChapterQuery('')} hitSlop={8}>
                 <Feather name="x" size={13} color={colors.mutedForeground} />
               </Pressable>
