@@ -27,6 +27,10 @@ import { Feather } from '@expo/vector-icons';
 import { mobileFetch } from '@/lib/api';
 import { useNavigation } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useVellumTokens } from '@/lib/tokens';
+import { SkeletonItem } from '@/components/SkeletonItem';
+import { EmptyState } from '@/components/EmptyState';
+import { font } from '@/lib/typography';
 
 const DOMAIN = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
 const API = `https://${DOMAIN}/api`;
@@ -44,6 +48,7 @@ interface MemoryFact {
 
 export default function MemoryScreen() {
   const colors = useColors();
+  const T = useVellumTokens();
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
   const isWeb = Platform.OS === 'web';
@@ -281,8 +286,8 @@ export default function MemoryScreen() {
               ]}
             >
               {isSaving
-                ? <ActivityIndicator size="small" color="#fff" />
-                : <Text style={[styles.editBtnText, { color: '#fff' }]}>Save</Text>}
+                ? <ActivityIndicator size="small" color={colors.background} />
+                : <Text style={[styles.editBtnText, { color: colors.background }]}>Save</Text>}
             </Pressable>
           </View>
         </View>
@@ -347,12 +352,15 @@ export default function MemoryScreen() {
             {/* Edit button */}
             <Pressable
               onPress={() => startEdit(item)}
-              hitSlop={12}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
               disabled={isDeleting}
               style={({ pressed }) => ({
                 padding: 6,
                 marginLeft: 8,
                 borderRadius: 6,
+                minHeight: 44,
+                alignItems: 'center',
+                justifyContent: 'center',
                 backgroundColor: pressed ? colors.primary + '20' : 'transparent',
                 opacity: isDeleting ? 0.4 : 1,
               })}
@@ -365,13 +373,16 @@ export default function MemoryScreen() {
             {/* Delete button */}
             <Pressable
               onPress={() => handleDeleteFact(item)}
-              hitSlop={12}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
               disabled={isDeleting}
               style={({ pressed }) => ({
                 padding: 6,
                 marginLeft: 8,
                 borderRadius: 6,
-                backgroundColor: pressed ? '#ef444418' : 'transparent',
+                minHeight: 44,
+                alignItems: 'center',
+                justifyContent: 'center',
+                backgroundColor: pressed ? T.rustSoft : 'transparent',
                 opacity: isDeleting ? 0.4 : 1,
               })}
               accessibilityLabel="Delete this memory"
@@ -379,7 +390,7 @@ export default function MemoryScreen() {
             >
               {isDeleting
                 ? <ActivityIndicator size="small" color={colors.mutedForeground} />
-                : <Feather name="trash-2" size={14} color={colors.mutedForeground} />}
+                : <Feather name="trash-2" size={14} color={T.rust} />}
             </Pressable>
           </View>
         </View>
@@ -400,7 +411,7 @@ export default function MemoryScreen() {
           {facts.length > 0 && (
             <Pressable
               onPress={handleClearAll}
-              hitSlop={12}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
               disabled={clearingAll}
               style={({ pressed }) => ({
                 flexDirection: 'row',
@@ -408,25 +419,31 @@ export default function MemoryScreen() {
                 gap: 4,
                 paddingHorizontal: 10,
                 paddingVertical: 5,
+                minHeight: 44,
                 borderRadius: 8,
                 borderWidth: 1,
-                borderColor: '#ef444444',
-                backgroundColor: pressed ? '#ef444412' : 'transparent',
+                borderColor: T.giltLine,
+                backgroundColor: pressed ? T.rustSoft : 'transparent',
                 opacity: clearingAll ? 0.5 : 1,
               })}
               accessibilityLabel="Clear all memories"
               accessibilityRole="button"
             >
               {clearingAll
-                ? <ActivityIndicator size="small" color="#ef4444" />
-                : <Feather name="trash-2" size={13} color="#ef4444" />}
-              <Text style={{ fontSize: 12, fontFamily: 'Inter_500Medium', color: '#ef4444' }}>
+                ? <ActivityIndicator size="small" color={T.rust} />
+                : <Feather name="trash-2" size={13} color={T.rust} />}
+              <Text style={[styles.clearAllText, { color: T.rust }]}>
                 Clear all
               </Text>
             </Pressable>
           )}
           {/* Refresh */}
-          <Pressable onPress={() => fetchFacts(true)} hitSlop={12} disabled={refreshing}>
+          <Pressable
+            onPress={() => fetchFacts(true)}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            disabled={refreshing}
+            style={{ minHeight: 44, alignItems: 'center', justifyContent: 'center' }}
+          >
             <Feather
               name="refresh-cw"
               size={16}
@@ -445,8 +462,8 @@ export default function MemoryScreen() {
 
       {/* Body */}
       {loading ? (
-        <View style={styles.centered}>
-          <ActivityIndicator color={colors.primary} />
+        <View style={{ paddingHorizontal: 16, paddingTop: 12 }}>
+          {[...Array(5)].map((_, i) => <SkeletonItem key={i} lines={2} />)}
         </View>
       ) : error ? (
         <View style={styles.centered}>
@@ -460,14 +477,11 @@ export default function MemoryScreen() {
           </Pressable>
         </View>
       ) : facts.length === 0 ? (
-        <View style={styles.centered}>
-          <Text style={{ fontSize: 40, marginBottom: 12 }}>✨</Text>
-          <Text style={[styles.emptyTitle, { color: colors.foreground }]}>No facts yet</Text>
-          <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
-            Facts are captured automatically as you chat.{'\n'}
-            Try saying "I prefer X" or sharing context about your work.
-          </Text>
-        </View>
+        <EmptyState
+          icon="database"
+          title="No memory facts yet"
+          body="As you chat with Orivellum it learns and stores facts here."
+        />
       ) : (
         <FlatList
           data={facts}
@@ -483,7 +497,7 @@ export default function MemoryScreen() {
           contentContainerStyle={{
             paddingHorizontal: 16,
             paddingTop: 12,
-            paddingBottom: insets.bottom + 32,
+            paddingBottom: insets.bottom + 24,
             gap: 10,
           }}
           showsVerticalScrollIndicator={false}
@@ -509,13 +523,18 @@ const styles = StyleSheet.create({
     paddingBottom: 12,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  title: { fontSize: 22, fontFamily: 'Inter_700Bold' },
+  title: { fontSize: 22, ...font('bold') },
   caption: {
-    fontSize: 13,
-    fontFamily: 'Inter_400Regular',
+    fontSize: 12,
     lineHeight: 18,
+    ...font('regular'),
     paddingHorizontal: 16,
     paddingVertical: 10,
+  },
+  clearAllText: {
+    fontSize: 12,
+    lineHeight: 18,
+    ...font('medium'),
   },
   centered: {
     flex: 1,
@@ -524,24 +543,21 @@ const styles = StyleSheet.create({
     gap: 10,
     paddingHorizontal: 32,
   },
-  emptyTitle: { fontSize: 17, fontFamily: 'Inter_600SemiBold', textAlign: 'center' },
-  emptyText: {
-    fontSize: 14,
-    fontFamily: 'Inter_400Regular',
-    textAlign: 'center',
-    lineHeight: 20,
-    opacity: 0.7,
-  },
+  emptyTitle: { fontSize: 17, ...font('semibold'), textAlign: 'center' },
   retryBtn: {
     marginTop: 8,
     paddingHorizontal: 24,
     paddingVertical: 10,
     borderRadius: 20,
+    minHeight: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  retryText: { fontSize: 14, fontFamily: 'Inter_600SemiBold' },
+  retryText: { fontSize: 14, ...font('semibold') },
   factCount: {
-    fontSize: 11,
-    fontFamily: 'Inter_400Regular',
+    fontSize: 12,
+    lineHeight: 18,
+    ...font('regular'),
     marginBottom: 6,
   },
   factCard: {
@@ -551,26 +567,26 @@ const styles = StyleSheet.create({
   },
   factKey: {
     fontSize: 11,
-    fontFamily: 'Inter_600SemiBold',
+    ...font('semibold'),
     textTransform: 'uppercase',
     letterSpacing: 0.5,
     marginBottom: 4,
   },
   factValue: {
     fontSize: 15,
-    fontFamily: 'Inter_400Regular',
-    lineHeight: 21,
+    lineHeight: 22,
+    ...font('regular'),
   },
   factPrev: {
     fontSize: 11,
-    fontFamily: 'Inter_400Regular',
+    ...font('regular'),
     fontStyle: 'italic',
     textDecorationLine: 'line-through',
     flex: 1,
   },
   factMeta: {
     fontSize: 10,
-    fontFamily: 'Inter_400Regular',
+    ...font('regular'),
     opacity: 0.7,
   },
 
@@ -580,8 +596,8 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     padding: 10,
     fontSize: 15,
-    fontFamily: 'Inter_400Regular',
-    lineHeight: 21,
+    lineHeight: 22,
+    ...font('regular'),
     marginTop: 8,
     marginBottom: 10,
     minHeight: 64,
@@ -597,10 +613,10 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',
-    minHeight: 38,
+    minHeight: 44,
   },
   editBtnText: {
     fontSize: 14,
-    fontFamily: 'Inter_600SemiBold',
+    ...font('semibold'),
   },
 });
