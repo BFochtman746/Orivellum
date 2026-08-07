@@ -28,6 +28,9 @@ import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useVellumTokens, alpha } from '@/lib/tokens';
+import { font } from '@/lib/typography';
+import { SkeletonItem } from '@/components/SkeletonItem';
 
 const DOMAIN = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
 const API = `https://${DOMAIN}/api`;
@@ -55,7 +58,7 @@ async function postJson(path: string, body?: object) {
 function StatPill({ label, value, color }: { label: string; value: string | number; color: string }) {
   const colors = useColors();
   return (
-    <View style={[s.statPill, { backgroundColor: color + '18', borderColor: color + '44' }]}>
+    <View style={[s.statPill, { backgroundColor: alpha(color, 0.10), borderColor: alpha(color, 0.27) }]}>
       <Text style={[s.statValue, { color }]}>{value}</Text>
       <Text style={[s.statLabel, { color: colors.mutedForeground }]}>{label}</Text>
     </View>
@@ -165,7 +168,7 @@ function ProfileSection() {
             style={[
               profileS.pill,
               { borderColor: style === opt.value ? colors.primary : colors.border },
-              style === opt.value && { backgroundColor: colors.primary + '18' },
+              style === opt.value && { backgroundColor: alpha(colors.primary, 0.10) },
             ]}
           >
             <Text style={[profileS.pillText, { color: style === opt.value ? colors.primary : colors.mutedForeground }]}>
@@ -190,13 +193,13 @@ function ProfileSection() {
 }
 
 const profileS = StyleSheet.create({
-  label:    { fontSize: 11, fontFamily: 'Inter_600SemiBold', letterSpacing: 0.5, marginBottom: 4, marginTop: 10, textTransform: 'uppercase' },
-  input:    { borderWidth: 1, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8, fontSize: 13, fontFamily: 'Inter_400Regular' },
+  label:    { fontSize: 11, ...font('semibold'), letterSpacing: 0.5, marginBottom: 4, marginTop: 10, textTransform: 'uppercase' },
+  input:    { borderWidth: 1, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8, fontSize: 13, ...font('regular') },
   textarea: { minHeight: 52, textAlignVertical: 'top' },
-  counter:  { fontSize: 10, fontFamily: 'Inter_400Regular', marginTop: 2, textAlign: 'right' },
+  counter:  { fontSize: 10, ...font('regular'), marginTop: 2, textAlign: 'right' },
   pillRow:  { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 4 },
-  pill:     { borderWidth: 1, borderRadius: 20, paddingHorizontal: 10, paddingVertical: 5 },
-  pillText: { fontSize: 12, fontFamily: 'Inter_400Regular' },
+  pill:     { borderWidth: 1, borderRadius: 20, paddingHorizontal: 12, paddingVertical: 8, minHeight: 36, justifyContent: 'center' },
+  pillText: { fontSize: 12, ...font('regular') },
 });
 
 // ── Toggle row ────────────────────────────────────────────────────────────────
@@ -244,6 +247,7 @@ function ToggleRow({
 
 export default function SystemScreen() {
   const colors = useColors();
+  const T = useVellumTokens();
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const qc = useQueryClient();
@@ -406,12 +410,18 @@ export default function SystemScreen() {
 
   const embState: string = (embStatus as any)?.state ?? 'unknown';
   const embOk = embState === 'closed'; // circuit-breaker "closed" = healthy
+  // Embeddings: ok → green, loading/half-open → gilt, open/error → rust
+  const embColor = embOk ? T.green : embState === 'open' ? T.rust : T.gilt;
 
   return (
     <View style={[s.container, { backgroundColor: colors.background }]}>
       {/* Header */}
       <View style={[s.header, { paddingTop: topPad + 8, borderBottomColor: colors.border, backgroundColor: colors.background }]}>
-        <Pressable onPress={() => router.back()} style={s.backRow} hitSlop={8}>
+        <Pressable
+          onPress={() => router.back()}
+          style={s.backRow}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+        >
           <Feather name="arrow-left" size={18} color={colors.primary} />
           <Text style={[s.backLabel, { color: colors.primary }]}>Back</Text>
         </Pressable>
@@ -425,26 +435,32 @@ export default function SystemScreen() {
       </View>
 
       <ScrollView
-        contentContainerStyle={{ padding: 16, paddingBottom: insets.bottom + 32 }}
+        contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 16, paddingBottom: insets.bottom + 24 }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={colors.primary} />}
         showsVerticalScrollIndicator={false}
       >
         {/* Health card */}
         <Section title="Server Health" icon="activity">
           {healthLoading ? (
-            <ActivityIndicator color={colors.primary} style={{ marginVertical: 12 }} />
+            <>
+              <SkeletonItem lines={1} icon={false} />
+              <SkeletonItem lines={1} icon={false} />
+            </>
           ) : (
             <>
-              <View style={[s.healthBadge, { backgroundColor: overallOk ? '#22c55e18' : '#ef444418', borderColor: overallOk ? '#22c55e44' : '#ef444444' }]}>
-                <View style={[s.dot, { backgroundColor: overallOk ? '#22c55e' : '#ef4444' }]} />
-                <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: overallOk ? '#22c55e' : '#ef4444' }}>
+              <View style={[s.healthBadge, {
+                backgroundColor: alpha(overallOk ? T.green : T.rust, 0.10),
+                borderColor: alpha(overallOk ? T.green : T.rust, 0.28),
+              }]}>
+                <View style={[s.dot, { backgroundColor: overallOk ? T.green : T.rust }]} />
+                <Text style={[s.healthBadgeText, { color: overallOk ? T.green : T.rust }]}>
                   {overallOk ? 'All systems operational' : 'Degraded — check server logs'}
                 </Text>
               </View>
               <View style={s.pillRow}>
                 <StatPill label="Works" value={dbStats.works ?? '—'} color={colors.primary} />
-                <StatPill label="Docs" value={dbStats.documents ?? '—'} color="#8b5cf6" />
-                <StatPill label="Knowledge" value={dbStats.knowledge ?? '—'} color="#0ea5e9" />
+                <StatPill label="Docs" value={dbStats.documents ?? '—'} color={colors.mutedForeground} />
+                <StatPill label="Knowledge" value={dbStats.knowledge ?? '—'} color={colors.mutedForeground} />
                 {dbStats.size_mb != null && (
                   <StatPill label="DB" value={`${dbStats.size_mb} MB`} color={colors.mutedForeground} />
                 )}
@@ -489,25 +505,25 @@ export default function SystemScreen() {
                 <View style={[
                   audioEnhBadge.badge,
                   audioEnhance.installed
-                    ? { backgroundColor: '#22c55e18', borderColor: '#22c55e55' }
+                    ? { backgroundColor: alpha(T.green, 0.10), borderColor: alpha(T.green, 0.33) }
                     : { backgroundColor: colors.muted, borderColor: colors.border },
                 ]}>
                   <Text style={[
                     audioEnhBadge.badgeText,
-                    { color: audioEnhance.installed ? '#22c55e' : colors.mutedForeground },
+                    { color: audioEnhance.installed ? T.green : colors.mutedForeground },
                   ]}>
                     {audioEnhance.installed ? 'installed' : 'not installed'}
                   </Text>
                 </View>
                 {audioEnhance.installed && audioEnhance.enabled && (
-                  <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: '#22c55e' }}>
+                  <Text style={[s.audioStatusText, { color: T.green }]}>
                     Active — audio will be denoised before transcription
                   </Text>
                 )}
               </View>
               {!audioEnhance.installed && audioEnhance.install_hint && (
-                <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: '#f59e0b', lineHeight: 16 }}>
-                  To install: <Text style={{ fontFamily: 'Inter_600SemiBold' }}>{audioEnhance.install_hint}</Text>
+                <Text style={[s.audioStatusText, { color: T.gilt, lineHeight: 16 }]}>
+                  To install: <Text style={{ ...font('semibold') }}>{audioEnhance.install_hint}</Text>
                 </Text>
               )}
             </View>
@@ -517,14 +533,21 @@ export default function SystemScreen() {
         {/* Embeddings */}
         <Section title="Semantic Search" icon="search">
           <View style={s.row}>
-            <View style={[s.dot, { backgroundColor: embOk ? '#22c55e' : '#f59e0b', marginRight: 6 }]} />
+            <View style={[s.dot, { backgroundColor: embColor, marginRight: 6 }]} />
             <Text style={[s.rowText, { color: colors.foreground }]}>
-              {embOk ? 'Semantic search active' : embState === 'open' ? 'Circuit breaker open — keyword-only mode' : `State: ${embState}`}
+              {embOk
+                ? 'Semantic search active'
+                : embState === 'open'
+                  ? 'Circuit breaker open — keyword-only mode'
+                  : `State: ${embState}`}
             </Text>
           </View>
           {probeResult && (
-            <View style={[s.probeResult, { backgroundColor: probeResult.startsWith('✓') ? '#22c55e18' : '#ef444418', borderColor: probeResult.startsWith('✓') ? '#22c55e44' : '#ef444444' }]}>
-              <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: probeResult.startsWith('✓') ? '#22c55e' : '#ef4444' }}>
+            <View style={[s.probeResult, {
+              backgroundColor: alpha(probeResult.startsWith('✓') ? T.green : T.rust, 0.10),
+              borderColor: alpha(probeResult.startsWith('✓') ? T.green : T.rust, 0.28),
+            }]}>
+              <Text style={[s.probeResultText, { color: probeResult.startsWith('✓') ? T.green : T.rust }]}>
                 {probeResult}
               </Text>
             </View>
@@ -545,7 +568,10 @@ export default function SystemScreen() {
         <Section title="Nightshift Maintenance" icon="moon">
           {nightshiftStatus && (
             <View style={s.row}>
-              <View style={[s.dot, { backgroundColor: (nightshiftStatus as any).running ? '#f59e0b' : '#22c55e', marginRight: 6 }]} />
+              <View style={[s.dot, {
+                backgroundColor: (nightshiftStatus as any).running ? T.gilt : T.green,
+                marginRight: 6,
+              }]} />
               <Text style={[s.rowText, { color: colors.foreground }]}>
                 {(nightshiftStatus as any).running ? 'Running now…' : 'Idle'}
               </Text>
@@ -613,42 +639,47 @@ export default function SystemScreen() {
 const s = StyleSheet.create({
   container: { flex: 1 },
   header: { paddingHorizontal: 16, paddingBottom: 14, borderBottomWidth: 1 },
-  backRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 10 },
-  backLabel: { fontSize: 14, fontFamily: 'Inter_500Medium' },
-  title: { fontSize: 22, fontFamily: 'Inter_700Bold', letterSpacing: -0.3 },
-  subtitle: { fontSize: 12, fontFamily: 'Inter_400Regular', marginTop: 2 },
+  backRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 10, minHeight: 44 },
+  backLabel: { fontSize: 14, ...font('medium') },
+  title: { fontSize: 22, ...font('bold'), letterSpacing: -0.3 },
+  subtitle: { fontSize: 12, lineHeight: 18, ...font('regular'), marginTop: 2 },
   // Section
-  section: { borderRadius: 10, borderWidth: 1, padding: 14, marginBottom: 14 },
+  section: { borderRadius: 10, borderWidth: 1, padding: 14, marginBottom: 16 },
   sectionHead: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 12 },
-  sectionTitle: { fontSize: 10, fontFamily: 'Inter_700Bold', letterSpacing: 1 },
+  sectionTitle: { fontSize: 10, ...font('bold'), letterSpacing: 1 },
   // Stats
   pillRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginVertical: 8 },
   statPill: { borderRadius: 8, borderWidth: 1, paddingHorizontal: 10, paddingVertical: 6, alignItems: 'center', minWidth: 70 },
-  statValue: { fontSize: 16, fontFamily: 'Inter_700Bold' },
-  statLabel: { fontSize: 10, fontFamily: 'Inter_400Regular', marginTop: 1 },
-  versionText: { fontSize: 11, fontFamily: 'Inter_400Regular', marginTop: 6 },
+  statValue: { fontSize: 16, ...font('bold') },
+  statLabel: { fontSize: 10, ...font('regular'), marginTop: 1 },
+  versionText: { fontSize: 11, lineHeight: 16, ...font('regular'), marginTop: 6 },
   // Health
   healthBadge: { flexDirection: 'row', alignItems: 'center', gap: 8, padding: 10, borderRadius: 8, borderWidth: 1, marginBottom: 10 },
+  healthBadgeText: { fontSize: 13, lineHeight: 18, ...font('semibold') },
   dot: { width: 8, height: 8, borderRadius: 4 },
   // Toggle row
-  toggleRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, borderTopWidth: StyleSheet.hairlineWidth },
-  toggleLabel: { fontSize: 13, fontFamily: 'Inter_600SemiBold', marginBottom: 2 },
-  toggleDesc: { fontSize: 11, fontFamily: 'Inter_400Regular', lineHeight: 15 },
+  toggleRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, minHeight: 48, borderTopWidth: StyleSheet.hairlineWidth },
+  toggleLabel: { fontSize: 13, lineHeight: 18, ...font('semibold'), marginBottom: 2 },
+  toggleDesc: { fontSize: 11, lineHeight: 15, ...font('regular') },
   // Generic row
   row: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
-  rowText: { fontSize: 13, fontFamily: 'Inter_400Regular', flex: 1 },
-  metaText: { fontSize: 12, fontFamily: 'Inter_400Regular', marginBottom: 10, lineHeight: 17 },
+  rowText: { fontSize: 13, lineHeight: 18, ...font('regular'), flex: 1 },
+  metaText: { fontSize: 12, lineHeight: 18, ...font('regular'), marginBottom: 10 },
+  // Audio status inline text
+  audioStatusText: { fontSize: 11, lineHeight: 16, ...font('regular') },
   // Probe result
   probeResult: { borderRadius: 6, borderWidth: 1, padding: 8, marginVertical: 6 },
+  probeResultText: { fontSize: 12, lineHeight: 18, ...font('regular') },
   // Action button
   actionBtn: {
     flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'flex-start',
-    borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 7, marginTop: 4,
+    borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, marginTop: 4,
+    minHeight: 44,
   },
-  actionBtnText: { fontSize: 13, fontFamily: 'Inter_500Medium' },
+  actionBtnText: { fontSize: 13, lineHeight: 18, ...font('medium') },
 });
 
 const audioEnhBadge = StyleSheet.create({
   badge:     { borderWidth: 1, borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2 },
-  badgeText: { fontSize: 10, fontFamily: 'Inter_600SemiBold' },
+  badgeText: { fontSize: 10, ...font('semibold') },
 });
