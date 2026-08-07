@@ -9,11 +9,14 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useColors } from '@/hooks/useColors';
+import { useVellumTokens } from '@/lib/tokens';
+import { font } from '@/lib/typography';
 import { Feather } from '@expo/vector-icons';
 import { KnowledgeGraphView } from '@/components/KnowledgeGraphView';
 
 export default function GraphScreen() {
   const colors = useColors();
+  const T = useVellumTokens();
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { work_id, work_title } = useLocalSearchParams<{ work_id?: string; work_title?: string }>();
@@ -32,7 +35,7 @@ export default function GraphScreen() {
       }]}>
         <Pressable
           onPress={() => router.back()}
-          hitSlop={10}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
           style={gStyles.backBtn}
           accessibilityRole="button"
           accessibilityLabel="Back"
@@ -55,8 +58,8 @@ export default function GraphScreen() {
               { backgroundColor: isGlobal ? colors.primary : colors.muted, opacity: pressed ? 0.75 : 1 },
             ]}
           >
-            <Feather name="globe" size={11} color={isGlobal ? '#fff' : colors.mutedForeground} />
-            <Text style={{ fontSize: 11, fontFamily: 'Inter_600SemiBold', color: isGlobal ? '#fff' : colors.mutedForeground }}>
+            <Feather name="globe" size={11} color={isGlobal ? colors.foreground : colors.mutedForeground} />
+            <Text style={[gStyles.toggleText, { color: isGlobal ? colors.foreground : colors.mutedForeground }]}>
               {isGlobal ? 'Global' : 'This work'}
             </Text>
           </Pressable>
@@ -74,15 +77,33 @@ const gStyles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 12,
+    paddingHorizontal: 16,
     paddingBottom: 10,
     gap: 8,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  backBtn:     { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
-  headerTitle: { fontSize: 15, fontFamily: 'Inter_600SemiBold' },
+  backBtn: {
+    minHeight: 44,
+    minWidth: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  headerTitle: {
+    fontSize: 15,
+    lineHeight: 22,
+    ...font('semibold'),
+  },
   toggleBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 4,
-    paddingHorizontal: 10, paddingVertical: 6, borderRadius: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    minHeight: 44,
+    borderRadius: 20,
+  },
+  toggleText: {
+    fontSize: 11,
+    lineHeight: 14,
+    ...font('semibold'),
   },
 });
