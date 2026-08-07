@@ -3952,12 +3952,75 @@ class OrivellumDB:
         {"episodic", "semantic", "procedural", "working", "zettelkasten"}
     )
 
+    # -------------------------------------------------------------------------
+    # Source evidence (v99) — Evidence Before Belief
+    # -------------------------------------------------------------------------
+
+    def create_memory_evidence(
+        self,
+        raw_text: str,
+        source_type: str = "conversation",
+        source_id: str | None = None,
+        conversation_id: str | None = None,
+        message_id: str | None = None,
+    ) -> str:
+        """Persist a source-evidence row and return its ID.
+
+        Must be called BEFORE upsert_memory_fact so every derived fact has a
+        traceable origin record (Evidence Before Belief principle).  The
+        raw_text is the source passage — the conversation exchange or document
+        chunk — that triggered the inference.
+        """
+        eid = _uuid()
+        now = _now()
+        with self._lock:
+            self._conn.execute(
+                """INSERT INTO memory_evidence
+                       (id, raw_text, source_type, source_id,
+                        conversation_id, message_id, created_at)
+                   VALUES (?,?,?,?,?,?,?)""",
+                (
+                    eid, raw_text[:2000], source_type, source_id,
+                    conversation_id, message_id, now,
+                ),
+            )
+            self._conn.commit()
+        return eid
+
+    def get_memory_evidence(self, evidence_id: str) -> dict | None:
+        """Return a single evidence row by ID, or None if not found."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM memory_evidence WHERE id=?", (evidence_id,)
+            ).fetchone()
+        return dict(row) if row else None
+
+    def delete_memory_evidence(self, evidence_id: str) -> bool:
+        """Delete an evidence row by ID.
+
+        Called when the capture pipeline commits an evidence row but
+        subsequently produces no qualifying memory facts — ensuring that raw
+        conversation text is not retained beyond its usefulness.  Returns True
+        if a row was deleted, False if the ID was not found.
+        """
+        with self._lock:
+            cur = self._conn.execute(
+                "DELETE FROM memory_evidence WHERE id=?", (evidence_id,)
+            )
+            self._conn.commit()
+        return cur.rowcount > 0
+
+    # -------------------------------------------------------------------------
+    # Bi-temporal memory (v98+)
+    # -------------------------------------------------------------------------
+
     def upsert_memory_fact(
         self,
         key: str,
         value: str,
         source_conv_id: str | None = None,
         memory_type: str = "semantic",
+        source_evidence_id: str | None = None,
     ) -> bool:
         """Append a durable fact to the bi-temporal memory log (v98+).
 
@@ -3992,9 +4055,12 @@ class OrivellumDB:
             self._conn.execute(
                 """INSERT INTO user_memory
                        (id, key, value, memory_type, valid_from, valid_to,
-                        txn_time, source_conv_id, created_at)
-                   VALUES (?,?,?,?,?,NULL,?,?,?)""",
-                (_uuid(), key, value, memory_type, now, now, source_conv_id, now),
+                        txn_time, source_conv_id, source_evidence_id, created_at)
+                   VALUES (?,?,?,?,?,NULL,?,?,?,?)""",
+                (
+                    _uuid(), key, value, memory_type, now, now,
+                    source_conv_id, source_evidence_id, now,
+                ),
             )
             self._conn.commit()
         return True
@@ -4048,24 +4114,50 @@ class OrivellumDB:
             self._conn.commit()
         return True
 
-    def get_current_memory_facts(self, limit: int = 50) -> list[dict]:
+    def get_current_memory_facts(
+        self, limit: int = 50, include_evidence: bool = False
+    ) -> list[dict]:
         """Return all current (non-superseded) memory facts, newest first.
 
         Filters by valid_to IS NULL so only live bi-temporal rows are returned.
         Falls back gracefully when running on a pre-v98 schema.
+
+        When ``include_evidence=True``, LEFT JOINs with ``memory_evidence`` to
+        add ``evidence_text``, ``evidence_source_type``, ``evidence_source_id``,
+        ``evidence_conversation_id``, and ``evidence_message_id`` to each row.
+        Missing evidence (NULL source_evidence_id) returns NULL for all five.
         """
         with self._lock:
             try:
-                rows = self._conn.execute(
-                    """SELECT id, key, value, memory_type, valid_from, valid_to,
-                              txn_time, source_conv_id, created_at
-                       FROM user_memory
-                       WHERE valid_to IS NULL
-                       ORDER BY created_at DESC LIMIT ?""",
-                    (limit,),
-                ).fetchall()
+                if include_evidence:
+                    rows = self._conn.execute(
+                        """SELECT um.id, um.key, um.value, um.memory_type,
+                                  um.valid_from, um.valid_to, um.txn_time,
+                                  um.source_conv_id, um.source_evidence_id,
+                                  um.created_at,
+                                  me.raw_text        AS evidence_text,
+                                  me.source_type     AS evidence_source_type,
+                                  me.source_id       AS evidence_source_id,
+                                  me.conversation_id AS evidence_conversation_id,
+                                  me.message_id      AS evidence_message_id
+                           FROM user_memory um
+                           LEFT JOIN memory_evidence me
+                                  ON um.source_evidence_id = me.id
+                           WHERE um.valid_to IS NULL
+                           ORDER BY um.created_at DESC LIMIT ?""",
+                        (limit,),
+                    ).fetchall()
+                else:
+                    rows = self._conn.execute(
+                        """SELECT id, key, value, memory_type, valid_from, valid_to,
+                                  txn_time, source_conv_id, source_evidence_id, created_at
+                           FROM user_memory
+                           WHERE valid_to IS NULL
+                           ORDER BY created_at DESC LIMIT ?""",
+                        (limit,),
+                    ).fetchall()
             except Exception:
-                # Pre-v98 fallback — columns not yet added
+                # Pre-v98/v99 fallback — columns not yet added
                 rows = self._conn.execute(
                     """SELECT id, key, value, source_conv_id, created_at
                        FROM user_memory

@@ -1644,4 +1644,27 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         CREATE INDEX IF NOT EXISTS um_type        ON user_memory(memory_type);
         CREATE INDEX IF NOT EXISTS um_valid_from  ON user_memory(valid_from);
     """),
+
+    # v99 — Evidence Before Belief: source evidence table + FK on user_memory.
+    # Every memory fact must now have a traceable origin.  The capture pipeline
+    # writes a memory_evidence row first (raw_text = the source passage that
+    # triggered the inference), then writes the memory row with source_evidence_id
+    # pointing back to it.  Existing facts keep source_evidence_id = NULL — they
+    # are not broken, just untraced.  Future contradiction detection can join
+    # conflicting memory rows back to their evidence to determine authority.
+    (99, "Source evidence table for memory derivation (Evidence Before Belief)", """
+        CREATE TABLE IF NOT EXISTS memory_evidence (
+            id              TEXT PRIMARY KEY,
+            raw_text        TEXT NOT NULL,
+            source_type     TEXT NOT NULL DEFAULT 'conversation',
+            source_id       TEXT,
+            conversation_id TEXT,
+            message_id      TEXT,
+            created_at      TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS me_source_type ON memory_evidence(source_type);
+        CREATE INDEX IF NOT EXISTS me_conv        ON memory_evidence(conversation_id);
+        ALTER TABLE user_memory ADD COLUMN source_evidence_id TEXT;
+        CREATE INDEX IF NOT EXISTS um_evidence ON user_memory(source_evidence_id);
+    """),
 ]

@@ -44,7 +44,7 @@ import {
   Trash2, Wifi, WifiOff, Loader2, Cpu, Pencil, BookOpen, Archive, ArchiveRestore,
   AlertTriangle, FolderOpen, FileText, ChevronRight, ChevronLeft, X as XIcon, Zap, Brain,
   Globe, Paperclip, Download, Layers, HelpCircle, Compass, ChevronDown, ImageIcon, Square,
-  Sparkles, History, RefreshCw,
+  Sparkles, History, RefreshCw, ExternalLink,
 } from "lucide-react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -1014,7 +1014,14 @@ type MemoryFact = {
   txn_time?: string | null;
   prev_value?: string | null;
   source_conv_id?: string | null;
+  source_evidence_id?: string | null;
   created_at: string;
+  // Evidence fields (present when ?include_evidence=1)
+  evidence_text?: string | null;
+  evidence_source_type?: string | null;
+  evidence_source_id?: string | null;
+  evidence_conversation_id?: string | null;
+  evidence_message_id?: string | null;
 };
 
 const MEMORY_TYPE_STYLE: Record<string, { label: string; cls: string }> = {
@@ -1026,16 +1033,25 @@ const MEMORY_TYPE_STYLE: Record<string, { label: string; cls: string }> = {
 };
 
 function MemoryPanel({ apiBase }: { apiBase: string }) {
+  const [expandedEvidence, setExpandedEvidence] = useState<Set<string>>(new Set());
+
   const { data, isLoading, refetch, isRefetching } = useQuery<{ facts: MemoryFact[]; total: number }>({
     queryKey: ["memory-facts"],
     queryFn: async () => {
       const { buildAuthHeaders } = await import("@/lib/auth");
-      const r = await fetch(`${apiBase}/memory`, { headers: buildAuthHeaders() });
+      const r = await fetch(`${apiBase}/memory?include_evidence=1`, { headers: buildAuthHeaders() });
       if (!r.ok) throw new Error("Failed");
       return r.json();
     },
     staleTime: 30_000,
   });
+
+  const toggleEvidence = (id: string) =>
+    setExpandedEvidence(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
 
   const facts = data?.facts ?? [];
 
@@ -1072,24 +1088,55 @@ function MemoryPanel({ apiBase }: { apiBase: string }) {
           No facts yet — they're captured automatically as you chat.
         </div>
       ) : (
-        <div className="px-4 pb-3 space-y-1.5 max-h-52 overflow-y-auto">
+        <div className="px-4 pb-3 space-y-2 max-h-64 overflow-y-auto">
           {facts.map((f) => {
+            const fid = f.id ?? f.key;
             const typeStyle = MEMORY_TYPE_STYLE[f.memory_type ?? "semantic"] ?? MEMORY_TYPE_STYLE.semantic;
+            const hasEvidence = Boolean(f.evidence_text);
+            const evidenceOpen = expandedEvidence.has(fid);
             return (
-              <div key={f.id ?? f.key} className="text-[11px] leading-snug">
-                <div className="flex items-center gap-1 flex-wrap">
-                  <span className={`text-[9px] font-mono font-semibold px-1 py-0.5 rounded shrink-0 ${typeStyle.cls}`}>
+              <div key={fid} className="text-[11px] leading-snug">
+                <div className="flex items-start gap-1 flex-wrap">
+                  <span className={`text-[9px] font-mono font-semibold px-1 py-0.5 rounded shrink-0 mt-px ${typeStyle.cls}`}>
                     {typeStyle.label}
                   </span>
-                  <span className="font-mono text-violet-600/80 dark:text-violet-400/80">
+                  <span className="font-mono text-violet-600/80 dark:text-violet-400/80 shrink-0">
                     {f.key}:
                   </span>
-                  <span className="text-foreground/80">{f.value}</span>
+                  <span className="text-foreground/80 flex-1">{f.value}</span>
+                  {hasEvidence && (
+                    <button
+                      onClick={() => toggleEvidence(fid)}
+                      title={evidenceOpen ? "Hide source" : "Show source"}
+                      className="ml-auto shrink-0 text-muted-foreground/40 hover:text-muted-foreground/70 transition-colors"
+                    >
+                      <ChevronDown className={`w-3 h-3 transition-transform ${evidenceOpen ? "rotate-180" : ""}`} />
+                    </button>
+                  )}
                 </div>
                 {f.valid_from && (
                   <div className="text-[9px] text-muted-foreground/40 mt-0.5 font-mono">
                     valid from {f.valid_from.slice(0, 10)}
                     {f.valid_to ? ` → ${f.valid_to.slice(0, 10)}` : ""}
+                  </div>
+                )}
+                {hasEvidence && evidenceOpen && (
+                  <div className="mt-1.5 rounded border border-border/40 bg-muted/30 p-2 space-y-1">
+                    <div className="text-[9px] font-semibold text-muted-foreground/60 uppercase tracking-wide">
+                      Source · {f.evidence_source_type ?? "conversation"}
+                    </div>
+                    <p className="text-[10px] text-foreground/60 leading-relaxed line-clamp-4 whitespace-pre-wrap break-words">
+                      {f.evidence_text}
+                    </p>
+                    {f.evidence_conversation_id && (
+                      <a
+                        href={`/chat?id=${f.evidence_conversation_id}`}
+                        className="inline-flex items-center gap-0.5 text-[9px] text-violet-500/70 hover:text-violet-500 transition-colors"
+                      >
+                        <ExternalLink className="w-2.5 h-2.5" />
+                        View conversation
+                      </a>
+                    )}
                   </div>
                 )}
               </div>

@@ -356,11 +356,17 @@ def delete_conversation(conv_id: str):
 
 
 @router.get("/memory")
-async def get_memory() -> dict:
-    """Return current (non-superseded) user memory facts, newest first."""
+async def get_memory(include_evidence: bool = False) -> dict:
+    """Return current (non-superseded) user memory facts, newest first.
+
+    Pass ``?include_evidence=1`` (or ``?include_evidence=true``) to include
+    the raw source passage that triggered each fact's inference.  Evidence
+    fields are prefixed ``evidence_``.  Facts captured before v99 have
+    ``source_evidence_id=null`` and all evidence fields will be null.
+    """
     db = get_db()
     try:
-        facts = db.get_current_memory_facts(limit=50)
+        facts = db.get_current_memory_facts(limit=50, include_evidence=include_evidence)
     except Exception:
         facts = []
     return {"facts": facts, "total": len(facts)}
@@ -3082,11 +3088,38 @@ def _handle_action_preview(action_name: str, action_inputs: dict) -> tuple[str, 
 def _handle_remember(db: Any, user_text: str, base_url: str, model: str) -> str:
     """Synchronously extract and store a durable fact, then return a confirmation.
 
-    Only acknowledges success after a committed database write.
+    Evidence-Before-Belief ordering (v99+):
+    1. The user's raw message is persisted to ``memory_evidence`` first, before
+       the LLM is invoked.  If the evidence write fails, the capture aborts so
+       no untraced belief is ever written.
+    2. The LLM derives the fact key/value from the committed evidence text.
+    3. The memory row is written with ``source_evidence_id`` pointing back to
+       the pre-committed evidence row.
+
     Returns a clear failure message when extraction or storage does not succeed.
     """
     try:
         from orivellum.capabilities.cognition import _call_sync
+
+        # ── Step 1: Persist source evidence BEFORE any LLM invocation ────────
+        try:
+            evidence_id: str | None = db.create_memory_evidence(
+                raw_text=user_text[:2000],
+                source_type="conversation",
+                source_id=None,
+                conversation_id=None,
+            )
+        except Exception as _ev_exc:
+            logger.warning(
+                "Remember: evidence write failed — aborting capture: %s", _ev_exc
+            )
+            return (
+                "📌 **Could not save**\n\n"
+                "Something went wrong while trying to store that fact "
+                f"({type(_ev_exc).__name__}). Please try again."
+            )
+
+        # ── Step 2: Derive the fact from the now-committed evidence ──────────
         prompt = (
             "Extract the single most important durable fact from this message. "
             "Return ONLY valid JSON (no code fences): "
@@ -3110,6 +3143,12 @@ def _handle_remember(db: Any, user_text: str, base_url: str, model: str) -> str:
         value = str(parsed.get("value") or "").strip()[:500]
 
         if not key or not value:
+            # LLM found nothing worth storing — delete the evidence row immediately
+            # so the raw user message is not retained beyond its usefulness.
+            try:
+                db.delete_memory_evidence(evidence_id)
+            except Exception:
+                pass
             return (
                 "📌 **Nothing stored**\n\n"
                 "I couldn't identify a specific fact worth saving from that message. "
@@ -3117,7 +3156,18 @@ def _handle_remember(db: Any, user_text: str, base_url: str, model: str) -> str:
                 "e.g. *\"remember that I prefer APA citations\"*."
             )
 
-        db.upsert_memory_fact(key, value, source_conv_id=None)
+        # ── Step 3: Write the fact referencing the pre-committed evidence ─────
+        stored = db.upsert_memory_fact(
+            key, value,
+            source_conv_id=None,
+            source_evidence_id=evidence_id,
+        )
+        if not stored:
+            # No-op upsert (value identical) — delete the evidence row
+            try:
+                db.delete_memory_evidence(evidence_id)
+            except Exception:
+                pass
         db.audit("user_memory.upserted", object_id=None, object_type="user_memory",
                  actor="user", detail=key[:80])
 
@@ -3369,10 +3419,17 @@ def _infer_memory_facts(
 ) -> None:
     """Extract and store durable facts from a full exchange using LLM inference.
 
-    Unlike the legacy trigger-phrase approach, this runs on every substantive
-    exchange.  A quality gate (confidence ≥ 0.75) keeps noise out.  Changed
-    facts are versioned rather than overwritten — the old value is archived
-    with a superseded_at timestamp.
+    Evidence-Before-Belief ordering (v99+):
+    1. The raw exchange text is persisted to ``memory_evidence`` FIRST —
+       before any LLM call is made or any belief derived from the text.
+    2. The LLM then infers facts from the exchange.
+    3. Each derived fact is written to ``user_memory`` with ``source_evidence_id``
+       pointing back to the already-committed evidence row.
+
+    This guarantees every belief has a pre-existing, auditable origin record.
+    If the evidence write fails, inference is skipped entirely (no untraced
+    facts are written).  If inference produces no qualifying facts, the
+    orphaned evidence row is left for the nightly prune pass.
     """
     # Skip trivially short exchanges that won't contain storable facts
     if len(user_text) < 15:
@@ -3384,6 +3441,25 @@ def _infer_memory_facts(
             f"User: {user_text[:600].strip()}\n\n"
             f"Assistant: {assistant_text[:400].strip()}"
         )
+
+        # ── Step 1: Persist source evidence BEFORE any inference ─────────────
+        # This is the Evidence-Before-Belief guarantee: the raw passage that
+        # will be used to derive facts is committed to the database before
+        # the LLM is called.  If this write fails we abort (no untraced facts).
+        try:
+            evidence_id: str | None = db.create_memory_evidence(
+                raw_text=exchange,
+                source_type="conversation",
+                source_id=conv_id,
+                conversation_id=conv_id,
+            )
+        except Exception as _ev_exc:
+            logger.debug(
+                "Memory evidence write failed — skipping inference: %s", _ev_exc
+            )
+            return  # abort: no evidence → no derived facts
+
+        # ── Step 2: Derive beliefs from the now-committed evidence ────────────
         prompt = (
             "Review this conversation exchange. Extract ONLY facts that are:\n"
             "  (a) Specific and concrete — not vague or situational.\n"
@@ -3411,6 +3487,11 @@ def _infer_memory_facts(
             timeout=15,
         )
         if not raw:
+            # LLM returned nothing — discard the evidence row immediately
+            try:
+                db.delete_memory_evidence(evidence_id)
+            except Exception:
+                pass
             return
         clean = raw.strip().strip("`").strip()
         if clean.startswith("json"):
@@ -3420,6 +3501,8 @@ def _infer_memory_facts(
         _VALID_TYPES = frozenset(
             {"episodic", "semantic", "procedural", "working", "zettelkasten"}
         )
+
+        # ── Step 3: Write each fact referencing the pre-committed evidence ────
         written = 0
         for fact in facts[:3]:
             key   = str(fact.get("key") or "").strip()[:80]
@@ -3432,12 +3515,24 @@ def _infer_memory_facts(
                 continue
             raw_type    = str(fact.get("memory_type") or "semantic").strip()
             memory_type = raw_type if raw_type in _VALID_TYPES else "semantic"
-            if db.upsert_memory_fact(key, value, conv_id, memory_type=memory_type):
+            if db.upsert_memory_fact(
+                key, value, conv_id,
+                memory_type=memory_type,
+                source_evidence_id=evidence_id,
+            ):
                 written += 1
+
         if written:
             db.audit("user_memory.inferred", object_id=None, object_type="user_memory",
                      actor="system", detail=f"{written} fact(s) from conv {conv_id[:8]}")
             logger.info("Inference memory: wrote %d fact(s) from conv %s", written, conv_id[:8])
+        else:
+            # No qualifying facts derived — delete the evidence row immediately so
+            # raw conversation text is not retained beyond its usefulness.
+            try:
+                db.delete_memory_evidence(evidence_id)
+            except Exception:
+                pass
     except Exception as exc:
         logger.debug("Inference memory extraction skipped: %s", exc)
 
