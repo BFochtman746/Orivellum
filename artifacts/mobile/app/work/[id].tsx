@@ -2022,6 +2022,29 @@ function OverviewTab({ workId, onStartDiscussion, starting, onNavigateToTab, boo
     chapter_target?: number;
   };
 
+  // ── Progress bar data — derived from bookIntel ────────────────────────────
+  // Prefer the canonical manuscript word count (most accurate single source),
+  // then fall back to summing chapter word counts from the outline.
+  const wordCount: number = (() => {
+    const cw = (bookIntel?.canonical as any)?.word_count;
+    if (typeof cw === 'number' && cw > 0) return cw;
+    if (Array.isArray(bookIntel?.outline)) {
+      return (bookIntel.outline as any[]).reduce(
+        (s: number, ch: any) => s + (ch.word_count ?? 0), 0,
+      );
+    }
+    return 0;
+  })();
+  const chapterCount: number = Array.isArray(bookIntel?.outline)
+    ? (bookIntel.outline as any[]).length : 0;
+  const _wordTarget  = savedTargets.word_target    ?? 50_000;
+  const _chapTarget  = savedTargets.chapter_target ?? 10;
+  const wordPct      = wordCount    > 0 ? Math.min(Math.round(100 * wordCount    / _wordTarget), 100) : 0;
+  const chapPct      = chapterCount > 0 ? Math.min(Math.round(100 * chapterCount / _chapTarget),  100) : 0;
+  const _barColor    = (pct: number): string => pct >= 70 ? T.green : pct >= 30 ? T.gilt : T.rust;
+  const wordBarColor = _barColor(wordPct);
+  const chapBarColor = _barColor(chapPct);
+
   const openTargetEditor = () => {
     setWordInput(String(savedTargets.word_target ?? 50000));
     setChapterInput(String(savedTargets.chapter_target ?? 10));
@@ -2454,29 +2477,69 @@ function OverviewTab({ workId, onStartDiscussion, starting, onNavigateToTab, boo
               opacity: pressed ? 0.7 : 1,
             })}
           >
-            <View style={{ flex: 1, gap: 4 }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                <Feather name="file-text" size={12} color={colors.mutedForeground} />
-                <Text style={{ fontSize: 13, color: colors.foreground }}>
-                  {savedTargets.word_target
-                    ? `${Number(savedTargets.word_target).toLocaleString()} words`
-                    : '50,000 words'}
-                  {!savedTargets.word_target && (
-                    <Text style={{ color: colors.mutedForeground, fontSize: 11 }}> (default)</Text>
+            <View style={{ flex: 1, gap: 8 }}>
+
+              {/* ── Word count row + progress bar ── */}
+              <View style={{ gap: 4 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <Feather name="file-text" size={12} color={colors.mutedForeground} />
+                  <Text style={{ fontSize: 13, color: colors.foreground, flex: 1 }}>
+                    {savedTargets.word_target
+                      ? `${Number(savedTargets.word_target).toLocaleString()} words`
+                      : '50,000 words'}
+                    {!savedTargets.word_target && (
+                      <Text style={{ color: colors.mutedForeground, fontSize: 11 }}> (default)</Text>
+                    )}
+                  </Text>
+                  {wordCount > 0 && (
+                    <Text style={{ fontSize: 11, fontWeight: '600', color: wordBarColor }}>
+                      {wordCount >= 1000
+                        ? `${(wordCount / 1000).toFixed(1)}k`
+                        : wordCount.toLocaleString()}
+                      {' '}/ {_wordTarget >= 1000
+                        ? `${(_wordTarget / 1000).toFixed(0)}k`
+                        : _wordTarget.toLocaleString()}
+                    </Text>
                   )}
-                </Text>
+                </View>
+                {wordCount > 0 && (
+                  <View style={{ height: 3, backgroundColor: colors.muted, borderRadius: 2, overflow: 'hidden' }}>
+                    <View style={{
+                      height: '100%', borderRadius: 2, backgroundColor: wordBarColor,
+                      width: `${wordPct}%` as any,
+                    }} />
+                  </View>
+                )}
               </View>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                <Feather name="layers" size={12} color={colors.mutedForeground} />
-                <Text style={{ fontSize: 13, color: colors.foreground }}>
-                  {savedTargets.chapter_target
-                    ? `${savedTargets.chapter_target} chapters`
-                    : '10 chapters'}
-                  {!savedTargets.chapter_target && (
-                    <Text style={{ color: colors.mutedForeground, fontSize: 11 }}> (default)</Text>
+
+              {/* ── Chapter count row + progress bar ── */}
+              <View style={{ gap: 4 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <Feather name="layers" size={12} color={colors.mutedForeground} />
+                  <Text style={{ fontSize: 13, color: colors.foreground, flex: 1 }}>
+                    {savedTargets.chapter_target
+                      ? `${savedTargets.chapter_target} chapters`
+                      : '10 chapters'}
+                    {!savedTargets.chapter_target && (
+                      <Text style={{ color: colors.mutedForeground, fontSize: 11 }}> (default)</Text>
+                    )}
+                  </Text>
+                  {chapterCount > 0 && (
+                    <Text style={{ fontSize: 11, fontWeight: '600', color: chapBarColor }}>
+                      {chapterCount} / {_chapTarget}
+                    </Text>
                   )}
-                </Text>
+                </View>
+                {chapterCount > 0 && (
+                  <View style={{ height: 3, backgroundColor: colors.muted, borderRadius: 2, overflow: 'hidden' }}>
+                    <View style={{
+                      height: '100%', borderRadius: 2, backgroundColor: chapBarColor,
+                      width: `${chapPct}%` as any,
+                    }} />
+                  </View>
+                )}
               </View>
+
             </View>
             <Feather name="chevron-right" size={14} color={colors.mutedForeground} />
           </Pressable>
