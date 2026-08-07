@@ -1659,6 +1659,8 @@ class TestPromptHealthMultiSlot(unittest.TestCase):
 
             def _fake_run_all(db_, cfg_):
                 # Return a minimal per-slot list without hitting the real LLM.
+                # Must include one entry per PROMPT_SLOTS key so the nightshift
+                # report can emit a line for every slot.
                 return [
                     {"ok": True, "slot": "chat.base", "slot_label": "Base chat",
                      "prompt_name": "Default", "prompt_version": 1,
@@ -1669,6 +1671,12 @@ class TestPromptHealthMultiSlot(unittest.TestCase):
                      "skipped": True, "reason": "content valid", "runs": []},
                     {"ok": True, "slot": "mcos.judge", "slot_label": "MCOS judge",
                      "prompt_name": "Judge", "prompt_version": 1,
+                     "skipped": True, "reason": "content valid", "runs": []},
+                    {"ok": True, "slot": "write.draft", "slot_label": "Prose drafter",
+                     "prompt_name": "Prose drafter", "prompt_version": 1,
+                     "skipped": True, "reason": "content valid", "runs": []},
+                    {"ok": True, "slot": "write.critic", "slot_label": "Adversarial editor",
+                     "prompt_name": "Adversarial editor", "prompt_version": 1,
                      "skipped": True, "reason": "content valid", "runs": []},
                 ]
 
