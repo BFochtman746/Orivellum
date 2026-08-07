@@ -1156,17 +1156,18 @@ export function BookTab({ workId }: { workId: string }) {
                     <span className="text-[10px] font-mono text-muted-foreground shrink-0" title="Word count">
                       {c.word_count.toLocaleString()} w
                     </span>
-                    <span
-                      className="text-[10px] font-mono shrink-0 px-1.5 py-0.5 rounded border"
+                    <Link
+                      href={`/works/${workId}/intelligence`}
+                      className="text-[10px] font-mono shrink-0 px-1.5 py-0.5 rounded border hover:opacity-75 transition-opacity"
                       style={c.knowledge_count === 0
                         ? { color: "var(--rust)", background: "var(--rust-soft)", borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)" }
                         : c.knowledge_count < 3
                         ? { color: "var(--gilt)", background: "var(--gilt-soft)", borderColor: "var(--gilt-line)" }
                         : {}}
-                      title="Knowledge items supporting this chapter"
+                      title={`${c.knowledge_count} knowledge item${c.knowledge_count !== 1 ? "s" : ""} — view on Intelligence page`}
                     >
                       {c.knowledge_count} research
-                    </span>
+                    </Link>
                     <span className="text-[10px] font-mono shrink-0 px-1.5 py-0.5 rounded border" style={chip.style}>{chip.label}</span>
                   </div>
                 );
