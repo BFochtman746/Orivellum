@@ -179,6 +179,25 @@ def learning_due(work_id: str):
     return {"due": due, "count": len(due)}
 
 
+@router.get("/works/{work_id}/learning/analytics")
+def learning_analytics(work_id: str):
+    """Return learning analytics for the Analytics panel.
+
+    Computed from existing work_mastery + work_concepts tables.
+    Response shape:
+      velocity           — [{ week, graduated }]  4-week sparkline
+      stuck              — [{ concept_id, subject, fail_count, error_types }]
+      retention_forecast — [{ concept_id, subject, next_review_at, days_overdue, half_life_days }]
+      session_history    — [{ concept_id, subject, score, question_type, error_type, date }]
+      distribution       — { not_started, in_progress, graduated, due_for_review, total }
+    """
+    db = get_db()
+    if not db.get_work(work_id):
+        raise HTTPException(404, f"Work {work_id!r} not found")
+    from orivellum.capabilities.learning import get_learning_analytics
+    return get_learning_analytics(db, work_id)
+
+
 @router.post("/works/{work_id}/learning/assess")
 async def learning_assess(work_id: str, body: AssessBody):
     """Score the student's answer, update streak, and return routing decision."""

@@ -109,6 +109,17 @@ def learn_list():
     return {"works": works}
 
 
+@router.get("/learn/health")
+def learn_health():
+    """Return aggregate learning health metrics across all Works for the mobile health card.
+
+    Response: { total_due, stuck_count, graduating_this_week }
+    """
+    db = get_db()
+    from orivellum.capabilities.learning import get_learn_health
+    return get_learn_health(db)
+
+
 @router.get("/works")
 def works_list(status: str | None = None, work_type: str | None = None):
     db = get_db()

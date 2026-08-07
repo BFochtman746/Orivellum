@@ -800,6 +800,292 @@ def assess_answer(
     }
 
 
+def get_learning_analytics(db: Any, work_id: str) -> dict:
+    """Return structured analytics for the Learning Analytics Panel.
+
+    Computes entirely from existing work_mastery / work_concepts tables — no new storage.
+
+    Returns
+    -------
+    velocity           list[{week, graduated}] — 4 weekly buckets (3w ago → this week)
+    stuck              list[{concept_id, subject, fail_count, error_types}]
+    retention_forecast list[{concept_id, subject, next_review_at, days_overdue, half_life_days}]
+    session_history    list[{concept_id, subject, score, question_type, error_type, date}]
+    distribution       {not_started, in_progress, graduated, due_for_review, total}
+    """
+    from datetime import timedelta
+
+    now_dt = datetime.now(timezone.utc)
+    now_str = now_dt.isoformat()
+    seven_days_ago     = (now_dt - timedelta(days=7)).isoformat()
+    twentyeight_days_ago = (now_dt - timedelta(days=28)).isoformat()
+
+    with db._lock:
+        concept_ids = [
+            r["id"] for r in db._conn.execute(
+                "SELECT id FROM work_concepts WHERE work_id=?", (work_id,)
+            ).fetchall()
+        ]
+
+    if not concept_ids:
+        buckets = [
+            {"week": "3w ago", "graduated": 0},
+            {"week": "2w ago", "graduated": 0},
+            {"week": "Last week", "graduated": 0},
+            {"week": "This week", "graduated": 0},
+        ]
+        return {
+            "velocity": buckets,
+            "stuck": [],
+            "retention_forecast": [],
+            "session_history": [],
+            "distribution": {"not_started": 0, "in_progress": 0, "graduated": 0,
+                             "due_for_review": 0, "total": 0},
+        }
+
+    ph = ",".join("?" * len(concept_ids))
+
+    with db._lock:
+        # ── 1. Velocity: first graduation per concept in last 28 days ───────────
+        grad_events = db._conn.execute(
+            f"""WITH first_grad AS (
+                    SELECT concept_id, MIN(created_at) AS graduated_at
+                    FROM work_mastery
+                    WHERE concept_id IN ({ph})
+                      AND consecutive_passes >= ?
+                    GROUP BY concept_id
+                )
+                SELECT graduated_at
+                FROM first_grad
+                WHERE graduated_at >= ?""",
+            (*concept_ids, _PASSES_TO_GRAD, twentyeight_days_ago),
+        ).fetchall()
+
+        # ── 2. Stuck concepts: ≥3 failures in last 7 days, no pass in same window ─
+        stuck_rows = db._conn.execute(
+            f"""WITH recent AS (
+                    SELECT concept_id,
+                           SUM(CASE WHEN score < ? THEN 1 ELSE 0 END) AS fail_count,
+                           MAX(CASE WHEN score >= ? THEN 1 ELSE 0 END) AS had_pass
+                    FROM work_mastery
+                    WHERE concept_id IN ({ph})
+                      AND created_at >= ?
+                    GROUP BY concept_id
+                )
+                SELECT wc.id, wc.subject, r.fail_count
+                FROM recent r
+                JOIN work_concepts wc ON wc.id = r.concept_id
+                WHERE r.fail_count >= 3 AND r.had_pass = 0
+                ORDER BY r.fail_count DESC""",
+            (_GRAD_THRESHOLD, _GRAD_THRESHOLD, *concept_ids, seven_days_ago),
+        ).fetchall()
+
+        # Error-type breakdown for stuck concepts only
+        stuck_ids = [r["id"] for r in stuck_rows]
+        error_rows: list = []
+        if stuck_ids:
+            ph2 = ",".join("?" * len(stuck_ids))
+            error_rows = db._conn.execute(
+                f"""SELECT concept_id, error_type, COUNT(*) AS cnt
+                    FROM work_mastery
+                    WHERE concept_id IN ({ph2})
+                      AND created_at >= ?
+                      AND score < ?
+                      AND error_type IS NOT NULL
+                    GROUP BY concept_id, error_type""",
+                (*stuck_ids, seven_days_ago, _GRAD_THRESHOLD),
+            ).fetchall()
+
+        # ── 3. Retention forecast: overdue GRADUATED concepts only ────────────
+        # "graduated" means the latest mastery row has consecutive_passes >= _PASSES_TO_GRAD.
+        # Unstarted / in-progress concepts also receive next_review_at after assessments,
+        # so we must filter on the graduation predicate to avoid surfacing unmastered material
+        # as "retention work."
+        forecast_rows = db._conn.execute(
+            f"""WITH latest AS (
+                    SELECT concept_id,
+                           consecutive_passes,
+                           next_review_at,
+                           COALESCE(half_life_days, 1.0) AS half_life_days,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY concept_id
+                               ORDER BY created_at DESC, rowid DESC
+                           ) AS rn
+                    FROM work_mastery
+                    WHERE concept_id IN ({ph})
+                )
+                SELECT l.concept_id, wc.subject,
+                       l.next_review_at, l.half_life_days
+                FROM latest l
+                JOIN work_concepts wc ON wc.id = l.concept_id
+                WHERE l.rn = 1
+                  AND l.consecutive_passes >= ?
+                  AND l.next_review_at IS NOT NULL
+                  AND l.next_review_at <= ?
+                ORDER BY l.next_review_at ASC
+                LIMIT 5""",
+            (*concept_ids, _PASSES_TO_GRAD, now_str),
+        ).fetchall()
+
+        # ── 4. Session history: last 10 assessments with concept name ───────────
+        history_rows = db._conn.execute(
+            f"""SELECT wm.concept_id, wc.subject,
+                       wm.score, wm.question_type, wm.error_type, wm.created_at
+                FROM work_mastery wm
+                JOIN work_concepts wc ON wc.id = wm.concept_id
+                WHERE wm.concept_id IN ({ph})
+                ORDER BY wm.created_at DESC, wm.rowid DESC
+                LIMIT 10""",
+            concept_ids,
+        ).fetchall()
+
+    # ── 5. Mastery distribution (reuse get_mastery_summary) ────────────────────
+    summary = get_mastery_summary(db, work_id)
+
+    # ── Process velocity: bucket into 4 weekly time slots ──────────────────────
+    bucket_keys = ["3w ago", "2w ago", "Last week", "This week"]
+    buckets: dict[str, int] = {k: 0 for k in bucket_keys}
+    for row in grad_events:
+        try:
+            ev_dt = datetime.fromisoformat(row["graduated_at"].replace("Z", "+00:00"))
+            days_ago = (now_dt - ev_dt).days
+            if days_ago < 7:
+                buckets["This week"] += 1
+            elif days_ago < 14:
+                buckets["Last week"] += 1
+            elif days_ago < 21:
+                buckets["2w ago"] += 1
+            else:
+                buckets["3w ago"] += 1
+        except Exception:
+            pass
+
+    velocity = [{"week": k, "graduated": buckets[k]} for k in bucket_keys]
+
+    # ── Build stuck with error breakdown ────────────────────────────────────────
+    error_by_concept: dict[str, list[dict]] = {}
+    for r in error_rows:
+        error_by_concept.setdefault(r["concept_id"], []).append(
+            {"error_type": r["error_type"], "count": r["cnt"]}
+        )
+
+    stuck = [
+        {
+            "concept_id":  r["id"],
+            "subject":     r["subject"],
+            "fail_count":  r["fail_count"],
+            "error_types": error_by_concept.get(r["id"], []),
+        }
+        for r in stuck_rows
+    ]
+
+    # ── Retention forecast ───────────────────────────────────────────────────────
+    retention_forecast = []
+    for r in forecast_rows:
+        try:
+            nra_dt = datetime.fromisoformat(r["next_review_at"].replace("Z", "+00:00"))
+            days_overdue = max(0.0, (now_dt - nra_dt).total_seconds() / 86400)
+        except Exception:
+            days_overdue = 0.0
+        retention_forecast.append({
+            "concept_id":     r["concept_id"],
+            "subject":        r["subject"],
+            "next_review_at": r["next_review_at"],
+            "days_overdue":   round(days_overdue, 1),
+            "half_life_days": round(float(r["half_life_days"]), 1),
+        })
+
+    return {
+        "velocity":           velocity,
+        "stuck":              stuck,
+        "retention_forecast": retention_forecast,
+        "session_history": [
+            {
+                "concept_id":    r["concept_id"],
+                "subject":       r["subject"],
+                "score":         float(r["score"]),
+                "question_type": r["question_type"] or "recall",
+                "error_type":    r["error_type"],
+                "date":          r["created_at"],
+            }
+            for r in history_rows
+        ],
+        "distribution": {
+            "not_started":   summary["not_started"],
+            "in_progress":   summary["in_progress"],
+            "graduated":     summary["graduated"],
+            "due_for_review": summary["due_count"],
+            "total":         summary["total"],
+        },
+    }
+
+
+def get_learn_health(db: Any) -> dict:
+    """Aggregate learning health metrics across ALL Works — used by the mobile learn tab.
+
+    Returns
+    -------
+    total_due            int  — concepts whose latest next_review_at has passed
+    stuck_count          int  — concepts with ≥3 failures and no pass in last 7 days
+    graduating_this_week int  — concepts that first graduated within the last 7 days
+    """
+    from datetime import timedelta
+
+    now_dt  = datetime.now(timezone.utc)
+    now_str = now_dt.isoformat()
+    seven_days_ago = (now_dt - timedelta(days=7)).isoformat()
+
+    with db._lock:
+        # Total overdue: latest mastery row per concept where next_review_at <= now
+        total_due = db._conn.execute(
+            """WITH latest AS (
+                   SELECT concept_id, next_review_at,
+                          ROW_NUMBER() OVER (
+                              PARTITION BY concept_id ORDER BY created_at DESC, rowid DESC
+                          ) AS rn
+                   FROM work_mastery
+               )
+               SELECT COUNT(DISTINCT concept_id)
+               FROM latest
+               WHERE rn = 1
+                 AND next_review_at IS NOT NULL
+                 AND next_review_at <= ?""",
+            (now_str,),
+        ).fetchone()[0]
+
+        # Stuck across all works: ≥3 failures in last 7 days, no pass in same window
+        stuck_count = db._conn.execute(
+            """SELECT COUNT(*) FROM (
+                   SELECT concept_id,
+                          SUM(CASE WHEN score < ? THEN 1 ELSE 0 END) AS fail_count,
+                          MAX(CASE WHEN score >= ? THEN 1 ELSE 0 END) AS had_pass
+                   FROM work_mastery
+                   WHERE created_at >= ?
+                   GROUP BY concept_id
+                   HAVING fail_count >= 3 AND had_pass = 0
+               )""",
+            (_GRAD_THRESHOLD, _GRAD_THRESHOLD, seven_days_ago),
+        ).fetchone()[0]
+
+        # Graduating this week: first graduation event for each concept within last 7 days
+        graduating_this_week = db._conn.execute(
+            """SELECT COUNT(*) FROM (
+                   SELECT concept_id, MIN(created_at) AS first_grad
+                   FROM work_mastery
+                   WHERE consecutive_passes >= ?
+                   GROUP BY concept_id
+                   HAVING first_grad >= ?
+               )""",
+            (_PASSES_TO_GRAD, seven_days_ago),
+        ).fetchone()[0]
+
+    return {
+        "total_due":            int(total_due or 0),
+        "stuck_count":          int(stuck_count or 0),
+        "graduating_this_week": int(graduating_this_week or 0),
+    }
+
+
 def get_mastery_summary(db: Any, work_id: str) -> dict:
     """Return aggregate mastery stats for the work, including HLR due_count."""
     concepts  = list_concepts(db, work_id)

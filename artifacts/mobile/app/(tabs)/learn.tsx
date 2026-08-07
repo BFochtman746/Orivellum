@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import {
   ActivityIndicator,
+  Linking,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -43,6 +44,92 @@ function MasteryRing({ pct, size = 44 }: { pct: number; size?: number }) {
         strokeLinecap="round"
       />
     </Svg>
+  );
+}
+
+interface LearnHealth {
+  total_due: number;
+  stuck_count: number;
+  graduating_this_week: number;
+}
+
+function LearningHealthCard() {
+  const colors = useColors();
+  const domain = process.env.EXPO_PUBLIC_DOMAIN;
+  const apiBase = domain ? `https://${domain}/api` : 'http://localhost:8000/api';
+  const { data } = useQuery<LearnHealth>({
+    queryKey: ['mobile', 'learn', 'health'],
+    queryFn: () => mobileFetch(`${apiBase}/learn/health`).then(r => r.json()),
+    staleTime: 60_000,
+    refetchInterval: 120_000,
+    enabled: !!domain,
+  });
+
+  // Only render when there's something worth surfacing
+  if (!data || (data.total_due === 0 && data.stuck_count === 0 && data.graduating_this_week === 0)) {
+    return null;
+  }
+
+  const metrics = [
+    {
+      icon: 'clock' as const,
+      value: data.total_due,
+      label: 'due for review',
+      color: data.total_due > 0 ? '#d97706' : colors.mutedForeground,
+    },
+    {
+      icon: 'alert-triangle' as const,
+      value: data.stuck_count,
+      label: 'stuck',
+      color: data.stuck_count > 0 ? '#ef4444' : colors.mutedForeground,
+    },
+    {
+      icon: 'award' as const,
+      value: data.graduating_this_week,
+      label: 'graduated this week',
+      color: data.graduating_this_week > 0 ? '#16a34a' : colors.mutedForeground,
+    },
+  ];
+
+  return (
+    <Pressable
+      onPress={() => {
+        const domain = process.env.EXPO_PUBLIC_DOMAIN;
+        if (domain) Linking.openURL(`https://${domain}/learn`);
+      }}
+      style={({ pressed }) => ({
+        borderRadius: 12, borderWidth: 1, borderColor: colors.border,
+        backgroundColor: colors.card, padding: 14, marginTop: 4, marginBottom: 16,
+        opacity: pressed ? 0.85 : 1,
+      })}
+    >
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 10 }}>
+        <Feather name="activity" size={13} color={colors.primary} />
+        <Text style={{ fontSize: 10, fontFamily: 'Inter_600SemiBold', color: colors.mutedForeground, letterSpacing: 1 }}>
+          LEARNING HEALTH
+        </Text>
+        <Feather name="external-link" size={10} color={colors.mutedForeground} style={{ marginLeft: 'auto' }} />
+      </View>
+      <View style={{ flexDirection: 'row', gap: 0 }}>
+        {metrics.map((m, i) => (
+          <View
+            key={m.label}
+            style={[
+              { flex: 1, alignItems: 'center', gap: 2 },
+              i < metrics.length - 1 && { borderRightWidth: 1, borderRightColor: colors.border },
+            ]}
+          >
+            <Feather name={m.icon} size={13} color={m.color} />
+            <Text style={{ fontSize: 18, fontFamily: 'Merriweather_700Bold', color: m.color }}>
+              {m.value}
+            </Text>
+            <Text style={{ fontSize: 9, fontFamily: 'Inter_400Regular', color: colors.mutedForeground, textAlign: 'center' }}>
+              {m.label}
+            </Text>
+          </View>
+        ))}
+      </View>
+    </Pressable>
   );
 }
 
@@ -165,6 +252,9 @@ export default function LearnScreen() {
           ))}
         </View>
       )}
+
+      {/* Learning health card — shown when there's actionable data */}
+      {!isLoading && <LearningHealthCard />}
 
       {isLoading ? (
         <ActivityIndicator color={colors.primary} style={{ marginTop: 48 }} />

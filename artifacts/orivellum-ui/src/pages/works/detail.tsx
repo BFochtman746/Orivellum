@@ -2886,6 +2886,268 @@ function CompletenessTab({ workId }: { workId: string }) {
   );
 }
 
+// ─── Analytics panel ─────────────────────────────────────────────────────────
+
+const API_BASE_ANALYTICS = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
+
+const ERROR_TYPE_LABELS: Record<string, string> = {
+  careless_slip:            "Careless slip",
+  procedural_gap:           "Procedural gap",
+  conceptual_misconception: "Misconception",
+  knowledge_gap:            "Knowledge gap",
+};
+
+function VelocitySparkline({ weeks }: { weeks: { week: string; graduated: number }[] }) {
+  const max = Math.max(...weeks.map(w => w.graduated), 1);
+  const W = 220, H = 52, pad = 6;
+  const step = (W - pad * 2) / Math.max(weeks.length - 1, 1);
+  const pts = weeks.map((w, i) => ({
+    x: pad + i * step,
+    y: H - pad - ((w.graduated / max) * (H - pad * 2)),
+    v: w.graduated,
+    label: w.week,
+  }));
+  const polyline = pts.map(p => `${p.x},${p.y}`).join(" ");
+  return (
+    <div className="space-y-2">
+      <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} className="overflow-visible">
+        {/* baseline */}
+        <line x1={pad} y1={H - pad} x2={W - pad} y2={H - pad}
+          stroke="var(--border)" strokeWidth={1} />
+        {/* sparkline */}
+        <polyline points={polyline} fill="none"
+          stroke="var(--primary)" strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
+        {/* dots */}
+        {pts.map((p, i) => (
+          <g key={i}>
+            <circle cx={p.x} cy={p.y} r={3.5} fill="var(--primary)" />
+            {p.v > 0 && (
+              <text x={p.x} y={p.y - 7} textAnchor="middle"
+                fontSize={9} fill="var(--foreground)" fontFamily="monospace">{p.v}</text>
+            )}
+          </g>
+        ))}
+      </svg>
+      <div className="flex justify-between text-[9px] font-mono text-muted-foreground">
+        {pts.map((p, i) => <span key={i}>{p.label}</span>)}
+      </div>
+    </div>
+  );
+}
+
+function AnalyticsPanel({ workId }: { workId: string }) {
+  const { data, isLoading, error } = useQuery({
+    queryKey: ["learnAnalytics", workId],
+    queryFn: () =>
+      apiFetch(`${API_BASE_ANALYTICS}/works/${workId}/learning/analytics`)
+        .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); }),
+    staleTime: 60_000,
+    refetchInterval: 120_000,
+  });
+
+  if (isLoading) return (
+    <div className="flex items-center justify-center py-16 gap-3 text-muted-foreground text-sm font-mono">
+      <Loader2 className="w-4 h-4 animate-spin" /> Loading analytics…
+    </div>
+  );
+
+  if (error || !data) return (
+    <div className="py-8 text-center text-sm text-muted-foreground font-mono">
+      Could not load analytics — study a few concepts first.
+    </div>
+  );
+
+  const { velocity, stuck, retention_forecast, session_history, distribution } = data as any;
+  const totalDistrib = distribution.total || 1;
+
+  return (
+    <div className="space-y-6">
+
+      {/* Mastery distribution bar */}
+      <Card className="p-5 space-y-3">
+        <div className="flex items-center gap-2">
+          <BarChart2 className="w-4 h-4 text-primary" />
+          <h4 className="font-serif font-semibold text-sm">Mastery Distribution</h4>
+        </div>
+        <div className="h-2.5 rounded-full overflow-hidden flex gap-0.5">
+          {distribution.graduated > 0 && (
+            <div className="bg-emerald-500 transition-all" style={{ width: `${distribution.graduated / totalDistrib * 100}%` }} title={`Graduated: ${distribution.graduated}`} />
+          )}
+          {distribution.due_for_review > 0 && (
+            <div className="bg-amber-400 transition-all" style={{ width: `${distribution.due_for_review / totalDistrib * 100}%` }} title={`Due for review: ${distribution.due_for_review}`} />
+          )}
+          {distribution.in_progress > 0 && (
+            <div className="bg-violet-400 transition-all" style={{ width: `${distribution.in_progress / totalDistrib * 100}%` }} title={`In progress: ${distribution.in_progress}`} />
+          )}
+          {distribution.not_started > 0 && (
+            <div className="bg-muted transition-all" style={{ width: `${distribution.not_started / totalDistrib * 100}%` }} title={`Not started: ${distribution.not_started}`} />
+          )}
+        </div>
+        <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-[11px] font-mono">
+          {[
+            { label: "Graduated",     value: distribution.graduated,     color: "text-emerald-600" },
+            { label: "Due for review",value: distribution.due_for_review, color: "text-amber-600" },
+            { label: "In progress",   value: distribution.in_progress,   color: "text-violet-600" },
+            { label: "Not started",   value: distribution.not_started,   color: "text-muted-foreground" },
+          ].map(({ label, value, color }) => (
+            <div key={label} className="flex items-center justify-between gap-2">
+              <span className="text-muted-foreground">{label}</span>
+              <span className={`font-semibold ${color}`}>{value}</span>
+            </div>
+          ))}
+        </div>
+      </Card>
+
+      {/* Velocity sparkline */}
+      <Card className="p-5 space-y-3">
+        <div className="flex items-center gap-2">
+          <TrendingUp className="w-4 h-4 text-primary" />
+          <h4 className="font-serif font-semibold text-sm">Graduation Velocity</h4>
+          <span className="text-[10px] font-mono text-muted-foreground ml-auto">concepts / week</span>
+        </div>
+        <VelocitySparkline weeks={velocity} />
+        {(() => {
+          const thisWeek = velocity.find((w: any) => w.week === "This week")?.graduated ?? 0;
+          const lastWeek = velocity.find((w: any) => w.week === "Last week")?.graduated ?? 0;
+          const trend = thisWeek >= lastWeek
+            ? { label: "On track", color: "text-emerald-600" }
+            : { label: "Falling behind", color: "text-amber-600" };
+          return (
+            <p className={`text-[11px] font-mono font-semibold ${trend.color}`}>
+              {trend.label} — {thisWeek} graduated this week
+              {lastWeek > 0 ? ` vs ${lastWeek} last week` : ""}
+            </p>
+          );
+        })()}
+      </Card>
+
+      {/* Stuck concepts */}
+      <Card className="p-5 space-y-3">
+        <div className="flex items-center gap-2">
+          <AlertTriangle className="w-4 h-4 text-amber-500" />
+          <h4 className="font-serif font-semibold text-sm">Stuck Concepts</h4>
+          <span className="text-[10px] font-mono text-muted-foreground ml-auto">3+ failures, last 7 days</span>
+        </div>
+        {stuck.length === 0 ? (
+          <p className="text-sm text-muted-foreground font-mono">
+            No stuck concepts — you're making consistent progress. ✓
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {stuck.map((s: any) => (
+              <div key={s.concept_id}
+                className="flex items-start justify-between gap-3 py-2 border-b border-border/40 last:border-0">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium truncate">{s.subject}</p>
+                  {s.error_types.length > 0 && (
+                    <p className="text-[10px] font-mono text-muted-foreground mt-0.5">
+                      {s.error_types.map((e: any) =>
+                        `${ERROR_TYPE_LABELS[e.error_type] ?? e.error_type} ×${e.count}`
+                      ).join(" · ")}
+                    </p>
+                  )}
+                </div>
+                <span className="shrink-0 text-xs font-mono font-semibold text-amber-600 bg-amber-50 dark:bg-amber-950/40 border border-amber-200/60 px-1.5 py-0.5 rounded">
+                  {s.fail_count}✗
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+
+      {/* Retention forecast */}
+      {retention_forecast.length > 0 && (
+        <Card className="p-5 space-y-3">
+          <div className="flex items-center gap-2">
+            <Clock className="w-4 h-4 text-amber-500" />
+            <h4 className="font-serif font-semibold text-sm">Retention Forecast</h4>
+            <span className="text-[10px] font-mono text-muted-foreground ml-auto">most overdue first</span>
+          </div>
+          <div className="space-y-1.5">
+            {retention_forecast.map((f: any) => (
+              <div key={f.concept_id}
+                className="flex items-center justify-between gap-3 py-1.5 border-b border-border/40 last:border-0">
+                <p className="text-sm truncate flex-1">{f.subject}</p>
+                <div className="flex items-center gap-2 shrink-0 text-[10px] font-mono">
+                  <span className="text-amber-600 font-semibold">
+                    {f.days_overdue < 1
+                      ? `<1 day overdue`
+                      : `${f.days_overdue.toFixed(0)}d overdue`}
+                  </span>
+                  <span className="text-muted-foreground">HL {f.half_life_days}d</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+
+      {/* Session history */}
+      <Card className="p-5 space-y-3">
+        <div className="flex items-center gap-2">
+          <Brain className="w-4 h-4 text-primary" />
+          <h4 className="font-serif font-semibold text-sm">Recent Sessions</h4>
+          <span className="text-[10px] font-mono text-muted-foreground ml-auto">last 10 assessments</span>
+        </div>
+        {session_history.length === 0 ? (
+          <p className="text-sm text-muted-foreground font-mono">
+            No assessments yet — start studying to see your history.
+          </p>
+        ) : (
+          <div className="space-y-0 divide-y divide-border/30">
+            {session_history.map((h: any, i: number) => (
+              <div key={i} className="flex items-center gap-3 py-2 text-sm">
+                <span className={`w-10 text-right font-mono font-semibold shrink-0 text-xs ${
+                  h.score >= 0.75 ? "text-emerald-600" : h.score >= 0.5 ? "text-amber-600" : "text-red-500"
+                }`}>
+                  {Math.round(h.score * 100)}%
+                </span>
+                <span className="flex-1 truncate text-xs">{h.subject}</span>
+                {h.question_type === "transfer" && (
+                  <Zap className="w-3 h-3 text-amber-500 shrink-0" />
+                )}
+                <span className="text-[10px] font-mono text-muted-foreground/60 shrink-0">
+                  {h.date ? new Date(h.date).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : ""}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+// ─── Learn section switcher ───────────────────────────────────────────────────
+
+function LearnSectionPills({
+  active,
+  onChange,
+}: { active: "study" | "analytics"; onChange: (v: "study" | "analytics") => void }) {
+  return (
+    <div className="flex items-center gap-1 p-1 rounded-lg bg-muted/40 border border-border/40 w-fit text-xs font-mono mb-4">
+      {(["study", "analytics"] as const).map(v => (
+        <button
+          key={v}
+          onClick={() => onChange(v)}
+          className={`px-3 py-1 rounded-md capitalize transition-all ${
+            active === v
+              ? "bg-background shadow-sm text-foreground font-semibold"
+              : "text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          {v === "analytics" ? (
+            <span className="flex items-center gap-1"><BarChart2 className="w-3 h-3" /> Analytics</span>
+          ) : (
+            <span className="flex items-center gap-1"><BookOpen className="w-3 h-3" /> Study</span>
+          )}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function LearnTab({ workId }: { workId: string }) {
   const [phase, setPhase]       = useState<LearnPhase>("loading");
   const [session, setSession]   = useState<LearningSession | null>(null);
@@ -2896,6 +3158,7 @@ function LearnTab({ workId }: { workId: string }) {
   const [showConcepts, setShowConcepts] = useState(false);
   const [concepts, setConcepts] = useState<any[]>([]);
   const [resettingConcept, setResettingConcept] = useState<string | null>(null);
+  const [learnSection, setLearnSection] = useState<"study" | "analytics">("study");
 
   const apiBase = API_BASE_WORKS;
 
@@ -3050,6 +3313,16 @@ function LearnTab({ workId }: { workId: string }) {
     );
   };
 
+  // ── Section: Analytics panel (always reachable, independent of study phase) ──
+  if (learnSection === "analytics") {
+    return (
+      <div className="max-w-2xl mx-auto py-4 space-y-4">
+        <LearnSectionPills active="analytics" onChange={setLearnSection} />
+        <AnalyticsPanel workId={workId} />
+      </div>
+    );
+  }
+
   // ── All done ───────────────────────────────────────────────────────────────
   if (phase === "all_done") {
     const handleReset = async () => {
@@ -3059,21 +3332,24 @@ function LearnTab({ workId }: { workId: string }) {
       } catch {/* init handles errors */}
     };
     return (
-      <div className="flex flex-col items-center justify-center py-24 gap-6">
-        <div className="w-16 h-16 rounded-2xl bg-emerald-500/10 flex items-center justify-center">
-          <Trophy className="w-8 h-8 text-emerald-500" />
+      <div className="max-w-2xl mx-auto py-4 space-y-6">
+        <LearnSectionPills active="study" onChange={setLearnSection} />
+        <div className="flex flex-col items-center justify-center py-16 gap-6">
+          <div className="w-16 h-16 rounded-2xl bg-emerald-500/10 flex items-center justify-center">
+            <Trophy className="w-8 h-8 text-emerald-500" />
+          </div>
+          <div className="text-center space-y-2">
+            <h3 className="font-serif text-2xl font-medium">All concepts mastered!</h3>
+            <p className="text-sm text-muted-foreground max-w-xs">
+              You've graduated every concept in this Work. Add more documents to unlock new material,
+              or reset your streaks to study it all again.
+            </p>
+          </div>
+          {summary && <MasteryBar />}
+          <Button variant="outline" size="sm" className="gap-2 mt-2" onClick={handleReset}>
+            <RefreshCw className="w-3.5 h-3.5" /> Reset streaks &amp; study again
+          </Button>
         </div>
-        <div className="text-center space-y-2">
-          <h3 className="font-serif text-2xl font-medium">All concepts mastered!</h3>
-          <p className="text-sm text-muted-foreground max-w-xs">
-            You've graduated every concept in this Work. Add more documents to unlock new material,
-            or reset your streaks to study it all again.
-          </p>
-        </div>
-        {summary && <MasteryBar />}
-        <Button variant="outline" size="sm" className="gap-2 mt-2" onClick={handleReset}>
-          <RefreshCw className="w-3.5 h-3.5" /> Reset streaks &amp; study again
-        </Button>
       </div>
     );
   }
@@ -3081,17 +3357,21 @@ function LearnTab({ workId }: { workId: string }) {
   // ── Loading / seeding ──────────────────────────────────────────────────────
   if (phase === "loading" || phase === "seeding") {
     return (
-      <div className="flex flex-col items-center justify-center py-24 gap-4">
-        <Loader2 className="w-8 h-8 animate-spin text-primary" />
-        <p className="text-sm text-muted-foreground font-mono">
-          {phase === "seeding" ? "Seeding concepts from your knowledge base…" : "Loading your learning session…"}
-        </p>
+      <div className="max-w-2xl mx-auto py-4 space-y-6">
+        <LearnSectionPills active="study" onChange={setLearnSection} />
+        <div className="flex flex-col items-center justify-center py-16 gap-4">
+          <Loader2 className="w-8 h-8 animate-spin text-primary" />
+          <p className="text-sm text-muted-foreground font-mono">
+            {phase === "seeding" ? "Seeding concepts from your knowledge base…" : "Loading your learning session…"}
+          </p>
+        </div>
       </div>
     );
   }
 
   return (
     <div className="max-w-2xl mx-auto py-4 space-y-6">
+      <LearnSectionPills active="study" onChange={setLearnSection} />
       <MasteryBar />
 
       {/* Error banner */}
