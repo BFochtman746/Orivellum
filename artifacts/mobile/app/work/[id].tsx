@@ -1864,6 +1864,41 @@ function OverviewTab({ workId, onStartDiscussion, starting, onNavigateToTab, boo
     setChapterInput('');
   };
 
+  // ── Work type picker ──────────────────────────────────────────────────────
+  const WORK_TYPES_MOBILE = [
+    { id: 'research',  label: 'Research' },
+    { id: 'writing',   label: 'Writing' },
+    { id: 'learning',  label: 'Learning' },
+    { id: 'project',   label: 'Project' },
+    { id: 'reference', label: 'Reference' },
+  ] as const;
+
+  const handleTypeChange = () => {
+    const currentType = work?.work_type ?? 'research';
+    Alert.alert(
+      'Work Type',
+      'Select a type for this Work',
+      [
+        ...WORK_TYPES_MOBILE.map(t => ({
+          text: t.id === currentType ? `${t.label} ✓` : t.label,
+          onPress: () => {
+            if (t.id === currentType) return;
+            updateWork(
+              { workId, data: { work_type: t.id } },
+              {
+                onSuccess: () =>
+                  queryClient.invalidateQueries({ queryKey: getGetWorkQueryKey(workId) }),
+                onError: () =>
+                  Alert.alert('Save failed', 'Could not update work type — check your connection.'),
+              },
+            );
+          },
+        })),
+        { text: 'Cancel', style: 'cancel' as const },
+      ],
+    );
+  };
+
   const startDescEdit = () => {
     setDescDraft(work?.description ?? '');
     setEditingDesc(true);
@@ -1927,43 +1962,45 @@ function OverviewTab({ workId, onStartDiscussion, starting, onNavigateToTab, boo
       )}
 
       <View style={[styles.infoGrid, { borderColor: colors.border }]}>
-        {[
-          { label: 'Type', value: work?.work_type ?? '—', tab: undefined },
-          { label: 'Status', value: work?.status ?? '—', tab: undefined },
-          { label: 'Documents', value: String((work as any)?.doc_count ?? 0), tab: 'docs' as Tab },
-          ...((): { label: string; value: string; tab?: Tab }[] => {
-            const ready = (work as any)?.ready_doc_count ?? 0;
-            const errs  = (work as any)?.error_doc_count ?? 0;
-            const proc  = (work as any)?.processing_doc_count ?? 0;
-            const total = (work as any)?.doc_count ?? 0;
-            if (total === 0) return [];
+        {((): Array<{ label: string; value: string; tab?: Tab; onPress?: () => void }> => {
+          const rows: Array<{ label: string; value: string; tab?: Tab; onPress?: () => void }> = [
+            { label: 'Type', value: work?.work_type ?? '—', onPress: handleTypeChange },
+            { label: 'Status', value: work?.status ?? '—' },
+            { label: 'Documents', value: String((work as any)?.doc_count ?? 0), tab: 'docs' as Tab },
+          ];
+          const ready = (work as any)?.ready_doc_count ?? 0;
+          const errs  = (work as any)?.error_doc_count ?? 0;
+          const proc  = (work as any)?.processing_doc_count ?? 0;
+          const total = (work as any)?.doc_count ?? 0;
+          if (total > 0) {
             const parts: string[] = [];
             if (ready > 0) parts.push(`${ready} ready`);
             if (proc > 0)  parts.push(`${proc} processing`);
             if (errs > 0)  parts.push(`${errs} error${errs !== 1 ? 's' : ''}`);
-            return parts.length ? [{ label: 'Readiness', value: parts.join(' · '), tab: 'docs' as Tab }] : [];
-          })(),
-          { label: 'Knowledge', value: String((work as any)?.knowledge_count ?? 0), tab: 'knowledge' as Tab },
-          { label: 'Pending Tasks', value: String((work as any)?.pending_tasks ?? 0), tab: 'tasks' as Tab },
-          { label: 'Conversations', value: String((work as any)?.conv_count ?? 0), tab: 'conversations' as Tab },
-          {
-            label: 'Updated',
-            value: work?.updated_at ? new Date(work.updated_at).toLocaleDateString() : '—',
-            tab: undefined,
-          },
-        ].map((row) => (
+            if (parts.length) rows.push({ label: 'Readiness', value: parts.join(' · '), tab: 'docs' as Tab });
+          }
+          rows.push(
+            { label: 'Knowledge',      value: String((work as any)?.knowledge_count ?? 0), tab: 'knowledge' as Tab },
+            { label: 'Pending Tasks',  value: String((work as any)?.pending_tasks ?? 0),   tab: 'tasks' as Tab },
+            { label: 'Conversations',  value: String((work as any)?.conv_count ?? 0),       tab: 'conversations' as Tab },
+            { label: 'Updated',        value: work?.updated_at ? new Date(work.updated_at).toLocaleDateString() : '—' },
+          );
+          return rows;
+        })().map((row) => (
           <Pressable
             key={row.label}
-            onPress={row.tab ? () => onNavigateToTab?.(row.tab!) : undefined}
+            onPress={row.onPress ?? (row.tab ? () => onNavigateToTab?.(row.tab!) : undefined)}
             style={({ pressed }) => [
               styles.infoRow,
-              { borderBottomColor: colors.border, opacity: (row.tab && pressed) ? 0.7 : 1 },
+              { borderBottomColor: colors.border, opacity: ((row.tab || row.onPress) && pressed) ? 0.7 : 1 },
             ]}
           >
             <Text style={[styles.infoLabel, { color: colors.mutedForeground }]}>{row.label}</Text>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-              <Text style={[styles.infoValue, { color: row.tab ? colors.primary : colors.foreground }]}>{row.value}</Text>
-              {row.tab && <Feather name="chevron-right" size={12} color={colors.primary} />}
+              <Text style={[styles.infoValue, { color: (row.tab || row.onPress) ? colors.primary : colors.foreground }]}>
+                {row.value}
+              </Text>
+              {(row.tab || row.onPress) && <Feather name="chevron-right" size={12} color={colors.primary} />}
             </View>
           </Pressable>
         ))}
@@ -5538,7 +5575,11 @@ export default function WorkDetailScreen() {
             returnKeyType="done"
           />
         ) : (
-          <Pressable onLongPress={() => { setWorkTitleDraft(work?.title ?? ''); setEditingWorkTitle(true); }} delayLongPress={500}>
+          <Pressable
+            onPress={() => { setWorkTitleDraft(work?.title ?? ''); setEditingWorkTitle(true); }}
+            onLongPress={() => { setWorkTitleDraft(work?.title ?? ''); setEditingWorkTitle(true); }}
+            delayLongPress={500}
+          >
             <Text style={[styles.workTitle, { color: colors.foreground }]} numberOfLines={2}>
               {work?.title ?? ''}
             </Text>
