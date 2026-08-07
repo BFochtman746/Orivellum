@@ -5380,6 +5380,11 @@ export default function WorkDetailScreen() {
       const res = await mobileFetch(`https://${domain}/api/works/${id}/pipeline`, { method: 'POST' });
       if (res.ok) {
         await fetchPipeline();
+        // Keep the Books tab in sync — invalidate both the books list and the
+        // all-works list so the newly promoted work appears immediately and is
+        // removed from "Other Works" without waiting for the 60 s cache to expire.
+        queryClient.invalidateQueries({ queryKey: ['mobile', 'books'] });
+        queryClient.invalidateQueries({ queryKey: ['mobile', 'works-all'] });
         setActiveTab('book');
         setPipelineToast(true);
         setTimeout(() => setPipelineToast(false), 3000);
