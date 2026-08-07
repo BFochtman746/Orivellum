@@ -1293,7 +1293,9 @@ export default function LibraryDocDetail() {
                 )}
                 <Text style={[styles.listenBtnText, { color: '#059669' }]}>
                   {dlState === 'generating'
-                    ? (dlProgress ? `Synthesising ${dlProgress.done}/${dlProgress.total}…` : 'Synthesising…')
+                    ? (dlProgress
+                        ? `Synthesising ${Math.round((dlProgress.done / dlProgress.total) * 100)}%…`
+                        : 'Synthesising…')
                     : dlState === 'downloading'
                     ? 'Saving…'
                     : dlState === 'done'
@@ -1324,6 +1326,23 @@ export default function LibraryDocDetail() {
                 </Pressable>
               )}
             </View>
+
+            {/* Synthesis progress bar — visible only while segments are generating */}
+            {dlState === 'generating' && dlProgress && (
+              <View style={{ marginTop: 8 }}>
+                <View style={{ height: 4, backgroundColor: colors.muted, borderRadius: 2, overflow: 'hidden' }}>
+                  <View style={{
+                    height: 4,
+                    width: `${Math.round((dlProgress.done / dlProgress.total) * 100)}%`,
+                    backgroundColor: '#059669',
+                    borderRadius: 2,
+                  }} />
+                </View>
+                <Text style={{ fontSize: 10, fontFamily: 'Inter_400Regular', color: colors.mutedForeground, marginTop: 4 }}>
+                  {dlProgress.done} of {dlProgress.total} segment{dlProgress.total !== 1 ? 's' : ''} synthesised
+                </Text>
+              </View>
+            )}
 
             {/* ── In-app audiobook player — appears once an MP3 is downloaded ── */}
             {audiobookUri && (
