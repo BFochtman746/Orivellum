@@ -610,9 +610,12 @@ export default function WriteDeskPage() {
   const [loading, setLoading]     = useState(true);
   const [saving, setSaving]       = useState(false);
   const [focusMode, setFocusMode] = useState(false);
-  const [aiPanelOpen, setAiPanelOpen] = useState(() =>
-    typeof window !== 'undefined' ? window.innerWidth >= 640 : true
-  );
+  const [aiPanelOpen, setAiPanelOpen] = useState(() => {
+    if (typeof window === 'undefined') return true;
+    const stored = localStorage.getItem('write_ai_panel_open');
+    if (stored !== null) return stored === 'true';
+    return window.innerWidth >= 640; // width-based default when no preference stored
+  });
   // mobileSidebarOpen: controls the slide-over on viewports < 640 px.
   // Defaults to false — on narrow phones the sidebar auto-hides so the editor
   // gets the full width without the user needing to find focus mode.
@@ -676,6 +679,16 @@ export default function WriteDeskPage() {
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Persist the AI panel open/closed preference so it survives page reloads
+  // and navigation.  Written on every toggle; read back in the useState initializer.
+  useEffect(() => {
+    try {
+      localStorage.setItem('write_ai_panel_open', String(aiPanelOpen));
+    } catch {
+      // localStorage unavailable (private browsing, quota exceeded) — silently skip
+    }
+  }, [aiPanelOpen]);
 
   // ── Open a doc ────────────────────────────────────────────────────────────
 
