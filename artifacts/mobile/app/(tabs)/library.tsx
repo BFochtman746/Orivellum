@@ -4,6 +4,7 @@ import { getApiToken } from '@/lib/token';
 import { readCache, writeCache } from '@/lib/cache';
 import {
   Alert,
+  Animated,
   FlatList,
   Platform,
   Pressable,
@@ -19,12 +20,46 @@ import { useColors } from '@/hooks/useColors';
 import { Feather } from '@expo/vector-icons';
 import { useListLibrary, useSearchLibrary, useListWorks } from '@workspace/api-client-react';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { font } from '@/lib/typography';
+import { font, fontSerif } from '@/lib/typography';
 import { useRouter } from 'expo-router';
 import { OfflineBanner, ErrorScreen } from '@/components/OfflineBanner';
 import { useVellumTokens } from '@/lib/tokens';
-import { SkeletonItem } from '@/components/SkeletonItem';
 import { EmptyState } from '@/components/EmptyState';
+
+function LibraryCardSkeleton() {
+  const colors = useColors();
+  const opacity = useRef(new Animated.Value(0.35)).current;
+  useEffect(() => {
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(opacity, { toValue: 0.65, duration: 800, useNativeDriver: true }),
+        Animated.timing(opacity, { toValue: 0.35, duration: 800, useNativeDriver: true }),
+      ])
+    ).start();
+  }, []);
+  const bg = { backgroundColor: colors.muted, borderRadius: 6 };
+  return (
+    <Animated.View style={{
+      paddingHorizontal: 16, paddingVertical: 12, gap: 8, opacity,
+      borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border,
+    }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+        {/* Thumbnail placeholder */}
+        <View style={[bg, { width: 44, height: 44, borderRadius: 8 }]} />
+        <View style={{ flex: 1, gap: 6 }}>
+          {/* Title */}
+          <View style={[bg, { height: 14, width: '70%' }]} />
+          {/* Subtitle */}
+          <View style={[bg, { height: 11, width: '45%' }]} />
+        </View>
+        {/* Badge placeholder */}
+        <View style={[bg, { width: 48, height: 20, borderRadius: 10 }]} />
+      </View>
+      {/* Meta row */}
+      <View style={[bg, { height: 10, width: '55%', marginLeft: 56 }]} />
+    </Animated.View>
+  );
+}
 
 const KIND_ICON: Record<string, string> = {
   pdf: 'file-text',
@@ -723,8 +758,8 @@ export default function LibraryScreen() {
 
       {/* Body */}
       {isLoading && !hasData ? (
-        <View style={{ flex: 1, paddingHorizontal: 16, paddingTop: 12 }}>
-          {[...Array(4)].map((_, i) => <SkeletonItem key={i} />)}
+        <View style={{ flex: 1 }}>
+          <>{[...Array(6)].map((_, i) => <LibraryCardSkeleton key={i} />)}</>
         </View>
       ) : listError && !hasData ? (
         <ErrorScreen
@@ -786,7 +821,7 @@ const styles = StyleSheet.create({
     paddingBottom: 12,
     borderBottomWidth: 1,
   },
-  title: { fontSize: 28, ...font('bold'), letterSpacing: -0.5 },
+  title: { fontSize: 28, ...fontSerif('bold'), letterSpacing: -0.5 },
   subtitle: { fontSize: 13, ...font('regular'), lineHeight: 18, marginTop: 2 },
   searchRow: {
     flexDirection: 'row',
