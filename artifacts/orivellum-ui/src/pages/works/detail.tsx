@@ -3167,6 +3167,140 @@ function LearnSectionPills({
   );
 }
 
+// ─── Dependency map SVG (layered DAG) ────────────────────────────────────────
+
+function DepMapSVG({
+  nodes,
+  edges,
+  onStudy,
+}: {
+  nodes: any[];
+  edges: any[];
+  onStudy: (id: string) => void;
+}) {
+  // Compute BFS depth: nodes with no prereqs = layer 0, dependents below
+  const depth: Record<string, number> = {};
+  const computeDepth = (id: string, visiting = new Set<string>()): number => {
+    if (depth[id] !== undefined) return depth[id];
+    if (visiting.has(id)) { depth[id] = 0; return 0; } // cycle guard
+    visiting.add(id);
+    const prereqs: string[] = nodes.find(n => n.id === id)?.prereq_ids ?? [];
+    depth[id] = prereqs.length === 0
+      ? 0
+      : Math.max(...prereqs.map(p => computeDepth(p, new Set(visiting)))) + 1;
+    return depth[id];
+  };
+  nodes.forEach(n => computeDepth(n.id));
+
+  const maxDepth = Math.max(0, ...Object.values(depth));
+  const layers: any[][] = Array.from({ length: maxDepth + 1 }, () => []);
+  nodes.forEach(n => layers[depth[n.id] ?? 0].push(n));
+
+  const R     = 32;
+  const H_GAP = 100; // horizontal spacing (centre-to-centre)
+  const V_GAP = 90;  // vertical spacing (centre-to-centre)
+  const PAD   = 50;
+
+  const maxLayerSize = Math.max(...layers.map(l => l.length), 1);
+  const svgW = Math.max(520, maxLayerSize * H_GAP + PAD * 2);
+  const svgH = (maxDepth + 1) * V_GAP + PAD * 2;
+
+  const pos: Record<string, { x: number; y: number }> = {};
+  layers.forEach((layer, li) => {
+    const rowW    = (layer.length - 1) * H_GAP;
+    const startX  = (svgW - rowW) / 2;
+    layer.forEach((n, ni) => {
+      pos[n.id] = { x: startX + ni * H_GAP, y: PAD + li * V_GAP };
+    });
+  });
+
+  const nodeColor = (n: any) => {
+    if (n.graduated)                        return "#22c55e"; // green
+    if ((n.consecutive_passes ?? 0) > 0)    return "#f59e0b"; // amber
+    if (n.prereqs_met !== false)            return "#3b82f6"; // blue
+    return "#9ca3af";                                          // grey (locked)
+  };
+
+  return (
+    <div style={{ overflowX: "auto" }}>
+      <svg
+        width={svgW}
+        height={svgH}
+        viewBox={`0 0 ${svgW} ${svgH}`}
+        style={{ display: "block", minWidth: "100%" }}
+      >
+        {/* Arrow marker */}
+        <defs>
+          <marker id="dep-arrow" markerWidth="6" markerHeight="6" refX="3" refY="3" orient="auto">
+            <path d="M0,0 L6,3 L0,6 Z" fill="#d1d5db" />
+          </marker>
+        </defs>
+        {/* Edges: prereq (top) → dependent (bottom) */}
+        {edges.map((e, i) => {
+          const pre = pos[e.target]; // target = prerequisite
+          const dep = pos[e.source]; // source = dependent
+          if (!pre || !dep) return null;
+          // cubic bezier from bottom of prereq to top of dependent
+          const x1 = pre.x, y1 = pre.y + R + 2;
+          const x2 = dep.x, y2 = dep.y - R - 8;
+          const cy = (y1 + y2) / 2;
+          return (
+            <path
+              key={i}
+              d={`M${x1},${y1} C${x1},${cy} ${x2},${cy} ${x2},${y2}`}
+              fill="none"
+              stroke="#d1d5db"
+              strokeWidth={1.5}
+              markerEnd="url(#dep-arrow)"
+            />
+          );
+        })}
+        {/* Nodes */}
+        {nodes.map(n => {
+          const p = pos[n.id];
+          if (!p) return null;
+          const col = nodeColor(n);
+          // Split subject into up to 2 wrapped lines
+          const words = n.subject.split(" ");
+          const line1 = words.slice(0, 2).join(" ");
+          const line2 = words.length > 2 ? words.slice(2, 4).join(" ") + (words.length > 4 ? "…" : "") : "";
+          const l1 = line1.length > 13 ? line1.slice(0, 12) + "…" : line1;
+          const l2 = line2.length > 13 ? line2.slice(0, 12) + "…" : line2;
+          return (
+            <g
+              key={n.id}
+              onClick={() => onStudy(n.id)}
+              style={{ cursor: "pointer" }}
+              role="button"
+              aria-label={`Study ${n.subject}`}
+            >
+              <circle cx={p.x} cy={p.y} r={R} fill={col} fillOpacity={0.15} stroke={col} strokeWidth={2} />
+              <text
+                x={p.x} y={p.y + (l2 ? -7 : 1)}
+                textAnchor="middle"
+                fontSize="8.5"
+                fontFamily="Inter,system-ui,sans-serif"
+                fontWeight="600"
+                fill={col}
+              >{l1}</text>
+              {l2 && (
+                <text
+                  x={p.x} y={p.y + 9}
+                  textAnchor="middle"
+                  fontSize="8.5"
+                  fontFamily="Inter,system-ui,sans-serif"
+                  fontWeight="600"
+                  fill={col}
+                >{l2}</text>
+              )}
+            </g>
+          );
+        })}
+      </svg>
+    </div>
+  );
+}
+
 function LearnTab({ workId }: { workId: string }) {
   const [phase, setPhase]       = useState<LearnPhase>("loading");
   const [session, setSession]   = useState<LearningSession | null>(null);
@@ -3181,6 +3315,9 @@ function LearnTab({ workId }: { workId: string }) {
   const [interleavedMode, setInterleavedMode] = useState(false);
   const [interleavedHistory, setInterleavedHistory] = useState<{concept_id: string; subject: string; score: number}[]>([]);
   const [showInterleavedSummary, setShowInterleavedSummary] = useState(false);
+  const [showDepMap, setShowDepMap]     = useState(false);
+  const [depGraph, setDepGraph]         = useState<{ nodes: any[]; edges: any[] } | null>(null);
+  const [depGraphLoading, setDepGraphLoading] = useState(false);
 
   const apiBase = API_BASE_WORKS;
 
@@ -3263,6 +3400,28 @@ function LearnTab({ workId }: { workId: string }) {
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { let active = true; void init().then(() => {}).catch(() => {}); return () => { active = false; }; }, [workId]);
+
+  // Clear dep-map cache whenever the Work changes so we never show stale data
+  useEffect(() => {
+    setDepGraph(null);
+    setShowDepMap(false);
+    setDepGraphLoading(false);
+  }, [workId]);
+
+  // Lazily load the prerequisite graph when the dep-map section is expanded;
+  // uses an AbortController so an in-flight request for a previous Work is discarded.
+  useEffect(() => {
+    if (!showDepMap || depGraph !== null) return;
+    const controller = new AbortController();
+    setDepGraphLoading(true);
+    apiFetch(`${apiBase}/works/${workId}/learning/graph`, { signal: controller.signal })
+      .then(r => r.ok ? r.json() : Promise.reject(`HTTP ${r.status}`))
+      .then(d => { if (!controller.signal.aborted) setDepGraph(d); })
+      .catch(e => { if (!controller.signal.aborted) setDepGraph({ nodes: [], edges: [] }); void e; })
+      .finally(() => { if (!controller.signal.aborted) setDepGraphLoading(false); });
+    return () => controller.abort();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showDepMap, workId]);
 
   const submitAnswer = async () => {
     if (!session || !answer.trim()) return;
@@ -3858,6 +4017,60 @@ function LearnTab({ workId }: { workId: string }) {
                   </div>
                 );
               })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Dependency map (collapsible) */}
+      {concepts.length > 0 && (
+        <div className="border border-border/50 rounded-xl overflow-hidden mt-2">
+          <button
+            onClick={() => setShowDepMap(v => !v)}
+            className="w-full flex items-center justify-between px-4 py-3 text-xs font-mono uppercase tracking-wider text-muted-foreground hover:bg-muted/30 transition-colors"
+          >
+            <span className="flex items-center gap-1.5">
+              <GitBranch className="w-3 h-3" />
+              Dependency map
+            </span>
+            <ChevronDown className={`w-4 h-4 transition-transform ${showDepMap ? "rotate-180" : ""}`} />
+          </button>
+
+          {showDepMap && (
+            <div className="p-4">
+              {depGraphLoading ? (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground py-4">
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Loading dependency graph…
+                </div>
+              ) : depGraph && depGraph.nodes.length > 0 ? (
+                <>
+                  {/* Legend */}
+                  <div className="flex flex-wrap items-center gap-4 mb-3 text-[10px] font-mono text-muted-foreground">
+                    {[
+                      { color: "#22c55e", label: "Graduated" },
+                      { color: "#f59e0b", label: "In progress" },
+                      { color: "#3b82f6", label: "Eligible" },
+                      { color: "#9ca3af", label: "Locked" },
+                    ].map(({ color, label }) => (
+                      <span key={label} className="flex items-center gap-1.5">
+                        <span style={{ width: 8, height: 8, borderRadius: "50%", backgroundColor: color, display: "inline-block", flexShrink: 0 }} />
+                        {label}
+                      </span>
+                    ))}
+                    <span className="ml-auto opacity-60">click a node to study it</span>
+                  </div>
+                  <DepMapSVG
+                    nodes={depGraph.nodes}
+                    edges={depGraph.edges}
+                    onStudy={(id) => { startOrContinue(id); setShowDepMap(false); }}
+                  />
+                </>
+              ) : depGraph ? (
+                <p className="text-xs text-muted-foreground py-2">
+                  No prerequisite relationships defined yet — they appear as concepts build on each other.
+                </p>
+              ) : null}
             </div>
           )}
         </div>

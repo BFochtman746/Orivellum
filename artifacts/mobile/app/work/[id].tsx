@@ -2644,12 +2644,14 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
   const [summary, setSummary]   = useState<{ total: number; graduated: number; mastery_pct: number; due_count?: number } | null>(null);
   const [errorMsg, setErrorMsg] = useState('');
   const [sessionCorrect, setSessionCorrect] = useState(0);
-  const [learnView, setLearnView] = useState<'study' | 'concepts'>('study');
+  const [learnView, setLearnView] = useState<'study' | 'concepts' | 'graph'>('study');
   const [concepts, setConcepts] = useState<any[]>([]);
   const [conceptsLoading, setConceptsLoading] = useState(false);
   const [resettingConcept, setResettingConcept] = useState<string | null>(null);
   const [interleavedMode, setInterleavedMode] = useState(false);
   const [interleavedHistory, setInterleavedHistory] = useState<{concept_id: string; subject: string; score: number}[]>([]);
+  const [graphNodes, setGraphNodes] = useState<any[]>([]);
+  const [graphLoading, setGraphLoading] = useState(false);
 
   const SESSION_LIMIT = 5; // correct answers before "session complete" screen
   const INTERLEAVED_SESSION_LENGTH = 10; // questions per interleaved session
@@ -2765,6 +2767,27 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
   useEffect(() => {
     if (learnView === 'concepts') loadConcepts();
   }, [learnView, loadConcepts]);
+
+  // Clear graph cache whenever the Work changes so we never show a previous Work's dep map
+  useEffect(() => {
+    setGraphNodes([]);
+    setGraphLoading(false);
+  }, [workId]);
+
+  // Load prerequisite graph when the Dep Map view is selected;
+  // a cancelled flag discards any in-flight response from a previous Work.
+  useEffect(() => {
+    if (learnView !== 'graph') return;
+    let cancelled = false;
+    setGraphNodes([]);   // clear stale data immediately on every re-trigger
+    setGraphLoading(true);
+    mobileFetch(`${apiBase}/works/${workId}/learning/graph`)
+      .then(r => r.ok ? r.json() : Promise.reject(`HTTP ${r.status}`))
+      .then(d => { if (!cancelled) setGraphNodes(d.nodes ?? []); })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setGraphLoading(false); });
+    return () => { cancelled = true; };
+  }, [learnView, workId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const submitAnswer = async () => {
     if (!session || !answer.trim()) return;
@@ -3065,7 +3088,7 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
     >
       {/* Study / Concepts view toggle + Interleaved toggle */}
       <View style={{ flexDirection: 'row', gap: 6, marginBottom: 16, flexWrap: 'wrap' }}>
-        {(['study', 'concepts'] as const).map((v) => (
+        {(['study', 'concepts', 'graph'] as const).map((v) => (
           <Pressable
             key={v}
             onPress={() => setLearnView(v)}
@@ -3077,7 +3100,7 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
             }}
           >
             <Text style={{ fontSize: 13, fontWeight: '600', color: learnView === v ? colors.primary : colors.mutedForeground }}>
-              {v === 'study' ? 'Study' : 'Concepts'}
+              {v === 'study' ? 'Study' : v === 'concepts' ? 'Concepts' : 'Dep Map'}
             </Text>
           </Pressable>
         ))}
@@ -3245,6 +3268,144 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
             })}
           </>
         )
+      )}
+
+      {/* Dependency map — layered depth list grouped by prerequisite order */}
+      {learnView === 'graph' && (
+        graphLoading ? (
+          <View style={[styles.centered, { paddingVertical: 40 }]}>
+            <ActivityIndicator color={colors.primary} />
+            <Text style={[styles.emptyText, { color: colors.mutedForeground, marginTop: 10 }]}>
+              Loading dependency map…
+            </Text>
+          </View>
+        ) : graphNodes.length === 0 ? (
+          <View style={[styles.centered, { paddingVertical: 40 }]}>
+            <Feather name="git-branch" size={32} color={colors.mutedForeground} />
+            <Text style={[styles.emptyText, { color: colors.mutedForeground, textAlign: 'center', maxWidth: 240 }]}>
+              No prerequisite relationships defined yet.
+            </Text>
+          </View>
+        ) : (() => {
+          // Compute BFS depth for each node
+          const depth: Record<string, number> = {};
+          const visited = new Set<string>();
+          const computeDepth = (id: string, visiting = new Set<string>()): number => {
+            if (depth[id] !== undefined) return depth[id];
+            if (visiting.has(id)) { depth[id] = 0; return 0; }
+            visiting.add(id);
+            const prereqs: string[] = graphNodes.find((n: any) => n.id === id)?.prereq_ids ?? [];
+            depth[id] = prereqs.length === 0
+              ? 0
+              : Math.max(...prereqs.map(p => computeDepth(p, new Set(visiting)))) + 1;
+            return depth[id];
+          };
+          graphNodes.forEach((n: any) => computeDepth(n.id));
+
+          const maxDepth = Math.max(0, ...Object.values(depth));
+          const layers: any[][] = Array.from({ length: maxDepth + 1 }, () => []);
+          graphNodes.forEach((n: any) => layers[depth[n.id] ?? 0].push(n));
+          void visited;
+
+          const nodeColor = (n: any): string => {
+            if (n.graduated)                      return '#22c55e';
+            if ((n.consecutive_passes ?? 0) > 0)  return '#f59e0b';
+            if (n.prereqs_met !== false)           return '#3b82f6';
+            return colors.mutedForeground;
+          };
+          const nodeLabel = (n: any): string => {
+            if (n.graduated)                      return '✓ Graduated';
+            if ((n.consecutive_passes ?? 0) > 0)  return 'In progress';
+            if (n.prereqs_met !== false)           return 'Eligible';
+            return '🔒 Locked';
+          };
+
+          return (
+            <View>
+              {/* Legend */}
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 14 }}>
+                {[
+                  { color: '#22c55e', label: 'Graduated' },
+                  { color: '#f59e0b', label: 'In progress' },
+                  { color: '#3b82f6', label: 'Eligible' },
+                  { color: colors.mutedForeground, label: 'Locked' },
+                ].map(({ color, label }) => (
+                  <View key={label} style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+                    <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: color }} />
+                    <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: colors.mutedForeground }}>
+                      {label}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+
+              {layers.map((layer, li) => (
+                <View key={li} style={{ marginBottom: 16 }}>
+                  {/* Layer header */}
+                  <Text style={{
+                    fontSize: 10, fontFamily: 'Inter_600SemiBold', color: colors.mutedForeground,
+                    letterSpacing: 0.7, textTransform: 'uppercase', marginBottom: 8,
+                  }}>
+                    {li === 0 ? 'Foundation' : `Builds on layer ${li}`} · {layer.length} concept{layer.length !== 1 ? 's' : ''}
+                  </Text>
+
+                  {/* Left border to show depth visually */}
+                  <View style={{ marginLeft: li * 10, borderLeftWidth: li > 0 ? 2 : 0, borderLeftColor: colors.border, paddingLeft: li > 0 ? 10 : 0 }}>
+                    {layer.map((n: any) => {
+                      const col = nodeColor(n);
+                      const lbl = nodeLabel(n);
+                      const isLocked = n.prereqs_met === false && !n.graduated;
+                      return (
+                        <Pressable
+                          key={n.id}
+                          onPress={() => {
+                            if (isLocked) {
+                              const labels: string[] = n.prereq_labels ?? [];
+                              Alert.alert(
+                                '🔒 Prerequisites needed',
+                                labels.length > 0
+                                  ? `Complete these first:\n\n${labels.map((l: string) => `• ${l}`).join('\n')}`
+                                  : 'Complete your prerequisites first.',
+                                [
+                                  { text: 'OK', style: 'cancel' },
+                                  { text: 'Study anyway', onPress: () => focusOnConcept(n.id) },
+                                ],
+                              );
+                            } else {
+                              focusOnConcept(n.id);
+                            }
+                          }}
+                          style={({ pressed }: { pressed: boolean }) => ({
+                            flexDirection: 'row', alignItems: 'center', gap: 10,
+                            padding: 10, marginBottom: 6, borderRadius: 8,
+                            borderWidth: 1, borderColor: col + '44',
+                            backgroundColor: col + '10',
+                            opacity: pressed ? 0.7 : isLocked ? 0.55 : 1,
+                          })}
+                        >
+                          <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: col, flexShrink: 0 }} />
+                          <Text style={{ flex: 1, fontSize: 13, fontFamily: 'Inter_500Medium', color: isLocked ? colors.mutedForeground : colors.foreground }} numberOfLines={1}>
+                            {n.subject}
+                          </Text>
+                          <Text style={{ fontSize: 10, fontFamily: 'Inter_400Regular', color: col }}>
+                            {lbl}
+                          </Text>
+                          {!isLocked && (
+                            <Feather name="chevron-right" size={12} color={colors.mutedForeground} />
+                          )}
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                </View>
+              ))}
+
+              <Text style={{ fontSize: 10, fontFamily: 'Inter_400Regular', color: colors.mutedForeground, textAlign: 'center', marginTop: 4, marginBottom: 8 }}>
+                Tap a concept to study it
+              </Text>
+            </View>
+          );
+        })()
       )}
 
       {/* Mastery bar — only shown in study view */}
