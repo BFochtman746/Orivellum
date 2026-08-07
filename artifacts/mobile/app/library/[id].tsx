@@ -281,6 +281,15 @@ export default function LibraryDocDetail() {
   // once the server has confirmed the job (preventing a cancel-before-POST race).
   const [dlJobId, setDlJobId] = useState<string | null>(null);
 
+  // ── In-app audiobook playback ─────────────────────────────────────────────
+  // audiobookUri is set after a successful download and cleared on unmount.
+  // It persists across dlState resets so the Play button stays available.
+  const [audiobookUri, setAudiobookUri] = useState<string | null>(null);
+  type AbState = 'idle' | 'loading' | 'playing' | 'paused';
+  const [abState, setAbState] = useState<AbState>('idle');
+  const [abPosition, setAbPosition] = useState(0); // seconds
+  const audiobookPlayerRef = useRef<AudioPlayer | null>(null);
+
   const handleReprocess = async () => {
     setReprocessing(true);
     try {
@@ -479,6 +488,8 @@ export default function LibraryDocDetail() {
       }
 
       if (dlRunRef.current !== runId) return;
+      // Store the local URI so the in-app player can pick it up
+      setAudiobookUri(dlResult.uri);
       setDlState('done');
       setTimeout(() => { if (dlRunRef.current === runId) setDlState('idle'); }, 5_000);
     } catch (e: any) {
@@ -486,6 +497,70 @@ export default function LibraryDocDetail() {
       Alert.alert('Error', (e as any)?.message ?? 'Could not download audiobook');
       reset('error', 3_000);
     }
+  };
+
+  // ── Audiobook in-app playback handlers ───────────────────────────────────
+
+  const fmtTime = (secs: number) => {
+    const m = Math.floor(secs / 60);
+    const s = Math.floor(secs % 60);
+    return `${m}:${s.toString().padStart(2, '0')}`;
+  };
+
+  const handlePlayAudiobook = async () => {
+    if (!audiobookUri) return;
+
+    if (abState === 'playing') {
+      audiobookPlayerRef.current?.pause();
+      setAbState('paused');
+      return;
+    }
+    if (abState === 'paused' && audiobookPlayerRef.current) {
+      audiobookPlayerRef.current.play();
+      setAbState('playing');
+      return;
+    }
+
+    // Stop original-document audio if it is playing
+    if (audioState === 'playing' || audioState === 'paused') {
+      audioPlayerRef.current?.remove();
+      audioPlayerRef.current = null;
+      setAudioState('idle');
+    }
+
+    setAbState('loading');
+    try {
+      await setAudioModeAsync({ playsInSilentMode: true });
+      const player = createAudioPlayer({ uri: audiobookUri });
+      audiobookPlayerRef.current = player;
+      player.play();
+      setAbState('playing');
+      setAbPosition(0);
+      player.addListener('playbackStatusUpdate', (status) => {
+        // Guard: if a newer player has already replaced this one, ignore stale events
+        if (audiobookPlayerRef.current !== player) return;
+        if (status.currentTime != null) setAbPosition(status.currentTime);
+        // Detect natural end-of-file — remove() cleans up native resources
+        if (!status.playing && status.currentTime > 0
+            && status.duration > 0
+            && status.currentTime >= status.duration - 0.5) {
+          player.remove();
+          audiobookPlayerRef.current = null;
+          setAbState('idle');
+          setAbPosition(0);
+        }
+      });
+    } catch (e: any) {
+      setAbState('idle');
+      Alert.alert('Playback failed', e?.message ?? 'Could not play audiobook');
+    }
+  };
+
+  const handleStopAudiobook = () => {
+    audiobookPlayerRef.current?.remove();
+    audiobookPlayerRef.current = null;
+    setAbState('idle');
+    setAbPosition(0);
   };
 
   const handleCancelAudiobook = () => {
@@ -508,7 +583,10 @@ export default function LibraryDocDetail() {
   const audioPlayerRef = useRef<AudioPlayer | null>(null);
 
   useEffect(() => {
-    return () => { audioPlayerRef.current?.remove(); };
+    return () => {
+      audioPlayerRef.current?.remove();
+      audiobookPlayerRef.current?.remove();
+    };
   }, []);
 
   const handlePlayOriginal = async () => {
@@ -521,6 +599,13 @@ export default function LibraryDocDetail() {
       audioPlayerRef.current.play();
       setAudioState('playing');
       return;
+    }
+    // Stop audiobook player symmetrically before starting original audio
+    if (abState === 'playing' || abState === 'paused') {
+      audiobookPlayerRef.current?.remove();
+      audiobookPlayerRef.current = null;
+      setAbState('idle');
+      setAbPosition(0);
     }
     setAudioState('loading');
     try {
@@ -1239,6 +1324,71 @@ export default function LibraryDocDetail() {
                 </Pressable>
               )}
             </View>
+
+            {/* ── In-app audiobook player — appears once an MP3 is downloaded ── */}
+            {audiobookUri && (
+              <View style={{
+                marginTop: 10, borderRadius: 8, borderWidth: 1,
+                borderColor: '#059669' + '44', backgroundColor: '#05966910',
+                paddingHorizontal: 12, paddingVertical: 10,
+                flexDirection: 'row', alignItems: 'center', gap: 10,
+              }}>
+                {/* Play / Pause button */}
+                <Pressable
+                  onPress={handlePlayAudiobook}
+                  disabled={abState === 'loading'}
+                  style={({ pressed }) => ({
+                    flexDirection: 'row', alignItems: 'center', gap: 6,
+                    paddingHorizontal: 12, paddingVertical: 7, borderRadius: 7,
+                    backgroundColor: pressed ? '#059669' + 'cc' : '#059669',
+                    opacity: abState === 'loading' ? 0.6 : 1,
+                  })}
+                  accessibilityRole="button"
+                  accessibilityLabel={abState === 'playing' ? 'Pause audiobook' : 'Play audiobook'}
+                >
+                  {abState === 'loading'
+                    ? <ActivityIndicator size="small" color="#fff" />
+                    : <Feather
+                        name={abState === 'playing' ? 'pause' : 'play'}
+                        size={14} color="#fff"
+                      />
+                  }
+                  <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: '#fff' }}>
+                    {abState === 'playing' ? 'Pause' : abState === 'paused' ? 'Resume' : 'Play'}
+                  </Text>
+                </Pressable>
+
+                {/* Current position */}
+                {(abState === 'playing' || abState === 'paused') && (
+                  <Text style={{ fontSize: 12, fontFamily: 'Inter_500Medium', color: '#059669', minWidth: 36 }}>
+                    {fmtTime(abPosition)}
+                  </Text>
+                )}
+
+                {/* Stop button — shown while playing or paused */}
+                {(abState === 'playing' || abState === 'paused') && (
+                  <Pressable
+                    onPress={handleStopAudiobook}
+                    hitSlop={8}
+                    style={({ pressed }) => ({
+                      padding: 6, borderRadius: 6,
+                      backgroundColor: pressed ? colors.muted : 'transparent',
+                    })}
+                    accessibilityRole="button"
+                    accessibilityLabel="Stop audiobook"
+                  >
+                    <Feather name="square" size={14} color="#dc2626" />
+                  </Pressable>
+                )}
+
+                {/* Label when idle */}
+                {abState === 'idle' && (
+                  <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: '#059669', flex: 1 }}>
+                    Audiobook ready
+                  </Text>
+                )}
+              </View>
+            )}
           </>
         )}
       </View>
