@@ -1,0 +1,165 @@
+# Forge Execution Policy — A-01
+# Version: 0.1.0
+# This file is the authority for what the build agent may and may not do.
+# Any action not listed as PERMITTED is PROHIBITED.
+
+version: "0.1.0"
+updated: "2026-08-07"
+
+# ---------------------------------------------------------------------------
+# WORKTREE BOUNDARIES
+# The agent operates exclusively within its assigned job worktree.
+# ---------------------------------------------------------------------------
+worktree:
+  root_pattern: "/home/*/forge/*-JOB-*"
+  # Paths the agent may never read or write regardless of worktree
+  absolute_prohibitions:
+    - "$HOME/.ssh"
+    - "$HOME/.gnupg"
+    - "$HOME/.config/lmstudio"
+    - "/mnt/c/Users"           # Windows profile (cross-FS)
+    - "/mnt/d/Orivellum"       # knowledge vault — never touched
+    - "/mnt/*/Documents"
+    - "/etc/passwd"
+    - "/etc/shadow"
+    - "**/.env"
+    - "**/.env.*"
+    - "**/secrets.*"
+    - "**/credentials.*"
+  # Paths the agent may read (in addition to its worktree)
+  permitted_reads:
+    - "/proc/meminfo"
+    - "/proc/cpuinfo"
+    - "orivellum-forge/contracts/**"
+    - "orivellum-forge/policies/**"
+    - "orivellum-forge/opencode/agents/**"
+    - "forge-jobs/$JOB_ID/task-contract.json"
+
+# ---------------------------------------------------------------------------
+# GIT OPERATIONS
+# ---------------------------------------------------------------------------
+git:
+  permitted:
+    - git_status          # read
+    - git_diff            # read
+    - git_log             # read
+    - git_add             # stage within worktree only
+    - git_commit          # commit within worktree only
+    - git_stash           # stash within worktree only
+    - git_checkout_file   # revert single file within worktree
+  prohibited:
+    - git_push            # NO remote push during build
+    - git_reset_hard      # requires explicit rollback-verify.sh
+    - git_clean_fdx       # destructive — requires explicit approval
+    - git_rebase          # not permitted in build phase
+    - git_merge           # merges are user-approved only
+    - git_tag             # tags are created by bundle-evidence.sh only
+  notes:
+    - "Commits to main or production branches require explicit user approval."
+    - "git worktree remove is handled by rollback-verify.sh only."
+
+# ---------------------------------------------------------------------------
+# SHELL / COMMAND EXECUTION
+# ---------------------------------------------------------------------------
+shell:
+  permitted_categories:
+    - build_tools        # make, cargo, gradle, mvn, npm, pnpm, pip, uv
+    - test_runners       # pytest, jest, vitest, cargo test, go test
+    - linters            # ruff, eslint, mypy, tsc, prettier
+    - formatters         # black, rustfmt, prettier --write
+    - package_managers   # pip install, npm ci (no --global)
+  prohibited_commands:
+    - "rm -rf /"
+    - "sudo"
+    - "su "
+    - "chmod 777"
+    - "curl * | bash"
+    - "wget * | bash"
+    - "eval"
+    - "docker run --privileged"
+    - "docker run --net=host"
+    - "apt-get install"    # system packages require explicit approval
+    - "pip install --user" # user-scope installs require explicit approval
+    - "npm install -g"     # global installs require explicit approval
+    - "git push"
+    - "git reset --hard"
+    - "shutdown"
+    - "reboot"
+    - "kill -9 1"
+  package_install_scope:
+    - "Project-scoped installs (venv, node_modules) are permitted."
+    - "User or system-scope installs require an approval event before execution."
+  execution_timeout_seconds: 300   # 5 minutes per gate step; override in project-profile
+
+# ---------------------------------------------------------------------------
+# NETWORK ACCESS
+# ---------------------------------------------------------------------------
+network:
+  default: DENY
+  permitted_during_build:
+    - "127.0.0.1:8080"     # LM Studio inference only
+    - "127.0.0.1:4096"     # OpenCode server (self)
+  permitted_with_approval:
+    - "package_registry"   # npm, PyPI, crates.io — require explicit approval per job
+  prohibited:
+    - "Any external API calls from agent code during build"
+    - "Opening a public port from within the worktree"
+    - "Connecting to cloud services without approval"
+  notes:
+    - "Web search (Forge websearch tool) is separately approved per task, never automatic."
+
+# ---------------------------------------------------------------------------
+# DATABASE AND DATA MUTATIONS
+# ---------------------------------------------------------------------------
+data:
+  prohibited_without_approval:
+    - "DROP TABLE"
+    - "TRUNCATE"
+    - "DELETE FROM * WHERE 1=1"
+    - "UPDATE * SET * WHERE 1=1"
+    - "schema migrations on production databases"
+    - "direct writes to Orivellum knowledge vault"
+  notes:
+    - "Test databases may be created and destroyed within the worktree."
+    - "Production data mutations always require a recorded approval event."
+
+# ---------------------------------------------------------------------------
+# SCOPE CONTROL
+# ---------------------------------------------------------------------------
+scope:
+  max_files_changed_without_review: 20
+  max_lines_changed_without_review: 500
+  forbidden_path_patterns:
+    - "orivellum-forge/policies/**"   # policy files are not agent-editable
+    - "orivellum-forge/contracts/**"  # schemas are not agent-editable
+    - "forge-jobs/*/release-decision.json"  # written by gate engine only
+    - "forge-jobs/*/evidence-manifest.sha256"  # written by bundle-evidence.sh only
+  notes:
+    - "Files outside the task-contract's affected_files list require approval."
+    - "Scope expansion during build is a BLOCKED condition."
+
+# ---------------------------------------------------------------------------
+# REPAIR LOOP LIMITS
+# ---------------------------------------------------------------------------
+repair:
+  max_cycles_per_task: 3
+  max_cycles_per_job: 9
+  prohibited_repairs:
+    - "Weakening or deleting a failing test to make it pass"
+    - "Marking a gate as skipped without an explicit skip_reason"
+    - "Expanding scope to fix a problem outside the task contract"
+    - "Changing linter/formatter configuration to suppress an existing finding"
+  on_limit_reached: "Set job status to BLOCKED_WITH_EVIDENCE. Do not attempt further repairs."
+
+# ---------------------------------------------------------------------------
+# SECRET HANDLING
+# ---------------------------------------------------------------------------
+secrets:
+  prohibited:
+    - "Reading environment variables that contain API keys, tokens, or passwords"
+    - "Logging any value that matches a secret pattern"
+    - "Writing secrets to any file in the worktree"
+    - "Including secret values in task-contract.json or work-ledger.ndjson"
+  notes:
+    - "If a task requires a secret, it must be passed as an environment variable."
+    - "Gitleaks runs on every candidate to detect accidental secret inclusion."

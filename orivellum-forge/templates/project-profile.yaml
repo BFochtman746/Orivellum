@@ -1,0 +1,141 @@
+# Forge Project Profile
+# Copy this file to your project root as: forge-profile.yaml
+# Fill in every field before the first job. Unknown values: write "unknown".
+
+# ---------------------------------------------------------------------------
+# IDENTITY
+# ---------------------------------------------------------------------------
+project:
+  name: "my-project"
+  description: "One sentence describing what the project does."
+  type: web          # web | mobile | api | library | cli | data | document | mixed
+  language: python   # python | typescript | javascript | rust | java | go | mixed
+  framework: fastapi # e.g. fastapi, react-vite, express, axum, spring — or null
+
+# ---------------------------------------------------------------------------
+# PATHS (all relative to project root)
+# ---------------------------------------------------------------------------
+paths:
+  source_root: "src/"
+  test_root: "tests/"
+  build_output: "dist/"   # or null if no build step
+  entry_point: "src/main.py"  # file that starts the app
+
+# ---------------------------------------------------------------------------
+# COMMANDS (exact shell commands that run from project root in WSL)
+# Use 'null' if a step does not apply.
+# ---------------------------------------------------------------------------
+commands:
+  install: "uv sync"            # restore dependencies
+  format_check: "ruff format --check ."
+  lint: "ruff check ."
+  type_check: "mypy src/ --ignore-missing-imports"
+  unit_test: "pytest tests/unit/ -x -q --tb=short"
+  integration_test: "pytest tests/integration/ -x -q --tb=short"
+  browser_test: "npx playwright test"
+  build: null                   # e.g. "pnpm build"
+  start: "uv run python -m src.main"  # startup smoke (run for 5s)
+
+# ---------------------------------------------------------------------------
+# PLAYWRIGHT BROWSER TARGETS (for web/mobile projects)
+# ---------------------------------------------------------------------------
+playwright:
+  enabled: false
+  config_file: "playwright.config.ts"  # or use templates/playwright.config.template.ts
+  targets:
+    - chromium
+    # - firefox
+    # - webkit          # iPhone Safari class
+    # - mobile-safari   # Playwright mobile preset
+
+# ---------------------------------------------------------------------------
+# SECURITY SCAN TARGETS
+# ---------------------------------------------------------------------------
+security:
+  semgrep:
+    enabled: true
+    config: "auto"    # "auto" uses community rules; or path to custom ruleset
+    severity_gate: HIGH
+  gitleaks:
+    enabled: true
+    config: null      # null uses built-in ruleset
+  osv_scanner:
+    enabled: true
+    lockfiles:
+      - "uv.lock"
+      # - "pnpm-lock.yaml"
+      # - "Cargo.lock"
+      # - "go.sum"
+
+# ---------------------------------------------------------------------------
+# FORBIDDEN PATHS (never edited by any Forge agent)
+# Extend the base list in execution-policy.yaml with project-specific paths.
+# ---------------------------------------------------------------------------
+forbidden:
+  - ".env"
+  - ".env.*"
+  - "secrets/"
+  - "data/production/"
+  - "forge-jobs/"
+
+# ---------------------------------------------------------------------------
+# SCOPE LIMITS
+# ---------------------------------------------------------------------------
+scope:
+  max_files_per_job: 20
+  max_lines_changed_per_job: 500
+  # Files that require user approval before the agent may edit them:
+  approval_required_files:
+    - "pyproject.toml"     # dependency changes require review
+    - "package.json"
+    - "Cargo.toml"
+    - "*.migration.py"
+    - "alembic/"
+
+# ---------------------------------------------------------------------------
+# EXECUTION LIMITS
+# ---------------------------------------------------------------------------
+limits:
+  gate_timeout_seconds: 300       # per gate step
+  max_repair_cycles_per_task: 3
+  max_repair_cycles_per_job: 9
+  startup_smoke_duration_seconds: 5
+
+# ---------------------------------------------------------------------------
+# RISK CLASSIFICATION
+# ---------------------------------------------------------------------------
+risk_classification:
+  # Patterns in the task description that auto-elevate to HIGH risk
+  high_risk_patterns:
+    - "database migration"
+    - "schema change"
+    - "DROP"
+    - "DELETE"
+    - "production"
+    - "deploy"
+    - "secret"
+    - "authentication"
+    - "authorization"
+    - "payment"
+
+# ---------------------------------------------------------------------------
+# BROWSER / DEVICE TARGETS FOR ACCEPTANCE TESTS
+# ---------------------------------------------------------------------------
+acceptance_targets:
+  - name: "Desktop Chrome"
+    viewport: { width: 1280, height: 720 }
+    project: chromium
+  # - name: "iPhone 15"
+  #   viewport: { width: 390, height: 844 }
+  #   project: webkit
+  #   is_mobile: true
+
+# ---------------------------------------------------------------------------
+# INTEGRATION NOTES (filled in by planner during authority inspection)
+# ---------------------------------------------------------------------------
+integrations:
+  database: null        # e.g. "sqlite at data/orivellum.db"
+  external_apis: []
+  environment_variables:
+    required: []        # list required env vars (names only, never values)
+    optional: []

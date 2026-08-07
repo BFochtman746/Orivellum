@@ -1,0 +1,100 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://orivellum.local/forge/release-decision.schema.json",
+  "title": "Forge Release Decision",
+  "description": "The final gate engine output for a job. Written by bundle-evidence.sh. Never written by the agent.",
+  "type": "object",
+  "required": [
+    "schema_version", "job_id", "decided_at",
+    "decision", "gate_results", "evidence_manifest_sha256"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "type": "string", "const": "0.1.0" },
+    "job_id": { "type": "string", "pattern": "^JOB-\\d{8}-\\d{6}$" },
+    "decided_at": { "type": "string", "format": "date-time" },
+    "decision": {
+      "type": "string",
+      "enum": ["VERIFIED", "CONDITIONAL", "BLOCKED"],
+      "description": "VERIFIED = all mandatory gates pass. CONDITIONAL = mandatory pass, optional gaps remain. BLOCKED = mandatory gate failed or evidence missing."
+    },
+    "decision_label": {
+      "type": "string",
+      "description": "Human-readable label matching the decision. e.g. 'RELEASE CANDIDATE — VERIFIED'"
+    },
+    "blocking_reason": {
+      "type": ["string", "null"],
+      "description": "Required when decision is BLOCKED. States the exact gate and failure."
+    },
+    "conditional_items": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Required when decision is CONDITIONAL. Lists the named manual checks remaining."
+    },
+    "gate_results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["gate_id", "gate_name", "status", "mandatory", "duration_seconds"],
+        "properties": {
+          "gate_id": { "type": "string" },
+          "gate_name": { "type": "string" },
+          "mandatory": { "type": "boolean" },
+          "status": { "type": "string", "enum": ["PASS", "FAIL", "SKIPPED", "ERROR"] },
+          "exit_code": { "type": ["integer", "null"] },
+          "duration_seconds": { "type": "number" },
+          "output_excerpt": { "type": ["string", "null"], "maxLength": 2000 },
+          "artifact_paths": { "type": "array", "items": { "type": "string" } },
+          "skip_reason": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "model_attribution": {
+      "type": "object",
+      "properties": {
+        "builder_model": { "type": "string" },
+        "reviewer_model": { "type": ["string", "null"] },
+        "lm_studio_version": { "type": ["string", "null"] },
+        "opencode_version": { "type": "string" }
+      }
+    },
+    "diff_summary": {
+      "type": "object",
+      "properties": {
+        "files_changed": { "type": "integer" },
+        "lines_added": { "type": "integer" },
+        "lines_removed": { "type": "integer" },
+        "scope_violation": { "type": "boolean" },
+        "scope_violation_detail": { "type": ["string", "null"] }
+      }
+    },
+    "repair_summary": {
+      "type": "object",
+      "properties": {
+        "total_cycles": { "type": "integer" },
+        "cycles_per_task": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "task_id": { "type": "string" },
+              "cycles": { "type": "integer" }
+            }
+          }
+        }
+      }
+    },
+    "evidence_manifest_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "SHA256 of evidence-manifest.sha256 file. Self-referential integrity check."
+    },
+    "user_approved_at": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "description": "Set when the user explicitly approves merge/release. Required before any merge."
+    },
+    "merge_commit": { "type": ["string", "null"] },
+    "notes": { "type": ["string", "null"] }
+  }
+}

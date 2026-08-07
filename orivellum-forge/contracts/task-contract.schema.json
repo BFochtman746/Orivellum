@@ -1,0 +1,209 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://orivellum.local/forge/task-contract.schema.json",
+  "title": "Forge Task Contract",
+  "description": "The complete specification of a Forge job. Produced by the planner agent. Approved by the user before any build work begins.",
+  "type": "object",
+  "required": [
+    "job_id", "created_at", "status", "requested_by",
+    "outcome", "non_goals", "affected_files",
+    "requirements", "risks", "test_plan", "tasks",
+    "release_definition", "policy_version", "contract_version"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "contract_version": {
+      "type": "string",
+      "const": "0.1.0"
+    },
+    "policy_version": {
+      "type": "string",
+      "description": "Version of execution-policy.yaml in effect when this contract was written."
+    },
+    "job_id": {
+      "type": "string",
+      "pattern": "^JOB-\\d{8}-\\d{6}$",
+      "description": "Unique job identifier. Format: JOB-YYYYMMDD-HHMMSS."
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "approved_at": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "description": "Set by Forge when the user explicitly approves the contract."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["DRAFT", "AWAITING_APPROVAL", "APPROVED", "REJECTED"],
+      "description": "APPROVED is the only status that permits a build job to start."
+    },
+    "requested_by": {
+      "type": "string",
+      "description": "Who initiated the job. 'user' for human, 'forge-automation' for scheduled."
+    },
+    "project": {
+      "type": "object",
+      "required": ["path", "type", "language"],
+      "properties": {
+        "path": { "type": "string", "description": "Absolute path to the project root in WSL." },
+        "type": {
+          "type": "string",
+          "enum": ["web", "mobile", "api", "library", "cli", "data", "document", "mixed"]
+        },
+        "language": {
+          "type": "string",
+          "enum": ["python", "typescript", "javascript", "rust", "java", "go", "mixed"]
+        },
+        "framework": { "type": ["string", "null"] },
+        "test_command": { "type": ["string", "null"] },
+        "build_command": { "type": ["string", "null"] },
+        "start_command": { "type": ["string", "null"] }
+      }
+    },
+    "outcome": {
+      "type": "string",
+      "minLength": 20,
+      "description": "One sentence: what will be different when this job is complete?"
+    },
+    "non_goals": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Explicit list of things this job will NOT do."
+    },
+    "affected_files": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Files and directories the builder is permitted to modify. Glob patterns allowed.",
+      "minItems": 1
+    },
+    "forbidden_files": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Files the builder must never touch, even if they are in affected_files."
+    },
+    "requirements": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "description", "verification"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^R\\d+$" },
+          "description": { "type": "string", "minLength": 10 },
+          "verification": {
+            "type": "string",
+            "enum": ["unit_test", "integration_test", "browser_test", "manual_check", "static_analysis"],
+            "description": "How this requirement will be verified."
+          },
+          "test_reference": {
+            "type": ["string", "null"],
+            "description": "Test file/function that covers this requirement."
+          }
+        }
+      }
+    },
+    "risks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["description", "severity", "mitigation"],
+        "properties": {
+          "description": { "type": "string" },
+          "severity": { "type": "string", "enum": ["LOW", "MEDIUM", "HIGH", "CRITICAL"] },
+          "mitigation": { "type": "string" },
+          "category": {
+            "type": "string",
+            "enum": ["dependency", "data_migration", "security", "deployment", "performance", "scope", "other"]
+          }
+        }
+      }
+    },
+    "risks_require_approval": {
+      "type": "boolean",
+      "description": "True if any risk is HIGH or CRITICAL, requiring explicit user approval."
+    },
+    "test_plan": {
+      "type": "object",
+      "required": ["unit", "integration", "browser", "security", "manual"],
+      "properties": {
+        "unit": { "type": "string", "description": "Unit test command or 'none' with reason." },
+        "integration": { "type": "string" },
+        "browser": { "type": "string" },
+        "security": { "type": "string", "default": "semgrep + gitleaks + osv-scanner" },
+        "manual": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["description", "acceptance_criteria"],
+            "properties": {
+              "description": { "type": "string" },
+              "acceptance_criteria": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "browser_targets": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": ["chromium", "firefox", "webkit", "mobile-safari", "mobile-chrome"]
+      }
+    },
+    "tasks": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Ordered list of build tasks. Each task produces a checkpoint.",
+      "items": {
+        "type": "object",
+        "required": ["id", "description", "checkpoint_after"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^T\\d+$" },
+          "description": { "type": "string", "minLength": 10 },
+          "files_expected": { "type": "array", "items": { "type": "string" } },
+          "checkpoint_after": { "type": "boolean", "default": true },
+          "approval_required": {
+            "type": "boolean",
+            "default": false,
+            "description": "True for tasks involving data migration, schema change, or destructive ops."
+          }
+        }
+      }
+    },
+    "max_lines_changed": {
+      "type": ["integer", "null"],
+      "description": "Expected maximum lines changed. Exceeding this requires documented justification."
+    },
+    "release_definition": {
+      "type": "object",
+      "required": ["done_when", "done_never_if"],
+      "properties": {
+        "done_when": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Binary, observable conditions that define completion."
+        },
+        "done_never_if": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Conditions that unconditionally prevent a VERIFIED decision."
+        }
+      }
+    },
+    "fast_path": {
+      "type": "boolean",
+      "default": false,
+      "description": "True for pre-approved small repair requests. Still creates a checkpoint."
+    },
+    "model_used": {
+      "type": ["string", "null"],
+      "description": "LM Studio model identifier used for the plan. Set automatically."
+    },
+    "planner_evidence": {
+      "type": ["string", "null"],
+      "description": "Key files and facts the planner inspected. Not private reasoning."
+    }
+  }
+}

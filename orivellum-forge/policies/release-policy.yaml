@@ -1,0 +1,205 @@
+# Forge Release Policy — A-01
+# Version: 0.1.0
+# Defines which gates are mandatory, which are conditional, and
+# what the three possible release decisions mean.
+
+version: "0.1.0"
+updated: "2026-08-07"
+
+# ---------------------------------------------------------------------------
+# GATE DEFINITIONS
+# Gates run in order. A mandatory gate failure stops verification immediately.
+# An optional gate failure sets the decision to CONDITIONAL (not BLOCKED).
+# ---------------------------------------------------------------------------
+gates:
+
+  - id: G1
+    name: "Dependency Integrity"
+    mandatory: true
+    description: >
+      Verify all declared dependencies are installed and lockfiles match.
+      Detects missing packages, hash mismatches, and broken virtual environments.
+    commands:
+      python: "pip check && python -c 'import pkg_resources; pkg_resources.require(open(\"requirements.txt\").read().splitlines())'"
+      node: "npm ci --dry-run || pnpm install --frozen-lockfile"
+      rust: "cargo check --locked"
+      java: "mvn dependency:resolve -q || gradle dependencies --configuration runtimeClasspath -q"
+    skip_condition: "No lockfile present AND task-contract.affected_files contains no dependency changes"
+
+  - id: G2
+    name: "Format / Lint / Type"
+    mandatory: true
+    description: >
+      Static analysis — formatter, linter, compiler, and type checker.
+      Fails the candidate on deterministic code-quality defects.
+    commands:
+      python: "ruff format --check . && ruff check . && mypy . --ignore-missing-imports"
+      node: "prettier --check . && eslint . && tsc --noEmit"
+      rust: "cargo fmt --check && cargo clippy -- -D warnings"
+      java: "checkstyle -c /google_checks.xml src/"
+    skip_condition: "No source files changed in diff"
+
+  - id: G3
+    name: "Unit Tests"
+    mandatory: true
+    description: >
+      Run the project's unit test suite. Must pass with zero failures.
+      Coverage delta is recorded but not a hard gate in Phase 1.
+    commands:
+      python: "pytest tests/unit/ -x -q --tb=short"
+      node: "pnpm test --run || npx vitest run || npx jest --bail"
+      rust: "cargo test --lib"
+      java: "mvn test -q || gradle test"
+    skip_condition: "No unit test files exist AND task-contract explicitly marks unit_tests: none"
+
+  - id: G4
+    name: "Integration / API Tests"
+    mandatory: false
+    description: >
+      API and integration tests that require a running service or database.
+      Optional gate — failure is CONDITIONAL, not BLOCKED.
+    commands:
+      python: "pytest tests/integration/ -x -q --tb=short"
+      node: "pnpm test:integration --run"
+    skip_condition: "No integration test directory exists"
+
+  - id: G5
+    name: "Browser / Mobile Acceptance"
+    mandatory: false
+    description: >
+      Playwright acceptance suite. Required for web/mobile task types.
+      Records trace, screenshot, and video artifacts on failure.
+    commands:
+      web: "npx playwright test --reporter=html"
+      mobile: "npx playwright test --project=webkit --reporter=html"
+    artifacts:
+      - "playwright-report/"
+      - "test-results/"
+    skip_condition: "task-contract.type is not web or mobile"
+
+  - id: G6
+    name: "Build / Startup Smoke"
+    mandatory: true
+    description: >
+      Build the project and run a startup smoke test (5 seconds).
+      Catches import errors, missing assets, and port-binding failures
+      before the browser suite runs.
+    commands:
+      python: "python -c 'import src.orivellum.api.main' || python -m py_compile $(find src -name '*.py')"
+      node: "pnpm build && timeout 5 node dist/index.js || true"
+      rust: "cargo build --release"
+      java: "mvn package -DskipTests -q"
+    skip_condition: "task-contract.type is library and no entrypoint exists"
+
+  - id: G7
+    name: "Security Scans"
+    mandatory: true
+    description: >
+      Semgrep CE (SAST), Gitleaks (secret detection), OSV-Scanner (dependency CVEs).
+      Any HIGH or CRITICAL finding blocks the candidate unless a skip_reason
+      with owner and expiry date is recorded in policy-decision.json.
+    commands:
+      semgrep: "semgrep --config=auto --error --severity=ERROR ."
+      gitleaks: "gitleaks detect --source . --no-git"
+      osv: "osv-scanner --lockfile=requirements.txt --lockfile=pnpm-lock.yaml ."
+    severity_gate: "HIGH"  # CRITICAL and HIGH block; MEDIUM and LOW are recorded only
+    skip_condition: "Never skipped without an explicit recorded exception"
+
+  - id: G8
+    name: "Diff / Scope Review"
+    mandatory: true
+    description: >
+      Verify the diff stays within the task contract's affected_files list.
+      Detect edits to forbidden paths (policy files, evidence files, production data).
+      Flag scope expansion for user review.
+    checks:
+      - "No file modified outside task-contract.affected_files (± allowed_extras)"
+      - "No edit to orivellum-forge/policies/ or orivellum-forge/contracts/"
+      - "No edit to forge-jobs/*/release-decision.json or evidence-manifest.sha256"
+      - "Diff line count within task-contract.max_lines_changed or documented reason"
+    skip_condition: "Never"
+
+  - id: G9
+    name: "Evidence Manifest Integrity"
+    mandatory: true
+    description: >
+      Verify that all required evidence files exist and their SHA256 hashes
+      match the manifest created by bundle-evidence.sh.
+      A missing or tampered evidence file is an automatic BLOCKED decision.
+    required_files:
+      - "task-contract.json"
+      - "authority-inventory.json"
+      - "policy-decision.json"
+      - "checkpoints.json"
+      - "work-ledger.ndjson"
+      - "diff-summary.md"
+      - "test-report.json"
+      - "security-reports/semgrep.json"
+      - "security-reports/gitleaks.json"
+      - "security-reports/osv.json"
+    skip_condition: "Never"
+
+# ---------------------------------------------------------------------------
+# RELEASE DECISION RULES
+# ---------------------------------------------------------------------------
+release:
+
+  VERIFIED:
+    condition: "All mandatory gates pass AND all optional gates either pass or are explicitly skipped with a recorded reason"
+    meaning: "The candidate is ready for user-approved merge/release."
+    user_action_required: true
+    notes: "VERIFIED does not mean merged. The user must approve the merge."
+
+  CONDITIONAL:
+    condition: "All mandatory gates pass AND one or more optional gates fail without a recorded skip reason"
+    meaning: "The candidate passes hard requirements but has known gaps. Named manual checks remain."
+    user_action_required: true
+    notes: "A CONDITIONAL candidate may not be labeled 'complete'. The named gaps must be resolved or explicitly deferred."
+
+  BLOCKED:
+    condition: >
+      Any of the following:
+      - A mandatory gate fails
+      - A security scan finds HIGH or CRITICAL without a recorded exception
+      - The diff includes forbidden-path edits
+      - The evidence manifest is missing or fails integrity check
+      - The repair loop hit its maximum cycle limit
+      - Scope expanded beyond the task contract without approval
+    meaning: "The candidate is not releasable. Evidence of the failure is recorded in the job directory."
+    user_action_required: false
+    notes: "BLOCKED status is final for this job. Start a new job with the failure evidence as input."
+
+# ---------------------------------------------------------------------------
+# MERGE / RELEASE AUTHORITIES
+# ---------------------------------------------------------------------------
+merge_authority:
+  production_branch:
+    - "User approval required (explicit action, not timeout)"
+    - "Only after VERIFIED decision"
+    - "Merge is logged as a job event in work-ledger.ndjson"
+  staging_branch:
+    - "User approval required"
+    - "CONDITIONAL candidates may merge to staging with named exceptions"
+  worktree_discard:
+    - "Automatic on BLOCKED (worktree is archived, not deleted)"
+    - "User may force-discard a VERIFIED worktree if they choose not to release"
+
+# ---------------------------------------------------------------------------
+# EXCEPTION PROCESS
+# ---------------------------------------------------------------------------
+exceptions:
+  security_finding:
+    required_fields:
+      - "finding_id"
+      - "severity"
+      - "owner"
+      - "risk_acceptance_reason"
+      - "expiry_date"
+      - "approved_by"  # must be the user, not the agent
+    location: "forge-jobs/$JOB_ID/policy-decision.json"
+  gate_skip:
+    required_fields:
+      - "gate_id"
+      - "skip_reason"
+      - "evidence_why_not_applicable"
+    notes: "Agent may propose a skip; user must approve it."

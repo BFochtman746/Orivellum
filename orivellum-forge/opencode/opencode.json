@@ -1,0 +1,97 @@
+{
+  "$schema": "https://opencode.ai/config.schema.json",
+
+  "providers": {
+    "lmstudio": {
+      "name": "LM Studio (A-01)",
+      "type": "openai",
+      "baseURL": "http://127.0.0.1:8080/v1",
+      "apiKey": "lm-studio",
+      "models": [
+        {
+          "id": "qwen3-coder-30b-a3b-instruct",
+          "name": "Qwen3-Coder-30B-A3B (Builder)",
+          "contextLength": 65536,
+          "temperature": 0.0,
+          "reasoning": false
+        }
+      ]
+    }
+  },
+
+  "model": "lmstudio/qwen3-coder-30b-a3b-instruct",
+
+  "agents": {
+    "plan": {
+      "name": "Forge Planner",
+      "model": "lmstudio/qwen3-coder-30b-a3b-instruct",
+      "system": {
+        "file": "agents/planner.md"
+      },
+      "permissions": {
+        "read": true,
+        "write": false,
+        "execute": false,
+        "web": false
+      },
+      "description": "Read-only planning agent. Produces task-contract.json. Cannot edit files."
+    },
+
+    "build": {
+      "name": "Forge Builder",
+      "model": "lmstudio/qwen3-coder-30b-a3b-instruct",
+      "system": {
+        "file": "agents/builder.md"
+      },
+      "permissions": {
+        "read": true,
+        "write": true,
+        "execute": true,
+        "web": false
+      },
+      "description": "Build agent. Operates only within the assigned job worktree."
+    },
+
+    "repair": {
+      "name": "Forge Repairer",
+      "model": "lmstudio/qwen3-coder-30b-a3b-instruct",
+      "system": {
+        "file": "agents/repairer.md"
+      },
+      "permissions": {
+        "read": true,
+        "write": true,
+        "execute": true,
+        "web": false
+      },
+      "description": "Repair agent. Receives exact failure evidence. Maximum 3 cycles per task."
+    },
+
+    "review": {
+      "name": "Forge Reviewer",
+      "model": "lmstudio/qwen3-coder-30b-a3b-instruct",
+      "system": {
+        "file": "agents/reviewer.md"
+      },
+      "permissions": {
+        "read": true,
+        "write": false,
+        "execute": false,
+        "web": false
+      },
+      "description": "Read-only reviewer. Receives diff, test report, contract. Cannot edit."
+    }
+  },
+
+  "rules": [
+    "You are running on A-01 (AMD Ryzen AI Max+ 395, 128 GB unified memory, Windows 11 + WSL).",
+    "The inference endpoint is LM Studio on 127.0.0.1:8080. Never suggest installing another model server.",
+    "All work happens in the assigned worktree. Never access paths outside the worktree except for the task-contract.json and authority-inventory.json in forge-jobs/.",
+    "Never call git push. Never reset --hard without explicit user approval.",
+    "Never read or log environment variables that contain keys, tokens, or passwords.",
+    "When uncertain about a fact, record it as unknown. Do not infer from screenshots, chat history, or guesses.",
+    "The authority for done is deterministic gate results, not your confidence."
+  ],
+
+  "mcpServers": {}
+}
