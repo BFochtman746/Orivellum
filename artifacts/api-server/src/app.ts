@@ -25,7 +25,22 @@ app.use(
     },
   }),
 );
-app.use(cors());
+// Restrict CORS to Replit preview domains and localhost dev.
+// This server only exposes health endpoints; no cross-origin writes are possible,
+// but we still lock down to prevent the permissive default from being inherited
+// if routes expand in future.
+app.use(
+  cors({
+    origin: (origin, cb) => {
+      if (!origin) return cb(null, true); // same-site / server-to-server
+      const allowed =
+        /^https:\/\/[a-z0-9-]+\.replit\.dev$/.test(origin) ||
+        /^https?:\/\/localhost(:\d+)?$/.test(origin);
+      cb(null, allowed);
+    },
+    credentials: true,
+  }),
+);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
