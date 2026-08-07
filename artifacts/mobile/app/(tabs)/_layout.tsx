@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { mobileFetch } from '@/lib/api';
 import {
   Animated,
+  AppState,
   Easing,
   Modal,
   Platform,
@@ -509,13 +510,96 @@ function AudiobookProgressBanner({
   );
 }
 
+// ── Audiobook ready banner ────────────────────────────────────────────────────
+
+const READY_GREEN = '#22c55e';
+
+/**
+ * Compact banner shown for ~8 s after a background audiobook job finishes.
+ * Replaces the progress banner in the same slot; tapping navigates to /studio.
+ */
+function AudiobookReadyBanner({ onPress }: { onPress: () => void }) {
+  const colors = useColors();
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel="Your audiobook is ready. Tap to open Studio."
+      style={[
+        styles.progressBanner,
+        { backgroundColor: colors.background, borderBottomColor: colors.border },
+      ]}
+    >
+      {/* Solid green bar — signals 100 % complete */}
+      <View style={[styles.progressTrack, { backgroundColor: `${READY_GREEN}22` }]}>
+        <View style={[styles.progressFill, { width: '100%', backgroundColor: READY_GREEN }]} />
+      </View>
+
+      <View style={styles.progressTextRow}>
+        <Feather name="check-circle" size={11} color={READY_GREEN} />
+        <Text
+          style={[styles.progressLabel, { color: colors.mutedForeground }]}
+          numberOfLines={1}
+        >
+          Your audiobook is ready — tap to play
+        </Text>
+        <Feather name="chevron-right" size={11} color={colors.mutedForeground} />
+      </View>
+    </Pressable>
+  );
+}
+
 // ── Native layout (iOS / Android) — no tab bar ────────────────────────────────
+
+/** Auto-dismiss duration for the "ready" banner (ms of foreground time). */
+const READY_BANNER_MS = 8_000;
 
 function NativeAppLayout() {
   const [menuOpen, setMenuOpen] = useState(false);
   const reviewCount       = useReviewCount();
   const audiobookProgress = useAudiobookJobActive();
   const router            = useRouter();
+
+  // 8 s auto-dismiss timer — only runs while the app is in the foreground so
+  // the banner doesn't silently expire while the user is in another app.
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (!audiobookProgress.justCompleted) {
+      if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
+      return;
+    }
+
+    const tryStart = () => {
+      if (timerRef.current) return; // already ticking
+      timerRef.current = setTimeout(() => {
+        timerRef.current = null;
+        audiobookProgress.dismissReady();
+      }, READY_BANNER_MS);
+    };
+
+    // Start immediately if already foregrounded; otherwise wait for focus.
+    if (AppState.currentState === 'active') tryStart();
+
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') {
+        tryStart();
+      } else {
+        // App moved to background — pause the timer so the full 8 s is
+        // shown when the user actually returns.
+        if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
+      }
+    });
+
+    return () => {
+      sub.remove();
+      if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
+    };
+  }, [audiobookProgress.justCompleted, audiobookProgress.dismissReady]);
+
+  const handleReadyPress = () => {
+    audiobookProgress.dismissReady();
+    router.navigate('/studio' as any);
+  };
 
   return (
     <View style={{ flex: 1 }}>
@@ -524,8 +608,13 @@ function NativeAppLayout() {
         reviewCount={reviewCount}
       />
 
+      {/* Ready banner — shown briefly after successful background completion */}
+      {audiobookProgress.justCompleted && !audiobookProgress.active && (
+        <AudiobookReadyBanner onPress={handleReadyPress} />
+      )}
+
       {/* Progress banner — visible only while a background audiobook job is active */}
-      {audiobookProgress.active && (
+      {audiobookProgress.active && !audiobookProgress.justCompleted && (
         <AudiobookProgressBanner
           chapterIdx={audiobookProgress.chapterIdx}
           totalChapters={audiobookProgress.totalChapters}

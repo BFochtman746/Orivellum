@@ -3380,6 +3380,9 @@ function AudiobookPanel({
           if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
           if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
           pollJobRef.current = null;
+          // Write completion flag BEFORE removing the job key so the layout
+          // hook can distinguish a successful finish from a cancel/error.
+          AsyncStorage.setItem('orivellum:audiobook_done_v1', '1').catch(() => {});
           AsyncStorage.removeItem(AUDIOBOOK_JOB_KEY).catch(() => {});
           const r = status.result;
           setResult({ path: r.path, filename: r.filename, work_title: r.work_title });
