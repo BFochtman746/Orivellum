@@ -89,6 +89,7 @@
     "zod-validation-error": "^3.4.0"
   },
   "dependencies": {
+    "@expo-google-fonts/fraunces": "^0.4.1",
     "expo-audio": "^57.0.3",
     "expo-clipboard": "^57.0.1",
     "expo-device": "~8.0.10",
