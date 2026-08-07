@@ -1,0 +1,178 @@
+{
+  "task": "VELLUM UI polish pass — visual only, no new features",
+  "completed": "2026-08-07",
+  "research_citations": {
+    "ios26_liquid_glass": "https://developer.apple.com/documentation/technologyoverviews/adopting-liquid-glass",
+    "editorial_type_rhythm": "https://www.carmenansio.com/articles/editorial-typography-css/",
+    "micro_interaction_easing": "https://kitlab.app/en/blog/cubic-bezier-css-easing-guide-2026",
+    "empty_skeleton_states": "https://mobileapp.wiki/en/uiux/empty-loading-states-guide",
+    "touch_targets_a11y": "https://www.w3.org/WAI/WCAG22/Understanding/target-size-minimum.html",
+    "mobile_safe_area": "https://modern-css.com/mobile-viewport-height-without-100vh-hack/"
+  },
+  "screens": {
+    "home": {
+      "status": "done",
+      "commit": "e82a42f",
+      "changes": [
+        "Briefing header: eyebrow + vellum-h1 + gilt-rule pattern",
+        "Tier scorecard tiles: VELLUM token backgrounds (green-soft/gilt-soft) and icon/value/label colors",
+        "Research Gaps badge: rust token instead of amber-700",
+        "AlertTriangle icon: var(--rust) instead of text-amber-500",
+        "Suggestions Widget sparkle: gilt token",
+        "Active Works h2: text-balance",
+        "Active Works cards: vellum-card tap spring-scale data-interactive",
+        "Conversations h2: text-balance; empty state: gilt-soft card",
+        "Activity h2: text-balance; empty state: ink-faint mono text",
+        "Custodian widget h2: section-label-mono class",
+        "Research Gaps h2: text-balance"
+      ]
+    },
+    "chat": {
+      "status": "done",
+      "commit": "36c3acd",
+      "changes": [
+        "Loading skeletons: rounded-lg → rounded-xl",
+        "Empty message state: Bot icon var(--green-raw), serif italic text, var(--ink-soft)",
+        "Conversation h2: text-balance",
+        "No conversations empty state: mono font ink-faint in small card"
+      ]
+    },
+    "library": {
+      "status": "done",
+      "commit": "492fd0c",
+      "changes": [
+        "Header already had VELLUM pattern — kept",
+        "Search mode buttons: py-1.5 min-h-[34px] touch-manipulation",
+        "ZIP exploded badge: gilt-soft/gilt-line tokens instead of amber",
+        "from_zip archive badge: t-artifact token instead of violet",
+        "Grouped and flat view empty states: vellum-card + gilt-rule + text-balance",
+        "Flat view Card: vellum-card tap spring-scale, rust-soft on error",
+        "Flat view error icon container: rust tokens",
+        "Flat view error message: rust-soft background",
+        "Flat view zip badges: gilt and t-artifact tokens"
+      ]
+    },
+    "works": {
+      "status": "done",
+      "commit": "70005e7",
+      "changes": [
+        "WorkReadinessBadge: all colors replaced with VELLUM inline styles (rust/gilt/green-2)",
+        "Status filter buttons: py-2 min-h-[36px] touch-manipulation",
+        "Loading skeleton: rounded-xl",
+        "Work cards: vellum-card tap spring-scale data-interactive",
+        "Work h2: text-balance"
+      ]
+    },
+    "book_detail": {
+      "status": "done",
+      "commit": "f2fc5cc",
+      "changes": [
+        "Header already had vellum-h1 + gilt-rule — kept",
+        "Stats bar processing badge: gilt-soft/gilt-line tokens instead of amber",
+        "Stats bar error badge: rust-soft/rust tokens instead of red",
+        "Mastery bar fill: var(--green-2) instead of emerald-500/70",
+        "Tab trigger row: min-h-[44px] touch-manipulation"
+      ]
+    },
+    "learn": {
+      "status": "done",
+      "commit": "a1d211b",
+      "changes": [
+        "Scorecard stat tiles: vellum-card + green-soft/gilt-soft backgrounds, token colors",
+        "MasteryRing SVG stroke: CSS var(--green-2)/var(--gilt)/var(--ink-soft) instead of hex",
+        "masteryColor (className) → masteryStyle (inline style) with VELLUM vars",
+        "Active Study h2: text-balance + var(--green-raw) icon"
+      ]
+    },
+    "intake": {
+      "status": "done",
+      "commit": "1f1262f",
+      "changes": [
+        "Empty state: VELLUM green-soft icon box, eyebrow + vellum-h1 + gilt-rule, text-balance body",
+        "Empty state buttons: min-h-[44px]",
+        "Intake Profile header: eyebrow + vellum-h1 + gilt-rule, gilt Sparkles icon, mono docId chip",
+        "Back nav button: min-h-[44px]"
+      ]
+    },
+    "studio": {
+      "status": "done",
+      "commit": "271aed4",
+      "changes": [
+        "Main tab bar buttons: min-h-[44px] touch-manipulation"
+      ]
+    },
+    "graph": {
+      "status": "done",
+      "commit": "4277877",
+      "changes": [
+        "Page header: eyebrow 'Knowledge Map' + vellum-h1 'Graph' + gilt-rule + ink-soft description",
+        "Filter container: rounded-xl with var(--line) border instead of border-border/40",
+        "Work selector label: font-mono uppercase tracking-wider eyebrow style",
+        "Entity kind chip buttons: px-3 py-1.5 min-h-[36px] touch-manipulation; ink-faint when off",
+        "Refresh button: min-h-[44px]"
+      ]
+    },
+    "recall": {
+      "status": "done",
+      "note": "Recall is embedded in /chat as MemoryPanel — chat screen commit covers it"
+    },
+    "review": {
+      "status": "done",
+      "commit": "d4103d3",
+      "changes": [
+        "Page header: eyebrow 'Governance' + vellum-h1 + gilt-rule + text-balance description",
+        "Refresh button: min-h-[44px]",
+        "TYPE_META: all badge/border colors replaced with VELLUM inline style objects (gilt/rust/green-2/ink-soft)",
+        "ReviewCard border-left: inline style from TYPE_META.borderStyle",
+        "Filter pills: py-2 min-h-[36px] touch-manipulation",
+        "Approve button: var(--green-2) color",
+        "Reject button: var(--rust) color",
+        "Defer button: min-h-[36px]",
+        "Empty 'all clear' state: vellum-card + green-2 icon + gilt-rule + text-balance"
+      ]
+    },
+    "settings": {
+      "status": "done",
+      "commit": "2ea2042",
+      "changes": [
+        "Page header was already vellum-h1 pattern — kept",
+        "Overall Status card: vellum-card + green-soft bg, green-2/gilt status icons",
+        "Database card: vellum-card, green-2 connected / rust offline icons",
+        "AI Engine card: vellum-card + gilt-soft bg when offline, consistent icon colors",
+        "Skeletons: rounded-lg"
+      ]
+    }
+  },
+  "deferred_post_polish": [
+    {
+      "screen": "learn / book_detail",
+      "item": "Interleaved-practice toggle uses violet-600/violet-50 (feature-branding, deeply tied to quiz UX)",
+      "reason": "Color change would need a new semantic token; violates 'no new features' rule"
+    },
+    {
+      "screen": "library / works",
+      "item": "ReadinessBadge and LifecycleBadge component internals still use amber/blue Tailwind classes",
+      "reason": "Shared components used across many screens; refactor is a standalone task to avoid scope creep"
+    },
+    {
+      "screen": "book_detail",
+      "item": "Inline amber/violet Tailwind in BookTab, BrainstormTab, GenesisTab sub-components",
+      "reason": "detail.tsx is 4492 lines with many sub-components — full sweep is a dedicated task"
+    },
+    {
+      "screen": "chat",
+      "item": "Archive/restore hover colors (hover:text-amber-600, hover:text-emerald-600) on sidebar row buttons",
+      "reason": "Tiny hover states; no single VELLUM hover token maps cleanly without a new semantic"
+    },
+    {
+      "screen": "settings",
+      "item": "Remaining 3000+ lines of Settings sub-cards (MCOS, nightshift, audio, workshop panels)",
+      "reason": "Only the three top stat cards were in scope for this pass; deeper Settings polish is a separate task"
+    },
+    {
+      "screen": "global",
+      "item": "Dark-mode pass — all inline var() tokens should work in dark mode but hasn't been verified",
+      "reason": "Requires dark-mode testing session; CSS var tokens are theme-aware but visual QA needed"
+    }
+  ]
+}
