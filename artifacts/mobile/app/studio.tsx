@@ -4011,7 +4011,19 @@ function useSavedAudiobookFiles() {
     setFiles(prev => prev.filter(f => f.uri !== uri));
   }, []);
 
-  return { files, loading, refresh, deleteFile };
+  const renameFile = useCallback(async (uri: string, newName: string): Promise<void> => {
+    if (Platform.OS === 'web') return;
+    const FileSystem = await import('expo-file-system/legacy');
+    const dir = FileSystem.documentDirectory;
+    if (!dir) return;
+    const newUri = `${dir}${newName}`;
+    await FileSystem.moveAsync({ from: uri, to: newUri });
+    setFiles(prev => prev.map(f =>
+      f.uri === uri ? { ...f, uri: newUri, name: newName } : f,
+    ));
+  }, []);
+
+  return { files, loading, refresh, deleteFile, renameFile };
 }
 
 /** Compact share button that shares a local file:// URI directly (no download). */
@@ -4063,21 +4075,67 @@ const _SWIPE_THRESHOLD  = 36; // how far left before snapping open
  * Gesture: swipe left to reveal the delete button underneath; swipe right (or
  * tap play) to snap back closed.  Implemented with Animated + PanResponder so
  * no extra gesture-handler dependency is required.
+ *
+ * Tap the pencil icon to rename the file inline.  While the rename TextInput
+ * is active the swipe gesture is suppressed so the keyboard doesn't fight it.
  */
 function SavedFileRow({
   file,
   audio,
   onDelete,
+  onRename,
 }: {
   file: SavedFile;
   audio: ReturnType<typeof useSharedAudio>;
   onDelete: () => void;
+  onRename: (newName: string) => Promise<void>;
 }) {
   const colors     = useColors();
   const translateX = useRef(new Animated.Value(0)).current;
   const isOpenRef  = useRef(false);
   const playKey    = `saved-file-${file.uri}`;
   const isPlaying  = audio.playingKey === playKey;
+
+  // Inline rename state
+  const [isRenaming, setIsRenaming] = useState(false);
+  // Pre-fill with name minus .mp3 extension for friendlier editing
+  const [draftName, setDraftName]   = useState('');
+  const [renaming, setRenaming]     = useState(false);
+
+  const startRename = () => {
+    snapTo(0); // close swipe if open
+    setDraftName(file.name.replace(/\.mp3$/i, ''));
+    setIsRenaming(true);
+  };
+
+  const cancelRename = () => {
+    setIsRenaming(false);
+    setDraftName('');
+  };
+
+  const confirmRename = async () => {
+    const trimmed = draftName.trim();
+    if (!trimmed || trimmed === file.name.replace(/\.mp3$/i, '')) {
+      cancelRename();
+      return;
+    }
+    // Reject names containing path separators
+    if (trimmed.includes('/') || trimmed.includes('\\')) {
+      Alert.alert('Invalid name', 'File name cannot contain slashes.');
+      return;
+    }
+    const newName = `${trimmed}.mp3`;
+    setRenaming(true);
+    try {
+      await onRename(newName);
+      setIsRenaming(false);
+      setDraftName('');
+    } catch (e: any) {
+      Alert.alert('Could not rename', e?.message ?? 'Rename failed');
+    } finally {
+      setRenaming(false);
+    }
+  };
 
   const snapTo = useCallback((toValue: number) => {
     Animated.spring(translateX, { toValue, useNativeDriver: true, bounciness: 0 }).start();
@@ -4086,8 +4144,9 @@ function SavedFileRow({
 
   const panResponder = useRef(
     PanResponder.create({
+      // Suppress swipe gesture while the rename input is active
       onMoveShouldSetPanResponder: (_, { dx, dy }) =>
-        Math.abs(dx) > 6 && Math.abs(dx) > Math.abs(dy) * 1.5,
+        !isRenaming && Math.abs(dx) > 6 && Math.abs(dx) > Math.abs(dy) * 1.5,
       onPanResponderGrant: () => {
         // Flatten any in-progress spring so the offset calculation is accurate.
         translateX.stopAnimation();
@@ -4124,6 +4183,53 @@ function SavedFileRow({
     });
   };
 
+  // ── Rename mode — full-width input, no swipe gesture ───────────────────────
+  if (isRenaming) {
+    return (
+      <View style={[
+        styles.outputRow,
+        { borderColor: colors.primary, backgroundColor: colors.primary + '08', gap: 8 },
+      ]}>
+        {/* Name input */}
+        <TextInput
+          autoFocus
+          value={draftName}
+          onChangeText={setDraftName}
+          onSubmitEditing={confirmRename}
+          returnKeyType="done"
+          selectTextOnFocus
+          style={{
+            flex: 1,
+            fontSize: 13,
+            fontFamily: 'Inter_400Regular',
+            color: colors.foreground,
+            borderWidth: 1,
+            borderColor: colors.primary + '66',
+            borderRadius: 6,
+            paddingHorizontal: 8,
+            paddingVertical: 5,
+            backgroundColor: colors.background,
+          }}
+        />
+        {/* .mp3 hint */}
+        <Text style={{ fontSize: 12, color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }}>
+          .mp3
+        </Text>
+        {/* Confirm */}
+        <Pressable onPress={confirmRename} hitSlop={8} style={styles.iconBtn} disabled={renaming}>
+          {renaming
+            ? <ActivityIndicator size="small" color={colors.primary} />
+            : <Feather name="check" size={16} color={colors.primary} />}
+        </Pressable>
+        {/* Cancel */}
+        <Pressable onPress={cancelRename} hitSlop={8} style={styles.iconBtn} disabled={renaming}>
+          <Feather name="x" size={16} color={colors.mutedForeground} />
+        </Pressable>
+      </View>
+    );
+  }
+
+  // ── Normal mode — swipeable row with edit icon ──────────────────────────────
   return (
     <View style={{ overflow: 'hidden', borderRadius: 8 }}>
       {/* Delete action revealed on swipe-left */}
@@ -4184,6 +4290,11 @@ function SavedFileRow({
           </Text>
         </View>
 
+        {/* Rename */}
+        <Pressable onPress={startRename} hitSlop={8} style={styles.iconBtn}>
+          <Feather name="edit-2" size={15} color={colors.mutedForeground} />
+        </Pressable>
+
         {/* Share */}
         <ShareLocalFileButton uri={file.uri} name={file.name} />
       </Animated.View>
@@ -4200,7 +4311,7 @@ function SavedFileRow({
  */
 function SavedFilesPanel({ audio }: { audio: ReturnType<typeof useSharedAudio> }) {
   const colors = useColors();
-  const { files, loading, refresh, deleteFile } = useSavedAudiobookFiles();
+  const { files, loading, refresh, deleteFile, renameFile } = useSavedAudiobookFiles();
 
   // Not meaningful on web — file:// URIs are iOS/Android only.
   if (Platform.OS === 'web') return null;
@@ -4247,6 +4358,7 @@ function SavedFilesPanel({ audio }: { audio: ReturnType<typeof useSharedAudio> }
               file={file}
               audio={audio}
               onDelete={() => handleDelete(file)}
+              onRename={(newName) => renameFile(file.uri, newName)}
             />
           ))}
         </View>
