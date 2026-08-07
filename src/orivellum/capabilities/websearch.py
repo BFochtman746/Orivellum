@@ -1,25 +1,24 @@
-"""Web search via Tavily — governed multi-query research with passage ranking and citation assembly.
+"""Web search via Tavily — governed multi-query, multi-mode research pipeline.
 
-Tavily is purpose-built for AI agents: it handles CAPTCHA solving, JavaScript rendering,
-anti-bot detection, and content extraction internally.  You never need to deal with those
-mechanisms directly.  The service returns extracted page content with relevance scores,
-which we then expand, deduplicate, chunk, score, and assemble into cited model context.
+Tavily handles CAPTCHA solving, JavaScript rendering, and anti-bot detection
+internally.  We focus entirely on the retrieval-quality pipeline above it:
+multi-query fan-out, reciprocal rank fusion, domain diversity, passage chunking,
+BM25 ranking, and citation assembly.
 
-Design principles from A-01 Internet Research Service v0.2.0:
-  - Multi-query fan-out: LLM-planned query variants improve recall
-  - Reciprocal rank fusion (RRF): merges discoveries across queries by URL
-  - Domain diversity: caps sources per hostname so one site can't dominate
-  - Source quality bonus: .gov/.edu/arxiv ranked up automatically
-  - Passage chunking: full raw_content split into overlapping 1 200-char chunks
-  - BM25-style lexical reranking: chunks scored against the query (no local ML model needed)
-  - Citation assembly: model_context with [S1], [S2] inline markers
-  - Search profiles: quick / balanced / thorough
-  - Freshness routing: time-bounded searches via Tavily ``days`` parameter
-  - Topic routing: news lane when current-events signals detected
-  - Diagnostics: transparent report of what worked and what failed
+Search modes
+────────────
+  WEB      — general web (always included by default)
+  NEWS     — Tavily news lane; auto-added when freshness signals detected
+  ACADEMIC — curated scholarly/academic domains
+  YOUTUBE  — YouTube video discovery + public transcript extraction
+  FACEBOOK — publicly-indexed Facebook pages (no login, no private content)
+  BIBLICAL — curated biblical/theological domains + scripture-aware query expansion
 
-Key difference from a self-hosted approach: Tavily already solves CAPTCHA and JS rendering,
-so we focus purely on the retrieval quality pipeline above it.
+Search profiles
+───────────────
+  QUICK    — 1 query, basic depth — narrow fact-checks
+  BALANCED — 2–3 queries, basic depth — most questions
+  THOROUGH — 4–6 queries, advanced depth + full page text — research reports
 
 Requires TAVILY_API_KEY.  Falls back to a DuckDuckGo link when absent.
 """
@@ -45,38 +44,76 @@ logger = logging.getLogger("orivellum.websearch")
 # ── API constants ──────────────────────────────────────────────────────────────
 
 _TAVILY_URL  = "https://api.tavily.com/search"
-_MAX_RESULTS = 8          # results per Tavily query
-_TIMEOUT     = 20         # seconds for each Tavily call
+_MAX_RESULTS = 8
+_TIMEOUT     = 20
 
-# ── Search profiles ────────────────────────────────────────────────────────────
+# ── Enums ──────────────────────────────────────────────────────────────────────
 
 class SearchProfile(str, Enum):
-    """Controls query expansion and retrieval depth.
+    QUICK    = "quick"     # 1 query, basic depth
+    BALANCED = "balanced"  # 2–3 queries, basic depth
+    THOROUGH = "thorough"  # 4–6 queries, advanced depth + raw content
 
-    QUICK    — 1 query, basic depth — fast for narrow fact-checks
-    BALANCED — 2–3 queries, basic depth — good for most questions
-    THOROUGH — 4–6 queries, advanced depth + full page text — for research reports
-    """
-    QUICK    = "quick"
-    BALANCED = "balanced"
-    THOROUGH = "thorough"
+class SearchMode(str, Enum):
+    WEB      = "web"       # general web (default)
+    NEWS     = "news"      # current-events lane
+    ACADEMIC = "academic"  # scholarly sources
+    YOUTUBE  = "youtube"   # YouTube videos + transcripts
+    FACEBOOK = "facebook"  # publicly-indexed Facebook pages
+    BIBLICAL = "biblical"  # biblical/theological sources
 
 # ── Source quality bonuses ─────────────────────────────────────────────────────
-
-# Authoritative sources receive a bonus added to their RRF score.  Values are
-# calibrated so a single .gov result still competes fairly with many ordinary results.
 
 _QUALITY_SUFFIX: dict[str, float] = {
     ".gov": 0.35, ".mil": 0.35,
     ".edu": 0.20, ".ac.uk": 0.20,
 }
+
 _QUALITY_HOST: dict[str, float] = {
-    "arxiv.org":                   0.20,
-    "pubmed.ncbi.nlm.nih.gov":     0.20,
-    "docs.python.org":             0.20,
-    "developer.mozilla.org":       0.20,
-    "en.wikipedia.org":            0.10,
-    "github.com":                  0.08,
+    # General authority
+    "arxiv.org":               0.20,
+    "pubmed.ncbi.nlm.nih.gov": 0.20,
+    "docs.python.org":         0.20,
+    "developer.mozilla.org":   0.20,
+    "en.wikipedia.org":        0.10,
+    "github.com":              0.08,
+    # ── Biblical / theological ─────────────────────────────────────────────
+    # Primary Scripture texts and lexicons
+    "biblegateway.com":        0.40,   # canonical Scripture text
+    "biblehub.com":            0.38,   # Strong's, interlinear, multiple versions
+    "blueletterbible.org":     0.38,   # Greek/Hebrew lexicon, commentaries
+    "biblestudytools.com":     0.32,
+    "bible.org":               0.30,
+    "studylight.org":          0.30,
+    # Trusted systematic theology / commentary
+    "thegospelcoalition.org":  0.35,
+    "desiringgod.org":         0.33,
+    "ligonier.org":            0.33,
+    "monergism.com":           0.30,
+    "ccel.org":                0.35,   # Christian classics (Spurgeon, Calvin, etc.)
+    "reformed.org":            0.28,
+    "biblical.org":            0.30,
+    "biblicalstudies.org.uk":  0.28,
+    "ntgateway.com":           0.28,
+    # General evangelical reference
+    "gotquestions.org":        0.28,
+    "crosswalk.com":           0.25,
+    "christianity.com":        0.22,
+    "bibleref.com":            0.28,
+    # Academic / Jewish scholarship
+    "thetorah.com":            0.30,
+    "jewishvirtuallibrary.org":0.28,
+    "myjewishlearning.com":    0.22,
+    "sacred-texts.com":        0.25,
+    "earlychristianwritings.com":0.28,
+    "tertullian.org":          0.25,
+    # Seminaries and academic theology
+    "dts.edu":                 0.30,
+    "rts.edu":                 0.28,
+    "tms.edu":                 0.28,
+    "gordon-conwell.edu":      0.28,
+    "wheaton.edu":             0.28,
+    "academia.edu":            0.20,
 }
 
 def _source_quality_bonus(url: str) -> float:
@@ -86,6 +123,34 @@ def _source_quality_bonus(url: str) -> float:
             return bonus
     return _QUALITY_HOST.get(host, 0.0)
 
+# ── Curated domain lists ───────────────────────────────────────────────────────
+
+# Tavily include_domains restricts results to only these hosts.
+# Used for mode-specific searches that run ALONGSIDE a general web lane.
+
+_ACADEMIC_DOMAINS: list[str] = [
+    "arxiv.org", "pubmed.ncbi.nlm.nih.gov", "scholar.google.com",
+    "jstor.org", "semanticscholar.org", "academia.edu",
+    "researchgate.net", "ncbi.nlm.nih.gov", "nature.com",
+    "sciencedirect.com", "springer.com", "wiley.com",
+]
+
+_YOUTUBE_DOMAINS: list[str] = ["youtube.com", "youtu.be"]
+
+_FACEBOOK_DOMAINS: list[str] = [
+    "facebook.com", "www.facebook.com", "m.facebook.com",
+]
+
+_BIBLICAL_DOMAINS: list[str] = [
+    "biblegateway.com", "biblehub.com", "blueletterbible.org",
+    "biblestudytools.com", "bible.org", "studylight.org",
+    "thegospelcoalition.org", "desiringgod.org", "ligonier.org",
+    "monergism.com", "ccel.org", "reformed.org", "biblical.org",
+    "gotquestions.org", "crosswalk.com", "bibleref.com",
+    "thetorah.com", "earlychristianwritings.com", "sacred-texts.com",
+    "tertullian.org", "jewishvirtuallibrary.org",
+]
+
 # ── URL helpers ────────────────────────────────────────────────────────────────
 
 _TRACKING_PARAMS = frozenset({
@@ -94,7 +159,6 @@ _TRACKING_PARAMS = frozenset({
 })
 
 def _canonical_url(url: str) -> str:
-    """Strip tracking params and fragment for deduplication."""
     try:
         parsed = urlparse(url)
         pairs = urllib.parse.parse_qsl(parsed.query)
@@ -109,17 +173,29 @@ def _canonical_url(url: str) -> str:
 def _hostname(url: str) -> str:
     return (urlparse(url).hostname or "").lower()
 
+def _youtube_video_id(url: str) -> str | None:
+    """Extract a YouTube video ID from a watch/shorts/embed URL."""
+    try:
+        parsed = urlparse(url)
+        host   = (parsed.hostname or "").lower()
+        if host == "youtu.be":
+            return parsed.path.strip("/") or None
+        if host.endswith("youtube.com"):
+            if parsed.path == "/watch":
+                return dict(urllib.parse.parse_qsl(parsed.query)).get("v")
+            parts = [p for p in parsed.path.split("/") if p]
+            if len(parts) >= 2 and parts[0] in {"shorts", "embed", "live", "v"}:
+                return parts[1]
+    except Exception:
+        pass
+    return None
+
 # ── Reciprocal Rank Fusion ─────────────────────────────────────────────────────
 
-_RRF_K = 60  # standard constant — higher = less steep; 60 is the canonical default
+_RRF_K = 60
 
 def _rrf_fuse(result_lists: list[list[dict]], max_per_domain: int = 2) -> list[dict]:
-    """Merge multiple Tavily result lists into one via RRF + source quality, then diversify.
-
-    Results appearing in multiple query results get a compounding RRF bonus.
-    Domain diversity is enforced after scoring so authoritative sites still
-    compete fairly before the cap is applied.
-    """
+    """Merge Tavily result lists via RRF + quality bonus, then enforce domain diversity."""
     by_canon: dict[str, dict]  = {}
     scores:   dict[str, float] = defaultdict(float)
 
@@ -133,18 +209,15 @@ def _rrf_fuse(result_lists: list[list[dict]], max_per_domain: int = 2) -> list[d
             if canon not in by_canon:
                 by_canon[canon] = dict(result)
 
-    # Add source quality bonus on top of RRF score
     for canon in by_canon:
         scores[canon] += _source_quality_bonus(by_canon[canon].get("url", canon))
 
-    # Sort by composite score (descending)
     fused = sorted(
         by_canon.values(),
         key=lambda r: scores[_canonical_url(r.get("url", ""))],
         reverse=True,
     )
 
-    # Enforce domain diversity: cap contributions per hostname
     domain_counts: dict[str, int] = defaultdict(int)
     diverse: list[dict] = []
     for result in fused:
@@ -152,18 +225,12 @@ def _rrf_fuse(result_lists: list[list[dict]], max_per_domain: int = 2) -> list[d
         if domain_counts[host] < max_per_domain:
             diverse.append(result)
             domain_counts[host] += 1
-
     return diverse
 
 # ── Text chunking ──────────────────────────────────────────────────────────────
 
 def _chunk_text(text: str, chunk_size: int = 1_200, overlap: int = 200) -> list[str]:
-    """Split text into overlapping chunks, preferring sentence boundaries.
-
-    Smaller chunks improve BM25 precision; overlap prevents evidence from
-    being cut mid-sentence across boundaries.
-    """
-    text = " ".join(text.split())   # collapse whitespace
+    text = " ".join(text.split())
     if len(text) <= chunk_size:
         return [text] if text else []
     chunks: list[str] = []
@@ -191,44 +258,33 @@ def _bm25_score(
     query_terms: Counter,
     doc_terms:   Counter,
     doc_len:     int,
-    avg_dl:      float,
+    avg_dl:      float = 150.0,
     k1: float = 1.5,
     b:  float = 0.75,
 ) -> float:
-    """BM25 term-frequency saturation scoring.
-
-    Uses a simplified IDF (log 2) since we don't have a reference corpus;
-    relative rankings between chunks are still meaningful and accurate.
-    """
     score = 0.0
-    for term, _ in query_terms.items():
+    for term in query_terms:
         tf = doc_terms.get(term, 0)
-        if tf == 0:
+        if not tf:
             continue
-        idf     = math.log(2)
         tf_norm = (tf * (k1 + 1)) / (tf + k1 * (1 - b + b * doc_len / max(avg_dl, 1)))
-        score  += idf * tf_norm
+        score  += math.log(2) * tf_norm
     return score
 
 @dataclass
 class _Passage:
-    source_id: str
-    title:     str
-    url:       str
-    text:      str
-    score:     float = 0.0
+    source_id:   str
+    title:       str
+    url:         str
+    source_type: str   # "web" | "youtube" | "facebook" | "biblical" | "academic"
+    text:        str
+    score:       float = 0.0
 
 def _rank_passages(
-    query:              str,
-    sources:            list[dict],
-    max_per_source:     int = 2,
-    avg_chunk_len:      float = 150.0,
+    query:          str,
+    sources:        list[dict],
+    max_per_source: int = 2,
 ) -> list[_Passage]:
-    """Chunk source texts, BM25-score each chunk against query, return top passages.
-
-    Prefers raw_content (full page text from Tavily advanced) over content snippets.
-    Caps contributions per source so no single page dominates the context.
-    """
     query_terms = Counter(_tokenize(query))
     if not query_terms:
         return []
@@ -236,43 +292,68 @@ def _rank_passages(
     all_passages: list[_Passage] = []
     for src in sources:
         text  = (src.get("raw_content") or src.get("content") or "").strip()
-        title = (src.get("title") or "").strip()
-        url   = (src.get("url")   or "").strip()
+        title = (src.get("title")   or "").strip()
+        url   = (src.get("url")     or "").strip()
+        stype = src.get("_source_type", "web")
         if not text or not url:
             continue
         source_id = hashlib.sha256(url.encode()).hexdigest()[:8]
         for chunk in _chunk_text(text):
             doc_terms = Counter(_tokenize(chunk))
-            score     = _bm25_score(query_terms, doc_terms, len(doc_terms), avg_chunk_len)
-            all_passages.append(_Passage(source_id=source_id, title=title, url=url,
-                                         text=chunk, score=score))
+            score     = _bm25_score(query_terms, doc_terms, len(doc_terms))
+            all_passages.append(
+                _Passage(source_id=source_id, title=title, url=url,
+                         source_type=stype, text=chunk, score=score)
+            )
 
     all_passages.sort(key=lambda p: p.score, reverse=True)
-
-    # Cap per source
     per_source: dict[str, int] = defaultdict(int)
     ranked: list[_Passage] = []
     for passage in all_passages:
         if per_source[passage.source_id] < max_per_source:
             ranked.append(passage)
             per_source[passage.source_id] += 1
-
     return ranked
+
+# ── YouTube transcript extraction ──────────────────────────────────────────────
+
+def _fetch_youtube_transcript(video_id: str) -> str | None:
+    """Fetch a public YouTube transcript via youtube-transcript-api.
+
+    Returns the full transcript as a single text string, or None if the video
+    has no public captions, captions are disabled, or the package is absent.
+    Never raises — transcript failure should not block the research pipeline.
+
+    This uses only the publicly available caption track; it does not download
+    the video, access account data, or use YouTube's paid Data API.
+    """
+    try:
+        from youtube_transcript_api import YouTubeTranscriptApi  # type: ignore[import]
+        entries = YouTubeTranscriptApi.get_transcript(video_id)
+        text    = " ".join(e.get("text", "") for e in entries if e.get("text"))
+        return text.strip() or None
+    except Exception as exc:
+        logger.debug("Transcript fetch failed for %s (non-fatal): %s", video_id, exc)
+        return None
 
 # ── Diagnostics ────────────────────────────────────────────────────────────────
 
 @dataclass
 class ResearchDiagnostics:
-    """Transparent report of what the research pipeline did and what failed."""
-    profile:            str        = "balanced"
-    queries_planned:    int        = 0
-    queries_executed:   int        = 0
-    results_discovered: int        = 0
-    unique_domains:     int        = 0
-    usable_sources:     int        = 0
-    passages_ranked:    int        = 0
-    provider_errors:    list[str]  = field(default_factory=list)
-    notes:              list[str]  = field(default_factory=list)
+    profile:               str       = "balanced"
+    modes_requested:       list[str] = field(default_factory=list)
+    queries_planned:       int       = 0
+    queries_executed:      int       = 0
+    results_discovered:    int       = 0
+    unique_domains:        int       = 0
+    usable_sources:        int       = 0
+    passages_ranked:       int       = 0
+    youtube_with_transcript: int     = 0
+    youtube_no_transcript:   int     = 0
+    facebook_results:        int     = 0
+    biblical_results:        int     = 0
+    provider_errors:       list[str] = field(default_factory=list)
+    notes:                 list[str] = field(default_factory=list)
 
 # ── Tavily API call ────────────────────────────────────────────────────────────
 
@@ -282,18 +363,20 @@ def _api_key() -> str:
 def _call_tavily(
     query: str,
     *,
-    search_depth:        str       = "basic",
-    max_results:         int       = _MAX_RESULTS,
-    include_raw_content: bool      = False,
-    days:                int | None = None,
-    topic:               str       = "general",
+    search_depth:        str            = "basic",
+    max_results:         int            = _MAX_RESULTS,
+    include_raw_content: bool           = False,
+    days:                int | None     = None,
+    topic:               str            = "general",
+    include_domains:     list[str]      | None = None,
+    exclude_domains:     list[str]      | None = None,
 ) -> list[dict]:
     """Single Tavily search call.  Returns raw result dicts.
 
-    search_depth="basic"    — fast, 1 Tavily credit
-    search_depth="advanced" — deeper extraction + raw_content, 2 Tavily credits
-    topic="news"            — news-optimised engine lane
-    days=7                  — restrict to results from the last 7 days
+    include_domains — restrict results to these hostnames only
+    exclude_domains — remove these hostnames from results
+    topic="news"    — use Tavily's news-optimised engine lane
+    days=N          — only results from the last N days
     """
     key = _api_key()
     if not key:
@@ -310,6 +393,10 @@ def _call_tavily(
         payload["include_raw_content"] = True
     if days is not None:
         payload["days"] = days
+    if include_domains:
+        payload["include_domains"] = include_domains
+    if exclude_domains:
+        payload["exclude_domains"] = exclude_domains
 
     req = urllib.request.Request(
         _TAVILY_URL,
@@ -324,7 +411,92 @@ def _call_tavily(
     with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:
         data = json.loads(resp.read().decode("utf-8"))
     results = data.get("results", [])
-    logger.info("Tavily: %d results for %r (depth=%s, topic=%s)", len(results), query, search_depth, topic)
+    logger.info(
+        "Tavily: %d results — %r (depth=%s topic=%s domains=%s)",
+        len(results), query, search_depth, topic,
+        include_domains or "any",
+    )
+    return results
+
+# ── Mode-specific search tasks ─────────────────────────────────────────────────
+
+def _search_web(query: str, *, depth: str, raw: bool, days: int | None) -> list[dict]:
+    results = _call_tavily(query, search_depth=depth, include_raw_content=raw, days=days)
+    for r in results:
+        r.setdefault("_source_type", "web")
+    return results
+
+def _search_news(query: str, *, days: int | None) -> list[dict]:
+    results = _call_tavily(query, topic="news", days=days or 7)
+    for r in results:
+        r["_source_type"] = "news"
+    return results
+
+def _search_academic(query: str, *, depth: str, raw: bool) -> list[dict]:
+    results = _call_tavily(
+        query,
+        search_depth=depth,
+        include_raw_content=raw,
+        include_domains=_ACADEMIC_DOMAINS,
+    )
+    for r in results:
+        r["_source_type"] = "academic"
+    return results
+
+def _search_youtube(query: str) -> list[dict]:
+    """Discover YouTube videos and enrich each result with its public transcript."""
+    results = _call_tavily(
+        query,
+        search_depth="basic",
+        include_raw_content=False,
+        include_domains=_YOUTUBE_DOMAINS,
+    )
+    enriched: list[dict] = []
+    for r in results:
+        r["_source_type"] = "youtube"
+        url        = r.get("url", "")
+        video_id   = _youtube_video_id(url)
+        transcript = _fetch_youtube_transcript(video_id) if video_id else None
+        if transcript:
+            # Prefer transcript over Tavily snippet — far richer evidence
+            r["raw_content"] = transcript
+            r["_has_transcript"] = True
+        else:
+            r["_has_transcript"] = False
+        enriched.append(r)
+    return enriched
+
+def _search_facebook(query: str) -> list[dict]:
+    """Search publicly indexed Facebook pages.
+
+    Returns only content that is publicly visible and already indexed by
+    search engines.  Private groups, login-gated content, and non-indexed
+    posts are not accessible — this is a deliberate boundary, not a limitation
+    to work around.
+    """
+    results = _call_tavily(
+        query,
+        search_depth="basic",
+        include_domains=_FACEBOOK_DOMAINS,
+    )
+    for r in results:
+        r["_source_type"] = "facebook"
+    return results
+
+def _search_biblical(query: str, *, depth: str, raw: bool) -> list[dict]:
+    """Search curated biblical/theological domains.
+
+    Returns results only from the trusted biblical source list, so every
+    result is from a verified scholarly or pastoral resource.
+    """
+    results = _call_tavily(
+        query,
+        search_depth=depth,
+        include_raw_content=raw,
+        include_domains=_BIBLICAL_DOMAINS,
+    )
+    for r in results:
+        r["_source_type"] = "biblical"
     return results
 
 # ── Query planning ─────────────────────────────────────────────────────────────
@@ -337,37 +509,81 @@ _PLANNER_PROMPT = (
     "Question: {query}"
 )
 
-def _plan_queries(query: str, n: int, llm_call_fn) -> list[str]:
-    """Use the local LLM to generate n complementary query variants.
+_BIBLICAL_PLANNER_PROMPT = (
+    "Generate {n} complementary search queries for the biblical/theological question below.\n"
+    "Vary the angle across:\n"
+    "  - Original Greek or Hebrew terminology (with transliteration where helpful)\n"
+    "  - Strong's Concordance numbers (e.g. G3056, H7225)\n"
+    "  - Specific verse references (e.g. John 1:1, Genesis 1:1)\n"
+    "  - Commentary or systematic theology perspective\n"
+    "  - Historical, cultural, or archaeological context\n"
+    "  - Church fathers or Reformation-era treatments\n"
+    "Return ONLY the queries, one per line, with no numbering, bullets, or explanation.\n\n"
+    "Question: {query}"
+)
 
-    Falls back silently to [] so the pipeline can continue with just the
-    original query.  The gateway remains the preferred planner; this is a
-    service-side fallback when an llm_call_fn is supplied.
-    """
+# Signals that a query is about biblical / theological content.
+# Checked against the lowercased query string.
+_BIBLICAL_SIGNALS: frozenset[str] = frozenset({
+    # Book names
+    "genesis", "exodus", "leviticus", "numbers", "deuteronomy",
+    "joshua", "judges", "ruth", "samuel", "kings", "chronicles",
+    "ezra", "nehemiah", "esther", "job", "psalms", "psalm",
+    "proverbs", "ecclesiastes", "isaiah", "jeremiah", "lamentations",
+    "ezekiel", "daniel", "hosea", "joel", "amos", "obadiah",
+    "jonah", "micah", "nahum", "habakkuk", "zephaniah", "haggai",
+    "zechariah", "malachi",
+    "matthew", "mark", "luke", "john", "acts", "romans",
+    "corinthians", "galatians", "ephesians", "philippians",
+    "colossians", "thessalonians", "timothy", "titus", "philemon",
+    "hebrews", "james", "peter", "jude", "revelation",
+    # Key terms
+    "bible", "biblical", "scripture", "gospel", "theology", "exegesis",
+    "hermeneutics", "eschatology", "soteriology", "christology",
+    "pneumatology", "ecclesiology", "covenant", "atonement",
+    "justification", "sanctification", "glorification", "redemption",
+    "propitiation", "expiation", "predestination", "election",
+    "grace", "faith", "repentance", "baptism", "communion",
+    "eucharist", "trinity", "incarnation", "resurrection",
+    "hebrew", "greek", "aramaic", "septuagint", "lxx",
+    "strongs", "strong's", "concordance", "interlinear",
+    "commentary", "sermon", "homily", "parable", "prophet",
+    "apostle", "disciple", "messiah", "christ", "jesus",
+    "yahweh", "elohim", "jehovah", "holy spirit",
+    "old testament", "new testament", "deuterocanonical", "apocrypha",
+    "church fathers", "calvin", "luther", "wesley", "spurgeon",
+})
+
+def _is_biblical_query(query: str) -> bool:
+    lower = query.lower()
+    return any(sig in lower for sig in _BIBLICAL_SIGNALS)
+
+_NEWS_SIGNALS: frozenset[str] = frozenset({
+    "today", "yesterday", "this week", "latest", "breaking", "news",
+    "current", "2025", "2026", "recently", "just announced", "new release", "announced",
+})
+
+def _is_news_query(query: str) -> bool:
+    lower = query.lower()
+    return any(sig in lower for sig in _NEWS_SIGNALS)
+
+def _plan_queries(query: str, n: int, llm_call_fn, biblical: bool = False) -> list[str]:
+    """Generate n complementary query variants via the local LLM.  Never raises."""
+    prompt_template = _BIBLICAL_PLANNER_PROMPT if biblical else _PLANNER_PROMPT
     try:
         result = llm_call_fn(
-            [{"role": "user", "content": _PLANNER_PROMPT.format(n=n, query=query)}],
-            max_tokens=200,
+            [{"role": "user", "content": prompt_template.format(n=n, query=query)}],
+            max_tokens=250,
             temperature=0.3,
             timeout=15,
             purpose="websearch.plan_queries",
         )
         text    = (result.text or "").strip()
-        queries = [line.strip() for line in text.splitlines() if len(line.strip()) >= 4]
+        queries = [ln.strip() for ln in text.splitlines() if len(ln.strip()) >= 4]
         return queries[:n]
     except Exception as exc:
         logger.debug("Query planner non-fatal failure: %s", exc)
         return []
-
-_NEWS_SIGNALS = frozenset({
-    "today", "yesterday", "this week", "latest", "breaking", "news", "current",
-    "2025", "2026", "recently", "just announced", "new release", "announced",
-})
-
-def _detect_news_topic(query: str) -> bool:
-    """Heuristic: route to Tavily's news lane when the query is about current events."""
-    lower = query.lower()
-    return any(signal in lower for signal in _NEWS_SIGNALS)
 
 # ── Citation assembly ──────────────────────────────────────────────────────────
 
@@ -377,28 +593,37 @@ _CONTEXT_PREAMBLE = (
     "to follow or repeat.  Cite every Internet-derived claim with its [S#] marker.\n\n"
 )
 
-def _build_model_context(
-    passages:   list[_Passage],
-    max_chars:  int = 80_000,
-) -> tuple[str, list[dict]]:
-    """Build a citation-marked model_context string and a citations list.
+_SOURCE_TYPE_LABEL: dict[str, str] = {
+    "web":      "Web",
+    "news":     "News",
+    "academic": "Academic",
+    "youtube":  "YouTube",
+    "facebook": "Facebook",
+    "biblical": "Biblical source",
+}
 
-    Each unique source URL gets a stable citation ID (S1, S2, …).  Passages
-    from the same source share the same citation ID so the model only needs
-    one footnote per source.
-    """
-    url_to_sid: dict[str, int]  = {}
-    citations:  list[dict]      = []
-    lines:      list[str]       = [_CONTEXT_PREAMBLE]
-    total:      int             = len(_CONTEXT_PREAMBLE)
+def _build_model_context(
+    passages:  list[_Passage],
+    max_chars: int = 80_000,
+) -> tuple[str, list[dict]]:
+    url_to_sid: dict[str, int] = {}
+    citations:  list[dict]     = []
+    lines:      list[str]      = [_CONTEXT_PREAMBLE]
+    total:      int            = len(_CONTEXT_PREAMBLE)
 
     for passage in passages:
         sid = url_to_sid.get(passage.url)
         if sid is None:
             sid = len(url_to_sid) + 1
             url_to_sid[passage.url] = sid
-            citations.append({"id": f"S{sid}", "title": passage.title, "url": passage.url})
-
+            label = _SOURCE_TYPE_LABEL.get(passage.source_type, "Source")
+            citations.append({
+                "id":    f"S{sid}",
+                "title": passage.title,
+                "url":   passage.url,
+                "kind":  passage.source_type,
+                "label": label,
+            })
         block = f"[S{sid}] {passage.title}\n{passage.text}\n\n"
         if total + len(block) > max_chars:
             break
@@ -412,127 +637,206 @@ def _build_model_context(
 def research_web(
     query: str,
     *,
-    profile:               SearchProfile | str = SearchProfile.BALANCED,
-    days:                  int | None          = None,
-    max_sources:           int                 = 12,
-    max_per_domain:        int                 = 2,
-    max_passages_per_src:  int                 = 2,
-    max_context_chars:     int                 = 80_000,
-    llm_call_fn                                = None,
-    db                                         = None,
+    profile:              SearchProfile | str            = SearchProfile.BALANCED,
+    modes:                list[SearchMode | str]         | None = None,
+    days:                 int | None                     = None,
+    max_sources:          int                            = 16,
+    max_per_domain:       int                            = 2,
+    max_passages_per_src: int                            = 2,
+    max_context_chars:    int                            = 80_000,
+    llm_call_fn                                          = None,
+    db                                                   = None,
 ) -> tuple[str, list[dict], ResearchDiagnostics]:
-    """Full governed web research: multi-query, fused, passage-ranked, cited.
+    """Full governed multi-mode research pipeline.
 
     Returns (model_context, citations, diagnostics).
 
-      model_context — citation-marked text for the system prompt
-      citations     — list of {"id": "S1", "title": ..., "url": ...} dicts
-      diagnostics   — ResearchDiagnostics with counts and any errors
+    model_context  — citation-marked text for the system prompt; [S#] citations
+    citations      — list of {id, title, url, kind, label} dicts
+    diagnostics    — ResearchDiagnostics with per-mode counts and any errors
 
-    Profile guide:
-      QUICK    — 1 query, basic depth — for narrow fact-checks
-      BALANCED — 2–3 queries, basic depth — for most questions
-      THOROUGH — 4–6 queries, advanced depth + full page text — for reports
+    modes controls which search lanes run alongside the general web lane:
+      [SearchMode.WEB]                    — general web only (default)
+      [SearchMode.BIBLICAL]               — biblical sources + web
+      [SearchMode.YOUTUBE, SearchMode.FACEBOOK, SearchMode.BIBLICAL]
+                                          — all three extra lanes + web
+      None / omitted                      — auto-detect from query signals
 
-    llm_call_fn, if supplied, is called to generate complementary query
-    variants before the search fan-out.  Its signature should match
-    orivellum.capabilities.llm.llm_call.
+    When modes=None the pipeline auto-detects: adds BIBLICAL if the query
+    contains scripture/theology signals, adds NEWS if freshness signals
+    are present.  WEB is always included.
     """
     if isinstance(profile, str):
         profile = SearchProfile(profile)
-    diag = ResearchDiagnostics(profile=profile.value)
 
-    # ── 1. Profile parameters ──────────────────────────────────────────────────
+    # Normalise modes
+    if modes is None:
+        resolved_modes: set[SearchMode] = {SearchMode.WEB}
+        if _is_biblical_query(query):
+            resolved_modes.add(SearchMode.BIBLICAL)
+        if _is_news_query(query):
+            resolved_modes.add(SearchMode.NEWS)
+    else:
+        resolved_modes = {SearchMode(m) if isinstance(m, str) else m for m in modes}
+        resolved_modes.add(SearchMode.WEB)   # WEB always present
+
+    is_biblical = SearchMode.BIBLICAL in resolved_modes
+
+    diag = ResearchDiagnostics(
+        profile=profile.value,
+        modes_requested=[m.value for m in resolved_modes],
+    )
+
+    # ── Profile parameters ─────────────────────────────────────────────────────
     if profile == SearchProfile.QUICK:
         n_variants, search_depth, include_raw = 0, "basic", False
     elif profile == SearchProfile.BALANCED:
         n_variants, search_depth, include_raw = 2, "basic", False
-    else:   # THOROUGH
+    else:
         n_variants, search_depth, include_raw = 4, "advanced", True
 
-    # ── 2. Query expansion ─────────────────────────────────────────────────────
+    # ── Query expansion ────────────────────────────────────────────────────────
     queries: list[str] = [query]
     if n_variants > 0 and llm_call_fn is not None:
-        variants = _plan_queries(query, n_variants, llm_call_fn)
+        variants = _plan_queries(query, n_variants, llm_call_fn, biblical=is_biblical)
         queries += [v for v in variants if v.casefold() != query.casefold()]
 
-    # Deduplicate while preserving order
-    seen_q: set[str] = set()
-    unique_queries: list[str] = []
+    seen_q: set[str]   = set()
+    unique_q: list[str] = []
     for q in queries:
         if q.casefold() not in seen_q:
-            unique_queries.append(q)
+            unique_q.append(q)
             seen_q.add(q.casefold())
-    queries = unique_queries[: n_variants + 1]
+    queries = unique_q[: n_variants + 1]
     diag.queries_planned = len(queries)
 
-    topic = "news" if _detect_news_topic(query) else "general"
+    # ── Build parallel task list ───────────────────────────────────────────────
+    # Each task is a (callable, label) pair.  All tasks run concurrently.
+    tasks: list[tuple[Any, str]] = []
 
-    # ── 3. Parallel Tavily fan-out ─────────────────────────────────────────────
+    for q in queries:
+        tasks.append((_make_web_task(q, search_depth, include_raw, days), f"web:{q[:40]}"))
+
+    if SearchMode.NEWS in resolved_modes:
+        tasks.append((_make_news_task(query, days), f"news:{query[:40]}"))
+
+    if SearchMode.ACADEMIC in resolved_modes:
+        tasks.append((_make_academic_task(query, search_depth, include_raw), f"academic:{query[:40]}"))
+
+    if SearchMode.BIBLICAL in resolved_modes:
+        # One biblical-domain search per main query (primary only — avoids over-fetching)
+        tasks.append((_make_biblical_task(query, search_depth, include_raw), f"biblical:{query[:40]}"))
+
+    if SearchMode.YOUTUBE in resolved_modes:
+        tasks.append((_make_youtube_task(query), f"youtube:{query[:40]}"))
+
+    if SearchMode.FACEBOOK in resolved_modes:
+        tasks.append((_make_facebook_task(query), f"facebook:{query[:40]}"))
+
+    # ── Execute all tasks in parallel ─────────────────────────────────────────
     result_lists: list[list[dict]] = []
 
-    def _search(q: str) -> list[dict]:
-        return _call_tavily(
-            q,
-            search_depth=search_depth,
-            max_results=_MAX_RESULTS,
-            include_raw_content=include_raw,
-            days=days,
-            topic=topic,
-        )
-
-    with ThreadPoolExecutor(max_workers=min(len(queries), 4)) as pool:
-        futures = {pool.submit(_search, q): q for q in queries}
+    with ThreadPoolExecutor(max_workers=min(len(tasks), 8)) as pool:
+        futures = {pool.submit(fn): label for fn, label in tasks}
         for future in as_completed(futures):
-            q = futures[future]
+            label = futures[future]
             try:
-                result_lists.append(future.result())
+                results = future.result()
+                result_lists.append(results)
                 diag.queries_executed += 1
+
+                # Per-mode stats
+                for r in results:
+                    stype = r.get("_source_type", "web")
+                    if stype == "youtube":
+                        if r.get("_has_transcript"):
+                            diag.youtube_with_transcript += 1
+                        else:
+                            diag.youtube_no_transcript += 1
+                    elif stype == "facebook":
+                        diag.facebook_results += 1
+                    elif stype == "biblical":
+                        diag.biblical_results += 1
             except Exception as exc:
-                diag.provider_errors.append(f"{q!r}: {exc}")
-                logger.warning("Tavily query failed (non-fatal): %r — %s", q, exc)
+                diag.provider_errors.append(f"{label}: {exc}")
+                logger.warning("Search task failed (non-fatal): %s — %s", label, exc)
 
     if not result_lists:
-        diag.notes.append("All Tavily queries failed — check TAVILY_API_KEY and connectivity.")
+        diag.notes.append("All search tasks failed — check TAVILY_API_KEY and connectivity.")
         return "", [], diag
 
-    # ── 4. RRF deduplication + domain diversity ────────────────────────────────
+    # ── Fuse, diversify, rank ──────────────────────────────────────────────────
     fused = _rrf_fuse(result_lists, max_per_domain=max_per_domain)
     fused = fused[:max_sources]
     diag.results_discovered = sum(len(r) for r in result_lists)
     diag.unique_domains     = len({_hostname(r.get("url", "")) for r in fused})
     diag.usable_sources     = len(fused)
 
-    # ── 5. Passage chunking + BM25 ranking ────────────────────────────────────
-    passages = _rank_passages(query, fused, max_per_source=max_passages_per_src)
+    passages            = _rank_passages(query, fused, max_per_source=max_passages_per_src)
     diag.passages_ranked = len(passages)
 
     if not passages:
-        diag.notes.append("Sources fetched but no passage text could be extracted.")
+        diag.notes.append("No passage text found in any retrieved source.")
         return "", [], diag
 
-    # ── 6. Citation assembly ───────────────────────────────────────────────────
     model_context, citations = _build_model_context(passages, max_context_chars)
 
-    if topic == "news":
-        diag.notes.append("News topic detected — Tavily news lane used for fresher results.")
+    # ── Diagnostic notes ───────────────────────────────────────────────────────
+    if SearchMode.BIBLICAL in resolved_modes:
+        diag.notes.append(
+            f"Biblical lane: {diag.biblical_results} result(s) from trusted biblical domains."
+        )
+    if SearchMode.YOUTUBE in resolved_modes:
+        diag.notes.append(
+            f"YouTube: {diag.youtube_with_transcript} video(s) with transcript, "
+            f"{diag.youtube_no_transcript} description-only."
+        )
+    if SearchMode.FACEBOOK in resolved_modes:
+        diag.notes.append(
+            f"Facebook: {diag.facebook_results} publicly-indexed result(s). "
+            "Private, login-gated, or non-indexed content is intentionally unavailable."
+        )
+    if is_biblical and _is_biblical_query(query):
+        diag.notes.append(
+            "Biblical query detected — used scripture-aware query expansion and "
+            "curated theological domain boost."
+        )
     if diag.provider_errors:
-        diag.notes.append(f"{len(diag.provider_errors)} query variant(s) failed; results from remaining queries only.")
+        diag.notes.append(
+            f"{len(diag.provider_errors)} task(s) failed; results drawn from remaining lanes."
+        )
 
     return model_context, citations, diag
 
 
+# ── Task factory helpers (keep lambdas picklable for ThreadPoolExecutor) ───────
+
+def _make_web_task(q, depth, raw, days):
+    return lambda: _search_web(q, depth=depth, raw=raw, days=days)
+
+def _make_news_task(q, days):
+    return lambda: _search_news(q, days=days)
+
+def _make_academic_task(q, depth, raw):
+    return lambda: _search_academic(q, depth=depth, raw=raw)
+
+def _make_biblical_task(q, depth, raw):
+    return lambda: _search_biblical(q, depth=depth, raw=raw)
+
+def _make_youtube_task(q):
+    return lambda: _search_youtube(q)
+
+def _make_facebook_task(q):
+    return lambda: _search_facebook(q)
+
+
 # ── Backward-compatible public API ─────────────────────────────────────────────
-# All three functions below keep their original signatures so existing callers
-# (conversations.py, intake.py, tests) do not need changes.
 
 def _fetch_results(query: str, search_depth: str = "basic") -> list[dict]:
-    """Call Tavily and return raw result dicts (legacy interface)."""
     return _call_tavily(query, search_depth=search_depth, max_results=_MAX_RESULTS)
 
 
 def _format_results_block(query: str, results: list[dict]) -> str:
-    """Format Tavily results as numbered markdown (fallback display)."""
     lines: list[str] = []
     for i, r in enumerate(results, 1):
         title   = (r.get("title")          or "").strip()[:200]
@@ -551,7 +855,7 @@ def _format_results_block(query: str, results: list[dict]) -> str:
 
 
 def web_search(query: str) -> str:
-    """Search with Tavily and return formatted markdown.  Never raises."""
+    """Search Tavily and return formatted markdown.  Never raises."""
     try:
         results = _fetch_results(query)
     except Exception as exc:
@@ -565,7 +869,6 @@ def web_search(query: str) -> str:
             "No results found — Tavily API key may be missing or the service is unreachable.\n\n"
             f"[Search on DuckDuckGo]({direct})"
         )
-
     return f"🌐 **Web Search: {query}**\n\n{_format_results_block(query, results)}"
 
 
@@ -574,11 +877,7 @@ def fetch_web_context(
     max_results: int = 3,
     timeout:     int = 5,
 ) -> list[dict]:
-    """Fetch top results for context injection into a chat prompt.
-
-    Returns list of dicts with title, url, content, score.  Never raises.
-    Deduplicates by canonical URL before returning.
-    """
+    """Fetch top results for chat context injection.  Never raises.  URL-deduplicated."""
     key = _api_key()
     if not key:
         return []
@@ -601,7 +900,7 @@ def fetch_web_context(
         )
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             data = json.loads(resp.read().decode("utf-8"))
-        results   = data.get("results", [])
+        results    = data.get("results", [])
         out:       list[dict] = []
         seen_urls: set[str]   = set()
         for r in results[:max_results]:
@@ -627,9 +926,8 @@ def web_search_synthesize(
 ) -> tuple[str, list[dict]]:
     """Search with Tavily, then synthesise a cited answer via the local LLM.
 
-    Uses research_web() internally for multi-query, fused, passage-ranked
-    retrieval.  Returns (synthesised_markdown, source_meta_list).
-    Falls back to plain formatted results if LLM synthesis fails.
+    Uses research_web() internally with auto-detected modes (biblical, news).
+    Returns (synthesised_markdown, source_meta_list).
     """
     from orivellum.capabilities.llm import llm_call
 
@@ -641,20 +939,19 @@ def web_search_synthesize(
             timeout=timeout, purpose=purpose, db=db,
         )
 
-    # Attempt full research pipeline
     try:
-        model_context, citations, diag = research_web(
+        model_context, citations, _diag = research_web(
             query,
             profile=SearchProfile.BALANCED,
             llm_call_fn=_llm,
             db=db,
+            # modes=None → auto-detects biblical/news from query signals
         )
     except Exception as exc:
         logger.error("research_web failed, falling back: %s", exc)
-        model_context, citations, diag = "", [], ResearchDiagnostics()
+        model_context, citations = "", []
 
     if not citations:
-        # Fallback: plain Tavily results, no synthesis
         try:
             results = _fetch_results(query)
         except Exception:
@@ -662,7 +959,7 @@ def web_search_synthesize(
         return web_search(query), []
 
     synthesis_prompt = (
-        "You are a research assistant. Using the numbered source passages below, "
+        "You are a research assistant. Using the source passages below, "
         "write a clear and accurate answer to the user's question. "
         "Use inline citation numbers like [S1] or [S2] when referencing a source. "
         "Be concise but complete. Do not invent facts not present in the sources.\n\n"
@@ -678,8 +975,11 @@ def web_search_synthesize(
 
     if synthesis:
         source_lines = [f"**[{c['id']}]** [{c['title']}]({c['url']})" for c in citations]
-        source_meta  = [{"title": c["title"] or c["url"], "url": c["url"], "kind": "web"}
-                        for c in citations]
+        source_meta  = [
+            {"title": c["title"] or c["url"], "url": c["url"],
+             "kind": c.get("kind", "web"), "isWeb": True}
+            for c in citations
+        ]
         text = (
             f"🌐 **{query}**\n\n"
             f"{synthesis}\n\n"
@@ -687,7 +987,6 @@ def web_search_synthesize(
         )
         return text, source_meta
 
-    # LLM synthesis failed — fall back to formatted results
     try:
         results = _fetch_results(query)
     except Exception:
