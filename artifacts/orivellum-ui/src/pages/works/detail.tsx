@@ -446,8 +446,8 @@ export default function WorkDetail() {
                   </div>
                   <div className="w-20 h-1.5 bg-muted rounded-full overflow-hidden">
                     <div
-                      className="h-full bg-emerald-500/70 rounded-full transition-all duration-700"
-                      style={{ width: `${(stats as any).avg_mastery_pct ?? 0}%` }}
+                      className="h-full rounded-full transition-all duration-700"
+                      style={{ width: `${(stats as any).avg_mastery_pct ?? 0}%`, background: 'var(--green-2)' }}
                     />
                   </div>
                 </div>
@@ -461,14 +461,16 @@ export default function WorkDetail() {
                 return (
                   <div className="flex items-center gap-2 ml-2 pl-4 border-l border-border/50">
                     {processing > 0 && (
-                      <span className="flex items-center gap-1 text-[10px] font-mono text-amber-600 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5">
-                        <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+                      <span className="flex items-center gap-1 text-[10px] font-mono rounded px-1.5 py-0.5"
+                            style={{ color: 'var(--gilt)', background: 'var(--gilt-soft)', border: '1px solid var(--gilt-line)' }}>
+                        <span className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: 'var(--gilt)' }} />
                         {processing} processing
                       </span>
                     )}
                     {errors > 0 && (
-                      <span className="flex items-center gap-1 text-[10px] font-mono text-red-600 bg-red-50 border border-red-200 rounded px-1.5 py-0.5">
-                        <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
+                      <span className="flex items-center gap-1 text-[10px] font-mono rounded px-1.5 py-0.5"
+                            style={{ color: 'var(--rust)', background: 'var(--rust-soft)', border: '1px solid var(--rust)' }}>
+                        <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'var(--rust)' }} />
                         {errors} error{errors !== 1 ? "s" : ""}
                       </span>
                     )}
@@ -503,7 +505,7 @@ export default function WorkDetail() {
               <TabsTrigger
                 key={value}
                 value={value}
-                className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent py-3 px-1 font-mono text-xs uppercase tracking-wider"
+                className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent py-3 px-1 font-mono text-xs uppercase tracking-wider min-h-[44px] touch-manipulation"
               >
                 <Icon className="w-4 h-4 mr-2" /> {label}
                 {badge !== null && badge !== undefined && badge > 0 && (
