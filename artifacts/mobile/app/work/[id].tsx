@@ -20,6 +20,7 @@ import {
 } from 'react-native';
 import { Swipeable } from 'react-native-gesture-handler';
 import { useColors } from '@/hooks/useColors';
+import { useVellumTokens, VELLUM_LIGHT, alpha } from '@/lib/tokens';
 import { Feather } from '@expo/vector-icons';
 import {
   useGetWork,
@@ -152,7 +153,7 @@ function TabBar({ active, onSelect, colors, badges = {}, onNavigateGraph }: {
                 {isSecondaryActive ? activeSecondaryLabel : '•••'}
               </Text>
               {!isSecondaryActive && secondaryBadgeTotal > 0 && (
-                <View style={{ backgroundColor: '#ef4444', borderRadius: 8, minWidth: 16, paddingHorizontal: 3, alignItems: 'center' }}>
+                <View style={{ backgroundColor: VELLUM_LIGHT.rust, borderRadius: 8, minWidth: 16, paddingHorizontal: 3, alignItems: 'center' }}>
                   <Text style={{ color: '#fff', fontSize: 9, fontFamily: 'Inter_700Bold', lineHeight: 14 }}>
                     {secondaryBadgeTotal}
                   </Text>
@@ -192,10 +193,10 @@ function DocItem({ doc, onReprocess }: { doc: Document; onReprocess?: (docId: st
       {isStuck && onReprocess && (
         <Pressable
           onPress={(e) => { e.stopPropagation?.(); onReprocess(doc.id ?? ''); }}
-          style={{ flexDirection: 'row', alignItems: 'center', gap: 4, alignSelf: 'flex-end', marginTop: 6, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, backgroundColor: '#f59e0b15', borderWidth: 1, borderColor: '#f59e0b44' }}
+          style={{ flexDirection: 'row', alignItems: 'center', gap: 4, alignSelf: 'flex-end', marginTop: 6, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, backgroundColor: VELLUM_LIGHT.giltSoft, borderWidth: 1, borderColor: VELLUM_LIGHT.giltLine }}
         >
-          <Feather name="refresh-cw" size={11} color="#d97706" />
-          <Text style={{ fontSize: 11, fontFamily: 'Inter_600SemiBold', color: '#d97706' }}>Re-extract</Text>
+          <Feather name="refresh-cw" size={11} color={VELLUM_LIGHT.gilt} />
+          <Text style={{ fontSize: 11, fontFamily: 'Inter_600SemiBold', color: VELLUM_LIGHT.gilt }}>Re-extract</Text>
         </Pressable>
       )}
     </Pressable>
@@ -249,7 +250,7 @@ function KnowledgeRow({ item, onReviewed, onDelete }: { item: KnowledgeItem; onR
       style={[styles.listItem, { borderColor: colors.border, opacity: isRejected ? 0.45 : 1 }]}
     >
       <View style={[styles.itemIcon, { backgroundColor: colors.muted }]}>
-        <Feather name="cpu" size={14} color={isAiAuto ? '#8b5cf6' : colors.primary} />
+        <Feather name="cpu" size={14} color={isAiAuto ? VELLUM_LIGHT.gilt : colors.primary} />
       </View>
       <View style={styles.itemBody}>
         <Text style={[styles.itemTitle, { color: colors.foreground }]} numberOfLines={3}>
@@ -271,12 +272,12 @@ function KnowledgeRow({ item, onReviewed, onDelete }: { item: KnowledgeItem; onR
                 paddingHorizontal: 10,
                 paddingVertical: 4,
                 borderRadius: 6,
-                backgroundColor: '#dcfce7',
+                backgroundColor: VELLUM_LIGHT.greenSoft,
                 opacity: reviewing ? 0.5 : 1,
               }}
             >
-              <Feather name="thumbs-up" size={12} color="#16a34a" />
-              <Text style={{ fontSize: 11, color: '#16a34a', fontFamily: 'Inter_600SemiBold' }}>Approve</Text>
+              <Feather name="thumbs-up" size={12} color={VELLUM_LIGHT.green} />
+              <Text style={{ fontSize: 11, color: VELLUM_LIGHT.green, fontFamily: 'Inter_600SemiBold' }}>Approve</Text>
             </Pressable>
             <Pressable
               onPress={() => review('reject')}
@@ -288,12 +289,12 @@ function KnowledgeRow({ item, onReviewed, onDelete }: { item: KnowledgeItem; onR
                 paddingHorizontal: 10,
                 paddingVertical: 4,
                 borderRadius: 6,
-                backgroundColor: '#fee2e2',
+                backgroundColor: VELLUM_LIGHT.rustSoft,
                 opacity: reviewing ? 0.5 : 1,
               }}
             >
-              <Feather name="thumbs-down" size={12} color="#dc2626" />
-              <Text style={{ fontSize: 11, color: '#dc2626', fontFamily: 'Inter_600SemiBold' }}>Reject</Text>
+              <Feather name="thumbs-down" size={12} color={VELLUM_LIGHT.rust} />
+              <Text style={{ fontSize: 11, color: VELLUM_LIGHT.rust, fontFamily: 'Inter_600SemiBold' }}>Reject</Text>
             </Pressable>
           </View>
         )}
@@ -375,7 +376,7 @@ function ConvSwipeRow({
             onArchive(conv.id, conv.title ?? 'Untitled');
           }}
           style={{
-            backgroundColor: '#f59e0b',
+            backgroundColor: VELLUM_LIGHT.gilt,
             borderRadius: 10,
             paddingHorizontal: 18,
             paddingVertical: 10,
@@ -441,10 +442,10 @@ function ConvSwipeRow({
 // Severity color coding tuned for the dark theme: red (high/critical),
 // amber (medium), muted (low). `dot` drives the leading indicator + accent.
 const GAP_SEVERITY: Record<string, { bg: string; text: string; dot: string }> = {
-  critical: { bg: 'rgba(239,68,68,0.18)',  text: '#f87171', dot: '#ef4444' },
-  high:     { bg: 'rgba(239,68,68,0.15)',  text: '#f87171', dot: '#ef4444' },
-  medium:   { bg: 'rgba(245,158,11,0.15)', text: '#fbbf24', dot: '#f59e0b' },
-  low:      { bg: 'rgba(148,163,184,0.15)',text: '#94a3b8', dot: '#94a3b8' },
+  critical: { bg: VELLUM_LIGHT.rustSoft,  text: VELLUM_LIGHT.rust,  dot: VELLUM_LIGHT.rust  },
+  high:     { bg: VELLUM_LIGHT.rustSoft,  text: VELLUM_LIGHT.rust,  dot: VELLUM_LIGHT.rust  },
+  medium:   { bg: VELLUM_LIGHT.giltSoft,  text: VELLUM_LIGHT.gilt,  dot: VELLUM_LIGHT.gilt  },
+  low:      { bg: 'rgba(148,163,184,0.15)', text: '#94a3b8', dot: '#94a3b8' },
 };
 
 const SEVERITY_RANK: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
@@ -500,7 +501,8 @@ function IdeaCard({
   const isApproved   = !!idea.knowledge_item_id;
   const isApproving  = approving === idea.id;
   const pct          = Math.round(idea.originality * 100);
-  const origColor    = pct >= 70 ? '#7c3aed' : pct >= 45 ? '#d97706' : '#94a3b8';
+  const T = useVellumTokens();
+  const origColor    = pct >= 70 ? T.gilt : pct >= 45 ? T.gilt : '#94a3b8';
 
   return (
     <View
@@ -528,7 +530,7 @@ function IdeaCard({
               key={n}
               style={{
                 width: 6, height: 6, borderRadius: 3,
-                backgroundColor: n <= idea.usefulness ? '#f59e0b' : colors.muted,
+                backgroundColor: n <= idea.usefulness ? T.gilt : colors.muted,
               }}
             />
           ))}
@@ -553,9 +555,9 @@ function IdeaCard({
         {isApproved ? (
           <View style={{
             paddingHorizontal: 8, paddingVertical: 3, borderRadius: 5,
-            borderWidth: 1, borderColor: '#16a34a44', backgroundColor: '#16a34a12',
+            borderWidth: 1, borderColor: T.green + '44', backgroundColor: T.greenSoft,
           }}>
-            <Text style={{ fontSize: 11, fontWeight: '500', color: '#16a34a' }}>✓ In knowledge</Text>
+            <Text style={{ fontSize: 11, fontWeight: '500', color: T.green }}>✓ In knowledge</Text>
           </View>
         ) : (
           <Pressable
@@ -584,6 +586,7 @@ function IdeaCard({
 }
 
 function BrainstormTab({ workId, colors, initialSeed, initialContext }: { workId: string; colors: any; initialSeed?: string; initialContext?: string }) {
+  const T = useVellumTokens();
   const domain = process.env.EXPO_PUBLIC_DOMAIN ?? '';
 
   const [seed,         setSeed]         = React.useState(initialSeed ?? '');
@@ -893,10 +896,10 @@ function BrainstormTab({ workId, colors, initialSeed, initialContext }: { workId
               </Text>
               <View style={{
                 paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, borderWidth: 1,
-                borderColor: s.status === 'done' ? '#16a34a44' : s.status === 'failed' ? '#dc262644' : '#d9770644',
-                backgroundColor: s.status === 'done' ? '#16a34a10' : s.status === 'failed' ? '#dc262610' : '#d9770610',
+                borderColor: s.status === 'done' ? T.green + '44' : s.status === 'failed' ? T.rust + '44' : T.gilt + '44',
+                backgroundColor: s.status === 'done' ? T.greenSoft : s.status === 'failed' ? T.rustSoft : T.giltSoft,
               }}>
-                <Text style={{ fontSize: 10, fontWeight: '500', color: s.status === 'done' ? '#16a34a' : s.status === 'failed' ? '#dc2626' : '#d97706' }}>
+                <Text style={{ fontSize: 10, fontWeight: '500', color: s.status === 'done' ? T.green : s.status === 'failed' ? T.rust : T.gilt }}>
                   {s.status}
                 </Text>
               </View>
@@ -918,10 +921,12 @@ function GapsTab({
   workId: string;
   colors: any;
   onResearch: (gapTitle: string) => void;
+
   onCreateTask: (taskText: string) => void;
   onBrainstorm: (seed: string) => void;
 }) {
   const domain = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
+  const T = useVellumTokens();
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
@@ -991,7 +996,7 @@ function GapsTab({
             style={{
               height: '100%',
               width: `${Math.max(0, Math.min(100, coverage ?? 0))}%` as any,
-              backgroundColor: isComplete ? '#22c55e' : colors.primary,
+              backgroundColor: isComplete ? T.green : colors.primary,
               borderRadius: 3,
             }}
           />
@@ -1000,7 +1005,7 @@ function GapsTab({
 
       {isComplete ? (
         <View style={styles.centered}>
-          <Feather name="check-circle" size={32} color="#22c55e" />
+          <Feather name="check-circle" size={32} color={T.green} />
           <Text style={[styles.emptyText, { color: colors.foreground, fontFamily: 'Inter_500Medium' }]}>
             No gaps — coverage looks complete
           </Text>
@@ -1066,13 +1071,13 @@ function GapsTab({
                     style={({ pressed }) => ({
                       flexDirection: 'row', alignItems: 'center', gap: 4,
                       paddingHorizontal: 10, paddingVertical: 5, borderRadius: 6,
-                      borderWidth: 1, borderColor: '#7c3aed55',
-                      backgroundColor: pressed ? '#7c3aed14' : 'transparent',
+                      borderWidth: 1, borderColor: T.giltLine,
+                      backgroundColor: pressed ? T.giltSoft : 'transparent',
                       opacity: pressed ? 0.7 : 1,
                     })}
                   >
-                    <Feather name="zap" size={12} color="#7c3aed" />
-                    <Text style={{ fontSize: 12, color: '#7c3aed', fontFamily: 'Inter_600SemiBold' }}>
+                    <Feather name="zap" size={12} color={T.gilt} />
+                    <Text style={{ fontSize: 12, color: T.gilt, fontFamily: 'Inter_600SemiBold' }}>
                       Brainstorm
                     </Text>
                   </Pressable>
@@ -1220,6 +1225,7 @@ interface TrailerPkgMobile {
 }
 
 function CopyButtonMobile({ text, label, colors }: { text: string; label: string; colors: any }) {
+  const T = useVellumTokens();
   const [copied, setCopied] = useState(false);
   const handleCopy = async () => {
     try {
@@ -1235,12 +1241,12 @@ function CopyButtonMobile({ text, label, colors }: { text: string; label: string
         flexDirection: 'row', alignItems: 'center', gap: 4,
         paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6,
         borderWidth: 1,
-        borderColor: copied ? '#16a34a55' : colors.border,
-        backgroundColor: copied ? '#f0fdf4' : (pressed ? colors.muted + '88' : colors.muted + '33'),
+        borderColor: copied ? T.green + '55' : colors.border,
+        backgroundColor: copied ? T.greenSoft : (pressed ? colors.muted + '88' : colors.muted + '33'),
       })}
     >
-      <Feather name={copied ? 'check' : 'copy'} size={11} color={copied ? '#16a34a' : colors.mutedForeground} />
-      <Text style={{ fontSize: 10, fontFamily: 'Inter_500Medium', color: copied ? '#16a34a' : colors.mutedForeground }}>
+      <Feather name={copied ? 'check' : 'copy'} size={11} color={copied ? T.green : colors.mutedForeground} />
+      <Text style={{ fontSize: 10, fontFamily: 'Inter_500Medium', color: copied ? T.green : colors.mutedForeground }}>
         {copied ? 'Copied!' : label}
       </Text>
     </Pressable>
@@ -1256,6 +1262,7 @@ interface TrailerPackageMobile {
 }
 
 function TrailerStatusBadgeMobile({ status, phase, colors }: { status: string; phase: string; colors: any }) {
+  const T = useVellumTokens();
   if (status === 'running') {
     return (
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
@@ -1269,28 +1276,29 @@ function TrailerStatusBadgeMobile({ status, phase, colors }: { status: string; p
   if (status === 'ready') {
     return (
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-        <Feather name="check-circle" size={11} color="#16a34a" />
-        <Text style={{ fontSize: 10, fontFamily: 'Inter_600SemiBold', color: '#16a34a' }}>READY</Text>
+        <Feather name="check-circle" size={11} color={T.green} />
+        <Text style={{ fontSize: 10, fontFamily: 'Inter_600SemiBold', color: T.green }}>READY</Text>
       </View>
     );
   }
   if (status === 'blocked') {
     return (
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-        <Feather name="alert-circle" size={11} color="#d97706" />
-        <Text style={{ fontSize: 10, fontFamily: 'Inter_600SemiBold', color: '#d97706' }}>BLOCKED</Text>
+        <Feather name="alert-circle" size={11} color={T.gilt} />
+        <Text style={{ fontSize: 10, fontFamily: 'Inter_600SemiBold', color: T.gilt }}>BLOCKED</Text>
       </View>
     );
   }
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-      <Feather name="x-circle" size={11} color="#dc2626" />
-      <Text style={{ fontSize: 10, fontFamily: 'Inter_600SemiBold', color: '#dc2626' }}>FAILED</Text>
+      <Feather name="x-circle" size={11} color={T.rust} />
+      <Text style={{ fontSize: 10, fontFamily: 'Inter_600SemiBold', color: T.rust }}>FAILED</Text>
     </View>
   );
 }
 
 function TrailerPackageViewMobile({ pkg, colors }: { pkg: TrailerPkgMobile; colors: any }) {
+  const T = useVellumTokens();
   const [activeDoc, setActiveDoc] = useState<string | null>(null);
 
   // ── Narration playback ──────────────────────────────────────────────────────
@@ -1390,14 +1398,14 @@ function TrailerPackageViewMobile({ pkg, colors }: { pkg: TrailerPkgMobile; colo
       <View style={{
         flexDirection: 'row', alignItems: 'center', gap: 8,
         paddingHorizontal: 10, paddingVertical: 8, borderRadius: 8, borderWidth: 1,
-        borderColor: statusReady ? '#86efac' : '#fcd34d',
-        backgroundColor: statusReady ? '#f0fdf4' : '#fffbeb',
+        borderColor: statusReady ? T.green + '66' : T.giltLine,
+        backgroundColor: statusReady ? T.greenSoft : T.giltSoft,
       }}>
-        <Feather name={statusReady ? 'check-circle' : 'alert-circle'} size={13} color={statusReady ? '#16a34a' : '#d97706'} />
-        <Text style={{ fontSize: 11, fontFamily: 'Inter_600SemiBold', color: statusReady ? '#15803d' : '#92400e', flex: 1 }}>
+        <Feather name={statusReady ? 'check-circle' : 'alert-circle'} size={13} color={statusReady ? T.green : T.gilt} />
+        <Text style={{ fontSize: 11, fontFamily: 'Inter_600SemiBold', color: statusReady ? T.green : T.gilt, flex: 1 }}>
           {pkg.status_badge}
         </Text>
-        <Text style={{ fontSize: 10, fontFamily: 'Inter_400Regular', color: statusReady ? '#15803d' : '#92400e', opacity: 0.7 }}>
+        <Text style={{ fontSize: 10, fontFamily: 'Inter_400Regular', color: statusReady ? T.green : T.gilt, opacity: 0.7 }}>
           {pkg.generated}
         </Text>
       </View>
@@ -1407,10 +1415,10 @@ function TrailerPackageViewMobile({ pkg, colors }: { pkg: TrailerPkgMobile; colo
         <View key={i} style={{
           flexDirection: 'row', alignItems: 'flex-start', gap: 6,
           paddingHorizontal: 10, paddingVertical: 8, borderRadius: 8,
-          borderWidth: 1, borderColor: '#fca5a520', backgroundColor: '#fef2f2',
+          borderWidth: 1, borderColor: T.rust + '20', backgroundColor: T.rustSoft,
         }}>
-          <Feather name="x-circle" size={12} color="#dc2626" style={{ marginTop: 1 }} />
-          <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: '#dc2626', flex: 1 }}>
+          <Feather name="x-circle" size={12} color={T.rust} style={{ marginTop: 1 }} />
+          <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: T.rust, flex: 1 }}>
             <Text style={{ fontFamily: 'Inter_600SemiBold' }}>{f.code}</Text> — {f.msg}
           </Text>
         </View>
@@ -1602,6 +1610,7 @@ function TrailerPackageViewMobile({ pkg, colors }: { pkg: TrailerPkgMobile; colo
 }
 
 function TrailerItemMobile({ trailer, workId, colors }: { trailer: TrailerListItemMobile; workId: string; colors: any }) {
+  const T = useVellumTokens();
   const domain = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
   const [expanded, setExpanded]           = useState(false);
   const [fullTrailer, setFullTrailer]     = useState<TrailerPackageMobile | null>(null);
@@ -1664,7 +1673,7 @@ function TrailerItemMobile({ trailer, workId, colors }: { trailer: TrailerListIt
               </Text>
             </View>
           ) : liveStatus === 'failed' ? (
-            <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: '#dc2626', paddingVertical: 8 }}>
+            <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: T.rust, paddingVertical: 8 }}>
               {fullTrailer?.error ?? 'Pipeline failed — check server logs.'}
             </Text>
           ) : (liveStatus === 'ready' || liveStatus === 'blocked') && fullTrailer?.package ? (
@@ -1942,6 +1951,7 @@ function OverviewTab({ workId, onStartDiscussion, starting, onNavigateToTab, boo
   advancingPipeline?: boolean;
 }) {
   const colors = useColors();
+  const T = useVellumTokens();
   const { data: workData, isLoading, isError, refetch } = useGetWork(workId);
   const work = workData?.work;
   const queryClient = useQueryClient();
@@ -2149,7 +2159,7 @@ function OverviewTab({ workId, onStartDiscussion, starting, onNavigateToTab, boo
           ((c.structural_pct ?? 0) + (c.content_pct ?? 0) +
            (c.research_pct ?? 0) + (c.editorial_pct ?? 0)) / 4,
         );
-        const avgColor = avgPct >= 70 ? '#16a34a' : avgPct >= 40 ? '#d97706' : '#dc2626';
+        const avgColor = avgPct >= 70 ? T.green : avgPct >= 40 ? T.gilt : T.rust;
         return (
           <View style={{
             marginTop: 16, borderWidth: 1, borderRadius: 10,
@@ -2195,7 +2205,7 @@ function OverviewTab({ workId, onStartDiscussion, starting, onNavigateToTab, boo
 
               {/* Gaps */}
               {Array.isArray(bookIntel.gaps) && bookIntel.gaps.length > 0 && (
-                <Text style={{ fontSize: 12, color: '#d97706' }}>
+                <Text style={{ fontSize: 12, color: T.gilt }}>
                   ⚠ {bookIntel.gaps.length} gap{bookIntel.gaps.length !== 1 ? 's' : ''} detected
                 </Text>
               )}
@@ -2241,28 +2251,28 @@ function OverviewTab({ workId, onStartDiscussion, starting, onNavigateToTab, boo
       {pipelineLoading ? (
         <View style={{
           marginTop: 16, borderWidth: 1, borderRadius: 10,
-          borderColor: '#d97706' + '55', backgroundColor: '#fef3c7' + '22',
+          borderColor: T.giltLine, backgroundColor: T.giltSoft,
           padding: 14, alignItems: 'center',
         }}>
-          <ActivityIndicator size="small" color="#d97706" />
+          <ActivityIndicator size="small" color={T.gilt} />
         </View>
       ) : pipeline ? (
         /* ── Active pipeline: compact stage + Advance button ── */
         <View style={{
           marginTop: 16, borderWidth: 1, borderRadius: 10,
-          borderColor: '#d97706' + '55', overflow: 'hidden',
-          backgroundColor: '#fef3c7' + '22',
+          borderColor: T.giltLine, overflow: 'hidden',
+          backgroundColor: T.giltSoft,
         }}>
           {/* Header row */}
           <View style={{
             flexDirection: 'row', alignItems: 'center', gap: 8,
             paddingHorizontal: 14, paddingVertical: 10,
-            backgroundColor: '#d97706' + '18',
+            backgroundColor: T.gilt + '18',
             borderBottomWidth: StyleSheet.hairlineWidth,
-            borderBottomColor: '#d97706' + '44',
+            borderBottomColor: T.gilt + '44',
           }}>
-            <Feather name="book-open" size={14} color="#d97706" />
-            <Text style={{ fontSize: 12, color: '#92400e', flex: 1, fontFamily: 'Inter_600SemiBold' }}>
+            <Feather name="book-open" size={14} color={T.gilt} />
+            <Text style={{ fontSize: 12, color: T.gilt, flex: 1, fontFamily: 'Inter_600SemiBold' }}>
               Book Pipeline
             </Text>
             {/* Tapping the header navigates to the full Book tab */}
@@ -2271,20 +2281,20 @@ function OverviewTab({ workId, onStartDiscussion, starting, onNavigateToTab, boo
               hitSlop={12}
               accessibilityLabel="Open Book tab"
             >
-              <Feather name="external-link" size={13} color="#b45309" />
+              <Feather name="external-link" size={13} color={T.gilt} />
             </Pressable>
           </View>
 
           {/* Stage row + Advance button */}
           <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 12, gap: 10 }}>
             {/* Badge: current stage code */}
-            <View style={{ backgroundColor: '#d97706' + '30', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 4 }}>
-              <Text style={{ fontSize: 13, fontFamily: 'Inter_700Bold', color: '#92400e' }}>
+            <View style={{ backgroundColor: T.gilt + '30', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 4 }}>
+              <Text style={{ fontSize: 13, fontFamily: 'Inter_700Bold', color: T.gilt }}>
                 {pipeline.status ?? 'B0'}
               </Text>
             </View>
             {/* Stage label */}
-            <Text style={{ flex: 1, fontSize: 13, fontFamily: 'Inter_400Regular', color: '#78350f' }} numberOfLines={2}>
+            <Text style={{ flex: 1, fontSize: 13, fontFamily: 'Inter_400Regular', color: T.gilt }} numberOfLines={2}>
               {pipeline.stage_label ?? pipeline.status ?? 'In progress'}
             </Text>
             {/* Advance button — only shown when there is a next stage */}
@@ -2295,7 +2305,7 @@ function OverviewTab({ workId, onStartDiscussion, starting, onNavigateToTab, boo
                 style={({ pressed }) => ({
                   flexDirection: 'row', alignItems: 'center', gap: 5,
                   paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8,
-                  backgroundColor: pressed || advancingPipeline ? '#b45309' : '#d97706',
+                  backgroundColor: pressed || advancingPipeline ? T.gilt + 'cc' : T.gilt,
                   opacity: advancingPipeline ? 0.7 : 1,
                 })}
                 accessibilityRole="button"
@@ -2317,23 +2327,23 @@ function OverviewTab({ workId, onStartDiscussion, starting, onNavigateToTab, boo
         /* ── No pipeline yet: "Start" CTA ── */
         <View style={{
           marginTop: 16, borderWidth: 1, borderRadius: 10,
-          borderColor: '#d97706' + '55', overflow: 'hidden',
-          backgroundColor: '#fef3c7' + '22',
+          borderColor: T.giltLine, overflow: 'hidden',
+          backgroundColor: T.giltSoft,
         }}>
           <View style={{
             flexDirection: 'row', alignItems: 'center', gap: 8,
             paddingHorizontal: 14, paddingVertical: 10,
-            backgroundColor: '#d97706' + '18',
+            backgroundColor: T.gilt + '18',
             borderBottomWidth: StyleSheet.hairlineWidth,
-            borderBottomColor: '#d97706' + '44',
+            borderBottomColor: T.gilt + '44',
           }}>
-            <Feather name="book-open" size={14} color="#d97706" />
-            <Text style={{ fontSize: 12, fontWeight: '600', color: '#92400e', flex: 1, fontFamily: 'Inter_600SemiBold' }}>
+            <Feather name="book-open" size={14} color={T.gilt} />
+            <Text style={{ fontSize: 12, fontWeight: '600', color: T.gilt, flex: 1, fontFamily: 'Inter_600SemiBold' }}>
               Book Pipeline
             </Text>
           </View>
           <View style={{ paddingHorizontal: 14, paddingVertical: 12, gap: 10 }}>
-            <Text style={{ fontSize: 13, color: '#78350f', lineHeight: 18, fontFamily: 'Inter_400Regular' }}>
+            <Text style={{ fontSize: 13, color: T.gilt, lineHeight: 18, fontFamily: 'Inter_400Regular' }}>
               Promote this Work to a book and track it through the full B0–B17 publication pipeline.
             </Text>
             <Pressable
@@ -2341,7 +2351,7 @@ function OverviewTab({ workId, onStartDiscussion, starting, onNavigateToTab, boo
               style={({ pressed }) => ({
                 flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
                 gap: 6, paddingVertical: 10, borderRadius: 8,
-                backgroundColor: pressed ? '#b45309' : '#d97706',
+                backgroundColor: pressed ? T.gilt + 'cc' : T.gilt,
               })}
               accessibilityRole="button"
               accessibilityLabel="Start Book Pipeline"
@@ -2636,6 +2646,7 @@ interface MobileAssessResult {
 }
 
 function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
+  const T = useVellumTokens();
   const router = useRouter();
   const [phase, setPhase]       = useState<MobileLearnPhase>('loading');
   const [session, setSession]   = useState<MobileSession | null>(null);
@@ -2848,8 +2859,8 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
     catch (e: any) { setErrorMsg(e.message ?? 'Error loading next question'); setPhase('error'); }
   };
 
-  const scoreBg    = (s: number) => s >= 0.75 ? '#dcfce7' : s >= 0.5 ? '#fef3c7' : '#fee2e2';
-  const scoreColor = (s: number) => s >= 0.75 ? '#16a34a' : s >= 0.5 ? '#d97706' : '#dc2626';
+  const scoreBg    = (s: number) => s >= 0.75 ? T.greenSoft : s >= 0.5 ? T.giltSoft : T.rustSoft;
+  const scoreColor = (s: number) => s >= 0.75 ? T.green : s >= 0.5 ? T.gilt : T.rust;
 
   // ── Loading / seeding ────────────────────────────────────────────────────
   if (phase === 'loading' || phase === 'seeding') {
@@ -2955,7 +2966,7 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
               </Text>
               <Text style={{
                 fontSize: 13, fontFamily: 'Inter_700Bold', width: 44, textAlign: 'right',
-                color: c.avg >= 0.75 ? '#16a34a' : c.avg >= 0.5 ? '#d97706' : '#dc2626',
+                color: c.avg >= 0.75 ? T.green : c.avg >= 0.5 ? T.gilt : T.rust,
               }}>
                 {Math.round(c.avg * 100)}%
               </Text>
@@ -2996,7 +3007,7 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
     const masteryPct = summary?.mastery_pct ?? 0;
     return (
       <View style={[styles.centered, { flex: 1, padding: 32 }]}>
-        <Feather name="check-circle" size={52} color="#22c55e" />
+        <Feather name="check-circle" size={52} color={T.green} />
         <Text style={[styles.workTitle, { color: colors.foreground, textAlign: 'center', marginTop: 16, fontSize: 20 }]}>
           Great session!
         </Text>
@@ -3019,7 +3030,7 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
               style={{
                 height: '100%',
                 width: `${masteryPct}%` as any,
-                backgroundColor: masteryPct === 100 ? '#22c55e' : colors.primary,
+                backgroundColor: masteryPct === 100 ? T.green : colors.primary,
                 borderRadius: 4,
               }}
             />
@@ -3063,8 +3074,8 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
   if (phase === 'error') {
     return (
       <View style={[styles.centered, { flex: 1, padding: 32 }]}>
-        <Feather name="alert-circle" size={40} color="#dc2626" />
-        <Text style={[styles.itemTitle, { color: '#dc2626', textAlign: 'center', marginTop: 12 }]}>{errorMsg}</Text>
+        <Feather name="alert-circle" size={40} color={T.rust} />
+        <Text style={[styles.itemTitle, { color: T.rust, textAlign: 'center', marginTop: 12 }]}>{errorMsg}</Text>
         <Pressable
           onPress={init}
           style={({ pressed }) => [
@@ -3160,9 +3171,9 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
               const tier: 'graduated' | 'in_progress' | 'not_started' =
                 c.graduated ? 'graduated' : passes > 0 ? 'in_progress' : 'not_started';
               const tierLabel = isDue ? 'Due' : isLocked ? 'Locked' : tier === 'graduated' ? 'Graduated' : tier === 'in_progress' ? 'In progress' : 'Not started';
-              const tierCol   = isDue ? '#d97706' : isLocked ? colors.mutedForeground : tier === 'graduated' ? '#16a34a' : tier === 'in_progress' ? colors.primary : colors.mutedForeground;
-              const tierBg    = isDue ? '#fef3c7' : isLocked ? colors.muted : tier === 'graduated' ? '#16a34a18' : tier === 'in_progress' ? colors.primary + '18' : colors.muted;
-              const borderCol = isDue ? '#fbbf2455' : isLocked ? colors.border : tier === 'graduated' ? '#16a34a44' : tier === 'in_progress' ? colors.primary + '33' : colors.border;
+              const tierCol   = isDue ? T.gilt : isLocked ? colors.mutedForeground : tier === 'graduated' ? T.green : tier === 'in_progress' ? colors.primary : colors.mutedForeground;
+              const tierBg    = isDue ? T.giltSoft : isLocked ? colors.muted : tier === 'graduated' ? T.greenSoft : tier === 'in_progress' ? colors.primary + '18' : colors.muted;
+              const borderCol = isDue ? T.giltLine : isLocked ? colors.border : tier === 'graduated' ? T.green + '44' : tier === 'in_progress' ? colors.primary + '33' : colors.border;
               const barPct    = tier === 'graduated' ? 100 : Math.min(99, Math.round((passes / 3) * 100));
 
               // Last-practised label
@@ -3213,8 +3224,8 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
                   accessibilityLabel={`Study ${c.subject}`}
                   style={({ pressed }: { pressed: boolean }) => ({
                     borderWidth: 1, borderRadius: 10, padding: 12, marginBottom: 8,
-                    borderColor: resettingConcept === c.id ? '#f59e0b55' : borderCol,
-                    backgroundColor: tier === 'graduated' ? '#16a34a08' : 'transparent',
+                    borderColor: resettingConcept === c.id ? T.giltLine : borderCol,
+                    backgroundColor: tier === 'graduated' ? T.greenSoft : 'transparent',
                     opacity: pressed ? 0.75 : 1,
                   })}
                 >
@@ -3308,8 +3319,8 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
           void visited;
 
           const nodeColor = (n: any): string => {
-            if (n.graduated)                      return '#22c55e';
-            if ((n.consecutive_passes ?? 0) > 0)  return '#f59e0b';
+            if (n.graduated)                      return T.green;
+            if ((n.consecutive_passes ?? 0) > 0)  return T.gilt;
             if (n.prereqs_met !== false)           return '#3b82f6';
             return colors.mutedForeground;
           };
@@ -3325,8 +3336,8 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
               {/* Legend */}
               <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 14 }}>
                 {[
-                  { color: '#22c55e', label: 'Graduated' },
-                  { color: '#f59e0b', label: 'In progress' },
+                  { color: T.green, label: 'Graduated' },
+                  { color: T.gilt, label: 'In progress' },
                   { color: '#3b82f6', label: 'Eligible' },
                   { color: colors.mutedForeground, label: 'Locked' },
                 ].map(({ color, label }) => (
@@ -3454,18 +3465,18 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
           }}
           style={({ pressed }: { pressed: boolean }) => ({
             flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-            backgroundColor: '#fef3c7', borderWidth: 1, borderColor: '#fbbf24',
+            backgroundColor: T.giltSoft, borderWidth: 1, borderColor: T.giltLine,
             borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10, marginBottom: 14,
             opacity: pressed ? 0.8 : 1,
           })}
         >
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <Feather name="clock" size={15} color="#d97706" />
-            <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: '#92400e' }}>
+            <Feather name="clock" size={15} color={T.gilt} />
+            <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: T.gilt }}>
               {summary.due_count} concept{summary.due_count !== 1 ? 's' : ''} due for review
             </Text>
           </View>
-          <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: '#d97706' }}>
+          <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: T.gilt }}>
             Review →
           </Text>
         </Pressable>
@@ -3528,10 +3539,10 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
               <View style={{
                 flexDirection: 'row', alignItems: 'center', gap: 4,
                 paddingHorizontal: 8, paddingVertical: 4, borderRadius: 20,
-                backgroundColor: '#fef3c7', borderWidth: 1, borderColor: '#fde68a',
+                backgroundColor: T.giltSoft, borderWidth: 1, borderColor: T.giltLine,
               }}>
-                <Feather name="zap" size={11} color="#d97706" />
-                <Text style={{ fontSize: 11, fontFamily: 'Inter_600SemiBold', color: '#d97706' }}>
+                <Feather name="zap" size={11} color={T.gilt} />
+                <Text style={{ fontSize: 11, fontFamily: 'Inter_600SemiBold', color: T.gilt }}>
                   Application question
                 </Text>
               </View>
@@ -3607,9 +3618,9 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
                   {Math.round(result.score * 100)}%
                 </Text>
                 {result.graduated && (
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 20, backgroundColor: '#dcfce7' }}>
-                    <Feather name="award" size={12} color="#16a34a" />
-                    <Text style={{ fontSize: 11, color: '#16a34a', fontFamily: 'Inter_600SemiBold' }}>Graduated!</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 20, backgroundColor: T.greenSoft }}>
+                    <Feather name="award" size={12} color={T.green} />
+                    <Text style={{ fontSize: 11, color: T.green, fontFamily: 'Inter_600SemiBold' }}>Graduated!</Text>
                   </View>
                 )}
               </View>
@@ -3628,21 +3639,21 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
               {/* ── careless_slip ─── amber retry card */}
               {result.error_type === 'careless_slip' && (
                 <View style={{
-                  borderWidth: 1, borderColor: '#fbbf24', borderRadius: 10,
+                  borderWidth: 1, borderColor: T.giltLine, borderRadius: 10,
                   backgroundColor: '#fffbeb', padding: 12, gap: 8,
                 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10 }}>
                     <View style={{
                       width: 28, height: 28, borderRadius: 14,
-                      backgroundColor: '#fef3c7', alignItems: 'center', justifyContent: 'center',
+                      backgroundColor: T.giltSoft, alignItems: 'center', justifyContent: 'center',
                     }}>
-                      <Feather name="alert-circle" size={14} color="#d97706" />
+                      <Feather name="alert-circle" size={14} color={T.gilt} />
                     </View>
                     <View style={{ flex: 1 }}>
-                      <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: '#92400e', marginBottom: 2 }}>
+                      <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: T.gilt, marginBottom: 2 }}>
                         Almost — small slip
                       </Text>
-                      <Text style={{ fontSize: 13, color: '#b45309', lineHeight: 19 }}>{result.feedback}</Text>
+                      <Text style={{ fontSize: 13, color: T.gilt, lineHeight: 19 }}>{result.feedback}</Text>
                     </View>
                   </View>
                   <Pressable
@@ -3657,12 +3668,12 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
                     style={({ pressed }) => ({
                       flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
                       gap: 6, paddingVertical: 10, borderRadius: 8,
-                      borderWidth: 1, borderColor: '#fbbf24', backgroundColor: '#fef3c7',
+                      borderWidth: 1, borderColor: T.giltLine, backgroundColor: T.giltSoft,
                       opacity: pressed ? 0.7 : 1,
                     })}
                   >
-                    <Feather name="refresh-cw" size={13} color="#d97706" />
-                    <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: '#d97706' }}>Try once more</Text>
+                    <Feather name="refresh-cw" size={13} color={T.gilt} />
+                    <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: T.gilt }}>Try once more</Text>
                   </Pressable>
                 </View>
               )}
@@ -3683,9 +3694,9 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
                     <View style={{
                       flexDirection: 'row', alignItems: 'center', gap: 6,
                       paddingHorizontal: 10, paddingVertical: 7, borderRadius: 8,
-                      backgroundColor: '#fee2e2', borderWidth: 1, borderColor: '#fca5a5',
+                      backgroundColor: T.rustSoft, borderWidth: 1, borderColor: T.rust + '66',
                     }}>
-                      <Feather name="alert-triangle" size={12} color="#dc2626" />
+                      <Feather name="alert-triangle" size={12} color={T.rust} />
                       <Text style={{ fontSize: 12, color: '#b91c1c', fontFamily: 'Inter_500Medium', flex: 1 }}>
                         Deep review needed — this misconception has appeared multiple times
                       </Text>
@@ -3700,7 +3711,7 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
                       width: 28, height: 28, borderRadius: 14,
                       backgroundColor: '#ede9fe', alignItems: 'center', justifyContent: 'center',
                     }}>
-                      <Feather name="help-circle" size={13} color="#7c3aed" />
+                      <Feather name="help-circle" size={13} color={T.gilt} />
                     </View>
                     <View style={{ flex: 1 }}>
                       <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: '#5b21b6', marginBottom: 2 }}>
@@ -3714,7 +3725,7 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
                       borderWidth: 1, borderColor: '#c4b5fd', borderRadius: 10,
                       backgroundColor: '#faf5ff', padding: 12, gap: 6,
                     }}>
-                      <Text style={{ fontSize: 10, color: '#7c3aed', fontFamily: 'Inter_600SemiBold', textTransform: 'uppercase', letterSpacing: 0.6 }}>
+                      <Text style={{ fontSize: 10, color: T.gilt, fontFamily: 'Inter_600SemiBold', textTransform: 'uppercase', letterSpacing: 0.6 }}>
                         Socratic follow-up
                       </Text>
                       <Text style={{ fontSize: 14, color: '#4c1d95', lineHeight: 21, fontFamily: 'Inter_500Medium' }}>
@@ -3735,9 +3746,9 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
                   }}>
                     <View style={{
                       width: 28, height: 28, borderRadius: 14,
-                      backgroundColor: '#fee2e2', alignItems: 'center', justifyContent: 'center',
+                      backgroundColor: T.rustSoft, alignItems: 'center', justifyContent: 'center',
                     }}>
-                      <Feather name="book-open" size={13} color="#dc2626" />
+                      <Feather name="book-open" size={13} color={T.rust} />
                     </View>
                     <View style={{ flex: 1 }}>
                       <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: '#991b1b', marginBottom: 2 }}>
@@ -3842,15 +3853,15 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
 // ─── Book Intelligence Tab ─────────────────────────────────────────────────────
 
 const SEV_COLOR: Record<string, string> = {
-  high: '#dc2626',
-  medium: '#d97706',
+  high: VELLUM_LIGHT.rust,
+  medium: VELLUM_LIGHT.gilt,
   low: '#6366f1',
 };
 
 const CHAPTER_STATUS_COLOR: Record<string, string> = {
-  present: '#16a34a',
-  incomplete: '#d97706',
-  missing: '#dc2626',
+  present: VELLUM_LIGHT.green,
+  incomplete: VELLUM_LIGHT.gilt,
+  missing: VELLUM_LIGHT.rust,
 };
 
 function BookIntelTab({
@@ -3868,6 +3879,7 @@ function BookIntelTab({
   chapters?: any[];
   chaptersLoading?: boolean;
 }) {
+  const T = useVellumTokens();
   // Derive bookIntel sections so they can be conditionally included inside a
   // single ScrollView — avoids early returns that would suppress the chapter
   // outline when bookIntel hasn't loaded yet.
@@ -3884,7 +3896,7 @@ function BookIntelTab({
   const topGaps = gaps.slice(0, 5);
 
   const barColor = (pct: number) =>
-    pct >= 70 ? '#16a34a' : pct >= 40 ? '#d97706' : '#dc2626';
+    pct >= 70 ? T.green : pct >= 40 ? T.gilt : T.rust;
 
   // Show a full-screen spinner only while both book-intel AND chapters are
   // still loading and there is nothing to show yet.
@@ -4036,7 +4048,7 @@ function BookIntelTab({
             backgroundColor: colors.muted + '44',
             flexDirection: 'row', alignItems: 'center', gap: 8,
           }}>
-            <Feather name="alert-triangle" size={14} color="#d97706" />
+            <Feather name="alert-triangle" size={14} color={T.gilt} />
             <Text style={{ fontSize: 11, fontFamily: 'Inter_600SemiBold', color: colors.mutedForeground, letterSpacing: 0.8, textTransform: 'uppercase' }}>
               Gaps ({gaps.length})
             </Text>
@@ -4232,10 +4244,10 @@ function BookIntelTab({
                 const scenes: number = ch.scene_count ?? 0;
                 const readiness: string = ch.readiness ?? 'unknown';
                 const readinessColor =
-                  readiness === 'ready'    ? '#16a34a' :
-                  readiness === 'imported' ? '#d97706' :
-                  readiness === 'error'    ? '#dc2626' :
-                  readiness === 'no_text'  ? '#dc2626' :
+                  readiness === 'ready'    ? T.green :
+                  readiness === 'imported' ? T.gilt :
+                  readiness === 'error'    ? T.rust :
+                  readiness === 'no_text'  ? T.rust :
                   colors.mutedForeground;
 
                 return (
@@ -4367,10 +4379,10 @@ interface GenesisStageDetail {
 }
 
 const GENESIS_STATUS_COLOR = {
-  PASSED:  { bg: 'rgba(34,197,94,0.15)',   text: '#22c55e', dot: '#22c55e'  },
-  FAILED:  { bg: 'rgba(239,68,68,0.15)',   text: '#ef4444', dot: '#ef4444'  },
-  PENDING: { bg: 'rgba(148,163,184,0.12)', text: '#94a3b8', dot: '#94a3b8'  },
-  CURRENT: { bg: 'rgba(245,158,11,0.15)',  text: '#f59e0b', dot: '#f59e0b'  },
+  PASSED:  { bg: VELLUM_LIGHT.greenSoft, text: VELLUM_LIGHT.green, dot: VELLUM_LIGHT.green  },
+  FAILED:  { bg: VELLUM_LIGHT.rustSoft,  text: VELLUM_LIGHT.rust,  dot: VELLUM_LIGHT.rust   },
+  PENDING: { bg: 'rgba(148,163,184,0.12)', text: '#94a3b8', dot: '#94a3b8' },
+  CURRENT: { bg: VELLUM_LIGHT.giltSoft,  text: VELLUM_LIGHT.gilt,  dot: VELLUM_LIGHT.gilt   },
 };
 
 function genesisStatusColor(stage: GenesisStage) {
@@ -4398,6 +4410,7 @@ function GenesisGateRow({
   colors: any;
   onRefresh: () => void;
 }) {
+  const T = useVellumTokens();
   const domain = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
   const [expanded, setExpanded] = useState(false);
   const [detail, setDetail] = useState<GenesisStageDetail | null>(null);
@@ -4474,8 +4487,8 @@ function GenesisGateRow({
           borderBottomLeftRadius: expanded ? 0 : 10,
           borderBottomRightRadius: expanded ? 0 : 10,
           borderWidth: StyleSheet.hairlineWidth,
-          borderColor: stage.is_current ? '#f59e0b55' : colors.border,
-          backgroundColor: stage.is_current ? '#f59e0b08' : colors.card,
+          borderColor: stage.is_current ? T.giltLine : colors.border,
+          backgroundColor: stage.is_current ? T.giltSoft : colors.card,
           opacity: pressed ? 0.85 : 1,
         })}
       >
@@ -4503,7 +4516,7 @@ function GenesisGateRow({
         <View style={{
           borderWidth: StyleSheet.hairlineWidth,
           borderTopWidth: 0,
-          borderColor: stage.is_current ? '#f59e0b55' : colors.border,
+          borderColor: stage.is_current ? T.giltLine : colors.border,
           borderBottomLeftRadius: 10,
           borderBottomRightRadius: 10,
           backgroundColor: colors.card,
@@ -4521,9 +4534,9 @@ function GenesisGateRow({
             <>
               {/* Unfilled placeholder warning */}
               {detail.has_unfilled_placeholders && (
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, padding: 8, borderRadius: 8, borderWidth: 1, borderColor: '#f59e0b44', backgroundColor: '#f59e0b10' }}>
-                  <Feather name="alert-circle" size={13} color="#f59e0b" />
-                  <Text style={{ fontSize: 11, fontFamily: 'Inter_500Medium', color: '#d97706', flex: 1 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, padding: 8, borderRadius: 8, borderWidth: 1, borderColor: T.giltLine, backgroundColor: T.giltSoft }}>
+                  <Feather name="alert-circle" size={13} color={T.gilt} />
+                  <Text style={{ fontSize: 11, fontFamily: 'Inter_500Medium', color: T.gilt, flex: 1 }}>
                     Artifact still contains {'<<FILL>>'} placeholders — fill before passing.
                   </Text>
                 </View>
@@ -4555,10 +4568,10 @@ function GenesisGateRow({
                 try { payload = JSON.parse(last.payload); } catch {}
                 const isPass = last.kind === 'gate.pass';
                 return (
-                  <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 6, padding: 8, borderRadius: 8, borderWidth: 1, borderColor: isPass ? '#22c55e44' : '#ef444444', backgroundColor: isPass ? '#22c55e0a' : '#ef44440a' }}>
-                    <Feather name={isPass ? 'check-circle' : 'x-circle'} size={13} color={isPass ? '#22c55e' : '#ef4444'} style={{ marginTop: 1 }} />
+                  <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 6, padding: 8, borderRadius: 8, borderWidth: 1, borderColor: isPass ? T.green + '44' : T.rust + '44', backgroundColor: isPass ? T.greenSoft : T.rustSoft }}>
+                    <Feather name={isPass ? 'check-circle' : 'x-circle'} size={13} color={isPass ? T.green : T.rust} style={{ marginTop: 1 }} />
                     <View style={{ flex: 1 }}>
-                      <Text style={{ fontSize: 11, fontFamily: 'Inter_600SemiBold', color: isPass ? '#22c55e' : '#ef4444' }}>
+                      <Text style={{ fontSize: 11, fontFamily: 'Inter_600SemiBold', color: isPass ? T.green : T.rust }}>
                         {isPass ? 'Passed' : 'Failed'} by {payload.author ?? '—'}
                       </Text>
                       {payload.note ? (
@@ -4583,7 +4596,7 @@ function GenesisGateRow({
                       style={({ pressed }) => ({
                         flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
                         gap: 7, paddingVertical: 11, borderRadius: 10,
-                        backgroundColor: pressed ? '#22c55ecc' : '#22c55e',
+                        backgroundColor: pressed ? T.green + 'cc' : T.green,
                       })}
                     >
                       <Feather name="check-circle" size={15} color="#fff" />
@@ -4620,7 +4633,7 @@ function GenesisGateRow({
                         <Pressable
                           onPress={handlePassGate}
                           disabled={gating || !authorInput.trim()}
-                          style={({ pressed }) => ({ flex: 2, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 6, paddingVertical: 10, borderRadius: 8, backgroundColor: !authorInput.trim() || gating ? '#22c55e55' : '#22c55e', opacity: pressed ? 0.8 : 1 })}
+                          style={({ pressed }) => ({ flex: 2, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 6, paddingVertical: 10, borderRadius: 8, backgroundColor: !authorInput.trim() || gating ? T.green + '55' : T.green, opacity: pressed ? 0.8 : 1 })}
                         >
                           {gating ? <ActivityIndicator size="small" color="#fff" /> : <Feather name="check-circle" size={14} color="#fff" />}
                           <Text style={{ fontSize: 13, fontFamily: 'Inter_700Bold', color: '#fff' }}>
@@ -4660,6 +4673,7 @@ function GenesisGateRow({
 }
 
 function GenesisTab({ workId, colors }: { workId: string; colors: any }) {
+  const T = useVellumTokens();
   const domain = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
   const [book, setBook] = useState<GenesisBook | null>(null);
   const [loading, setLoading] = useState(true);
@@ -4893,7 +4907,7 @@ function GenesisTab({ workId, colors }: { workId: string; colors: any }) {
         {/* State badge */}
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-            <Feather name={isSealed ? 'lock' : 'book'} size={16} color={isSealed ? '#22c55e' : colors.primary} />
+            <Feather name={isSealed ? 'lock' : 'book'} size={16} color={isSealed ? T.green : colors.primary} />
             <Text style={{ fontSize: 15, fontFamily: 'Inter_600SemiBold', color: colors.foreground }}>
               {isSealed ? 'SEALED' : 'DRAFT'}
             </Text>
@@ -4917,7 +4931,7 @@ function GenesisTab({ workId, colors }: { workId: string; colors: any }) {
             </Text>
           </View>
           <View style={{ height: 5, borderRadius: 3, backgroundColor: colors.muted, overflow: 'hidden' }}>
-            <View style={{ height: '100%', width: `${Math.round((passedCount / 10) * 100)}%` as any, backgroundColor: isSealed ? '#22c55e' : colors.primary, borderRadius: 3 }} />
+            <View style={{ height: '100%', width: `${Math.round((passedCount / 10) * 100)}%` as any, backgroundColor: isSealed ? T.green : colors.primary, borderRadius: 3 }} />
           </View>
         </View>
 
@@ -4947,15 +4961,15 @@ function GenesisTab({ workId, colors }: { workId: string; colors: any }) {
           style={({ pressed }) => ({
             flexDirection: 'row', alignItems: 'center', gap: 6,
             paddingHorizontal: 14, paddingVertical: 9, borderRadius: 10, borderWidth: 1,
-            borderColor: verifyResult ? (verifyResult.ok ? '#22c55e88' : '#ef444488') : colors.border,
-            backgroundColor: verifyResult ? (verifyResult.ok ? '#22c55e0a' : '#ef44440a') : (pressed ? colors.muted : 'transparent'),
+            borderColor: verifyResult ? (verifyResult.ok ? T.green + '88' : T.rust + '88') : colors.border,
+            backgroundColor: verifyResult ? (verifyResult.ok ? T.greenSoft : T.rustSoft) : (pressed ? colors.muted : 'transparent'),
             opacity: verifying ? 0.6 : 1,
           })}
         >
           {verifying
             ? <ActivityIndicator size="small" color={colors.primary} />
-            : <Feather name="shield" size={14} color={verifyResult ? (verifyResult.ok ? '#22c55e' : '#ef4444') : colors.primary} />}
-          <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: verifyResult ? (verifyResult.ok ? '#22c55e' : '#ef4444') : colors.primary }}>
+            : <Feather name="shield" size={14} color={verifyResult ? (verifyResult.ok ? T.green : T.rust) : colors.primary} />}
+          <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: verifyResult ? (verifyResult.ok ? T.green : T.rust) : colors.primary }}>
             {verifying ? 'Verifying…' : verifyResult ? (verifyResult.ok ? '✓ Intact' : '⛔ Tampered') : 'Verify Ledger'}
           </Text>
         </Pressable>
@@ -4967,7 +4981,7 @@ function GenesisTab({ workId, colors }: { workId: string; colors: any }) {
             style={({ pressed }) => ({
               flexDirection: 'row', alignItems: 'center', gap: 6,
               paddingHorizontal: 14, paddingVertical: 9, borderRadius: 10,
-              backgroundColor: pressed ? '#22c55ecc' : '#22c55e',
+              backgroundColor: pressed ? T.green + 'cc' : T.green,
             })}
           >
             <Feather name="lock" size={14} color="#fff" />
@@ -4978,9 +4992,9 @@ function GenesisTab({ workId, colors }: { workId: string; colors: any }) {
 
       {/* Verify result message */}
       {verifyResult && (
-        <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8, padding: 10, borderRadius: 10, borderWidth: 1, borderColor: verifyResult.ok ? '#22c55e44' : '#ef444444', backgroundColor: verifyResult.ok ? '#22c55e0a' : '#ef44440a', marginBottom: 12 }}>
-          <Feather name={verifyResult.ok ? 'check-circle' : 'alert-triangle'} size={14} color={verifyResult.ok ? '#22c55e' : '#ef4444'} style={{ marginTop: 1 }} />
-          <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: verifyResult.ok ? '#22c55e' : '#ef4444', flex: 1 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8, padding: 10, borderRadius: 10, borderWidth: 1, borderColor: verifyResult.ok ? T.green + '44' : T.rust + '44', backgroundColor: verifyResult.ok ? T.greenSoft : T.rustSoft, marginBottom: 12 }}>
+          <Feather name={verifyResult.ok ? 'check-circle' : 'alert-triangle'} size={14} color={verifyResult.ok ? T.green : T.rust} style={{ marginTop: 1 }} />
+          <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: verifyResult.ok ? T.green : T.rust, flex: 1 }}>
             {verifyResult.message}
           </Text>
         </View>
@@ -4988,10 +5002,10 @@ function GenesisTab({ workId, colors }: { workId: string; colors: any }) {
 
       {/* Seal form */}
       {showSealForm && (
-        <View style={{ borderWidth: StyleSheet.hairlineWidth, borderColor: '#22c55e55', borderRadius: 12, backgroundColor: '#22c55e08', padding: 14, gap: 10, marginBottom: 16 }}>
+        <View style={{ borderWidth: StyleSheet.hairlineWidth, borderColor: T.green + '55', borderRadius: 12, backgroundColor: T.greenSoft, padding: 14, gap: 10, marginBottom: 16 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <Feather name="lock" size={15} color="#22c55e" />
-            <Text style={{ fontSize: 14, fontFamily: 'Inter_700Bold', color: '#22c55e' }}>Seal the Origination Package</Text>
+            <Feather name="lock" size={15} color={T.green} />
+            <Text style={{ fontSize: 14, fontFamily: 'Inter_700Bold', color: T.green }}>Seal the Origination Package</Text>
           </View>
           <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: colors.mutedForeground, lineHeight: 18 }}>
             Sealing locks all ten gates, computes the manifest hash, and marks this Work READY_FOR_B0. The ledger entry is tamper-evident and append-only.
@@ -5010,7 +5024,7 @@ function GenesisTab({ workId, colors }: { workId: string; colors: any }) {
             <Pressable
               onPress={handleSeal}
               disabled={sealing || !sealAuthor.trim()}
-              style={({ pressed }) => ({ flex: 2, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 6, paddingVertical: 10, borderRadius: 8, backgroundColor: !sealAuthor.trim() || sealing ? '#22c55e55' : '#22c55e', opacity: pressed ? 0.8 : 1 })}
+              style={({ pressed }) => ({ flex: 2, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 6, paddingVertical: 10, borderRadius: 8, backgroundColor: !sealAuthor.trim() || sealing ? T.green + '55' : T.green, opacity: pressed ? 0.8 : 1 })}
             >
               {sealing ? <ActivityIndicator size="small" color="#fff" /> : <Feather name="lock" size={14} color="#fff" />}
               <Text style={{ fontSize: 13, fontFamily: 'Inter_700Bold', color: '#fff' }}>{sealing ? 'Sealing…' : 'Seal Package'}</Text>
@@ -5039,6 +5053,7 @@ function GenesisTab({ workId, colors }: { workId: string; colors: any }) {
 // ─── Intelligence Tab ────────────────────────────────────────────────────────
 function IntelligenceTab({ workId, onHighGapCount }: { workId: string; onHighGapCount?: (n: number) => void }) {
   const colors = useColors();
+  const T = useVellumTokens();
   const router = useRouter();
   const [completeness, setCompleteness] = useState<any>(null);
   const [gaps, setGaps] = useState<any>(null);
@@ -5149,7 +5164,7 @@ function IntelligenceTab({ workId, onHighGapCount }: { workId: string; onHighGap
           {gapList.length === 0 ? (
             <Text style={{ fontSize: 13, color: colors.mutedForeground }}>No gaps detected — great coverage!</Text>
           ) : (
-            [{ label: 'CRITICAL', items: critGaps, color: '#ef4444' }, { label: 'HIGH', items: highGaps, color: '#f97316' }, { label: 'MEDIUM', items: medGaps, color: '#f59e0b' }]
+            [{ label: 'CRITICAL', items: critGaps, color: VELLUM_LIGHT.rust }, { label: 'HIGH', items: highGaps, color: VELLUM_LIGHT.rust }, { label: 'MEDIUM', items: medGaps, color: VELLUM_LIGHT.gilt }]
               .filter(grp => grp.items.length > 0)
               .map(grp => (
                 <View key={grp.label} style={{ marginBottom: 10 }}>
@@ -6029,7 +6044,7 @@ export default function WorkDetailScreen() {
                   hitSlop={8}
                   style={({ pressed }: { pressed: boolean }) => ({
                     paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8,
-                    backgroundColor: '#f59e0b', opacity: pressed ? 0.8 : 1, marginLeft: 12,
+                    backgroundColor: VELLUM_LIGHT.gilt, opacity: pressed ? 0.8 : 1, marginLeft: 12,
                   })}
                 >
                   <Text style={{ color: '#fff', fontSize: 13, fontFamily: 'Inter_700Bold' }}>Undo</Text>
@@ -6151,13 +6166,13 @@ export default function WorkDetailScreen() {
         <View style={{
           position: 'absolute', bottom: insets.bottom + 24, left: 16, right: 16,
           flexDirection: 'row', alignItems: 'center', gap: 8,
-          backgroundColor: '#92400e', borderRadius: 12,
+          backgroundColor: VELLUM_LIGHT.gilt, borderRadius: 12,
           paddingVertical: 12, paddingHorizontal: 16,
           shadowColor: '#000', shadowOffset: { width: 0, height: 4 },
           shadowOpacity: 0.25, shadowRadius: 8, elevation: 8,
         }}>
-          <Feather name="book-open" size={15} color="#fef3c7" />
-          <Text style={{ flex: 1, fontSize: 13, fontFamily: 'Inter_500Medium', color: '#fef3c7' }}>
+          <Feather name="book-open" size={15} color="#fff" />
+          <Text style={{ flex: 1, fontSize: 13, fontFamily: 'Inter_500Medium', color: '#fff' }}>
             Book pipeline started — tracking begins at B0
           </Text>
         </View>
@@ -6228,7 +6243,7 @@ export default function WorkDetailScreen() {
                 ItemSeparatorComponent={() => <View style={{ height: 1, backgroundColor: colors.border }} />}
                 renderItem={({ item }) => {
                   const isResolving = resolvingId === item.id;
-                  const typeColor: Record<string, string> = { knowledge: '#8b5cf6', reclassify: '#f59e0b', suggestion: '#3b82f6', duplicate: '#f43f5e' };
+                  const typeColor: Record<string, string> = { knowledge: VELLUM_LIGHT.gilt, reclassify: VELLUM_LIGHT.gilt, suggestion: '#3b82f6', duplicate: VELLUM_LIGHT.rust };
                   const tc = typeColor[item.item_type] ?? colors.primary;
                   return (
                     <View style={{ paddingVertical: 12 }}>
@@ -6249,13 +6264,13 @@ export default function WorkDetailScreen() {
                               onPress={() => resolveReviewItem(item.id, d)}
                               style={({ pressed }) => ({
                                 flex: 1, paddingVertical: 7, borderRadius: 8, alignItems: 'center',
-                                backgroundColor: d === 'approve' ? colors.primary + '18' : d === 'reject' ? '#ef444418' : colors.muted,
+                                backgroundColor: d === 'approve' ? colors.primary + '18' : d === 'reject' ? VELLUM_LIGHT.rustSoft : colors.muted,
                                 borderWidth: 1,
-                                borderColor: d === 'approve' ? colors.primary + '55' : d === 'reject' ? '#ef444455' : colors.border,
+                                borderColor: d === 'approve' ? colors.primary + '55' : d === 'reject' ? VELLUM_LIGHT.rust + '55' : colors.border,
                                 opacity: pressed ? 0.7 : 1,
                               })}
                             >
-                              <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: d === 'approve' ? colors.primary : d === 'reject' ? '#ef4444' : colors.mutedForeground }}>
+                              <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: d === 'approve' ? colors.primary : d === 'reject' ? VELLUM_LIGHT.rust : colors.mutedForeground }}>
                                 {d.charAt(0).toUpperCase() + d.slice(1)}
                               </Text>
                             </Pressable>

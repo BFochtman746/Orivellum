@@ -35,6 +35,7 @@ import {
 import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import { useColors } from '@/hooks/useColors';
+import { useVellumTokens, VELLUM_LIGHT } from '@/lib/tokens';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useGetDocument, useListWorks } from '@workspace/api-client-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -232,11 +233,11 @@ function ExtractedTextSection({ text, colors }: { text: string; colors: ReturnTy
 // ─────────────────────────────────────────────────────────────────────────────
 
 const READINESS_COLOR: Record<string, string> = {
-  ready: '#4A8C65',
-  error: '#dc2626',
-  failed: '#dc2626',
-  imported: '#d97706',
-  transcribing: '#7c3aed',
+  ready:       VELLUM_LIGHT.green,
+  error:       VELLUM_LIGHT.rust,
+  failed:      VELLUM_LIGHT.rust,
+  imported:    VELLUM_LIGHT.gilt,
+  transcribing: VELLUM_LIGHT.gilt,
 };
 
 const READINESS_LABEL: Record<string, string> = {
@@ -250,6 +251,7 @@ const READINESS_LABEL: Record<string, string> = {
 export default function LibraryDocDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const colors = useColors();
+  const T = useVellumTokens();
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const navigation = useNavigation();
@@ -961,10 +963,10 @@ export default function LibraryDocDetail() {
   };
 
   const LIFECYCLE_OPTIONS = [
-    { value: 'draft',      label: 'Draft',      color: '#d97706' },
-    { value: 'canonical',  label: 'Canonical',  color: '#059669' },
-    { value: 'superseded', label: 'Superseded', color: '#6b7280' },
-    { value: 'reference',  label: 'Reference',  color: '#2563eb' },
+    { value: 'draft',      label: 'Draft',      color: T.gilt },
+    { value: 'canonical',  label: 'Canonical',  color: T.green },
+    { value: 'superseded', label: 'Superseded', color: colors.mutedForeground },
+    { value: 'reference',  label: 'Reference',  color: T.inkSoft },
   ] as const;
 
   const handleSetLifecycle = (lc: string) => {
@@ -1129,12 +1131,12 @@ export default function LibraryDocDetail() {
           <Pressable
             onPress={handleReprocess}
             disabled={reprocessing}
-            style={[styles.listenBtn, { borderColor: '#f59e0b55', backgroundColor: '#f59e0b0f' }]}
+            style={[styles.listenBtn, { borderColor: T.giltLine, backgroundColor: T.giltSoft }]}
           >
             {reprocessing
-              ? <ActivityIndicator size="small" color="#d97706" />
-              : <Feather name="refresh-cw" size={14} color="#d97706" />}
-            <Text style={[styles.listenBtnText, { color: '#d97706' }]}>
+              ? <ActivityIndicator size="small" color={T.gilt} />
+              : <Feather name="refresh-cw" size={14} color={T.gilt} />}
+            <Text style={[styles.listenBtnText, { color: T.gilt }]}>
               {reprocessing ? 'Processing…' : 'Re-extract'}
             </Text>
           </Pressable>
@@ -1198,18 +1200,18 @@ export default function LibraryDocDetail() {
           <Pressable
             onPress={handlePlayOriginal}
             disabled={audioState === 'loading' || audioState === 'error'}
-            style={[styles.listenBtn, { borderColor: '#7c3aed55', backgroundColor: '#7c3aed0f', marginRight: 6 }]}
+            style={[styles.listenBtn, { borderColor: T.giltLine, backgroundColor: T.giltSoft, marginRight: 6 }]}
           >
             {audioState === 'loading' ? (
-              <ActivityIndicator size="small" color="#7c3aed" />
+              <ActivityIndicator size="small" color={T.gilt} />
             ) : (
               <Feather
                 name={audioState === 'playing' ? 'pause' : audioState === 'paused' ? 'play' : 'music'}
                 size={14}
-                color="#7c3aed"
+                color={T.gilt}
               />
             )}
-            <Text style={[styles.listenBtnText, { color: '#7c3aed' }]}>
+            <Text style={[styles.listenBtnText, { color: T.gilt }]}>
               {audioState === 'loading' ? 'Loading…'
                 : audioState === 'playing' ? 'Pause'
                 : audioState === 'paused' ? 'Resume'
@@ -1250,11 +1252,11 @@ export default function LibraryDocDetail() {
               {(localTtsState === 'playing' || localTtsState === 'paused') && (
                 <Pressable
                   onPress={() => tts.stop()}
-                  style={[styles.listenBtn, { borderColor: '#dc262655', backgroundColor: '#dc26260f', marginTop: 0 }]}
+                  style={[styles.listenBtn, { borderColor: T.rust + '55', backgroundColor: T.rustSoft, marginTop: 0 }]}
                   hitSlop={6}
                 >
-                  <Feather name="square" size={13} color="#dc2626" />
-                  <Text style={[styles.listenBtnText, { color: '#dc2626' }]}>Stop</Text>
+                  <Feather name="square" size={13} color={T.rust} />
+                  <Text style={[styles.listenBtnText, { color: T.rust }]}>Stop</Text>
                 </Pressable>
               )}
               {/* Settings pill — shows active voice · speed and opens picker */}
@@ -1279,19 +1281,19 @@ export default function LibraryDocDetail() {
                 disabled={dlState === 'generating' || dlState === 'downloading'}
                 style={[styles.listenBtn, {
                   flex: 1,
-                  borderColor: '#05966955',
-                  backgroundColor: dlState === 'done' ? '#05966915' : '#05966910',
+                  borderColor: T.green + '55',
+                  backgroundColor: dlState === 'done' ? T.greenSoft : T.greenSoft,
                   opacity: (dlState === 'generating' || dlState === 'downloading') ? 0.8 : 1,
                 }]}
               >
                 {dlState === 'generating' || dlState === 'downloading' ? (
-                  <ActivityIndicator size="small" color="#059669" />
+                  <ActivityIndicator size="small" color={T.green} />
                 ) : dlState === 'done' ? (
-                  <Feather name="check-circle" size={14} color="#059669" />
+                  <Feather name="check-circle" size={14} color={T.green} />
                 ) : (
-                  <Feather name="download" size={14} color="#059669" />
+                  <Feather name="download" size={14} color={T.green} />
                 )}
-                <Text style={[styles.listenBtnText, { color: '#059669' }]}>
+                <Text style={[styles.listenBtnText, { color: T.green }]}>
                   {dlState === 'generating'
                     ? (dlProgress
                         ? `Synthesising ${Math.round((dlProgress.done / dlProgress.total) * 100)}%…`
@@ -1334,7 +1336,7 @@ export default function LibraryDocDetail() {
                   <View style={{
                     height: 4,
                     width: `${Math.round((dlProgress.done / dlProgress.total) * 100)}%`,
-                    backgroundColor: '#059669',
+                    backgroundColor: T.green,
                     borderRadius: 2,
                   }} />
                 </View>
@@ -1348,7 +1350,7 @@ export default function LibraryDocDetail() {
             {audiobookUri && (
               <View style={{
                 marginTop: 10, borderRadius: 8, borderWidth: 1,
-                borderColor: '#059669' + '44', backgroundColor: '#05966910',
+                borderColor: T.green + '44', backgroundColor: T.greenSoft,
                 paddingHorizontal: 12, paddingVertical: 10,
                 flexDirection: 'row', alignItems: 'center', gap: 10,
               }}>
@@ -1359,7 +1361,7 @@ export default function LibraryDocDetail() {
                   style={({ pressed }) => ({
                     flexDirection: 'row', alignItems: 'center', gap: 6,
                     paddingHorizontal: 12, paddingVertical: 7, borderRadius: 7,
-                    backgroundColor: pressed ? '#059669' + 'cc' : '#059669',
+                    backgroundColor: pressed ? T.green + 'cc' : T.green,
                     opacity: abState === 'loading' ? 0.6 : 1,
                   })}
                   accessibilityRole="button"
@@ -1379,7 +1381,7 @@ export default function LibraryDocDetail() {
 
                 {/* Current position */}
                 {(abState === 'playing' || abState === 'paused') && (
-                  <Text style={{ fontSize: 12, fontFamily: 'Inter_500Medium', color: '#059669', minWidth: 36 }}>
+                  <Text style={{ fontSize: 12, fontFamily: 'Inter_500Medium', color: T.green, minWidth: 36 }}>
                     {fmtTime(abPosition)}
                   </Text>
                 )}
@@ -1396,13 +1398,13 @@ export default function LibraryDocDetail() {
                     accessibilityRole="button"
                     accessibilityLabel="Stop audiobook"
                   >
-                    <Feather name="square" size={14} color="#dc2626" />
+                    <Feather name="square" size={14} color={T.rust} />
                   </Pressable>
                 )}
 
                 {/* Label when idle */}
                 {abState === 'idle' && (
-                  <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: '#059669', flex: 1 }}>
+                  <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: T.green, flex: 1 }}>
                     Audiobook ready
                   </Text>
                 )}
@@ -1418,9 +1420,9 @@ export default function LibraryDocDetail() {
       >
         {/* Error message */}
         {doc.error_message && (
-          <View style={[styles.errorBox, { backgroundColor: '#fee2e2', borderColor: '#fca5a5' }]}>
-            <Feather name="alert-triangle" size={14} color="#dc2626" />
-            <Text style={[styles.errorText, { color: '#dc2626' }]}>{doc.error_message}</Text>
+          <View style={[styles.errorBox, { backgroundColor: T.rustSoft, borderColor: T.rust + '66' }]}>
+            <Feather name="alert-triangle" size={14} color={T.rust} />
+            <Text style={[styles.errorText, { color: T.rust }]}>{doc.error_message}</Text>
           </View>
         )}
 
@@ -1485,8 +1487,8 @@ export default function LibraryDocDetail() {
               onPress={() => refetchKn()}
               style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 10 }}
             >
-              <Feather name="alert-circle" size={14} color={colors.destructive ?? '#ef4444'} />
-              <Text style={[styles.emptyText, { color: colors.destructive ?? '#ef4444' }]}>
+              <Feather name="alert-circle" size={14} color={colors.destructive ?? T.rust} />
+              <Text style={[styles.emptyText, { color: colors.destructive ?? T.rust }]}>
                 Could not load knowledge — tap to retry
               </Text>
             </Pressable>
@@ -1510,14 +1512,14 @@ export default function LibraryDocDetail() {
                           flex: 1, flexDirection: 'row', alignItems: 'center',
                           justifyContent: 'center', gap: 5, paddingVertical: 8,
                           borderRadius: 8, borderWidth: 1,
-                          backgroundColor: '#4A8C6518', borderColor: '#4A8C6544',
+                          backgroundColor: T.greenSoft, borderColor: T.green + '44',
                           opacity: bulkReviewing ? 0.6 : 1,
                         }}
                       >
                         {bulkReviewing === 'approve'
-                          ? <ActivityIndicator size="small" color="#4A8C65" />
-                          : <Feather name="thumbs-up" size={13} color="#4A8C65" />}
-                        <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: '#4A8C65' }}>
+                          ? <ActivityIndicator size="small" color={T.green} />
+                          : <Feather name="thumbs-up" size={13} color={T.green} />}
+                        <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: T.green }}>
                           Approve all
                         </Text>
                       </Pressable>
@@ -1528,14 +1530,14 @@ export default function LibraryDocDetail() {
                           flex: 1, flexDirection: 'row', alignItems: 'center',
                           justifyContent: 'center', gap: 5, paddingVertical: 8,
                           borderRadius: 8, borderWidth: 1,
-                          backgroundColor: '#dc262618', borderColor: '#dc262644',
+                          backgroundColor: T.rustSoft, borderColor: T.rust + '44',
                           opacity: bulkReviewing ? 0.6 : 1,
                         }}
                       >
                         {bulkReviewing === 'dismiss'
-                          ? <ActivityIndicator size="small" color="#dc2626" />
-                          : <Feather name="thumbs-down" size={13} color="#dc2626" />}
-                        <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: '#dc2626' }}>
+                          ? <ActivityIndicator size="small" color={T.rust} />
+                          : <Feather name="thumbs-down" size={13} color={T.rust} />}
+                        <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: T.rust }}>
                           Dismiss all
                         </Text>
                       </Pressable>
@@ -1553,8 +1555,8 @@ export default function LibraryDocDetail() {
                     style={[
                       styles.knowledgeItem,
                       {
-                        borderColor: isPending ? colors.primary + '44' : isApproved ? '#4A8C6544' : colors.border,
-                        backgroundColor: isPending ? colors.primary + '08' : isApproved ? '#4A8C6508' : colors.muted + '55',
+                        borderColor: isPending ? colors.primary + '44' : isApproved ? T.green + '44' : colors.border,
+                        backgroundColor: isPending ? colors.primary + '08' : isApproved ? T.greenSoft : colors.muted + '55',
                         opacity: isRejected ? 0.45 : 1,
                       },
                     ]}
@@ -1571,13 +1573,13 @@ export default function LibraryDocDetail() {
                             <Pressable
                               onPress={() => handleReview(item.id, 'approved')}
                               disabled={reviewing === item.id}
-                              style={[styles.reviewBtn, { backgroundColor: '#4A8C6522' }]}
+                              style={[styles.reviewBtn, { backgroundColor: T.greenSoft }]}
                               hitSlop={6}
                             >
                               {reviewing === item.id ? (
-                                <ActivityIndicator size="small" color="#4A8C65" />
+                                <ActivityIndicator size="small" color={T.green} />
                               ) : (
-                                <Feather name="thumbs-up" size={13} color="#4A8C65" />
+                                <Feather name="thumbs-up" size={13} color={T.green} />
                               )}
                             </Pressable>
                           )}
@@ -1585,10 +1587,10 @@ export default function LibraryDocDetail() {
                             <Pressable
                               onPress={() => handleReview(item.id, 'rejected')}
                               disabled={reviewing === item.id}
-                              style={[styles.reviewBtn, { backgroundColor: '#dc262622' }]}
+                              style={[styles.reviewBtn, { backgroundColor: T.rustSoft }]}
                               hitSlop={6}
                             >
-                              <Feather name="thumbs-down" size={13} color="#dc2626" />
+                              <Feather name="thumbs-down" size={13} color={T.rust} />
                             </Pressable>
                           )}
                         </View>
