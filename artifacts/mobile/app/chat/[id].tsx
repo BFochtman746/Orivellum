@@ -601,6 +601,32 @@ function ReasoningBlock({ text, colors }: { text: string; colors: any }) {
   );
 }
 
+function MessageSkeletonRow({ align = 'left', width = '70%' }: { align?: 'left' | 'right'; width?: string }) {
+  const colors = useColors();
+  const opacity = useRef(new Animated.Value(0.4)).current;
+
+  useEffect(() => {
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(opacity, { toValue: 0.7, duration: 700, useNativeDriver: true }),
+        Animated.timing(opacity, { toValue: 0.4, duration: 700, useNativeDriver: true }),
+      ])
+    ).start();
+  }, []);
+
+  return (
+    <View style={{ paddingHorizontal: 16, paddingVertical: 6, alignItems: align === 'right' ? 'flex-end' : 'flex-start' }}>
+      <Animated.View
+        style={{
+          height: 40, width, borderRadius: 18,
+          backgroundColor: colors.muted,
+          opacity,
+        }}
+      />
+    </View>
+  );
+}
+
 // stallLevel: 0 = normal typing dots, 1 = "Taking longer…" (≥15 s), 2 = "This is taking a while…" (≥30 s)
 function TypingIndicator({ colors, T, stallLevel = 0 }: { colors: any; T: ReturnType<typeof useVellumTokens>; stallLevel?: 0 | 1 | 2 }) {
   const stallText =
@@ -1460,11 +1486,15 @@ export default function ChatScreen() {
 
   const topPad = isWeb ? 67 : insets.top + 44;
 
-  // Full-screen loading
-  if (isLoading && !initialized) {
+  // Full-screen loading — show skeleton bubbles instead of a bare spinner
+  if (isLoading && !initialized && localMessages.length === 0) {
     return (
-      <View style={[styles.screen, styles.centered, { backgroundColor: colors.background }]}>
-        <ActivityIndicator color={colors.primary} />
+      <View style={[styles.screen, { backgroundColor: colors.background, paddingTop: topPad }]}>
+        <MessageSkeletonRow width="60%" />
+        <MessageSkeletonRow align="right" width="45%" />
+        <MessageSkeletonRow width="75%" />
+        <MessageSkeletonRow align="right" width="50%" />
+        <MessageSkeletonRow width="65%" />
       </View>
     );
   }
