@@ -205,19 +205,43 @@ function EditableTitle({ docId: _docId, title, onSave }: { docId: string; title:
 
 // ── Readiness badge ───────────────────────────────────────────────────────────
 
-const READINESS_CFG = {
-  ready:        { label: "READY",        Icon: CheckCircle2, cls: "text-emerald-600 border-emerald-200 bg-emerald-50" },
-  imported:     { label: "PROCESSING",   Icon: Clock,        cls: "text-amber-600 border-amber-200 bg-amber-50" },
-  transcribing: { label: "TRANSCRIBING", Icon: Clock,        cls: "text-violet-600 border-violet-200 bg-violet-50" },
-  no_text:      { label: "NO TEXT",      Icon: FileQuestion, cls: "text-orange-600 border-orange-200 bg-orange-50" },
-  error:        { label: "ERROR",        Icon: AlertCircle,  cls: "text-red-600 border-red-200 bg-red-50" },
-} as const;
+const READINESS_CFG: Record<string, {
+  label: string;
+  Icon: React.ElementType;
+  cls: string;
+  style: React.CSSProperties;
+}> = {
+  ready:        {
+    label: "READY",        Icon: CheckCircle2,
+    cls: "", style: { color: "var(--green-2)", borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)", background: "var(--green-soft)" },
+  },
+  imported:     {
+    label: "PROCESSING",   Icon: Clock,
+    cls: "", style: { color: "var(--gilt)", borderColor: "var(--gilt-line)", background: "var(--gilt-soft)" },
+  },
+  transcribing: {
+    label: "TRANSCRIBING", Icon: Clock,
+    // violet has no VELLUM token — keep raw Tailwind classes
+    cls: "text-violet-600 border-violet-200 bg-violet-50", style: {},
+  },
+  no_text:      {
+    label: "NO TEXT",      Icon: FileQuestion,
+    cls: "", style: { color: "var(--rust)", borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)", background: "var(--rust-soft)" },
+  },
+  error:        {
+    label: "ERROR",        Icon: AlertCircle,
+    cls: "", style: { color: "var(--rust)", borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)", background: "var(--rust-soft)" },
+  },
+};
 
 function ReadinessBadge({ readiness }: { readiness: string }) {
-  const cfg = READINESS_CFG[readiness as keyof typeof READINESS_CFG] ?? READINESS_CFG.imported;
+  const cfg = READINESS_CFG[readiness] ?? READINESS_CFG.imported;
   const { Icon } = cfg;
   return (
-    <span className={`inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-mono font-medium border ${cfg.cls}`}>
+    <span
+      className={`inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-mono font-medium border ${cfg.cls}`}
+      style={cfg.style}
+    >
       <Icon className="w-3 h-3" />
       {cfg.label}
     </span>
@@ -1686,17 +1710,18 @@ export default function DocumentDetail() {
               {/* Lifecycle badge + inline picker */}
               <Select value={docLifecycle} onValueChange={handleSetLifecycle}>
                 <SelectTrigger
-                  className={`h-auto py-0.5 px-1.5 text-[10px] font-mono uppercase border rounded gap-1 w-auto min-w-0 focus:ring-0 shadow-none ${
+                  className="h-auto py-0.5 px-1.5 text-[10px] font-mono uppercase border rounded gap-1 w-auto min-w-0 focus:ring-0 shadow-none"
+                  style={
                     docLifecycle === "canonical"
-                      ? "bg-amber-50 border-amber-300 text-amber-800"
+                      ? { background: "var(--gilt-soft)", borderColor: "var(--gilt-line)", color: "var(--gilt)" }
                       : docLifecycle === "reference"
-                      ? "bg-blue-50 border-blue-200 text-blue-700"
+                      ? { background: "transparent", borderColor: "var(--line)", color: "var(--ink-soft)" }
                       : docLifecycle === "superseded"
-                      ? "bg-muted/50 border-border text-muted-foreground"
-                      : "bg-muted/30 border-border/50 text-muted-foreground"
-                  }`}
+                      ? {}  // muted handled by Tailwind default
+                      : {}
+                  }
                 >
-                  {docLifecycle === "canonical" && <Star className="w-2.5 h-2.5 text-amber-600" />}
+                  {docLifecycle === "canonical" && <Star className="w-2.5 h-2.5" style={{ color: "var(--gilt)" }} />}
                   <SelectValue />
                   <ChevronDown className="w-3 h-3 opacity-50" />
                 </SelectTrigger>

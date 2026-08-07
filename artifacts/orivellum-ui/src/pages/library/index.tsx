@@ -37,10 +37,28 @@ const BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/
 
 type Lifecycle = "draft" | "canonical" | "superseded" | "reference";
 
-const LIFECYCLE_CFG: Record<string, { label: string; className: string; icon?: React.ElementType }> = {
-  canonical:  { label: "canonical",  className: "bg-amber-50 border border-amber-300 text-amber-800", icon: Star },
-  superseded: { label: "superseded", className: "bg-muted/50 border border-border text-muted-foreground line-through" },
-  reference:  { label: "reference",  className: "bg-blue-50 border border-blue-200 text-blue-700" },
+const LIFECYCLE_CFG: Record<string, {
+  label: string;
+  cls: string;
+  style: React.CSSProperties;
+  icon?: React.ElementType;
+}> = {
+  canonical:  {
+    label: "canonical",
+    cls: "",
+    style: { color: "var(--gilt)", borderColor: "var(--gilt-line)", background: "var(--gilt-soft)" },
+    icon: Star,
+  },
+  superseded: {
+    label: "superseded",
+    cls: "bg-muted/50 border-border text-muted-foreground line-through",
+    style: {},
+  },
+  reference:  {
+    label: "reference",
+    cls: "",
+    style: { color: "var(--ink-soft)", borderColor: "var(--line)", background: "transparent" },
+  },
 };
 
 function LifecycleBadge({ lifecycle }: { lifecycle?: string }) {
@@ -49,7 +67,10 @@ function LifecycleBadge({ lifecycle }: { lifecycle?: string }) {
   if (!cfg) return null;
   const Icon = cfg.icon;
   return (
-    <span className={`text-[10px] font-mono flex items-center gap-0.5 rounded px-1.5 py-0.5 ${cfg.className}`}>
+    <span
+      className={`text-[10px] font-mono flex items-center gap-0.5 rounded px-1.5 py-0.5 border ${cfg.cls}`}
+      style={cfg.style}
+    >
       {Icon && <Icon className="w-2.5 h-2.5" />}
       {cfg.label}
     </span>
@@ -264,21 +285,45 @@ function DuplicatesBanner({ readyDocCount = 0 }: { readyDocCount?: number }) {
 
 // ── Readiness config ─────────────────────────────────────────────────────────
 
-const READINESS = {
-  ready:        { label: "READY",        icon: CheckCircle2, cls: "text-emerald-600 border-emerald-200 bg-emerald-50" },
-  imported:     { label: "PROCESSING",   icon: Clock,        cls: "text-amber-600 border-amber-200 bg-amber-50" },
-  transcribing: { label: "TRANSCRIBING", icon: Clock,        cls: "text-violet-600 border-violet-200 bg-violet-50" },
-  no_text:      { label: "NO TEXT",      icon: FileQuestion, cls: "text-orange-600 border-orange-200 bg-orange-50" },
-  error:        { label: "ERROR",        icon: AlertCircle,  cls: "text-red-600 border-red-200 bg-red-50" },
-} as const;
+const READINESS: Record<string, {
+  label: string;
+  icon: React.ElementType;
+  cls: string;
+  style: React.CSSProperties;
+}> = {
+  ready:        {
+    label: "READY",        icon: CheckCircle2,
+    cls: "", style: { color: "var(--green-2)", borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)", background: "var(--green-soft)" },
+  },
+  imported:     {
+    label: "PROCESSING",   icon: Clock,
+    cls: "", style: { color: "var(--gilt)", borderColor: "var(--gilt-line)", background: "var(--gilt-soft)" },
+  },
+  transcribing: {
+    label: "TRANSCRIBING", icon: Clock,
+    // violet has no VELLUM token — keep raw Tailwind classes
+    cls: "text-violet-600 border-violet-200 bg-violet-50", style: {},
+  },
+  no_text:      {
+    label: "NO TEXT",      icon: FileQuestion,
+    cls: "", style: { color: "var(--rust)", borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)", background: "var(--rust-soft)" },
+  },
+  error:        {
+    label: "ERROR",        icon: AlertCircle,
+    cls: "", style: { color: "var(--rust)", borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)", background: "var(--rust-soft)" },
+  },
+};
 
 type Readiness = keyof typeof READINESS;
 
 function ReadinessBadge({ readiness }: { readiness: string }) {
-  const cfg = READINESS[readiness as Readiness] ?? READINESS.imported;
+  const cfg = READINESS[readiness] ?? READINESS.imported;
   const Icon = cfg.icon;
   return (
-    <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-medium border ${cfg.cls}`}>
+    <span
+      className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-medium border ${cfg.cls}`}
+      style={cfg.style}
+    >
       <Icon className="w-2.5 h-2.5" />
       {cfg.label}
     </span>
