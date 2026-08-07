@@ -34,11 +34,14 @@ interface LearnWork {
 
 function MasteryBar({ percent, color }: { percent: number; color: string }) {
   const anim = useRef(new Animated.Value(0)).current;
+  const colors = useColors();
   useEffect(() => {
     Animated.timing(anim, { toValue: percent / 100, duration: 600, useNativeDriver: false }).start();
   }, [percent]);
   return (
-    <View style={{ height: 5, backgroundColor: 'rgba(0,0,0,0.08)', borderRadius: 3, overflow: 'hidden' }}>
+    // Use colors.muted so the track is visible in both light and dark mode.
+    // rgba(0,0,0,0.08) is near-invisible on a dark canvas.
+    <View style={{ height: 5, backgroundColor: colors.muted, borderRadius: 3, overflow: 'hidden' }}>
       <Animated.View
         style={{
           position: 'absolute', left: 0, top: 0, bottom: 0, borderRadius: 3,

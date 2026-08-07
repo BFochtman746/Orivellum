@@ -482,14 +482,17 @@ export function KnowledgeGraphView({
             strokeOpacity={0.9}
           />
           {showLabel && (
-            <SvgText x={n.x} y={n.y + r + 10} textAnchor="middle" fontSize={8.5} fill={col} fontFamily="Inter_500Medium">
+            // Use colors.foreground (not col) so labels are readable in both
+            // light and dark mode. Node colors like #9A7B2E / #527A8A are too
+            // dark to be legible on a dark canvas background.
+            <SvgText x={n.x} y={n.y + r + 10} textAnchor="middle" fontSize={8.5} fill={colors.foreground} fillOpacity={0.75} fontFamily="Inter_500Medium">
               {short}
             </SvgText>
           )}
         </G>
       );
     }),
-  [simNodes, degreeMap, selectedNode]);
+  [simNodes, degreeMap, selectedNode, colors.foreground]);
 
   // ── Kind filter toggle ─────────────────────────────────────────────────────
 
