@@ -15,6 +15,9 @@ import {
   View,
 } from 'react-native';
 import { useColors } from '@/hooks/useColors';
+import { useVellumTokens, VELLUM_LIGHT } from '@/lib/tokens';
+import { SkeletonItem } from '@/components/SkeletonItem';
+import { EmptyState } from '@/components/EmptyState';
 import { Feather } from '@expo/vector-icons';
 import { useGetDashboardSummary, useGetDashboardActivity, useGetBriefing } from '@workspace/api-client-react';
 import { useQuery } from '@tanstack/react-query';
@@ -126,7 +129,8 @@ function MiniGauge({
   value: string;
   colors: ReturnType<typeof useColors>;
 }) {
-  const fill = pct > 90 ? '#ef4444' : pct > 70 ? '#f59e0b' : '#22c55e';
+  const T = useVellumTokens();
+  const fill = pct > 90 ? T.rust : pct > 70 ? T.gilt : T.green;
   return (
     <View style={{ flex: 1, minWidth: 80, gap: 4 }}>
       <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
@@ -238,6 +242,7 @@ const _REVIEW_QUEUE_URL = `https://${process.env.EXPO_PUBLIC_DOMAIN ?? 'localhos
 
 function ReviewQueueTile() {
   const colors = useColors();
+  const T = useVellumTokens();
   const router = useRouter();
 
   const { data } = useQuery<{
@@ -272,18 +277,19 @@ function ReviewQueueTile() {
         styles.reviewTile,
         {
           backgroundColor: colors.card,
-          borderColor: '#f59e0b44',
+          borderColor: T.giltLine,
           opacity: pressed ? 0.8 : 1,
+          minHeight: 44,
         },
       ]}
       accessibilityRole="button"
       accessibilityLabel={`Review queue: ${count} item${count !== 1 ? 's' : ''} pending`}
     >
       {/* Icon */}
-      <View style={[styles.reviewTileIcon, { backgroundColor: '#f59e0b18' }]}>
-        <Feather name="shield" size={18} color="#f59e0b" />
+      <View style={[styles.reviewTileIcon, { backgroundColor: T.giltSoft }]}>
+        <Feather name="shield" size={18} color={T.gilt} />
         {/* Count badge */}
-        <View style={styles.reviewTileBadge}>
+        <View style={[styles.reviewTileBadge, { backgroundColor: T.rust }]}>
           <Text style={styles.reviewTileBadgeText}>
             {count > 99 ? '99+' : String(count)}
           </Text>
@@ -376,7 +382,7 @@ function relTime(iso: string | null | undefined): string {
 }
 
 const DIAG_COLOR: Record<DiagStatus, string> = {
-  ok: '#22c55e', info: '#3b82f6', warn: '#f59e0b', error: '#ef4444',
+  ok: VELLUM_LIGHT.green, info: '#3b82f6', warn: VELLUM_LIGHT.gilt, error: VELLUM_LIGHT.rust,
 };
 
 // ── StatusRow ─────────────────────────────────────────────────────────────────
@@ -662,7 +668,7 @@ function _duration(start: string | null, end: string | null): string {
 
 const _LOG_SHEET_H = 500;
 const _LOG_LEVEL_COLOR: Record<string, string> = {
-  info: '#22c55e', warn: '#f59e0b', error: '#ef4444',
+  info: VELLUM_LIGHT.green, warn: VELLUM_LIGHT.gilt, error: VELLUM_LIGHT.rust,
 };
 
 function RunLogSheet({
@@ -677,6 +683,7 @@ function RunLogSheet({
   onRetrySuccess: (newRun: ActionRun) => void;
 }) {
   const colors = useColors();
+  const T = useVellumTokens();
   const insets = useSafeAreaInsets();
   const [rendered, setRendered] = useState(false);
   const [lines, setLines] = useState<LogLine[]>([]);
@@ -751,7 +758,7 @@ function RunLogSheet({
 
   if (!rendered || !run) return null;
 
-  const statusColor = run.status === 'done' ? '#22c55e' : run.status === 'error' ? '#ef4444' : '#f59e0b';
+  const statusColor = run.status === 'done' ? T.green : run.status === 'error' ? T.rust : T.gilt;
   const dur = _duration(run.created_at, run.completed_at);
 
   return (
@@ -817,7 +824,7 @@ function RunLogSheet({
             </View>
           )}
           {!logLoading && !!logErr && (
-            <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: '#ef4444', lineHeight: 18 }}>
+            <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: T.rust, lineHeight: 18 }}>
               {logErr}
             </Text>
           )}
@@ -856,7 +863,7 @@ function RunLogSheet({
               disabled={retrying}
               style={({ pressed }) => [
                 actStyles.retryBtn,
-                { backgroundColor: pressed ? '#ef444488' : '#ef4444', opacity: retrying ? 0.55 : 1 },
+                { backgroundColor: pressed ? T.rustSoft : T.rust, opacity: retrying ? 0.55 : 1 },
               ]}
             >
               {retrying
@@ -887,6 +894,7 @@ function ActionLauncherSheet({
   onLaunched: (run: ActionRun) => void;
 }) {
   const colors = useColors();
+  const T = useVellumTokens();
   const insets = useSafeAreaInsets();
   const [rendered, setRendered] = useState(false);
 
@@ -1031,8 +1039,8 @@ function ActionLauncherSheet({
 
         {/* Content */}
         {actionsLoading ? (
-          <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-            <ActivityIndicator color={colors.primary} />
+          <View style={{ flex: 1 }}>
+            {[...Array(4)].map((_, i) => <SkeletonItem key={i} />)}
           </View>
         ) : actions.length === 0 ? (
           <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24 }}>
@@ -1150,7 +1158,7 @@ function ActionLauncherSheet({
 
                   {/* Validation hint */}
                   {!!errMsg && (
-                    <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: '#ef4444', marginTop: 6 }}>
+                    <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: T.rust, marginTop: 6 }}>
                       {errMsg}
                     </Text>
                   )}
@@ -1244,11 +1252,12 @@ const _STATUS_ICON: Record<string, string> = {
   done: 'check-circle', error: 'x-circle', running: 'loader',
 };
 const _STATUS_COLOR: Record<string, string> = {
-  done: '#22c55e', error: '#ef4444', running: '#f59e0b',
+  done: VELLUM_LIGHT.green, error: VELLUM_LIGHT.rust, running: VELLUM_LIGHT.gilt,
 };
 
 function AutomationActivityCard() {
   const colors = useColors();
+  const T = useVellumTokens();
   const [collapsed, setCollapsed] = useState(false);
   const [selectedRun, setSelectedRun] = useState<ActionRun | null>(null);
   const [sheetVisible, setSheetVisible] = useState(false);
@@ -1304,7 +1313,7 @@ function AutomationActivityCard() {
 
   const failedCount  = runs.filter(r => r.status === 'error').length;
   const runningCount = runs.filter(r => r.status === 'running').length;
-  const summaryColor = failedCount > 0 ? '#ef4444' : runningCount > 0 ? '#f59e0b' : '#22c55e';
+  const summaryColor = failedCount > 0 ? T.rust : runningCount > 0 ? T.gilt : T.green;
 
   return (
     <>
@@ -1327,15 +1336,15 @@ function AutomationActivityCard() {
               Automation
             </Text>
             {failedCount > 0 && (
-              <View style={[actStyles.badge, { backgroundColor: '#ef444418', borderColor: '#ef444444' }]}>
-                <Text style={{ fontSize: 10, fontFamily: 'Inter_600SemiBold', color: '#ef4444' }}>
+              <View style={[actStyles.badge, { backgroundColor: T.rustSoft, borderColor: T.rust }]}>
+                <Text style={{ fontSize: 10, fontFamily: 'Inter_600SemiBold', color: T.rust }}>
                   {failedCount} failed
                 </Text>
               </View>
             )}
             {runningCount > 0 && (
-              <View style={[actStyles.badge, { backgroundColor: '#f59e0b18', borderColor: '#f59e0b44' }]}>
-                <Text style={{ fontSize: 10, fontFamily: 'Inter_600SemiBold', color: '#f59e0b' }}>
+              <View style={[actStyles.badge, { backgroundColor: T.giltSoft, borderColor: T.giltLine }]}>
+                <Text style={{ fontSize: 10, fontFamily: 'Inter_600SemiBold', color: T.gilt }}>
                   {runningCount} running
                 </Text>
               </View>
@@ -1369,7 +1378,7 @@ function AutomationActivityCard() {
         {!collapsed && (
           <View style={{ marginTop: 10, gap: 0 }}>
             {isLoading && runs.length === 0 && (
-              <ActivityIndicator size="small" color={colors.primary} style={{ alignSelf: 'flex-start', marginVertical: 8 }} />
+              <>{[...Array(3)].map((_, i) => <SkeletonItem key={i} lines={1} />)}</>
             )}
             {!isLoading && runs.length === 0 && (
               <View style={{ paddingVertical: 12, alignItems: 'center', gap: 4 }}>
@@ -1414,7 +1423,7 @@ function AutomationActivityCard() {
                     </Text>
                     {run.status === 'error' && !!run.error && (
                       <Text
-                        style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: '#ef4444', lineHeight: 15 }}
+                        style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: T.rust, lineHeight: 15 }}
                         numberOfLines={1}
                       >
                         {run.error.slice(0, 80)}
@@ -1507,6 +1516,7 @@ const actStyles = StyleSheet.create({
 
 function SystemHealthCard() {
   const colors = useColors();
+  const T = useVellumTokens();
   const [collapsed, setCollapsed] = useState(false);
   const [sheetOpen, setSheetOpen] = useState(false);
 
@@ -1544,14 +1554,14 @@ function SystemHealthCard() {
 
   const aiStatus = health?.services.ai.status ?? 'unknown';
   const serverColor =
-    aiStatus === 'ok' ? '#22c55e' : aiStatus === 'degraded' ? '#f59e0b' : aiStatus === 'unknown' ? '#9ca3af' : '#ef4444';
+    aiStatus === 'ok' ? T.green : aiStatus === 'degraded' ? T.gilt : aiStatus === 'unknown' ? '#9ca3af' : T.rust;
   const serverDetail =
     aiStatus === 'ok' ? 'AI endpoint reachable' :
     aiStatus === 'degraded' ? 'AI endpoint degraded' :
     aiStatus === 'unavailable' ? 'AI endpoint unreachable' : 'Checking…';
 
   const embCircuit = embeddings?.circuit_open;
-  const embColor = embCircuit == null ? '#9ca3af' : embCircuit ? '#f59e0b' : '#22c55e';
+  const embColor = embCircuit == null ? '#9ca3af' : embCircuit ? T.gilt : T.green;
   const embDetail =
     embCircuit == null ? 'Checking…' :
     embCircuit ? 'Circuit open — keyword search only' : 'Online — semantic search active';
@@ -1559,7 +1569,7 @@ function SystemHealthCard() {
   const ns = nightshift;
   const lastRun = ns?.last_run;
   const nsRunning = ns?.running;
-  const nsColor = lastRun ? '#22c55e' : nsRunning ? '#f59e0b' : '#9ca3af';
+  const nsColor = lastRun ? T.green : nsRunning ? T.gilt : '#9ca3af';
   const nsDetail = nsRunning
     ? 'Running now…'
     : lastRun
@@ -1568,11 +1578,11 @@ function SystemHealthCard() {
 
   const dbStatus = health?.services.database.status ?? 'unknown';
   const dbColor =
-    dbStatus === 'ok' ? '#22c55e' : dbStatus === 'degraded' ? '#f59e0b' : dbStatus === 'unknown' ? '#9ca3af' : '#ef4444';
+    dbStatus === 'ok' ? T.green : dbStatus === 'degraded' ? T.gilt : dbStatus === 'unknown' ? '#9ca3af' : T.rust;
   const dbDetail = dbStatus === 'ok' ? 'Healthy' : dbStatus === 'unknown' ? 'Checking…' : dbStatus;
 
   const overallOk = aiStatus === 'ok' && !embCircuit && dbStatus === 'ok';
-  const overallColor = health == null ? '#9ca3af' : overallOk ? '#22c55e' : '#f59e0b';
+  const overallColor = health == null ? '#9ca3af' : overallOk ? T.green : T.gilt;
 
   return (
     <>
@@ -1709,6 +1719,7 @@ const sysStyles = StyleSheet.create({
 
 export default function DashboardScreen() {
   const colors = useColors();
+  const T = useVellumTokens();
   const insets = useSafeAreaInsets();
   const isWeb = Platform.OS === 'web';
 
@@ -1794,7 +1805,7 @@ export default function DashboardScreen() {
       style={[styles.container, { backgroundColor: colors.background }]}
       contentContainerStyle={{
         paddingTop: topPad + 16,
-        paddingBottom: botPad + 100,
+        paddingBottom: insets.bottom + 24,
         paddingHorizontal: 16,
       }}
       scrollEnabled
@@ -1821,7 +1832,7 @@ export default function DashboardScreen() {
             </View>
             <Pressable
               onPress={openAiSettings}
-              hitSlop={8}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
               style={({ pressed }) => ({
                 width: 34, height: 34, borderRadius: 17,
                 alignItems: 'center', justifyContent: 'center',
@@ -1851,7 +1862,7 @@ export default function DashboardScreen() {
 
           {/* Stats */}
           {summaryLoading ? (
-            <ActivityIndicator color={colors.primary} style={styles.loader} />
+            <>{[...Array(4)].map((_, i) => <SkeletonItem key={i} />)}</>
           ) : (
             <View style={styles.statsGrid}>
               <StatCard label="Works" value={summary?.work_count} icon="book-open" />
@@ -1886,17 +1897,17 @@ export default function DashboardScreen() {
           )}
 
           {!isLoading && !isError && recentWorks.length === 0 && activity.length === 0 && (
-            <View style={styles.emptyState}>
-              <Feather name="inbox" size={40} color={colors.mutedForeground} />
-              <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
-                No activity yet.{'\n'}Create a work to get started.
-              </Text>
-            </View>
+            <EmptyState
+              icon="inbox"
+              title="No activity yet"
+              body="Create a work to get started."
+            />
           )}
 
           {/* Workspace health — collapsed by default to keep the dashboard clean */}
           <Pressable
             onPress={() => setShowWorkspaceHealth(v => !v)}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
             style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 24, marginBottom: 4 }}
           >
             <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>
@@ -1988,6 +1999,7 @@ const styles = StyleSheet.create({
     padding: 14,
     gap: 12,
     marginBottom: 14,
+    minHeight: 44,
   },
   reviewTileIcon: {
     width: 40,
@@ -2004,7 +2016,6 @@ const styles = StyleSheet.create({
     minWidth: 16,
     height: 16,
     borderRadius: 8,
-    backgroundColor: '#ef4444',
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 3,
@@ -2033,6 +2044,7 @@ const styles = StyleSheet.create({
     padding: 14,
     gap: 12,
     marginBottom: 24,
+    minHeight: 44,
   },
   studioIcon: {
     width: 40,
