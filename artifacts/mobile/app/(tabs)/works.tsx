@@ -1,6 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
   Alert,
   FlatList,
   Platform,
@@ -13,6 +12,7 @@ import {
 } from 'react-native';
 import { Swipeable } from 'react-native-gesture-handler';
 import { useColors } from '@/hooks/useColors';
+import { useVellumTokens, alpha } from '@/lib/tokens';
 import { Feather } from '@expo/vector-icons';
 import { useListWorks, useCreateConversation, useDeleteWork } from '@workspace/api-client-react';
 import { useQueryClient } from '@tanstack/react-query';
@@ -23,8 +23,8 @@ import * as Haptics from 'expo-haptics';
 import type { Work } from '@workspace/api-client-react';
 import { OfflineBanner, ErrorScreen } from '@/components/OfflineBanner';
 import { readCache, writeCache } from '@/lib/cache';
-
-const TEAL = '#14b8a6';
+import { SkeletonItem } from '@/components/SkeletonItem';
+import { EmptyState } from '@/components/EmptyState';
 
 const TYPE_ICONS: Record<string, string> = {
   research: 'book-open',
@@ -36,6 +36,7 @@ const TYPE_ICONS: Record<string, string> = {
 
 function WorkCard({ work, onStartChat, onDelete }: { work: Work; onStartChat: () => void; onDelete?: (id: string) => void }) {
   const colors = useColors();
+  const T = useVellumTokens();
   const router = useRouter();
   const icon = TYPE_ICONS[work.work_type ?? ''] ?? 'file';
 
@@ -43,7 +44,7 @@ function WorkCard({ work, onStartChat, onDelete }: { work: Work; onStartChat: ()
     work.status === 'active'
       ? colors.primary
       : work.status === 'complete'
-      ? '#4A8C65'
+      ? T.green
       : work.status === 'archived'
       ? '#6b7280'
       : colors.mutedForeground;
@@ -55,21 +56,21 @@ function WorkCard({ work, onStartChat, onDelete }: { work: Work; onStartChat: ()
     if (!isWeb) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
   };
 
-  // Left-swipe reveals the teal "Chat" action (rendered on the right edge)
+  // Left-swipe reveals the Chat action (rendered on the right edge)
   const renderRightActions = () => (
     <View style={{ flexDirection: 'row', alignItems: 'center', paddingRight: 12, paddingLeft: 8, marginVertical: 6 }}>
       <Pressable
         onPress={() => { swipeRef.current?.close(); triggerHaptic(); onStartChat(); }}
         style={{
-          backgroundColor: TEAL, borderRadius: 10,
+          backgroundColor: colors.primary, borderRadius: 10,
           paddingHorizontal: 18, paddingVertical: 10,
           alignItems: 'center', justifyContent: 'center', gap: 4,
           minHeight: 52,
         }}
-        hitSlop={12}
+        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
       >
         <Feather name="message-circle" size={18} color="#fff" />
-        <Text style={{ color: '#fff', fontSize: 12, fontWeight: '600' }}>Chat</Text>
+        <Text style={{ color: '#fff', fontSize: 12, ...font('semibold') }}>Chat</Text>
       </Pressable>
     </View>
   );
@@ -101,6 +102,7 @@ function WorkCard({ work, onStartChat, onDelete }: { work: Work; onStartChat: ()
           backgroundColor: colors.card,
           borderColor: colors.border,
           opacity: pressed ? 0.75 : 1,
+          minHeight: 44,
         },
       ]}
     >
@@ -151,7 +153,7 @@ function WorkCard({ work, onStartChat, onDelete }: { work: Work; onStartChat: ()
             </Text>
           </View>
         )}
-        <View style={[styles.statusBadge, { backgroundColor: statusColor + '22' }]}>
+        <View style={[styles.statusBadge, { backgroundColor: alpha(statusColor, 0.13) }]}>
           <Text style={[styles.statusText, { color: statusColor }]}>
             {work.status ?? 'active'}
           </Text>
@@ -163,8 +165,8 @@ function WorkCard({ work, onStartChat, onDelete }: { work: Work; onStartChat: ()
           const total = (work as any).doc_count         ?? 0;
           if (errs > 0) {
             return (
-              <View style={[styles.statusBadge, { backgroundColor: '#fee2e222' }]}>
-                <Text style={[styles.statusText, { color: '#b91c1c' }]}>
+              <View style={[styles.statusBadge, { backgroundColor: T.rustSoft }]}>
+                <Text style={[styles.statusText, { color: T.rust }]}>
                   {errs} error{errs !== 1 ? 's' : ''}
                 </Text>
               </View>
@@ -172,15 +174,15 @@ function WorkCard({ work, onStartChat, onDelete }: { work: Work; onStartChat: ()
           }
           if (proc > 0) {
             return (
-              <View style={[styles.statusBadge, { backgroundColor: '#fef3c722' }]}>
-                <Text style={[styles.statusText, { color: '#92400e' }]}>Processing</Text>
+              <View style={[styles.statusBadge, { backgroundColor: T.giltSoft }]}>
+                <Text style={[styles.statusText, { color: T.gilt }]}>Processing</Text>
               </View>
             );
           }
           if (ready === total) {
             return (
-              <View style={[styles.statusBadge, { backgroundColor: '#d1fae522' }]}>
-                <Text style={[styles.statusText, { color: '#065f46' }]}>Ready</Text>
+              <View style={[styles.statusBadge, { backgroundColor: T.greenSoft }]}>
+                <Text style={[styles.statusText, { color: T.green }]}>Ready</Text>
               </View>
             );
           }
@@ -282,7 +284,7 @@ export default function WorksScreen() {
     });
   }, [deleteMutate, queryClient, refetch]);
 
-  const topPad = isWeb ? 67 : 0;
+  const topPad = isWeb ? 67 : insets.top;
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
@@ -304,10 +306,10 @@ export default function WorksScreen() {
       </View>
 
       {/* Search bar */}
-      <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 8, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border, backgroundColor: colors.background, gap: 8 }}>
+      <View style={styles.searchBar}>
         <Feather name="search" size={15} color={colors.mutedForeground} />
         <TextInput
-          style={{ flex: 1, fontSize: 14, fontFamily: 'Inter_400Regular', color: colors.foreground }}
+          style={[styles.searchInput, { color: colors.foreground }]}
           placeholder="Search works…"
           placeholderTextColor={colors.mutedForeground}
           value={search}
@@ -315,7 +317,10 @@ export default function WorksScreen() {
           returnKeyType="search"
         />
         {search.length > 0 && (
-          <Pressable onPress={() => setSearch('')} hitSlop={8}>
+          <Pressable
+            onPress={() => setSearch('')}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
             <Feather name="x" size={15} color={colors.mutedForeground} />
           </Pressable>
         )}
@@ -331,8 +336,8 @@ export default function WorksScreen() {
 
       {/* List */}
       {isLoading && !hasData ? (
-        <View style={styles.centered}>
-          <ActivityIndicator color={colors.primary} />
+        <View style={styles.skeletonWrap}>
+          {[...Array(4)].map((_, i) => <SkeletonItem key={i} />)}
         </View>
       ) : isError && !hasData ? (
         <ErrorScreen
@@ -341,13 +346,13 @@ export default function WorksScreen() {
           onRetry={refetch}
         />
       ) : works.length === 0 ? (
-        <View style={styles.centered}>
-          <Feather name="book-open" size={44} color={colors.mutedForeground} />
-          <Text style={[styles.emptyTitle, { color: colors.foreground }]}>No works yet</Text>
-          <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
-            Works you create in the web app will appear here
-          </Text>
-        </View>
+        <EmptyState
+          icon="book-open"
+          title="No works yet"
+          body="Import documents to create your first Work."
+          cta="Load something"
+          onCta={() => router.push('/intake' as any)}
+        />
       ) : (
         <FlatList
           data={works}
@@ -365,7 +370,7 @@ export default function WorksScreen() {
           contentContainerStyle={{
             paddingHorizontal: 16,
             paddingTop: 12,
-            paddingBottom: isWeb ? 34 + 50 : insets.bottom + 24,
+            paddingBottom: insets.bottom + 24,
           }}
           showsVerticalScrollIndicator={false}
           ItemSeparatorComponent={() => <View style={{ height: 10 }} />}
@@ -387,13 +392,27 @@ const styles = StyleSheet.create({
   },
   title: { fontSize: 26, ...font('bold'), letterSpacing: -0.3 },
   count: { fontSize: 13, ...font('regular'), lineHeight: 18 },
-  centered: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 10, paddingHorizontal: 32 },
-  emptyTitle: { fontSize: 17, ...font('semibold'), lineHeight: 22 },
-  emptyText: { fontSize: 15, ...font('regular'), textAlign: 'center', lineHeight: 22 },
+  searchBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    minHeight: 44,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    gap: 8,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 15,
+    lineHeight: 22,
+    ...font('regular'),
+  },
+  skeletonWrap: { flex: 1 },
   card: {
     borderRadius: 8,
     borderWidth: 1,
     overflow: 'hidden',
+    minHeight: 44,
   },
   cardTop: {
     flexDirection: 'row',
@@ -417,7 +436,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
     paddingHorizontal: 14,
-    paddingVertical: 10,
+    paddingVertical: 12,
     borderTopWidth: 1,
   },
   statChip: { flexDirection: 'row', alignItems: 'center', gap: 4 },
@@ -438,7 +457,7 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     borderWidth: 1,
     marginLeft: 'auto',
-    minHeight: 30,
+    minHeight: 44,
   },
   chatBtnText: { fontSize: 12, ...font('semibold'), lineHeight: 16 },
 });
