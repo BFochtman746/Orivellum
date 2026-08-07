@@ -221,8 +221,8 @@ const READINESS_CFG: Record<string, {
   },
   transcribing: {
     label: "TRANSCRIBING", Icon: Clock,
-    // violet has no VELLUM token — keep raw Tailwind classes
-    cls: "text-violet-600 border-violet-200 bg-violet-50", style: {},
+    // No violet VELLUM token — gilt is the nearest processing-state equivalent
+    cls: "", style: { color: "var(--gilt)", borderColor: "var(--gilt-line)", background: "var(--gilt-soft)" },
   },
   no_text:      {
     label: "NO TEXT",      Icon: FileQuestion,
@@ -1710,15 +1710,19 @@ export default function DocumentDetail() {
               {/* Lifecycle badge + inline picker */}
               <Select value={docLifecycle} onValueChange={handleSetLifecycle}>
                 <SelectTrigger
-                  className="h-auto py-0.5 px-1.5 text-[10px] font-mono uppercase border rounded gap-1 w-auto min-w-0 focus:ring-0 shadow-none"
+                  className={`h-auto py-0.5 px-1.5 text-[10px] font-mono uppercase border rounded gap-1 w-auto min-w-0 focus:ring-0 shadow-none ${
+                    docLifecycle === "superseded"
+                      ? "bg-muted/50 border-border text-muted-foreground"
+                      : docLifecycle !== "canonical" && docLifecycle !== "reference"
+                      ? "bg-muted/30 border-border/50 text-muted-foreground"
+                      : ""
+                  }`}
                   style={
                     docLifecycle === "canonical"
                       ? { background: "var(--gilt-soft)", borderColor: "var(--gilt-line)", color: "var(--gilt)" }
                       : docLifecycle === "reference"
                       ? { background: "transparent", borderColor: "var(--line)", color: "var(--ink-soft)" }
-                      : docLifecycle === "superseded"
-                      ? {}  // muted handled by Tailwind default
-                      : {}
+                      : undefined
                   }
                 >
                   {docLifecycle === "canonical" && <Star className="w-2.5 h-2.5" style={{ color: "var(--gilt)" }} />}

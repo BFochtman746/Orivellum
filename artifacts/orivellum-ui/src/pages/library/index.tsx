@@ -301,8 +301,8 @@ const READINESS: Record<string, {
   },
   transcribing: {
     label: "TRANSCRIBING", icon: Clock,
-    // violet has no VELLUM token — keep raw Tailwind classes
-    cls: "text-violet-600 border-violet-200 bg-violet-50", style: {},
+    // No violet VELLUM token — gilt is the nearest processing-state equivalent
+    cls: "", style: { color: "var(--gilt)", borderColor: "var(--gilt-line)", background: "var(--gilt-soft)" },
   },
   no_text:      {
     label: "NO TEXT",      icon: FileQuestion,
