@@ -241,7 +241,8 @@ def count_embeddable_items(db: "OrivellumDB") -> dict[str, int]:
                 "SELECT COUNT(*) FROM vectors WHERE object_type='chunk'"
             ).fetchone()[0]
             know_total = c.execute(
-                "SELECT COUNT(*) FROM knowledge WHERE review_status != 'rejected'"
+                "SELECT COUNT(*) FROM knowledge"
+                " WHERE review_status NOT IN ('rejected','superseded_duplicate')"
                 "  AND length(text) > 20"
             ).fetchone()[0]
             know_done = c.execute(
@@ -397,7 +398,8 @@ def backfill_embeddings(db: "OrivellumDB", max_items: int = 200) -> int:
         ("knowledge",
          """SELECT k.id, k.text, NULL as context_prefix FROM knowledge k
             LEFT JOIN vectors v ON v.object_id = k.id AND v.object_type='knowledge'
-            WHERE v.id IS NULL AND k.review_status != 'rejected'
+            WHERE v.id IS NULL
+              AND k.review_status NOT IN ('rejected','superseded_duplicate')
               AND length(k.text) > 20 LIMIT ?""",
          False),
         ("conv_chunk",
@@ -596,7 +598,7 @@ def semantic_search(query: str, db: "OrivellumDB", object_type: str = "knowledge
                             k.meta, k.created_at
                      FROM vectors v JOIN knowledge k ON k.id = v.object_id
                      WHERE v.object_type='knowledge'
-                       AND k.review_status != 'rejected'"""
+                       AND k.review_status NOT IN ('rejected','superseded_duplicate')"""
     elif object_type == "conv_chunk":
         # Conversation exchange chunks — each row is one user+assistant turn.
         # Use LEFT JOIN for conversations so chunks from deleted or test conversations

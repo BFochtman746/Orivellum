@@ -20,6 +20,8 @@ Passes (in order):
  12. Outbox drain           — dispatch queued transactional events
  13. Audit-chain verify     — check governance audit chain integrity
  14. Version suggestions    — surface likely version pairs across each Work
+ 17b. Knowledge semantic dedup — cosine-similarity dedup of knowledge items
+      across documents within each Work; gated by auto_dedup_enabled
 """
 from __future__ import annotations
 
@@ -1233,6 +1235,206 @@ def _pass_clustering(db: "OrivellumDB", report: list[str]) -> None:
         logger.warning("Nightshift clustering pass failed: %s", exc, exc_info=True)
 
 
+def _pass_knowledge_semantic_dedup(db: "OrivellumDB", report: list[str]) -> None:
+    """Find near-duplicate knowledge items across different source documents within
+    each Work by comparing their stored embedding vectors (no new LLM calls).
+
+    Thresholds
+    ----------
+    cosine ≥ 0.88  — auto-retire the older item via
+                     ``review_status = 'superseded_duplicate'`` so it is
+                     excluded from chat context injection and semantic search.
+    0.75 ≤ cosine < 0.88 — insert a ``semantic_duplicate`` governance suggestion
+                     so a human can decide which item to keep.
+
+    Gates
+    -----
+    - ``auto_dedup_enabled`` setting must be ``"true"`` (same gate as the
+      MinHash file-dedup pass).
+    - Skips silently when no knowledge vectors exist yet (embeddings offline or
+      backfill not yet run).
+
+    Complexity
+    ----------
+    Capped at _MAX_PER_WORK items per Work (400) so the O(n²) comparison
+    stays bounded.  Works with fewer than 2 embedded items are skipped.
+    """
+    import json as _json
+    import uuid as _uuid_mod
+    import datetime as _dt
+
+    _HIGH = 0.88          # auto-retire threshold
+    _LOW  = 0.75          # suggest-for-review threshold
+    _MAX_PER_WORK = 400   # keep O(n²) loop bounded
+
+    # Gate 1: setting
+    if db.get_setting("auto_dedup_enabled", "false").lower() != "true":
+        logger.debug("Nightshift: knowledge semantic dedup skipped (auto_dedup_enabled=false)")
+        return
+
+    # Gate 2: check that at least some knowledge vectors exist — proxy for
+    # "the embeddings service has been running at some point".  Avoids
+    # importing private circuit-breaker state from embeddings.py.
+    try:
+        with db._lock:
+            vec_count: int = db._conn.execute(
+                "SELECT COUNT(*) FROM vectors WHERE object_type='knowledge'"
+            ).fetchone()[0]
+        if vec_count == 0:
+            report.append("Knowledge semantic dedup: skipped (no knowledge vectors yet)")
+            return
+    except Exception as exc:
+        logger.debug("Knowledge semantic dedup: vector count check failed: %s", exc)
+        return
+
+    from orivellum.capabilities.embeddings import unpack_vector, cosine as _cosine
+    from orivellum.capabilities.embeddings import bump_vector_cache_version
+
+    try:
+        works = db.list_works()
+    except Exception as exc:
+        logger.warning("Knowledge semantic dedup: could not list works: %s", exc)
+        return
+
+    total_superseded = 0
+    total_suggested  = 0
+
+    for work in works:
+        wid = work["id"]
+        try:
+            # Load knowledge items that have vectors AND come from a named
+            # source document — items without source_doc_id cannot be
+            # cross-document-compared so we skip them.
+            with db._lock:
+                rows = db._conn.execute(
+                    """SELECT k.id, k.created_at, k.source_doc_id,
+                              v.embedding, v.dim
+                       FROM knowledge k
+                       JOIN vectors v
+                         ON v.object_id = k.id AND v.object_type = 'knowledge'
+                       WHERE k.work_id = ?
+                         AND k.source_doc_id IS NOT NULL
+                         AND k.review_status NOT IN ('rejected', 'superseded_duplicate')
+                       ORDER BY k.created_at ASC
+                       LIMIT ?""",
+                    (wid, _MAX_PER_WORK),
+                ).fetchall()
+
+            if len(rows) < 2:
+                continue
+
+            # Pre-load vectors — items that fail to unpack are skipped silently.
+            items: list[dict] = []
+            for r in rows:
+                try:
+                    vec = unpack_vector(bytes(r["embedding"]), r["dim"])
+                    items.append({
+                        "id": r["id"],
+                        "created_at": r["created_at"],
+                        "source_doc_id": r["source_doc_id"],
+                        "vec": vec,
+                    })
+                except Exception:
+                    continue
+
+            if len(items) < 2:
+                continue
+
+            superseded_ids: set[str] = set()
+            now_iso = _dt.datetime.now(_dt.timezone.utc).isoformat()
+
+            for i in range(len(items)):
+                if items[i]["id"] in superseded_ids:
+                    continue
+                for j in range(i + 1, len(items)):
+                    if items[j]["id"] in superseded_ids:
+                        continue
+                    # Only compare items from *different* source documents.
+                    if items[i]["source_doc_id"] == items[j]["source_doc_id"]:
+                        continue
+
+                    sim = _cosine(items[i]["vec"], items[j]["vec"])
+
+                    if sim >= _HIGH:
+                        # items are sorted by created_at ASC → items[i] is older
+                        older_id = items[i]["id"]
+                        with db._lock:
+                            db._conn.execute(
+                                """UPDATE knowledge
+                                   SET review_status = 'superseded_duplicate'
+                                   WHERE id = ?""",
+                                (older_id,),
+                            )
+                            db._conn.commit()
+                        superseded_ids.add(older_id)
+                        total_superseded += 1
+                        # Invalidate vector cache so next search excludes the
+                        # retired item without waiting for the next cache eviction.
+                        try:
+                            bump_vector_cache_version(db._path, "knowledge")
+                        except Exception:
+                            pass
+
+                    elif sim >= _LOW:
+                        id_a, id_b = items[i]["id"], items[j]["id"]
+                        with db._lock:
+                            already = db._conn.execute(
+                                """SELECT id FROM suggestions
+                                   WHERE work_id = ? AND kind = 'semantic_duplicate'
+                                   AND (
+                                       (json_extract(meta,'$.item_a_id') = ?
+                                        AND json_extract(meta,'$.item_b_id') = ?)
+                                    OR (json_extract(meta,'$.item_a_id') = ?
+                                        AND json_extract(meta,'$.item_b_id') = ?)
+                                   )""",
+                                (wid, id_a, id_b, id_b, id_a),
+                            ).fetchone()
+                            if not already:
+                                meta_payload = _json.dumps({
+                                    "item_a_id": id_a,
+                                    "item_b_id": id_b,
+                                    "similarity": round(float(sim), 4),
+                                    "similarity_basis": "cosine_embedding",
+                                })
+                                db._conn.execute(
+                                    """INSERT INTO suggestions
+                                       (id, work_id, kind, text, meta, created_at)
+                                       VALUES (?, ?, ?, ?, ?, ?)""",
+                                    (
+                                        str(_uuid_mod.uuid4()), wid,
+                                        "semantic_duplicate",
+                                        (
+                                            "Two knowledge items may express the same fact "
+                                            f"(similarity {sim:.0%})"
+                                        ),
+                                        meta_payload, now_iso,
+                                    ),
+                                )
+                                db._conn.commit()
+                                total_suggested += 1
+
+        except Exception as exc:
+            logger.warning(
+                "Knowledge semantic dedup: failed for work %s: %s", wid, exc
+            )
+
+    parts: list[str] = []
+    if total_superseded:
+        parts.append(f"{total_superseded} item(s) retired")
+    if total_suggested:
+        parts.append(f"{total_suggested} pair(s) flagged for review")
+    report.append(
+        f"Knowledge semantic dedup: {', '.join(parts)}"
+        if parts
+        else "Knowledge semantic dedup: no near-duplicates found"
+    )
+    if total_superseded or total_suggested:
+        logger.info(
+            "Nightshift knowledge semantic dedup: superseded=%d suggested=%d",
+            total_superseded, total_suggested,
+        )
+
+
 def _run_nightshift_passes(db: "OrivellumDB", cfg: "OrivellumConfig") -> None:
     date_str = datetime.now().strftime("%Y-%m-%d")
     start_ts = time.time()
@@ -1387,6 +1589,15 @@ def _run_nightshift_passes(db: "OrivellumDB", cfg: "OrivellumConfig") -> None:
     except Exception as _adex:
         logger.warning("Auto-dedup pass failed (non-fatal): %s", _adex)
         report.append(f"Auto-dedup: failed — {_adex}")
+
+    # 17b — Knowledge semantic dedup (cross-document, embedding-based)
+    # Uses stored vectors so no new LLM calls.  Gated by auto_dedup_enabled.
+    logger.info("Nightshift pass 17b: knowledge semantic dedup")
+    try:
+        _pass_knowledge_semantic_dedup(db, report)
+    except Exception as _ksdex:
+        logger.warning("Knowledge semantic dedup pass failed (non-fatal): %s", _ksdex)
+        report.append(f"Knowledge semantic dedup: failed — {_ksdex}")
 
     elapsed = time.time() - start_ts
     report.append(f"Completed in {elapsed:.0f}s")
