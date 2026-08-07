@@ -648,6 +648,31 @@ def delete_user_memory(memory_id: str):
         raise HTTPException(500, f"Could not delete memory: {exc}")
 
 
+class _MemoryFactUpdate(BaseModel):
+    value: str
+
+
+@router.patch("/system/user-memory/{memory_id}")
+def patch_user_memory(memory_id: str, body: _MemoryFactUpdate):
+    """Correct a stored memory fact in-place.
+
+    Preserves the previous value in ``prev_value`` so the UI can show
+    what changed, and clears ``source_conv_id`` to indicate a manual
+    correction rather than an AI-captured update.
+    """
+    value = body.value.strip()
+    if not value:
+        raise HTTPException(422, "value cannot be empty")
+    db = get_db()
+    updated = db.update_memory_fact(memory_id, value)
+    if not updated:
+        raise HTTPException(404, f"Memory {memory_id!r} not found")
+    db.audit("user_memory.updated", object_id=memory_id,
+             object_type="user_memory", actor="user",
+             detail=f"value updated to: {value[:80]}")
+    return {"updated": memory_id, "value": value}
+
+
 @router.get("/system/settings/audio-enhance")
 def get_audio_enhance_setting():
     """Return DeepFilterNet3 availability and whether enhancement is enabled."""

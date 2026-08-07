@@ -3990,6 +3990,32 @@ class OrivellumDB:
             self._conn.commit()
         return True
 
+    def update_memory_fact(self, memory_id: str, value: str) -> bool:
+        """Update an existing memory fact by id (user-initiated correction).
+
+        Preserves the old value in ``prev_value`` and clears ``source_conv_id``
+        to indicate the fact was manually corrected (not AI-captured).
+        Returns True if the row was found and updated, False if not found.
+        """
+        value = str(value).strip()[:500]
+        if not value:
+            return False
+        now = _now()
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT id, value FROM user_memory WHERE id=?", (memory_id,)
+            ).fetchone()
+            if not row:
+                return False
+            self._conn.execute(
+                """UPDATE user_memory
+                   SET value=?, prev_value=?, source_conv_id=NULL, created_at=?
+                   WHERE id=?""",
+                (value, row["value"], now, memory_id),
+            )
+            self._conn.commit()
+        return True
+
     def get_current_memory_facts(self, limit: int = 20) -> list[dict]:
         """Return all memory facts (one per key), newest-updated first."""
         with self._lock:

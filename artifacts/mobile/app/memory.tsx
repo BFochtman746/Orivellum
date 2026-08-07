@@ -4,9 +4,12 @@
  * Facts are automatically captured in the background after each chat reply
  * (via _post_reply_background → _infer_memory_facts on the API server).
  * This screen surfaces them from GET /api/memory so users can see what the
- * AI knows about them, and lets them delete individual facts or clear all.
+ * AI knows about them, and lets them:
+ *   • Tap a card to edit the value inline (PATCH /api/system/user-memory/{id})
+ *   • Long-press or tap the trash icon to delete
+ *   • Clear all at once
  */
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -16,6 +19,7 @@ import {
   RefreshControl,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import { useColors } from '@/hooks/useColors';
@@ -23,7 +27,6 @@ import { Feather } from '@expo/vector-icons';
 import { mobileFetch } from '@/lib/api';
 import { useNavigation } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useEffect } from 'react';
 
 const DOMAIN = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
 const API = `https://${DOMAIN}/api`;
@@ -53,6 +56,11 @@ export default function MemoryScreen() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [clearingAll, setClearingAll] = useState(false);
 
+  // ── Inline edit state ──────────────────────────────────────────────────────
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editValue, setEditValue] = useState('');
+  const [savingId, setSavingId] = useState<string | null>(null);
+
   useEffect(() => {
     navigation.setOptions({ title: 'Memory' });
   }, [navigation]);
@@ -76,7 +84,59 @@ export default function MemoryScreen() {
 
   useEffect(() => { fetchFacts(); }, [fetchFacts]);
 
+  // ── Edit handlers ──────────────────────────────────────────────────────────
+
+  const startEdit = useCallback((fact: MemoryFact) => {
+    // Don't open edit on a card that's being deleted
+    if (deletingId === fact.id) return;
+    setEditingId(fact.id);
+    setEditValue(fact.value);
+  }, [deletingId]);
+
+  const cancelEdit = useCallback(() => {
+    setEditingId(null);
+    setEditValue('');
+  }, []);
+
+  const saveEdit = useCallback(async (fact: MemoryFact) => {
+    const trimmed = editValue.trim();
+    if (!trimmed) {
+      cancelEdit();
+      return;
+    }
+    // No-op if unchanged
+    if (trimmed === fact.value) {
+      cancelEdit();
+      return;
+    }
+    setSavingId(fact.id);
+    try {
+      const res = await mobileFetch(`${API}/system/user-memory/${fact.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ value: trimmed }),
+      });
+      if (!res.ok) throw new Error(`status ${res.status}`);
+      // Update local state optimistically — push old value into prev_value
+      setFacts(prev =>
+        prev.map(f =>
+          f.id === fact.id ? { ...f, value: trimmed, prev_value: f.value } : f
+        )
+      );
+      setEditingId(null);
+      setEditValue('');
+    } catch {
+      Alert.alert('Error', 'Could not save the updated fact. Please try again.');
+    } finally {
+      setSavingId(null);
+    }
+  }, [editValue, cancelEdit]);
+
+  // ── Delete handlers ────────────────────────────────────────────────────────
+
   const handleDeleteFact = useCallback((fact: MemoryFact) => {
+    // Cancel any active edit for this card before deleting
+    if (editingId === fact.id) cancelEdit();
     Alert.alert(
       'Delete memory?',
       `"${fact.key}" will be permanently removed. The AI won't remember this fact in future chats.`,
@@ -103,7 +163,7 @@ export default function MemoryScreen() {
         },
       ],
     );
-  }, []);
+  }, [editingId, cancelEdit]);
 
   const handleClearAll = useCallback(() => {
     if (facts.length === 0) return;
@@ -124,6 +184,7 @@ export default function MemoryScreen() {
               );
               if (!res.ok) throw new Error(`status ${res.status}`);
               setFacts([]);
+              cancelEdit();
             } catch {
               Alert.alert('Error', 'Could not clear memories. Please try again.');
             } finally {
@@ -133,7 +194,7 @@ export default function MemoryScreen() {
         },
       ],
     );
-  }, [facts.length]);
+  }, [facts.length, cancelEdit]);
 
   const formatDate = (iso: string | null | undefined) => {
     if (!iso) return '';
@@ -146,10 +207,91 @@ export default function MemoryScreen() {
     }
   };
 
+  // ── Render ─────────────────────────────────────────────────────────────────
+
   const renderFact = ({ item }: { item: MemoryFact }) => {
     const isDeleting = deletingId === item.id;
+    const isEditing  = editingId  === item.id;
+    const isSaving   = savingId   === item.id;
+
+    if (isEditing) {
+      return (
+        <View
+          style={[
+            styles.factCard,
+            {
+              backgroundColor: colors.card,
+              borderColor: colors.primary + 'AA',
+              borderWidth: 1.5,
+            },
+          ]}
+        >
+          {/* Key label */}
+          <Text style={[styles.factKey, { color: colors.primary }]} numberOfLines={1}>
+            {item.key}
+          </Text>
+
+          {/* Editable value field */}
+          <TextInput
+            value={editValue}
+            onChangeText={setEditValue}
+            autoFocus
+            multiline
+            style={[
+              styles.editInput,
+              {
+                color: colors.foreground,
+                borderColor: colors.border,
+                backgroundColor: colors.background,
+              },
+            ]}
+            placeholderTextColor={colors.mutedForeground}
+            placeholder="Enter the corrected value…"
+            returnKeyType="default"
+            blurOnSubmit={false}
+          />
+
+          {/* Save / Cancel row */}
+          <View style={styles.editActions}>
+            <Pressable
+              onPress={cancelEdit}
+              style={({ pressed }) => [
+                styles.editBtn,
+                {
+                  borderWidth: 1,
+                  borderColor: colors.border,
+                  backgroundColor: pressed ? colors.muted : 'transparent',
+                },
+              ]}
+            >
+              <Text style={[styles.editBtnText, { color: colors.mutedForeground }]}>
+                Cancel
+              </Text>
+            </Pressable>
+
+            <Pressable
+              onPress={() => saveEdit(item)}
+              disabled={!editValue.trim() || isSaving}
+              style={({ pressed }) => [
+                styles.editBtn,
+                {
+                  backgroundColor: colors.primary,
+                  opacity: (!editValue.trim() || isSaving || pressed) ? 0.6 : 1,
+                },
+              ]}
+            >
+              {isSaving
+                ? <ActivityIndicator size="small" color="#fff" />
+                : <Text style={[styles.editBtnText, { color: '#fff' }]}>Save</Text>}
+            </Pressable>
+          </View>
+        </View>
+      );
+    }
+
     return (
       <Pressable
+        onPress={() => startEdit(item)}
         onLongPress={() => handleDeleteFact(item)}
         delayLongPress={400}
         style={({ pressed }) => [
@@ -160,8 +302,8 @@ export default function MemoryScreen() {
             opacity: isDeleting || pressed ? 0.5 : 1,
           },
         ]}
-        accessibilityLabel={`${item.key}: ${item.value}. Long press to delete.`}
-        accessibilityHint="Long press to delete this memory"
+        accessibilityLabel={`${item.key}: ${item.value}. Tap to edit. Long press to delete.`}
+        accessibilityHint="Tap to edit this memory"
       >
         <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
           <View style={{ flex: 1 }}>
@@ -200,25 +342,46 @@ export default function MemoryScreen() {
             </View>
           </View>
 
-          {/* Delete button */}
-          <Pressable
-            onPress={() => handleDeleteFact(item)}
-            hitSlop={12}
-            disabled={isDeleting}
-            style={({ pressed }) => ({
-              padding: 6,
-              marginLeft: 8,
-              borderRadius: 6,
-              backgroundColor: pressed ? '#ef444418' : 'transparent',
-              opacity: isDeleting ? 0.4 : 1,
-            })}
-            accessibilityLabel="Delete this memory"
-            accessibilityRole="button"
-          >
-            {isDeleting
-              ? <ActivityIndicator size="small" color={colors.mutedForeground} />
-              : <Feather name="trash-2" size={15} color={colors.mutedForeground} />}
-          </Pressable>
+          {/* Action buttons */}
+          <View style={{ gap: 4 }}>
+            {/* Edit button */}
+            <Pressable
+              onPress={() => startEdit(item)}
+              hitSlop={12}
+              disabled={isDeleting}
+              style={({ pressed }) => ({
+                padding: 6,
+                marginLeft: 8,
+                borderRadius: 6,
+                backgroundColor: pressed ? colors.primary + '20' : 'transparent',
+                opacity: isDeleting ? 0.4 : 1,
+              })}
+              accessibilityLabel="Edit this memory"
+              accessibilityRole="button"
+            >
+              <Feather name="edit-2" size={14} color={colors.primary} />
+            </Pressable>
+
+            {/* Delete button */}
+            <Pressable
+              onPress={() => handleDeleteFact(item)}
+              hitSlop={12}
+              disabled={isDeleting}
+              style={({ pressed }) => ({
+                padding: 6,
+                marginLeft: 8,
+                borderRadius: 6,
+                backgroundColor: pressed ? '#ef444418' : 'transparent',
+                opacity: isDeleting ? 0.4 : 1,
+              })}
+              accessibilityLabel="Delete this memory"
+              accessibilityRole="button"
+            >
+              {isDeleting
+                ? <ActivityIndicator size="small" color={colors.mutedForeground} />
+                : <Feather name="trash-2" size={14} color={colors.mutedForeground} />}
+            </Pressable>
+          </View>
         </View>
       </Pressable>
     );
@@ -276,8 +439,8 @@ export default function MemoryScreen() {
 
       {/* Caption */}
       <Text style={[styles.caption, { color: colors.mutedForeground }]}>
-        Facts captured automatically as you chat. Long-press or tap{' '}
-        <Feather name="trash-2" size={11} color={colors.mutedForeground} /> to delete individual facts.
+        Facts captured automatically as you chat. Tap to edit,{' '}
+        long-press or tap <Feather name="trash-2" size={11} color={colors.mutedForeground} /> to delete.
       </Text>
 
       {/* Body */}
@@ -324,6 +487,7 @@ export default function MemoryScreen() {
             gap: 10,
           }}
           showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
           ListHeaderComponent={
             <Text style={[styles.factCount, { color: colors.mutedForeground }]}>
               {facts.length} fact{facts.length !== 1 ? 's' : ''} stored
@@ -408,5 +572,35 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontFamily: 'Inter_400Regular',
     opacity: 0.7,
+  },
+
+  // ── Inline edit ────────────────────────────────────────────────────────────
+  editInput: {
+    borderWidth: 1,
+    borderRadius: 8,
+    padding: 10,
+    fontSize: 15,
+    fontFamily: 'Inter_400Regular',
+    lineHeight: 21,
+    marginTop: 8,
+    marginBottom: 10,
+    minHeight: 64,
+    textAlignVertical: 'top',
+  },
+  editActions: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  editBtn: {
+    flex: 1,
+    paddingVertical: 9,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 38,
+  },
+  editBtnText: {
+    fontSize: 14,
+    fontFamily: 'Inter_600SemiBold',
   },
 });
