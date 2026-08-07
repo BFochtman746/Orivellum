@@ -42,8 +42,9 @@ import * as Haptics from 'expo-haptics';
 import type { Document, KnowledgeItem, Task } from '@workspace/api-client-react';
 import { OfflineBanner, ErrorScreen } from '@/components/OfflineBanner';
 import { readCache, writeCache } from '@/lib/cache';
+import { KnowledgeGraphView } from '@/components/KnowledgeGraphView';
 
-type Tab = 'overview' | 'docs' | 'knowledge' | 'tasks' | 'conversations' | 'learn' | 'gaps' | 'book' | 'brainstorm' | 'intelligence' | 'trailer' | 'genesis';
+type Tab = 'overview' | 'docs' | 'knowledge' | 'tasks' | 'conversations' | 'learn' | 'gaps' | 'book' | 'brainstorm' | 'intelligence' | 'trailer' | 'genesis' | 'graph';
 
 // Primary tabs always visible in the bar; secondary tabs disclosed via "More"
 const PRIMARY_TABS: { key: Tab; label: string }[] = [
@@ -61,6 +62,7 @@ const SECONDARY_TABS: { key: Tab; label: string }[] = [
   { key: 'brainstorm',   label: 'Ideas'   },
   { key: 'trailer',      label: 'Trailer' },
   { key: 'genesis',      label: 'Genesis' },
+  { key: 'graph',        label: 'Graph'   },
 ];
 
 function TabBar({ active, onSelect, colors, badges = {}, onNavigateGraph }: {
@@ -5492,6 +5494,19 @@ export default function WorkDetailScreen() {
         return <TrailerTab workId={id} colors={colors} />;
       case 'genesis':
         return <GenesisTab workId={id} colors={colors} />;
+      case 'graph':
+        return (
+          <KnowledgeGraphView
+            workId={id}
+            onOpenFullGraph={() => router.push({ pathname: '/graph', params: { work_id: id, work_title: work?.title ?? '' } } as any)}
+            onReprocess={() => {
+              const domain = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
+              mobileFetch(`https://${domain}/api/library/reprocess-all`, { method: 'POST' })
+                .catch(() => {});
+              Alert.alert('Reprocessing', 'Reprocess triggered. The graph will refresh once documents are ready.');
+            }}
+          />
+        );
     }
   };
 
