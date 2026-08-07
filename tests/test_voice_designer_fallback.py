@@ -472,5 +472,268 @@ class TestInputValidationWithoutLLM(unittest.TestCase):
         self.assertEqual(resp.status_code, 422, resp.text)
 
 
+# ---------------------------------------------------------------------------
+# Phase F — LLM online → success path
+# ---------------------------------------------------------------------------
+
+def _real_voice_ids(n: int = 3) -> list[str]:
+    """Return the first *n* voice IDs from the catalog (always real, always ordered)."""
+    from orivellum.api.routes.studio import _VOICE_BY_ID
+    return list(_VOICE_BY_ID.keys())[:n]
+
+
+def _llm_success(voice_ids: list[str]) -> LLMResult:
+    """Return a well-formed LLM response that uses real catalog IDs.
+
+    Scores, rationales, and interpretation are all deliberately distinct from
+    the keyword-fallback values so tests can tell the two paths apart.
+    """
+    payload = json.dumps({
+        "target_dimensions": {
+            "warmth": 8, "authority": 6, "gravitas": 9,
+            "pace": 4, "brightness": 3, "age": 8,
+        },
+        "interpretation": (
+            "A rich, sonorous voice with deep gravitas suited to epic historical narration."
+        ),
+        "matches": [
+            {
+                "voice_id": voice_ids[0],
+                "match_score": 94,
+                "why": "Exceptional warmth and gravitas alignment with the requested tone.",
+            },
+            {
+                "voice_id": voice_ids[1],
+                "match_score": 87,
+                "why": "Strong authority dimensions complement the historical register.",
+            },
+            {
+                "voice_id": voice_ids[2],
+                "match_score": 81,
+                "why": "Measured pace and elevated age score match the elder narrator profile.",
+            },
+        ],
+    })
+    return LLMResult(payload, True, "workhorse", 300)
+
+
+def _llm_success_fenced(voice_ids: list[str]) -> LLMResult:
+    """Same payload as _llm_success but wrapped in markdown code fences."""
+    inner = _llm_success(voice_ids)
+    fenced = f"```json\n{inner.text}\n```"
+    return LLMResult(fenced, True, "workhorse", 310)
+
+
+# Expected LLM rationales (match order must align with _llm_success)
+_LLM_WHYS = [
+    "Exceptional warmth and gravitas alignment with the requested tone.",
+    "Strong authority dimensions complement the historical register.",
+    "Measured pace and elevated age score match the elder narrator profile.",
+]
+_LLM_INTERPRETATION = (
+    "A rich, sonorous voice with deep gravitas suited to epic historical narration."
+)
+_LLM_DIMS = {"warmth": 8, "authority": 6, "gravitas": 9, "pace": 4, "brightness": 3, "age": 8}
+
+
+class TestLLMSuccessPath(unittest.TestCase):
+    """Phase F — LLM online path: well-formed JSON drives the full response.
+
+    Every test patches llm_call to return a correct, well-formed response so the
+    LLM-success branch (lines ~1026–1051 in studio.py) is exercised exclusively.
+
+    Assertions mirror the five acceptance criteria from the task brief:
+      1. match_score > 75  (LLM value, not the keyword-fallback constant)
+      2. why is the LLM rationale, not the voice catalog description
+      3. voice objects carry name, gender, accent from the catalog
+      4. target_dimensions holds numeric values (not {})
+      5. interpretation echoes the LLM's "interpretation" field
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.client = _make_client(Path(self._tmp.name))
+        self._ids = _real_voice_ids(3)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _design(self, description: str = "deep gravitas historical ancient male",
+                llm_result: LLMResult | None = None) -> dict:
+        result = llm_result if llm_result is not None else _llm_success(self._ids)
+        with patch("orivellum.capabilities.llm.llm_call", return_value=result):
+            resp = self.client.post(
+                "/api/studio/voices/design",
+                json={"description": description},
+            )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        return resp.json()
+
+    # ── Criterion 1: match_score > 75 ────────────────────────────────────────
+
+    def test_match_scores_exceed_fallback_constant(self):
+        """LLM-path match_score values (94, 87, 81) must all exceed the keyword-
+        fallback constant (75) so the UI renders in the correct colour band."""
+        data = self._design()
+        expected = [94, 87, 81]
+        for i, m in enumerate(data["matches"]):
+            self.assertGreater(
+                m["match_score"], 75,
+                f"match[{i}].match_score={m['match_score']} ≤ 75 — keyword fallback fired unexpectedly",
+            )
+            self.assertEqual(
+                m["match_score"], expected[i],
+                f"match[{i}].match_score should be {expected[i]} (LLM value)",
+            )
+
+    def test_all_scores_in_green_band(self):
+        """Scores ≥85 → green badge; all three LLM scores (94, 87, 81) should clear 80."""
+        data = self._design()
+        for i, m in enumerate(data["matches"]):
+            self.assertGreaterEqual(m["match_score"], 80,
+                f"match[{i}].match_score={m['match_score']} below expected LLM range")
+
+    # ── Criterion 2: why is LLM rationale, not catalog description ───────────
+
+    def test_why_is_llm_rationale_not_catalog_description(self):
+        """LLM-path 'why' must be the model's rationale string, not the catalog entry."""
+        from orivellum.api.routes.studio import _VOICE_BY_ID
+        data = self._design()
+        for i, m in enumerate(data["matches"]):
+            catalog_desc = _VOICE_BY_ID[m["voice_id"]]["description"]
+            self.assertNotEqual(
+                m["why"], catalog_desc,
+                f"match[{i}].why equals catalog description — fallback 'why' was used instead of LLM",
+            )
+            self.assertEqual(
+                m["why"], _LLM_WHYS[i],
+                f"match[{i}].why does not match LLM rationale.\n"
+                f"  expected: {_LLM_WHYS[i]!r}\n"
+                f"  got:      {m['why']!r}",
+            )
+
+    def test_why_fields_are_non_empty(self):
+        data = self._design()
+        for i, m in enumerate(data["matches"]):
+            self.assertTrue(bool(m.get("why", "").strip()),
+                f"match[{i}].why is empty — rationale row won't render on mobile")
+
+    # ── Criterion 3: voice objects enriched ──────────────────────────────────
+
+    def test_voice_objects_have_name(self):
+        """'Use {v.name}' action button requires voice.name to be non-empty."""
+        data = self._design()
+        for i, m in enumerate(data["matches"]):
+            self.assertGreater(len(m.get("voice", {}).get("name", "")), 0,
+                f"match[{i}].voice.name empty — Use button shows 'Use '")
+
+    def test_voice_objects_have_gender(self):
+        """Gender symbol (♀ / ♂) requires voice.gender to be present."""
+        data = self._design()
+        for i, m in enumerate(data["matches"]):
+            self.assertIn("gender", m.get("voice", {}),
+                f"match[{i}].voice missing 'gender'")
+
+    def test_voice_objects_have_accent(self):
+        """Accent badge colour requires voice.accent to be present."""
+        data = self._design()
+        for i, m in enumerate(data["matches"]):
+            self.assertIn("accent", m.get("voice", {}),
+                f"match[{i}].voice missing 'accent'")
+
+    def test_voice_id_matches_voice_object_id(self):
+        """Mobile card uses both m.voice_id and m.voice.id — they must agree."""
+        data = self._design()
+        for i, m in enumerate(data["matches"]):
+            self.assertEqual(m["voice_id"], m["voice"]["id"],
+                f"match[{i}]: voice_id={m['voice_id']!r} != voice.id={m['voice']['id']!r}")
+
+    def test_three_enriched_matches_returned(self):
+        """LLM provided 3 valid IDs → 3 enriched matches, not fewer."""
+        data = self._design()
+        self.assertEqual(len(data["matches"]), 3,
+            f"Expected 3 matches from LLM success path, got {len(data['matches'])}")
+
+    # ── Criterion 4: target_dimensions is numeric, not {} ────────────────────
+
+    def test_target_dimensions_not_empty(self):
+        """Keyword fallback returns {}; LLM path must return the model's scores."""
+        data = self._design()
+        dims = data.get("target_dimensions", {})
+        self.assertNotEqual(dims, {},
+            "target_dimensions is {} — LLM path returned fallback empty dict")
+
+    def test_target_dimensions_all_six_keys(self):
+        data = self._design()
+        dims = data.get("target_dimensions", {})
+        for key in ("warmth", "authority", "gravitas", "pace", "brightness", "age"):
+            self.assertIn(key, dims, f"target_dimensions missing '{key}'")
+
+    def test_target_dimensions_values_are_numeric(self):
+        data = self._design()
+        dims = data.get("target_dimensions", {})
+        for key, val in dims.items():
+            self.assertIsInstance(val, (int, float),
+                f"target_dimensions['{key}']={val!r} is not numeric")
+
+    def test_target_dimensions_match_llm_values(self):
+        """Exact LLM dimension values must survive the parse path unchanged."""
+        data = self._design()
+        dims = data.get("target_dimensions", {})
+        for key, expected in _LLM_DIMS.items():
+            self.assertEqual(dims.get(key), expected,
+                f"target_dimensions['{key}'] expected {expected}, got {dims.get(key)!r}")
+
+    # ── Criterion 5: interpretation echoes the LLM field ─────────────────────
+
+    def test_interpretation_echoes_llm_field(self):
+        data = self._design()
+        self.assertEqual(
+            data.get("interpretation"), _LLM_INTERPRETATION,
+            f"interpretation does not match LLM value.\n"
+            f"  expected: {_LLM_INTERPRETATION!r}\n"
+            f"  got:      {data.get('interpretation')!r}",
+        )
+
+    def test_interpretation_is_string(self):
+        data = self._design()
+        self.assertIsInstance(data.get("interpretation"), str)
+
+    def test_interpretation_is_not_keyword_fallback_text(self):
+        """Fallback sets interpretation to a 'keyword scoring' message; LLM path must not."""
+        data = self._design()
+        interp = data.get("interpretation", "").lower()
+        self.assertNotIn("keyword", interp,
+            "interpretation contains 'keyword' — keyword fallback fired instead of LLM path")
+        self.assertNotIn("unavailable", interp,
+            "interpretation contains 'unavailable' — keyword fallback fired instead of LLM path")
+
+    # ── Other top-level contract fields ──────────────────────────────────────
+
+    def test_description_is_echoed(self):
+        desc = "deep gravitas historical ancient male"
+        data = self._design(desc)
+        self.assertEqual(data.get("description"), desc,
+            "description field must echo the input unchanged")
+
+    def test_all_top_level_fields_present(self):
+        data = self._design()
+        for field in ("description", "interpretation", "matches", "target_dimensions"):
+            self.assertIn(field, data, f"Top-level field '{field}' missing on LLM-success path")
+
+    # ── Markdown code-fence stripping ────────────────────────────────────────
+
+    def test_markdown_fenced_json_is_parsed_correctly(self):
+        """LLMs sometimes wrap JSON in ```json … ``` fences — the endpoint must strip these."""
+        data = self._design(llm_result=_llm_success_fenced(self._ids))
+        # Fenced response must still take the LLM path, not fall through to keyword
+        self.assertNotEqual(data.get("target_dimensions"), {},
+            "Fenced-JSON response fell through to keyword fallback (target_dimensions={})")
+        self.assertGreater(data["matches"][0]["match_score"], 75,
+            "Fenced-JSON response gave fallback match_score — fence stripping may have failed")
+        self.assertEqual(data.get("interpretation"), _LLM_INTERPRETATION,
+            "interpretation does not match after fence stripping")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
