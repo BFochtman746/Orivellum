@@ -701,6 +701,11 @@ export default function LibraryDocDetail() {
   const [ttsSpeed, setTtsSpeed] = useState<TtsSpeed>(1.0);
   const [ttsSettingsOpen, setTtsSettingsOpen] = useState(false);
 
+  // Derived display labels — updated immediately when the user picks a new
+  // voice or speed so the button reflects the active selection at a glance.
+  const activeVoiceName = VOICES.find(v => v.id === ttsVoice)?.name ?? 'Voice';
+  const activeSpeedLabel = SPEED_LABELS[ttsSpeed] ?? '1×';
+
   // Load saved settings on mount
   useEffect(() => {
     AsyncStorage.multiGet([_TTS_VOICE_KEY, _TTS_SPEED_KEY]).then(pairs => {
@@ -1287,15 +1292,18 @@ export default function LibraryDocDetail() {
                   <Text style={[styles.listenBtnText, { color: '#dc2626' }]}>Stop</Text>
                 </Pressable>
               )}
-              {/* Settings gear — opens voice/speed picker */}
+              {/* Settings pill — shows active voice · speed and opens picker */}
               <Pressable
                 onPress={() => setTtsSettingsOpen(true)}
                 style={[styles.ttsSettingsBtn, { borderColor: colors.border, backgroundColor: colors.muted + '55' }]}
                 hitSlop={6}
-                accessibilityLabel="Read Aloud settings"
+                accessibilityLabel={`Read Aloud settings — ${activeVoiceName}, ${activeSpeedLabel}`}
                 accessibilityRole="button"
               >
-                <Feather name="settings" size={14} color={colors.mutedForeground} />
+                <Feather name="settings" size={12} color={colors.mutedForeground} />
+                <Text style={{ fontSize: 12, fontFamily: 'Inter_500Medium', color: colors.mutedForeground }} numberOfLines={1}>
+                  {activeVoiceName} · {activeSpeedLabel}
+                </Text>
               </Pressable>
             </View>
 
@@ -1635,8 +1643,8 @@ const styles = StyleSheet.create({
   },
   listenBtnText: { fontSize: 13, fontFamily: 'Inter_500Medium' },
   ttsSettingsBtn: {
-    width: 32, height: 32, borderRadius: 16,
-    alignItems: 'center', justifyContent: 'center',
+    flexDirection: 'row', alignItems: 'center', gap: 5,
+    paddingHorizontal: 10, paddingVertical: 6, borderRadius: 20,
     borderWidth: 1,
   },
   section: { borderWidth: 1, borderRadius: 10, padding: 14, marginBottom: 14 },
