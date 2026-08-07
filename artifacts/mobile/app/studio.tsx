@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
+  Easing,
   ActivityIndicator,
   Alert,
   AppState,
@@ -27,7 +28,7 @@ import { Stack, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useColors } from '@/hooks/useColors';
 import { useVellumTokens } from '@/lib/tokens';
-import { font } from '@/lib/typography';
+import { font, fontSerif } from '@/lib/typography';
 import { SkeletonItem } from '@/components/SkeletonItem';
 import { mobileFetch } from '@/lib/api';
 import { getApiToken } from '@/lib/token';
@@ -2013,6 +2014,63 @@ function PremiumEngineBadge() {
   );
 }
 
+// ── Animated waveform visualizer ─────────────────────────────────────────────
+
+const _WF_BAR_COUNT = 5;
+
+function WaveformVisualizer({ active, color }: { active: boolean; color: string }) {
+  const anims = useRef(
+    Array.from({ length: _WF_BAR_COUNT }, (_, i) =>
+      new Animated.Value(0.25 + (i % 2) * 0.15)
+    )
+  ).current;
+
+  useEffect(() => {
+    if (!active) {
+      anims.forEach(a =>
+        Animated.timing(a, { toValue: 0.25, duration: 300, useNativeDriver: true }).start()
+      );
+      return;
+    }
+    const loops = anims.map((a, i) =>
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(a, {
+            toValue: 0.35 + Math.random() * 0.55,
+            duration: 300 + i * 80,
+            easing: Easing.inOut(Easing.sin),
+            useNativeDriver: true,
+          }),
+          Animated.timing(a, {
+            toValue: 0.15 + Math.random() * 0.2,
+            duration: 280 + i * 60,
+            easing: Easing.inOut(Easing.sin),
+            useNativeDriver: true,
+          }),
+        ])
+      )
+    );
+    loops.forEach(l => l.start());
+    return () => loops.forEach(l => l.stop());
+  }, [active]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3, height: 24 }}>
+      {anims.map((a, i) => (
+        <Animated.View
+          key={i}
+          style={{
+            width: 3, height: 24, borderRadius: 1.5,
+            backgroundColor: color,
+            transform: [{ scaleY: a }],
+            opacity: active ? 1 : 0.35,
+          }}
+        />
+      ))}
+    </View>
+  );
+}
+
 function TTSPanel({
   voices,
   onGenerated,
@@ -2201,6 +2259,7 @@ function TTSPanel({
           <View style={ttsStreamStyles.statusRow}>
             {tts.phase === 'loading' && (
               <>
+                <WaveformVisualizer active={true} color={T.gilt} />
                 <ActivityIndicator size="small" color={colors.primary}
                   style={{ transform: [{ scale: 0.75 }] }} />
                 <Text style={[ttsStreamStyles.statusText, { color: colors.mutedForeground }]}>
@@ -2210,7 +2269,7 @@ function TTSPanel({
             )}
             {tts.phase === 'playing' && (
               <>
-                <Feather name="volume-2" size={13} color={colors.primary} />
+                <WaveformVisualizer active={true} color={colors.primary} />
                 <Text style={[ttsStreamStyles.statusText, { color: colors.foreground }]}>
                   {tts.segTotal > 0
                     ? `Playing segment ${tts.segCurrent} of ${tts.segTotal}`
@@ -3696,15 +3755,7 @@ function AudiobookPanel({
                 Full narrated MP3
               </Text>
             </View>
-            {isPlaying && (
-              <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 2 }}>
-                {[12, 18, 14, 20, 10].map((h, i) => (
-                  <View key={i} style={{
-                    width: 3, height: h, borderRadius: 2, backgroundColor: colors.primary,
-                  }} />
-                ))}
-              </View>
-            )}
+            <WaveformVisualizer active={isPlaying} color={colors.primary} />
           </Pressable>
 
           {/* Actions */}
@@ -4615,7 +4666,7 @@ export default function StudioScreen() {
 }
 
 const styles = StyleSheet.create({
-  title: { fontSize: 28, ...font('bold'), letterSpacing: -0.5 },
+  title: { fontSize: 28, ...fontSerif('bold'), letterSpacing: -0.5 },
   subtitle: { fontSize: 13, ...font('regular'), marginTop: 2 },
   card: {
     borderRadius: 10,
