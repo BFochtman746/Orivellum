@@ -231,6 +231,11 @@ export interface ConversationCreate {
   work_id?: string | null;
   /** @nullable */
   model?: string | null;
+  /**
+     * Built-in persona slug (default, story_partner, technical_editor, research_assistant, devils_advocate). Omit or set null for the default persona.
+     * @nullable
+     */
+  persona_id?: string | null;
 }
 
 export interface ConversationUpdate {
@@ -253,9 +258,29 @@ export interface Message {
   created_at?: string;
 }
 
+export type MessageSendScope = typeof MessageSendScope[keyof typeof MessageSendScope];
+
+
+export const MessageSendScope = {
+  work: 'work',
+  all: 'all',
+} as const;
+
 export interface MessageSend {
   text: string;
   stream?: boolean;
+  deep?: boolean;
+  scope?: MessageSendScope;
+  /** @nullable */
+  image_b64?: string | null;
+  image_media_type?: string;
+  /** @nullable */
+  client_msg_id?: string | null;
+  /**
+     * Document IDs to pin verbatim into the context for this message. Work-boundary enforced server-side.
+     * @nullable
+     */
+  context_doc_ids?: string[] | null;
 }
 
 export interface Project {

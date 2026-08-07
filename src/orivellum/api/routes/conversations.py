@@ -177,6 +177,11 @@ class MessageSend(BaseModel):
     # when flushing queued offline messages so the server can suppress
     # duplicates if the client retries after a lost response.
     client_msg_id: str | None = None
+    # Explicit document IDs to pin into the system-prompt context for this
+    # message.  When provided, the extracted text of each listed document is
+    # prepended to the knowledge-injection block regardless of semantic score.
+    # Allows users to "pin" specific files from the work-files drawer.
+    context_doc_ids: list[str] | None = None
 
 
 class ContinueBody(BaseModel):
@@ -501,6 +506,7 @@ async def send_message(conv_id: str, body: MessageSend):
             _stream_response(
                 db, conv, body.text, deep=body.deep, scope=body.scope,
                 image_b64=body.image_b64, image_media_type=body.image_media_type,
+                context_doc_ids=body.context_doc_ids or [],
             ),
             media_type="text/event-stream",
             headers={
@@ -517,6 +523,7 @@ async def send_message(conv_id: str, body: MessageSend):
         image_b64=body.image_b64, image_media_type=body.image_media_type,
         out_sources=_ns_sources,
         out_meta=_ns_strategy_meta,
+        context_doc_ids=body.context_doc_ids or [],
     )
     _seen_ns: set = set()
     ns_sources: list = []
@@ -1206,7 +1213,8 @@ def _detect_query_filters(
 def _build_system_prompt(db: Any, conv: dict, scope: str = "work",
                          user_query: str | None = None,
                          out_sources: list | None = None,
-                         out_meta: dict | None = None) -> str:
+                         out_meta: dict | None = None,
+                         context_doc_ids: list[str] | None = None) -> str:
     """Build a system prompt enriched with relevant knowledge from the database.
 
     Knowledge retrieval strategy (always global):
@@ -1464,6 +1472,67 @@ def _build_system_prompt(db: Any, conv: dict, scope: str = "work",
 
     if _chapter_block:
         base = base + "\n\n" + _chapter_block
+
+    # ── Pinned document injection ──────────────────────────────────────────────
+    # When context_doc_ids are provided (user pinned specific files via the
+    # mobile "Context" drawer), inject those documents' extracted text verbatim
+    # before regular knowledge retrieval so the model always sees them.
+    #
+    # Authorization / scope policy (enforced server-side; never trust client):
+    #
+    #   scope="work"  — All pins MUST belong to the conversation's linked Work.
+    #                   If the conversation has no linked Work, ALL pins are
+    #                   rejected outright (no work context = no work docs).
+    #                   Any doc whose work_id differs from the linked Work is
+    #                   dropped individually, mirroring existing work-scoped
+    #                   knowledge-retrieval isolation.
+    #
+    #   scope="all"   — Pins may belong to any Work, but each ID must resolve
+    #                   to a real document in the database; fabricated IDs are
+    #                   silently ignored.
+    #
+    #   Any other scope value — treated as "work" (allowlist; safest default).
+    #
+    # Capped at 5 documents × 2 000 chars to stay within context budgets.
+    _scope_normalized = scope if scope in ("work", "all") else "work"
+    if context_doc_ids:
+        _pinned_blocks: list[str] = []
+        # scope="work" with no linked Work → reject all pins immediately
+        if _scope_normalized == "work" and not work_id:
+            logger.debug(
+                "_build_system_prompt: context_doc_ids ignored — scope='work' "
+                "but conversation has no linked Work"
+            )
+        else:
+            for _pin_id in (context_doc_ids or [])[:5]:
+                try:
+                    with db._lock:
+                        _pin_row = db._conn.execute(
+                            "SELECT title, extracted_text, work_id "
+                            "FROM documents WHERE id = ?",
+                            (_pin_id,),
+                        ).fetchone()
+                    if not _pin_row or not _pin_row["extracted_text"]:
+                        continue  # fabricated / empty — skip
+                    # Work-boundary check for work scope
+                    if _scope_normalized == "work":
+                        # work_id is non-None here (guarded above)
+                        if _pin_row["work_id"] != work_id:
+                            logger.warning(
+                                "_build_system_prompt: pinned doc %s rejected — "
+                                "belongs to work %s, conversation work is %s",
+                                _pin_id, _pin_row["work_id"], work_id,
+                            )
+                            continue  # cross-Work doc silently dropped
+                    _pin_title = (_pin_row["title"] or _pin_id).strip()
+                    _pin_text  = str(_pin_row["extracted_text"])[:2000].strip()
+                    _pinned_blocks.append(
+                        f"PINNED DOCUMENT — {_pin_title}:\n{_pin_text}"
+                    )
+                except Exception:
+                    pass
+        if _pinned_blocks:
+            base = base + "\n\n" + "\n\n".join(_pinned_blocks)
 
     # ── 1. Query-matched global search (primary path) ──────────────────────────
     if user_query and user_query.strip():
@@ -2028,12 +2097,14 @@ def _build_messages(
     image_media_type: str = "image/jpeg",
     out_sources: list | None = None,
     out_meta: dict | None = None,
+    context_doc_ids: list[str] | None = None,
 ) -> list[dict]:
     """Build the full OpenAI-format messages array for this conversation."""
     system_prompt = _build_system_prompt(db, conv, scope=scope,
                                          user_query=new_user_text,
                                          out_sources=out_sources,
-                                         out_meta=out_meta)
+                                         out_meta=out_meta,
+                                         context_doc_ids=context_doc_ids or [])
 
     # ── Web search grounding ──────────────────────────────────────────────────
     # When the conversation has web_search_enabled=1, fetch live Tavily results
@@ -2238,6 +2309,7 @@ async def _call_ai_vision(messages: list[dict], model: str, db: Any = None) -> s
 async def _stream_response(
     db: Any, conv: dict, user_text: str, deep: bool = False, scope: str = "work",
     image_b64: str | None = None, image_media_type: str = "image/jpeg",
+    context_doc_ids: list[str] | None = None,
 ):
     """SSE generator — streams tokens, stores final reply, auto-titles.
 
@@ -2264,6 +2336,7 @@ async def _stream_response(
         image_b64=image_b64, image_media_type=image_media_type,
         out_sources=_sources,
         out_meta=_stream_strategy_meta,
+        context_doc_ids=context_doc_ids or [],
     )
     # Deduplicate sources by doc_id
     _seen: set = set()

@@ -4149,6 +4149,7 @@ components:
         title: { type: string, nullable: true }
         work_id: { type: string, nullable: true }
         model: { type: string, nullable: true }
+        persona_id: { type: string, nullable: true, description: "Built-in persona slug (default, story_partner, technical_editor, research_assistant, devils_advocate). Omit or set null for the default persona." }
 
     ConversationUpdate:
       type: object
@@ -4173,6 +4174,16 @@ components:
       properties:
         text: { type: string }
         stream: { type: boolean, default: false }
+        deep: { type: boolean, default: false }
+        scope: { type: string, default: work, enum: [work, all] }
+        image_b64: { type: string, nullable: true }
+        image_media_type: { type: string, default: image/jpeg }
+        client_msg_id: { type: string, nullable: true }
+        context_doc_ids:
+          type: array
+          nullable: true
+          items: { type: string }
+          description: "Document IDs to pin verbatim into the context for this message. Work-boundary enforced server-side."
 
     Project:
       type: object

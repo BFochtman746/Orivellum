@@ -7,11 +7,48 @@ import {
   Platform,
   Pressable,
   RefreshControl,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
+
+// ── Persona definitions (must match backend _PERSONAS in conversations.py) ────
+const PERSONAS = [
+  {
+    id: 'default',
+    label: 'Default',
+    emoji: '🤖',
+    description: 'Balanced, helpful assistant',
+  },
+  {
+    id: 'story_partner',
+    label: 'Story Partner',
+    emoji: '✨',
+    description: 'Creative collaborator for narrative and fiction',
+  },
+  {
+    id: 'technical_editor',
+    label: 'Technical Editor',
+    emoji: '🔬',
+    description: 'Precise, structured feedback on technical writing',
+  },
+  {
+    id: 'research_assistant',
+    label: 'Research Assistant',
+    emoji: '📚',
+    description: 'Deep synthesis, citations, analytical depth',
+  },
+  {
+    id: 'devils_advocate',
+    label: "Devil's Advocate",
+    emoji: '⚡',
+    description: 'Challenges assumptions, surfaces counterarguments',
+  },
+] as const;
+
+type PersonaId = (typeof PERSONAS)[number]['id'];
 import { useColors } from '@/hooks/useColors';
 import { Feather } from '@expo/vector-icons';
 import {
@@ -98,6 +135,16 @@ function ConversationItem({ item, onArchive, onDelete, onRename }: { item: Conve
               </Text>
             </View>
           )}
+          {/* Persona badge — only shown for non-default personas */}
+          {(item as any).persona_id && (item as any).persona_id !== 'default' && (() => {
+            const p = PERSONAS.find(p => p.id === (item as any).persona_id);
+            return p ? (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2 }}>
+                <Text style={{ fontSize: 10 }}>{p.emoji}</Text>
+                <Text style={{ fontSize: 10, fontWeight: '400', color: colors.mutedForeground }}>{p.label}</Text>
+              </View>
+            ) : null;
+          })()}
           {(item as any).model && (
             <Text style={{ fontSize: 11, fontWeight: '400', color: colors.mutedForeground, opacity: 0.7 }}>
               {String((item as any).model).split('/').pop()?.split('-').slice(0, 3).join('-')}
@@ -121,6 +168,10 @@ export default function ConversationsScreen() {
   const [renameModal, setRenameModal] = useState<{ id: string; title: string } | null>(null);
   const [renameText, setRenameText] = useState('');
   const renameRef = useRef<TextInput>(null);
+
+  // Persona picker — shown before creating a new conversation
+  const [personaSheetOpen, setPersonaSheetOpen] = useState(false);
+  const [selectedPersona, setSelectedPersona] = useState<PersonaId>('default');
 
   // Memory bottom sheet
   const [memoryOpen, setMemoryOpen] = useState(false);
@@ -270,8 +321,21 @@ export default function ConversationsScreen() {
 
   const handleNew = async () => {
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    // Open persona picker before creating the conversation
+    setSelectedPersona('default');
+    setPersonaSheetOpen(true);
+  };
+
+  const handleCreateWithPersona = async (personaId: PersonaId) => {
+    setPersonaSheetOpen(false);
     try {
-      const result = await createConversation({ data: { title: null, work_id: null } });
+      const result = await createConversation({
+        data: {
+          title: null,
+          work_id: null,
+          ...(personaId !== 'default' ? { persona_id: personaId } : {}),
+        },
+      });
       const convoId = result?.conversation?.id;
       if (convoId) {
         refetch();
@@ -527,6 +591,96 @@ export default function ConversationsScreen() {
             </View>
           </Pressable>
         </Pressable>
+      </Modal>
+
+      {/* Persona picker bottom sheet */}
+      <Modal
+        visible={personaSheetOpen}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setPersonaSheetOpen(false)}
+      >
+        <View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.4)' }}>
+          <Pressable style={{ flex: 1 }} onPress={() => setPersonaSheetOpen(false)} />
+          <View style={{
+            backgroundColor: colors.card,
+            borderTopLeftRadius: 20,
+            borderTopRightRadius: 20,
+            borderTopWidth: 1,
+            borderColor: colors.border,
+            paddingTop: 20,
+            paddingHorizontal: 20,
+            paddingBottom: insets.bottom + 24,
+          }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+              <Text style={{ fontSize: 16, fontFamily: 'Inter_700Bold', color: colors.foreground, flex: 1 }}>
+                Choose a persona
+              </Text>
+              <Pressable onPress={() => setPersonaSheetOpen(false)} hitSlop={8}>
+                <Feather name="x" size={18} color={colors.mutedForeground} />
+              </Pressable>
+            </View>
+            <Text style={{ fontSize: 12, color: colors.mutedForeground, fontFamily: 'Inter_400Regular', marginBottom: 16 }}>
+              Sets the AI's role and communication style for this conversation.
+            </Text>
+            {PERSONAS.map((p) => (
+              <Pressable
+                key={p.id}
+                onPress={() => setSelectedPersona(p.id)}
+                style={({ pressed }) => ({
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 12,
+                  paddingVertical: 12,
+                  paddingHorizontal: 14,
+                  marginBottom: 8,
+                  borderRadius: 12,
+                  borderWidth: 1.5,
+                  borderColor: selectedPersona === p.id ? colors.primary : colors.border,
+                  backgroundColor: pressed
+                    ? colors.muted
+                    : selectedPersona === p.id
+                    ? colors.primary + '0d'
+                    : 'transparent',
+                })}
+              >
+                <Text style={{ fontSize: 22 }}>{p.emoji}</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 14, fontFamily: 'Inter_600SemiBold', color: colors.foreground }}>
+                    {p.label}
+                  </Text>
+                  <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: colors.mutedForeground }}>
+                    {p.description}
+                  </Text>
+                </View>
+                {selectedPersona === p.id && (
+                  <Feather name="check" size={16} color={colors.primary} />
+                )}
+              </Pressable>
+            ))}
+            <Pressable
+              onPress={() => handleCreateWithPersona(selectedPersona)}
+              disabled={creating}
+              style={({ pressed }) => ({
+                marginTop: 8,
+                height: 48,
+                borderRadius: 12,
+                alignItems: 'center',
+                justifyContent: 'center',
+                backgroundColor: colors.primary,
+                opacity: pressed || creating ? 0.7 : 1,
+              })}
+            >
+              {creating ? (
+                <ActivityIndicator color={colors.primaryForeground} />
+              ) : (
+                <Text style={{ fontSize: 15, fontFamily: 'Inter_600SemiBold', color: colors.primaryForeground }}>
+                  Start conversation
+                </Text>
+              )}
+            </Pressable>
+          </View>
+        </View>
       </Modal>
 
       {/* Memory bottom sheet */}

@@ -27,6 +27,8 @@ import {
   useGetConversation,
   useGetSystemModels,
   useUpdateConversation,
+  useGetWebSearchStatus,
+  useGetWorkDocuments,
 } from '@workspace/api-client-react';
 import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
@@ -680,6 +682,10 @@ export default function ChatScreen() {
   // Web search toggle
   const [webSearch, setWebSearch] = useState(false);
   const [webSearchLoading, setWebSearchLoading] = useState(false);
+  // Work context controls
+  const [contextSheetOpen, setContextSheetOpen] = useState(false);
+  const [scopeAll, setScopeAll] = useState(false);
+  const [pinnedDocIds, setPinnedDocIds] = useState<Set<string>>(new Set());
 
   const { data, isLoading, isError, refetch } = useGetConversation(id, { query: { staleTime: 10_000 } } as any);
   const conversation = data?.conversation;
@@ -688,6 +694,20 @@ export default function ChatScreen() {
   const { data: modelsData } = useGetSystemModels();
   const models = modelsData?.models ?? [];
   const updateConv = useUpdateConversation();
+
+  // Gate web search toggle on whether Tavily is configured
+  const { data: webSearchStatus } = useGetWebSearchStatus({
+    query: { staleTime: 60_000 },
+  } as any);
+  const webSearchAvailable = webSearchStatus?.configured ?? false;
+
+  const convWorkId: string | null = (conversation as any)?.work_id ?? null;
+
+  // Load work documents for the context sheet (only when a work is linked)
+  const { data: workDocsData } = useGetWorkDocuments(
+    convWorkId ?? '',
+    { query: { enabled: !!convWorkId && contextSheetOpen, staleTime: 30_000 } } as any,
+  );
 
   const currentModelId = (conversation as any)?.model;
   const currentModelLabel =
@@ -1362,6 +1382,9 @@ export default function ChatScreen() {
         // Server persists this in messages.client_msg_id (schema v86) and
         // checks it before storing so retries after a lost response are safe.
         client_msg_id: clientMsgId,
+        // Work context controls
+        ...(convWorkId ? { scope: scopeAll ? 'all' : 'work' } : {}),
+        ...(pinnedDocIds.size > 0 ? { context_doc_ids: Array.from(pinnedDocIds) } : {}),
       };
       if (imageToSend?.base64) {
         payload.image_b64 = imageToSend.base64;
@@ -1474,6 +1497,140 @@ export default function ChatScreen() {
       behavior="padding"
       keyboardVerticalOffset={0}
     >
+      {/* Work context sheet — scope toggle + file pin list */}
+      <Modal
+        visible={contextSheetOpen}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setContextSheetOpen(false)}
+      >
+        <View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.4)' }}>
+          <Pressable style={{ flex: 1 }} onPress={() => setContextSheetOpen(false)} />
+          <View style={{
+            backgroundColor: colors.card,
+            borderTopLeftRadius: 20,
+            borderTopRightRadius: 20,
+            borderTopWidth: 1,
+            borderColor: colors.border,
+            paddingTop: 20,
+            paddingHorizontal: 20,
+            paddingBottom: insets.bottom + 20,
+            maxHeight: '75%',
+          }}>
+            {/* Header */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16 }}>
+              <Text style={{ fontSize: 16, fontFamily: 'Inter_700Bold', color: colors.foreground, flex: 1 }}>
+                Context
+              </Text>
+              <Pressable onPress={() => setContextSheetOpen(false)} hitSlop={8}>
+                <Feather name="x" size={18} color={colors.mutedForeground} />
+              </Pressable>
+            </View>
+
+            {/* Scope toggle */}
+            <Text style={{ fontSize: 11, fontFamily: 'Inter_500Medium', color: colors.mutedForeground, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 8 }}>
+              Knowledge scope
+            </Text>
+            <View style={{ flexDirection: 'row', gap: 8, marginBottom: 20 }}>
+              {[{ label: 'This Work', value: false }, { label: 'All Works', value: true }].map(({ label, value }) => (
+                <Pressable
+                  key={label}
+                  onPress={() => setScopeAll(value)}
+                  style={({ pressed }) => ({
+                    flex: 1,
+                    paddingVertical: 10,
+                    paddingHorizontal: 14,
+                    borderRadius: 10,
+                    borderWidth: 1.5,
+                    borderColor: scopeAll === value ? colors.primary : colors.border,
+                    backgroundColor: pressed ? colors.muted : scopeAll === value ? colors.primary + '10' : 'transparent',
+                    alignItems: 'center',
+                  })}
+                >
+                  <Text style={{
+                    fontSize: 13,
+                    fontFamily: scopeAll === value ? 'Inter_600SemiBold' : 'Inter_400Regular',
+                    color: scopeAll === value ? colors.primary : colors.mutedForeground,
+                  }}>
+                    {label}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+
+            {/* Pinned documents from work */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
+              <Text style={{ fontSize: 11, fontFamily: 'Inter_500Medium', color: colors.mutedForeground, textTransform: 'uppercase', letterSpacing: 0.8, flex: 1 }}>
+                Pin documents
+              </Text>
+              {pinnedDocIds.size > 0 && (
+                <Pressable onPress={() => setPinnedDocIds(new Set())} hitSlop={8}>
+                  <Text style={{ fontSize: 11, color: colors.primary, fontFamily: 'Inter_500Medium' }}>Clear all</Text>
+                </Pressable>
+              )}
+            </View>
+
+            {!convWorkId ? (
+              <Text style={{ fontSize: 13, color: colors.mutedForeground, fontFamily: 'Inter_400Regular', textAlign: 'center', paddingVertical: 20 }}>
+                No work linked to this conversation
+              </Text>
+            ) : !workDocsData?.documents?.length ? (
+              <Text style={{ fontSize: 13, color: colors.mutedForeground, fontFamily: 'Inter_400Regular', textAlign: 'center', paddingVertical: 20 }}>
+                No documents in this work yet
+              </Text>
+            ) : (
+              <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 300 }}>
+                {(workDocsData.documents as any[]).map((doc: any) => {
+                  const pinned = pinnedDocIds.has(doc.id);
+                  return (
+                    <Pressable
+                      key={doc.id}
+                      onPress={() => {
+                        setPinnedDocIds(prev => {
+                          const next = new Set(prev);
+                          if (next.has(doc.id)) next.delete(doc.id);
+                          else next.add(doc.id);
+                          return next;
+                        });
+                      }}
+                      style={({ pressed }) => ({
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        gap: 10,
+                        paddingVertical: 11,
+                        paddingHorizontal: 12,
+                        marginBottom: 6,
+                        borderRadius: 10,
+                        borderWidth: 1,
+                        borderColor: pinned ? colors.primary + '55' : colors.border,
+                        backgroundColor: pressed ? colors.muted : pinned ? colors.primary + '08' : 'transparent',
+                      })}
+                    >
+                      <View style={{
+                        width: 20, height: 20, borderRadius: 5, borderWidth: 1.5,
+                        borderColor: pinned ? colors.primary : colors.border,
+                        backgroundColor: pinned ? colors.primary : 'transparent',
+                        alignItems: 'center', justifyContent: 'center',
+                      }}>
+                        {pinned && <Feather name="check" size={11} color={colors.primaryForeground} />}
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ fontSize: 13, fontFamily: 'Inter_500Medium', color: colors.foreground }} numberOfLines={1}>
+                          {doc.title || doc.source?.split('/').pop() || 'Untitled'}
+                        </Text>
+                        <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: colors.mutedForeground }}>
+                          {(doc.kind ?? doc.readiness ?? '').replace(/_/g, ' ')}
+                        </Text>
+                      </View>
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
+            )}
+          </View>
+        </View>
+      </Modal>
+
       {/* Model picker modal — Android / web */}
       <Modal
         visible={modelPickerVisible}
@@ -1545,27 +1702,62 @@ export default function ChatScreen() {
           </Pressable>
         )}
 
-        {/* Work badge — shown when conversation is linked to a Work */}
+        {/* Work badge + context controls — shown when conversation is linked to a Work */}
         {conversation && (conversation as any).work_id && (
-          <Pressable
-            onPress={() => router.push(`/work/${(conversation as any).work_id}` as any)}
-            style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              gap: 5,
-              paddingHorizontal: 12,
-              paddingVertical: 5,
-              borderBottomWidth: StyleSheet.hairlineWidth,
-              borderBottomColor: colors.border,
-              backgroundColor: colors.primary + '0a',
-            }}
-          >
-            <Feather name="book-open" size={11} color={colors.primary} />
-            <Text style={{ fontSize: 11, fontFamily: 'Inter_500Medium', color: colors.primary, flex: 1 }} numberOfLines={1}>
-              {(conversation as any).work_title ?? 'Work'}
-            </Text>
-            <Feather name="chevron-right" size={11} color={colors.primary} />
-          </Pressable>
+          <View style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            borderBottomWidth: StyleSheet.hairlineWidth,
+            borderBottomColor: colors.border,
+            backgroundColor: colors.primary + '0a',
+          }}>
+            <Pressable
+              onPress={() => router.push(`/work/${(conversation as any).work_id}` as any)}
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 5,
+                flex: 1,
+                paddingHorizontal: 12,
+                paddingVertical: 5,
+              }}
+            >
+              <Feather name="book-open" size={11} color={colors.primary} />
+              <Text style={{ fontSize: 11, fontFamily: 'Inter_500Medium', color: colors.primary, flex: 1 }} numberOfLines={1}>
+                {(conversation as any).work_title ?? 'Work'}
+              </Text>
+            </Pressable>
+            {/* Scope indicator chip */}
+            <Pressable
+              onPress={() => setContextSheetOpen(true)}
+              hitSlop={8}
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 4,
+                paddingHorizontal: 10,
+                paddingVertical: 5,
+                marginRight: 8,
+                borderRadius: 8,
+                borderWidth: 1,
+                borderColor: (pinnedDocIds.size > 0 || scopeAll) ? colors.primary + '55' : colors.border,
+                backgroundColor: (pinnedDocIds.size > 0 || scopeAll) ? colors.primary + '10' : 'transparent',
+              }}
+            >
+              <Feather
+                name="layers"
+                size={11}
+                color={(pinnedDocIds.size > 0 || scopeAll) ? colors.primary : colors.mutedForeground}
+              />
+              <Text style={{
+                fontSize: 10,
+                fontFamily: 'Inter_500Medium',
+                color: (pinnedDocIds.size > 0 || scopeAll) ? colors.primary : colors.mutedForeground,
+              }}>
+                {scopeAll ? 'All Works' : pinnedDocIds.size > 0 ? `${pinnedDocIds.size} pinned` : 'Context'}
+              </Text>
+            </Pressable>
+          </View>
         )}
 
         {/* Soft offline banner — shown when we have loaded data but subsequent fetches fail */}
@@ -1744,23 +1936,25 @@ export default function ChatScreen() {
               {deepMode ? 'Deep' : 'Fast'}
             </Text>
           </Pressable>
-          {/* Web search toggle */}
-          <Pressable
-            onPress={handleWebSearchToggle}
-            disabled={webSearchLoading || sending}
-            hitSlop={6}
-            style={[
-              styles.deepToggle,
-              webSearch
-                ? { backgroundColor: '#0891b218', borderColor: '#0891b244' }
-                : { backgroundColor: colors.muted, borderColor: colors.border },
-            ]}
-          >
-            <Feather name="globe" size={12} color={webSearch ? '#0891b2' : colors.mutedForeground} />
-            <Text style={[styles.deepToggleText, { color: webSearch ? '#0891b2' : colors.mutedForeground }]}>
-              Web
-            </Text>
-          </Pressable>
+          {/* Web search toggle — only when Tavily is configured */}
+          {webSearchAvailable && (
+            <Pressable
+              onPress={handleWebSearchToggle}
+              disabled={webSearchLoading || sending}
+              hitSlop={6}
+              style={[
+                styles.deepToggle,
+                webSearch
+                  ? { backgroundColor: '#0891b218', borderColor: '#0891b244' }
+                  : { backgroundColor: colors.muted, borderColor: colors.border },
+              ]}
+            >
+              <Feather name="globe" size={12} color={webSearch ? '#0891b2' : colors.mutedForeground} />
+              <Text style={[styles.deepToggleText, { color: webSearch ? '#0891b2' : colors.mutedForeground }]}>
+                Web
+              </Text>
+            </Pressable>
+          )}
           {/* Image attach button — opens action sheet: Photo Library or Take Photo */}
           <Pressable
             onPress={handleImageAttach}

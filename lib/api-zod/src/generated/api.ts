@@ -596,7 +596,8 @@ export const ListConversationsResponse = zod.object({
 export const CreateConversationBody = zod.object({
   "title": zod.string().nullish(),
   "work_id": zod.string().nullish(),
-  "model": zod.string().nullish()
+  "model": zod.string().nullish(),
+  "persona_id": zod.string().nullish().describe('Built-in persona slug (default, story_partner, technical_editor, research_assistant, devils_advocate). Omit or set null for the default persona.')
 })
 
 export const CreateConversationResponse = zod.object({
@@ -697,10 +698,19 @@ export const SendMessageParams = zod.object({
 })
 
 export const sendMessageBodyStreamDefault = false;
+export const sendMessageBodyDeepDefault = false;
+export const sendMessageBodyScopeDefault = `work`;
+export const sendMessageBodyImageMediaTypeDefault = `image/jpeg`;
 
 export const SendMessageBody = zod.object({
   "text": zod.string(),
-  "stream": zod.boolean().default(sendMessageBodyStreamDefault)
+  "stream": zod.boolean().default(sendMessageBodyStreamDefault),
+  "deep": zod.boolean().default(sendMessageBodyDeepDefault),
+  "scope": zod.enum(['work', 'all']).default(sendMessageBodyScopeDefault),
+  "image_b64": zod.string().nullish(),
+  "image_media_type": zod.string().default(sendMessageBodyImageMediaTypeDefault),
+  "client_msg_id": zod.string().nullish(),
+  "context_doc_ids": zod.array(zod.string()).nullish().describe('Document IDs to pin verbatim into the context for this message. Work-boundary enforced server-side.')
 })
 
 export const SendMessageResponse = zod.object({
