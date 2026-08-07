@@ -43,7 +43,7 @@ import type { Document, KnowledgeItem, Task } from '@workspace/api-client-react'
 import { OfflineBanner, ErrorScreen } from '@/components/OfflineBanner';
 import { readCache, writeCache } from '@/lib/cache';
 
-type Tab = 'overview' | 'docs' | 'knowledge' | 'tasks' | 'conversations' | 'learn' | 'gaps' | 'book' | 'brainstorm' | 'intelligence' | 'trailer';
+type Tab = 'overview' | 'docs' | 'knowledge' | 'tasks' | 'conversations' | 'learn' | 'gaps' | 'book' | 'brainstorm' | 'intelligence' | 'trailer' | 'genesis';
 
 // Primary tabs always visible in the bar; secondary tabs disclosed via "More"
 const PRIMARY_TABS: { key: Tab; label: string }[] = [
@@ -60,6 +60,7 @@ const SECONDARY_TABS: { key: Tab; label: string }[] = [
   { key: 'book',         label: 'Book'    },
   { key: 'brainstorm',   label: 'Ideas'   },
   { key: 'trailer',      label: 'Trailer' },
+  { key: 'genesis',      label: 'Genesis' },
 ];
 
 function TabBar({ active, onSelect, colors, badges = {}, onNavigateGraph }: {
@@ -3776,6 +3777,714 @@ function BookIntelTab({
   );
 }
 
+// ─── Genesis Tab ──────────────────────────────────────────────────────────────
+
+interface GenesisStage {
+  code: string;
+  name: string;
+  status: 'PENDING' | 'PASSED' | 'FAILED';
+  gate_description: string;
+  is_current: boolean;
+}
+
+interface GenesisBook {
+  id: string;
+  work_id: string;
+  mode: string;
+  length: number;
+  acts: number;
+  state: string;
+  sealed: boolean;
+  manifest: string | null;
+  created_at: string;
+  updated_at: string;
+  stages: GenesisStage[];
+  next_stage: string | null;
+  ledger_entries: number;
+}
+
+interface GenesisStageDetail {
+  code: string;
+  name: string;
+  gate_description: string;
+  status: 'PENDING' | 'PASSED' | 'FAILED';
+  content: string;
+  has_unfilled_placeholders: boolean;
+  sha256: string;
+  updated_at: string | null;
+  decisions: Array<{ kind: string; payload: string; at: string }>;
+}
+
+const GENESIS_STATUS_COLOR = {
+  PASSED:  { bg: 'rgba(34,197,94,0.15)',   text: '#22c55e', dot: '#22c55e'  },
+  FAILED:  { bg: 'rgba(239,68,68,0.15)',   text: '#ef4444', dot: '#ef4444'  },
+  PENDING: { bg: 'rgba(148,163,184,0.12)', text: '#94a3b8', dot: '#94a3b8'  },
+  CURRENT: { bg: 'rgba(245,158,11,0.15)',  text: '#f59e0b', dot: '#f59e0b'  },
+};
+
+function genesisStatusColor(stage: GenesisStage) {
+  if (stage.status === 'PASSED') return GENESIS_STATUS_COLOR.PASSED;
+  if (stage.status === 'FAILED') return GENESIS_STATUS_COLOR.FAILED;
+  if (stage.is_current)         return GENESIS_STATUS_COLOR.CURRENT;
+  return GENESIS_STATUS_COLOR.PENDING;
+}
+
+function genesisStatusLabel(stage: GenesisStage) {
+  if (stage.status === 'PASSED') return 'PASSED';
+  if (stage.status === 'FAILED') return 'FAILED';
+  if (stage.is_current)         return 'OPEN';
+  return 'PENDING';
+}
+
+function GenesisGateRow({
+  stage,
+  workId,
+  colors,
+  onRefresh,
+}: {
+  stage: GenesisStage;
+  workId: string;
+  colors: any;
+  onRefresh: () => void;
+}) {
+  const domain = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
+  const [expanded, setExpanded] = useState(false);
+  const [detail, setDetail] = useState<GenesisStageDetail | null>(null);
+  const [loadingDetail, setLoadingDetail] = useState(false);
+  const [artifactModalOpen, setArtifactModalOpen] = useState(false);
+  const [gating, setGating] = useState(false);
+  const [authorInput, setAuthorInput] = useState('');
+  const [noteInput, setNoteInput] = useState('');
+  const [showGateForm, setShowGateForm] = useState(false);
+
+  const col = genesisStatusColor(stage);
+  const statusLabel = genesisStatusLabel(stage);
+
+  const loadDetail = useCallback(async () => {
+    if (detail || loadingDetail) return;
+    setLoadingDetail(true);
+    try {
+      const r = await mobileFetch(`https://${domain}/api/works/${workId}/genesis/stages/${stage.code}`);
+      if (r.ok) setDetail(await r.json());
+    } catch { /* non-fatal */ }
+    finally { setLoadingDetail(false); }
+  }, [domain, workId, stage.code, detail, loadingDetail]);
+
+  useEffect(() => {
+    if (expanded && !detail) loadDetail();
+  }, [expanded, detail, loadDetail]);
+
+  const handlePassGate = async () => {
+    if (!authorInput.trim()) {
+      Alert.alert('Author required', 'Please enter your name to record the gate decision.');
+      return;
+    }
+    setGating(true);
+    try {
+      const r = await mobileFetch(`https://${domain}/api/works/${workId}/genesis/stages/${stage.code}/gate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ decision: 'pass', author: authorInput.trim(), note: noteInput.trim() }),
+      });
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}));
+        Alert.alert('Gate failed', (body as any).detail ?? 'Could not record gate decision');
+        return;
+      }
+      setShowGateForm(false);
+      setAuthorInput('');
+      setNoteInput('');
+      setDetail(null); // force refetch
+      onRefresh();
+    } catch (e: any) {
+      Alert.alert('Error', e?.message ?? 'Gate recording failed');
+    } finally {
+      setGating(false);
+    }
+  };
+
+  const artifactPreview = detail?.content
+    ? detail.content.slice(0, 500) + (detail.content.length > 500 ? '…' : '')
+    : '';
+
+  return (
+    <View style={{ marginBottom: 8 }}>
+      {/* Gate row header */}
+      <Pressable
+        onPress={() => setExpanded(e => !e)}
+        style={({ pressed }) => ({
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 10,
+          padding: 12,
+          borderRadius: expanded ? 0 : 10,
+          borderTopLeftRadius: 10,
+          borderTopRightRadius: 10,
+          borderBottomLeftRadius: expanded ? 0 : 10,
+          borderBottomRightRadius: expanded ? 0 : 10,
+          borderWidth: StyleSheet.hairlineWidth,
+          borderColor: stage.is_current ? '#f59e0b55' : colors.border,
+          backgroundColor: stage.is_current ? '#f59e0b08' : colors.card,
+          opacity: pressed ? 0.85 : 1,
+        })}
+      >
+        {/* Status dot */}
+        <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: col.dot, flexShrink: 0 }} />
+
+        {/* Code + name */}
+        <Text style={{ fontSize: 11, fontFamily: 'Inter_700Bold', color: col.text, width: 28 }}>
+          {stage.code}
+        </Text>
+        <Text style={{ flex: 1, fontSize: 13, fontFamily: 'Inter_500Medium', color: colors.foreground }} numberOfLines={1}>
+          {stage.name}
+        </Text>
+
+        {/* Status badge */}
+        <View style={{ paddingHorizontal: 7, paddingVertical: 2, borderRadius: 5, backgroundColor: col.bg }}>
+          <Text style={{ fontSize: 10, fontFamily: 'Inter_600SemiBold', color: col.text }}>{statusLabel}</Text>
+        </View>
+
+        <Feather name={expanded ? 'chevron-up' : 'chevron-down'} size={14} color={colors.mutedForeground} />
+      </Pressable>
+
+      {/* Expanded content */}
+      {expanded && (
+        <View style={{
+          borderWidth: StyleSheet.hairlineWidth,
+          borderTopWidth: 0,
+          borderColor: stage.is_current ? '#f59e0b55' : colors.border,
+          borderBottomLeftRadius: 10,
+          borderBottomRightRadius: 10,
+          backgroundColor: colors.card,
+          padding: 12,
+          gap: 10,
+        }}>
+          {/* Gate description */}
+          <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: colors.mutedForeground, lineHeight: 18 }}>
+            {stage.gate_description}
+          </Text>
+
+          {loadingDetail ? (
+            <ActivityIndicator size="small" color={colors.primary} />
+          ) : detail ? (
+            <>
+              {/* Unfilled placeholder warning */}
+              {detail.has_unfilled_placeholders && (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, padding: 8, borderRadius: 8, borderWidth: 1, borderColor: '#f59e0b44', backgroundColor: '#f59e0b10' }}>
+                  <Feather name="alert-circle" size={13} color="#f59e0b" />
+                  <Text style={{ fontSize: 11, fontFamily: 'Inter_500Medium', color: '#d97706', flex: 1 }}>
+                    Artifact still contains {'<<FILL>>'} placeholders — fill before passing.
+                  </Text>
+                </View>
+              )}
+
+              {/* Artifact preview */}
+              {detail.content.length > 0 && (
+                <View style={{ gap: 6 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <Text style={{ fontSize: 11, fontFamily: 'Inter_600SemiBold', color: colors.mutedForeground, letterSpacing: 0.5, textTransform: 'uppercase' }}>
+                      Artifact
+                    </Text>
+                    <Pressable onPress={() => setArtifactModalOpen(true)} hitSlop={8}>
+                      <Text style={{ fontSize: 11, fontFamily: 'Inter_600SemiBold', color: colors.primary }}>View full</Text>
+                    </Pressable>
+                  </View>
+                  <View style={{ backgroundColor: colors.muted + '33', borderRadius: 8, padding: 10 }}>
+                    <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: colors.foreground, lineHeight: 17 }}>
+                      {artifactPreview}
+                    </Text>
+                  </View>
+                </View>
+              )}
+
+              {/* Last decision */}
+              {detail.decisions.length > 0 && (() => {
+                const last = detail.decisions[detail.decisions.length - 1];
+                let payload: any = {};
+                try { payload = JSON.parse(last.payload); } catch {}
+                const isPass = last.kind === 'gate.pass';
+                return (
+                  <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 6, padding: 8, borderRadius: 8, borderWidth: 1, borderColor: isPass ? '#22c55e44' : '#ef444444', backgroundColor: isPass ? '#22c55e0a' : '#ef44440a' }}>
+                    <Feather name={isPass ? 'check-circle' : 'x-circle'} size={13} color={isPass ? '#22c55e' : '#ef4444'} style={{ marginTop: 1 }} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontSize: 11, fontFamily: 'Inter_600SemiBold', color: isPass ? '#22c55e' : '#ef4444' }}>
+                        {isPass ? 'Passed' : 'Failed'} by {payload.author ?? '—'}
+                      </Text>
+                      {payload.note ? (
+                        <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: colors.mutedForeground, marginTop: 2 }}>
+                          {payload.note}
+                        </Text>
+                      ) : null}
+                      <Text style={{ fontSize: 10, fontFamily: 'Inter_400Regular', color: colors.mutedForeground + '99', marginTop: 2 }}>
+                        {last.at ? new Date(last.at).toLocaleString() : ''}
+                      </Text>
+                    </View>
+                  </View>
+                );
+              })()}
+
+              {/* Pass Gate form — only for current open gate with no fill placeholders */}
+              {stage.is_current && stage.status !== 'PASSED' && !detail.has_unfilled_placeholders && (
+                <View style={{ gap: 8 }}>
+                  {!showGateForm ? (
+                    <Pressable
+                      onPress={() => setShowGateForm(true)}
+                      style={({ pressed }) => ({
+                        flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+                        gap: 7, paddingVertical: 11, borderRadius: 10,
+                        backgroundColor: pressed ? '#22c55ecc' : '#22c55e',
+                      })}
+                    >
+                      <Feather name="check-circle" size={15} color="#fff" />
+                      <Text style={{ fontSize: 13, fontFamily: 'Inter_700Bold', color: '#fff' }}>Pass Gate {stage.code}</Text>
+                    </Pressable>
+                  ) : (
+                    <View style={{ gap: 8 }}>
+                      <Text style={{ fontSize: 11, fontFamily: 'Inter_600SemiBold', color: colors.mutedForeground, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                        Record gate pass
+                      </Text>
+                      <TextInput
+                        style={{ borderWidth: 1, borderColor: colors.border, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, fontSize: 13, fontFamily: 'Inter_400Regular', color: colors.foreground, backgroundColor: colors.background }}
+                        placeholder="Your name (required)"
+                        placeholderTextColor={colors.mutedForeground}
+                        value={authorInput}
+                        onChangeText={setAuthorInput}
+                        returnKeyType="next"
+                      />
+                      <TextInput
+                        style={{ borderWidth: 1, borderColor: colors.border, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, fontSize: 13, fontFamily: 'Inter_400Regular', color: colors.foreground, backgroundColor: colors.background, minHeight: 60, textAlignVertical: 'top' }}
+                        placeholder="Rationale for passing (optional)"
+                        placeholderTextColor={colors.mutedForeground}
+                        value={noteInput}
+                        onChangeText={setNoteInput}
+                        multiline
+                      />
+                      <View style={{ flexDirection: 'row', gap: 8 }}>
+                        <Pressable
+                          onPress={() => { setShowGateForm(false); setAuthorInput(''); setNoteInput(''); }}
+                          style={({ pressed }) => ({ flex: 1, alignItems: 'center', paddingVertical: 10, borderRadius: 8, borderWidth: 1, borderColor: colors.border, opacity: pressed ? 0.7 : 1 })}
+                        >
+                          <Text style={{ fontSize: 13, fontFamily: 'Inter_500Medium', color: colors.mutedForeground }}>Cancel</Text>
+                        </Pressable>
+                        <Pressable
+                          onPress={handlePassGate}
+                          disabled={gating || !authorInput.trim()}
+                          style={({ pressed }) => ({ flex: 2, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 6, paddingVertical: 10, borderRadius: 8, backgroundColor: !authorInput.trim() || gating ? '#22c55e55' : '#22c55e', opacity: pressed ? 0.8 : 1 })}
+                        >
+                          {gating ? <ActivityIndicator size="small" color="#fff" /> : <Feather name="check-circle" size={14} color="#fff" />}
+                          <Text style={{ fontSize: 13, fontFamily: 'Inter_700Bold', color: '#fff' }}>
+                            {gating ? 'Recording…' : 'Confirm Pass'}
+                          </Text>
+                        </Pressable>
+                      </View>
+                    </View>
+                  )}
+                </View>
+              )}
+            </>
+          ) : null}
+        </View>
+      )}
+
+      {/* Full artifact modal */}
+      <Modal visible={artifactModalOpen} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setArtifactModalOpen(false)}>
+        <View style={{ flex: 1, backgroundColor: colors.background }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', padding: 16, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border }}>
+            <Text style={{ flex: 1, fontSize: 16, fontFamily: 'Inter_600SemiBold', color: colors.foreground }}>
+              {stage.code} — {stage.name}
+            </Text>
+            <Pressable onPress={() => setArtifactModalOpen(false)} hitSlop={12}>
+              <Feather name="x" size={20} color={colors.mutedForeground} />
+            </Pressable>
+          </View>
+          <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16 }}>
+            <Text style={{ fontSize: 13, fontFamily: 'Inter_400Regular', color: colors.foreground, lineHeight: 20 }}>
+              {detail?.content ?? ''}
+            </Text>
+          </ScrollView>
+        </View>
+      </Modal>
+    </View>
+  );
+}
+
+function GenesisTab({ workId, colors }: { workId: string; colors: any }) {
+  const domain = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
+  const [book, setBook] = useState<GenesisBook | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [notFound, setNotFound] = useState(false);
+  const [fetchError, setFetchError] = useState('');
+
+  // Init form state
+  const [initMode, setInitMode] = useState<'cold' | 'library'>('cold');
+  const [initLength, setInitLength] = useState('80');
+  const [initActs, setInitActs] = useState<3 | 4 | 5>(4);
+  const [initing, setIniting] = useState(false);
+
+  // Ledger verify state
+  const [verifying, setVerifying] = useState(false);
+  const [verifyResult, setVerifyResult] = useState<{ ok: boolean; message: string } | null>(null);
+
+  // Seal state
+  const [sealAuthor, setSealAuthor] = useState('');
+  const [showSealForm, setShowSealForm] = useState(false);
+  const [sealing, setSealing] = useState(false);
+
+  const fetchBook = useCallback(async () => {
+    setLoading(true);
+    setFetchError('');
+    try {
+      const r = await mobileFetch(`https://${domain}/api/works/${workId}/genesis`);
+      if (r.status === 404) { setNotFound(true); setBook(null); return; }
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const data = await r.json();
+      setBook(data);
+      setNotFound(false);
+    } catch (e: any) {
+      setFetchError(e?.message ?? 'Could not load Genesis data');
+    } finally {
+      setLoading(false);
+    }
+  }, [domain, workId]);
+
+  useEffect(() => { fetchBook(); }, [fetchBook]);
+
+  const handleInit = async () => {
+    const len = parseInt(initLength, 10);
+    if (isNaN(len) || len < 10 || len > 500) {
+      Alert.alert('Invalid length', 'Target chapters must be between 10 and 500.');
+      return;
+    }
+    setIniting(true);
+    try {
+      const r = await mobileFetch(`https://${domain}/api/works/${workId}/genesis`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: initMode, length: len, acts: initActs }),
+      });
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}));
+        Alert.alert('Init failed', (body as any).detail ?? 'Could not start GENESIS');
+        return;
+      }
+      const data = await r.json();
+      setBook(data);
+      setNotFound(false);
+    } catch (e: any) {
+      Alert.alert('Error', e?.message ?? 'Init failed');
+    } finally {
+      setIniting(false);
+    }
+  };
+
+  const handleVerify = async () => {
+    setVerifying(true);
+    setVerifyResult(null);
+    try {
+      const r = await mobileFetch(`https://${domain}/api/works/${workId}/genesis/verify`);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      setVerifyResult(await r.json());
+    } catch (e: any) {
+      setVerifyResult({ ok: false, message: e?.message ?? 'Verify failed' });
+    } finally {
+      setVerifying(false);
+    }
+  };
+
+  const handleSeal = async () => {
+    if (!sealAuthor.trim()) {
+      Alert.alert('Author required', 'Enter your name to sign off the seal.');
+      return;
+    }
+    setSealing(true);
+    try {
+      const r = await mobileFetch(`https://${domain}/api/works/${workId}/genesis/seal`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ author: sealAuthor.trim() }),
+      });
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}));
+        Alert.alert('Seal failed', (body as any).detail ?? 'Could not seal package');
+        return;
+      }
+      setShowSealForm(false);
+      setSealAuthor('');
+      await fetchBook();
+    } catch (e: any) {
+      Alert.alert('Error', e?.message ?? 'Seal failed');
+    } finally {
+      setSealing(false);
+    }
+  };
+
+  // ── Render ──────────────────────────────────────────────────────────────────
+
+  if (loading) {
+    return <View style={styles.centered}><ActivityIndicator color={colors.primary} /></View>;
+  }
+
+  if (fetchError) {
+    return (
+      <View style={styles.centered}>
+        <Feather name="alert-circle" size={28} color={colors.mutedForeground} />
+        <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>{fetchError}</Text>
+        <Pressable onPress={fetchBook} style={[styles.retryBtn, { borderColor: colors.border }]}>
+          <Text style={{ color: colors.primary, fontSize: 13, fontFamily: 'Inter_500Medium' }}>Retry</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
+  // Not found — show init form
+  if (notFound || !book) {
+    return (
+      <ScrollView contentContainerStyle={{ padding: 16, gap: 16 }} keyboardShouldPersistTaps="handled">
+        {/* Header */}
+        <View style={{ alignItems: 'center', paddingVertical: 20, gap: 10 }}>
+          <Feather name="book" size={36} color={colors.mutedForeground} />
+          <Text style={{ fontSize: 18, fontFamily: 'Inter_600SemiBold', color: colors.foreground }}>Start Origination</Text>
+          <Text style={{ fontSize: 13, fontFamily: 'Inter_400Regular', color: colors.mutedForeground, textAlign: 'center', lineHeight: 19 }}>
+            GENESIS is a 10-gate book origination pipeline.{'\n'}Each gate produces a signed artifact in the tamper-evident ledger.
+          </Text>
+        </View>
+
+        {/* Mode picker */}
+        <View style={{ gap: 8 }}>
+          <Text style={{ fontSize: 11, fontFamily: 'Inter_600SemiBold', color: colors.mutedForeground, textTransform: 'uppercase', letterSpacing: 0.6 }}>Mode</Text>
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            {(['cold', 'library'] as const).map((m) => (
+              <Pressable
+                key={m}
+                onPress={() => setInitMode(m)}
+                style={({ pressed }) => ({
+                  flex: 1, paddingVertical: 11, alignItems: 'center', borderRadius: 10, borderWidth: 1,
+                  borderColor: initMode === m ? colors.primary : colors.border,
+                  backgroundColor: initMode === m ? colors.primary + '18' : pressed ? colors.muted : 'transparent',
+                })}
+              >
+                <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: initMode === m ? colors.primary : colors.mutedForeground }}>
+                  {m === 'cold' ? 'COLD' : 'LIBRARY'}
+                </Text>
+                <Text style={{ fontSize: 10, fontFamily: 'Inter_400Regular', color: colors.mutedForeground, marginTop: 2 }}>
+                  {m === 'cold' ? 'Fresh idea' : 'From corpus'}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        </View>
+
+        {/* Length */}
+        <View style={{ gap: 6 }}>
+          <Text style={{ fontSize: 11, fontFamily: 'Inter_600SemiBold', color: colors.mutedForeground, textTransform: 'uppercase', letterSpacing: 0.6 }}>Target Chapters</Text>
+          <TextInput
+            style={{ borderWidth: 1, borderColor: colors.border, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, fontFamily: 'Inter_400Regular', color: colors.foreground, backgroundColor: colors.background }}
+            keyboardType="number-pad"
+            value={initLength}
+            onChangeText={setInitLength}
+            placeholder="80"
+            placeholderTextColor={colors.mutedForeground}
+          />
+        </View>
+
+        {/* Acts */}
+        <View style={{ gap: 6 }}>
+          <Text style={{ fontSize: 11, fontFamily: 'Inter_600SemiBold', color: colors.mutedForeground, textTransform: 'uppercase', letterSpacing: 0.6 }}>Acts</Text>
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            {([3, 4, 5] as const).map((a) => (
+              <Pressable
+                key={a}
+                onPress={() => setInitActs(a)}
+                style={({ pressed }) => ({
+                  flex: 1, paddingVertical: 10, alignItems: 'center', borderRadius: 10, borderWidth: 1,
+                  borderColor: initActs === a ? colors.primary : colors.border,
+                  backgroundColor: initActs === a ? colors.primary + '18' : pressed ? colors.muted : 'transparent',
+                })}
+              >
+                <Text style={{ fontSize: 14, fontFamily: 'Inter_600SemiBold', color: initActs === a ? colors.primary : colors.mutedForeground }}>{a}</Text>
+              </Pressable>
+            ))}
+          </View>
+        </View>
+
+        {/* Start button */}
+        <Pressable
+          onPress={handleInit}
+          disabled={initing}
+          style={({ pressed }) => ({
+            alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 8,
+            paddingVertical: 14, borderRadius: 12,
+            backgroundColor: initing ? colors.muted : pressed ? colors.primary + 'cc' : colors.primary,
+          })}
+        >
+          {initing ? <ActivityIndicator size="small" color="#fff" /> : <Feather name="book" size={16} color="#fff" />}
+          <Text style={{ fontSize: 14, fontFamily: 'Inter_700Bold', color: '#fff' }}>
+            {initing ? 'Starting…' : 'Start GENESIS'}
+          </Text>
+        </Pressable>
+      </ScrollView>
+    );
+  }
+
+  // Compute seal eligibility
+  const allPassed = book.stages.every((s) => s.status === 'PASSED');
+  const isSealed  = book.sealed || book.state === 'READY_FOR_B0';
+  const passedCount = book.stages.filter((s) => s.status === 'PASSED').length;
+
+  return (
+    <ScrollView
+      contentContainerStyle={{ padding: 16, paddingBottom: 40 }}
+      showsVerticalScrollIndicator={false}
+      refreshControl={<RefreshControl refreshing={loading} onRefresh={fetchBook} tintColor={colors.primary} />}
+    >
+      {/* ── Book header card ───────────────────────────────────────────────── */}
+      <View style={{ borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border, borderRadius: 12, backgroundColor: colors.card, padding: 14, gap: 10, marginBottom: 16 }}>
+        {/* State badge */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <Feather name={isSealed ? 'lock' : 'book'} size={16} color={isSealed ? '#22c55e' : colors.primary} />
+            <Text style={{ fontSize: 15, fontFamily: 'Inter_600SemiBold', color: colors.foreground }}>
+              {isSealed ? 'SEALED' : 'DRAFT'}
+            </Text>
+          </View>
+          <View style={{ flex: 1 }} />
+          <View style={{ paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, backgroundColor: colors.muted }}>
+            <Text style={{ fontSize: 10, fontFamily: 'Inter_600SemiBold', color: colors.mutedForeground }}>
+              {book.mode.toUpperCase()} · {book.length} ch · {book.acts} acts
+            </Text>
+          </View>
+        </View>
+
+        {/* Progress bar */}
+        <View style={{ gap: 4 }}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+            <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: colors.mutedForeground }}>
+              {passedCount}/10 gates passed
+            </Text>
+            <Text style={{ fontSize: 11, fontFamily: 'Inter_600SemiBold', color: colors.foreground }}>
+              {Math.round((passedCount / 10) * 100)}%
+            </Text>
+          </View>
+          <View style={{ height: 5, borderRadius: 3, backgroundColor: colors.muted, overflow: 'hidden' }}>
+            <View style={{ height: '100%', width: `${Math.round((passedCount / 10) * 100)}%` as any, backgroundColor: isSealed ? '#22c55e' : colors.primary, borderRadius: 3 }} />
+          </View>
+        </View>
+
+        {/* Ledger entries */}
+        <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: colors.mutedForeground }}>
+          {book.ledger_entries} ledger entries · state: <Text style={{ fontFamily: 'Inter_600SemiBold', color: colors.foreground }}>{book.state}</Text>
+        </Text>
+
+        {/* Seal hash preview */}
+        {isSealed && book.manifest && (() => {
+          let manifest: any = {};
+          try { manifest = typeof book.manifest === 'string' ? JSON.parse(book.manifest) : book.manifest; } catch {}
+          return manifest?.seal_hash ? (
+            <Text style={{ fontSize: 10, fontFamily: 'Inter_400Regular', color: colors.mutedForeground }} numberOfLines={1}>
+              seal: {manifest.seal_hash}
+            </Text>
+          ) : null;
+        })()}
+      </View>
+
+      {/* ── Action bar ─────────────────────────────────────────────────────── */}
+      <View style={{ flexDirection: 'row', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
+        {/* Verify ledger */}
+        <Pressable
+          onPress={handleVerify}
+          disabled={verifying}
+          style={({ pressed }) => ({
+            flexDirection: 'row', alignItems: 'center', gap: 6,
+            paddingHorizontal: 14, paddingVertical: 9, borderRadius: 10, borderWidth: 1,
+            borderColor: verifyResult ? (verifyResult.ok ? '#22c55e88' : '#ef444488') : colors.border,
+            backgroundColor: verifyResult ? (verifyResult.ok ? '#22c55e0a' : '#ef44440a') : (pressed ? colors.muted : 'transparent'),
+            opacity: verifying ? 0.6 : 1,
+          })}
+        >
+          {verifying
+            ? <ActivityIndicator size="small" color={colors.primary} />
+            : <Feather name="shield" size={14} color={verifyResult ? (verifyResult.ok ? '#22c55e' : '#ef4444') : colors.primary} />}
+          <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: verifyResult ? (verifyResult.ok ? '#22c55e' : '#ef4444') : colors.primary }}>
+            {verifying ? 'Verifying…' : verifyResult ? (verifyResult.ok ? '✓ Intact' : '⛔ Tampered') : 'Verify Ledger'}
+          </Text>
+        </Pressable>
+
+        {/* Seal package — visible when all gates passed and not yet sealed */}
+        {allPassed && !isSealed && (
+          <Pressable
+            onPress={() => setShowSealForm(true)}
+            style={({ pressed }) => ({
+              flexDirection: 'row', alignItems: 'center', gap: 6,
+              paddingHorizontal: 14, paddingVertical: 9, borderRadius: 10,
+              backgroundColor: pressed ? '#22c55ecc' : '#22c55e',
+            })}
+          >
+            <Feather name="lock" size={14} color="#fff" />
+            <Text style={{ fontSize: 12, fontFamily: 'Inter_700Bold', color: '#fff' }}>Seal Package</Text>
+          </Pressable>
+        )}
+      </View>
+
+      {/* Verify result message */}
+      {verifyResult && (
+        <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8, padding: 10, borderRadius: 10, borderWidth: 1, borderColor: verifyResult.ok ? '#22c55e44' : '#ef444444', backgroundColor: verifyResult.ok ? '#22c55e0a' : '#ef44440a', marginBottom: 12 }}>
+          <Feather name={verifyResult.ok ? 'check-circle' : 'alert-triangle'} size={14} color={verifyResult.ok ? '#22c55e' : '#ef4444'} style={{ marginTop: 1 }} />
+          <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: verifyResult.ok ? '#22c55e' : '#ef4444', flex: 1 }}>
+            {verifyResult.message}
+          </Text>
+        </View>
+      )}
+
+      {/* Seal form */}
+      {showSealForm && (
+        <View style={{ borderWidth: StyleSheet.hairlineWidth, borderColor: '#22c55e55', borderRadius: 12, backgroundColor: '#22c55e08', padding: 14, gap: 10, marginBottom: 16 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <Feather name="lock" size={15} color="#22c55e" />
+            <Text style={{ fontSize: 14, fontFamily: 'Inter_700Bold', color: '#22c55e' }}>Seal the Origination Package</Text>
+          </View>
+          <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: colors.mutedForeground, lineHeight: 18 }}>
+            Sealing locks all ten gates, computes the manifest hash, and marks this Work READY_FOR_B0. The ledger entry is tamper-evident and append-only.
+          </Text>
+          <TextInput
+            style={{ borderWidth: 1, borderColor: colors.border, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, fontSize: 13, fontFamily: 'Inter_400Regular', color: colors.foreground, backgroundColor: colors.background }}
+            placeholder="Author sign-off (required)"
+            placeholderTextColor={colors.mutedForeground}
+            value={sealAuthor}
+            onChangeText={setSealAuthor}
+          />
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            <Pressable onPress={() => { setShowSealForm(false); setSealAuthor(''); }} style={({ pressed }) => ({ flex: 1, alignItems: 'center', paddingVertical: 10, borderRadius: 8, borderWidth: 1, borderColor: colors.border, opacity: pressed ? 0.7 : 1 })}>
+              <Text style={{ fontSize: 13, fontFamily: 'Inter_500Medium', color: colors.mutedForeground }}>Cancel</Text>
+            </Pressable>
+            <Pressable
+              onPress={handleSeal}
+              disabled={sealing || !sealAuthor.trim()}
+              style={({ pressed }) => ({ flex: 2, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 6, paddingVertical: 10, borderRadius: 8, backgroundColor: !sealAuthor.trim() || sealing ? '#22c55e55' : '#22c55e', opacity: pressed ? 0.8 : 1 })}
+            >
+              {sealing ? <ActivityIndicator size="small" color="#fff" /> : <Feather name="lock" size={14} color="#fff" />}
+              <Text style={{ fontSize: 13, fontFamily: 'Inter_700Bold', color: '#fff' }}>{sealing ? 'Sealing…' : 'Seal Package'}</Text>
+            </Pressable>
+          </View>
+        </View>
+      )}
+
+      {/* ── Gate list ───────────────────────────────────────────────────────── */}
+      <Text style={{ fontSize: 11, fontFamily: 'Inter_600SemiBold', color: colors.mutedForeground, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 10 }}>
+        Gates
+      </Text>
+      {book.stages.map((stage) => (
+        <GenesisGateRow
+          key={stage.code}
+          stage={stage}
+          workId={workId}
+          colors={colors}
+          onRefresh={fetchBook}
+        />
+      ))}
+    </ScrollView>
+  );
+}
+
 // ─── Intelligence Tab ────────────────────────────────────────────────────────
 function IntelligenceTab({ workId, onHighGapCount }: { workId: string; onHighGapCount?: (n: number) => void }) {
   const colors = useColors();
@@ -4781,6 +5490,8 @@ export default function WorkDetailScreen() {
         return <BrainstormTab key={brainstormSeed} workId={id} colors={colors} initialSeed={brainstormSeed || qParam} initialContext={brainstormContext} />;
       case 'trailer':
         return <TrailerTab workId={id} colors={colors} />;
+      case 'genesis':
+        return <GenesisTab workId={id} colors={colors} />;
     }
   };
 
