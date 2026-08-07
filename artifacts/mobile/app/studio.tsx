@@ -4125,6 +4125,10 @@ function SavedFileRow({
       return;
     }
     const newName = `${trimmed}.mp3`;
+    // Stop playback before rename — the player key is derived from file.uri,
+    // which changes after moveAsync; leaving it playing would leave the shared
+    // player pointing at a stale key with no visible pause state.
+    if (isPlaying) audio.stop();
     setRenaming(true);
     try {
       await onRename(newName);
