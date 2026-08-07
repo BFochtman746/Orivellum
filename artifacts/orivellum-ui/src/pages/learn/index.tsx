@@ -24,7 +24,7 @@ interface LearnWork extends Work {
 function MasteryRing({ pct, size = 48 }: { pct: number; size?: number }) {
   const r = (size - 8) / 2;
   const circ = 2 * Math.PI * r;
-  const color = pct >= 80 ? "#22c55e" : pct >= 50 ? "#f59e0b" : "#6366f1";
+  const color = pct >= 80 ? "var(--green-2)" : pct >= 50 ? "var(--gilt)" : "var(--ink-soft)";
   return (
     <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="shrink-0 -rotate-90">
       <circle cx={size / 2} cy={size / 2} r={r} fill="none" strokeWidth={6}
@@ -50,7 +50,7 @@ function LearnWorkCard({ work }: { work: LearnWork }) {
     : pct >= 50 ? "In progress"
     : pct > 0   ? "Getting started"
     : "Not started";
-  const masteryColor = pct >= 80 ? "text-green-600" : pct >= 50 ? "text-amber-600" : "text-violet-600";
+  const masteryStyle = pct >= 80 ? { color: 'var(--green-2)' } : pct >= 50 ? { color: 'var(--gilt)' } : { color: 'var(--ink-soft)' };
 
   return (
     <Link href={`/works/${work.id}`}>
@@ -81,7 +81,7 @@ function LearnWorkCard({ work }: { work: LearnWork }) {
                 {work.title}
               </h3>
               {hasConcepts ? (
-                <p className={`text-xs font-mono mt-0.5 ${masteryColor}`}>{masteryLabel}</p>
+                <p className="text-xs font-mono mt-0.5" style={masteryStyle}>{masteryLabel}</p>
               ) : (
                 <p className="text-xs font-mono text-muted-foreground mt-0.5">No concepts seeded</p>
               )}
@@ -165,19 +165,18 @@ export default function LearnPage() {
       {!isLoading && totalConcepts > 0 && (
         <div className="grid grid-cols-3 gap-4">
           {[
-            { label: "Total Concepts", value: totalConcepts, icon: Target, color: "text-violet-500" },
-            { label: "Graduated", value: totalGraduated, icon: GraduationCap, color: "text-green-500" },
-            { label: "Overall Mastery", value: `${overallPct}%`, icon: TrendingUp, color: "text-primary" },
-          ].map(({ label, value, icon: Icon, color }) => (
-            <Card key={label} className="bg-card">
-              <CardContent className="p-4 flex items-center gap-3">
-                <Icon className={`w-5 h-5 shrink-0 ${color}`} />
-                <div>
-                  <div className="text-2xl font-serif font-semibold">{value}</div>
-                  <div className="text-[10px] font-mono uppercase text-muted-foreground">{label}</div>
-                </div>
-              </CardContent>
-            </Card>
+            { label: "Total Concepts",  value: totalConcepts,       icon: Target,       tokenColor: 'var(--green-raw)', tokenBg: 'var(--green-soft)' },
+            { label: "Graduated",       value: totalGraduated,      icon: GraduationCap, tokenColor: 'var(--gilt)',      tokenBg: 'var(--gilt-soft)' },
+            { label: "Overall Mastery", value: `${overallPct}%`,    icon: TrendingUp,   tokenColor: 'var(--green-2)',   tokenBg: 'var(--green-soft)' },
+          ].map(({ label, value, icon: Icon, tokenColor, tokenBg }) => (
+            <div key={label} className="vellum-card p-4 flex items-center gap-3"
+                 style={{ background: tokenBg }}>
+              <Icon className="w-5 h-5 shrink-0" style={{ color: tokenColor }} />
+              <div>
+                <div className="text-2xl font-serif font-semibold" style={{ color: tokenColor }}>{value}</div>
+                <div className="text-[10px] font-mono uppercase" style={{ color: tokenColor, opacity: 0.7 }}>{label}</div>
+              </div>
+            </div>
           ))}
         </div>
       )}
@@ -206,8 +205,8 @@ export default function LearnPage() {
         <div className="space-y-6">
           {worksWithConcepts.length > 0 && (
             <div className="space-y-3">
-              <h2 className="text-lg font-serif font-semibold flex items-center gap-2">
-                <BookOpen className="w-4 h-4 text-primary" /> Active Study
+              <h2 className="text-lg font-serif font-semibold flex items-center gap-2 text-balance">
+                <BookOpen className="w-4 h-4" style={{ color: 'var(--green-raw)' }} /> Active Study
               </h2>
               <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
                 {worksWithConcepts.map(w => <LearnWorkCard key={w.id} work={w} />)}
