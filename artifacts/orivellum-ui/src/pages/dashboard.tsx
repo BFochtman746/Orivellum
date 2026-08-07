@@ -84,7 +84,7 @@ function CustodianNudgeWidget() {
     <div className="space-y-2">
       <div className="flex items-center gap-2">
         <Bell className="w-4 h-4 text-muted-foreground" />
-        <h2 className="text-sm font-mono uppercase tracking-wider text-muted-foreground">Custodian</h2>
+        <h2 className="section-label-mono !mt-0">Custodian</h2>
       </div>
       <div className="space-y-2">
         {visible.map(nudge => (
@@ -203,8 +203,8 @@ function SuggestionsWidget() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-serif font-semibold flex items-center gap-2">
-          <Sparkles className="w-5 h-5 text-primary" />
+        <h2 className="text-2xl font-serif font-semibold flex items-center gap-2 text-balance">
+          <Sparkles className="w-5 h-5" style={{ color: 'var(--gilt)' }} />
           What to Explore Next
         </h2>
         <Button
@@ -328,12 +328,13 @@ function TopGapsWidget() {
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
-        <h2 className="text-lg font-serif font-semibold flex items-center gap-2">
-          <AlertTriangle className="w-4 h-4 text-amber-500" />
+        <h2 className="text-lg font-serif font-semibold flex items-center gap-2 text-balance">
+          <AlertTriangle className="w-4 h-4" style={{ color: 'var(--rust)' }} />
           Research Gaps
         </h2>
         <div className="flex items-center gap-2">
-          <Badge variant="outline" className="font-mono text-[10px] uppercase text-amber-700 border-amber-200 bg-amber-50/70">
+          <Badge variant="outline" className="font-mono text-[10px] uppercase"
+                 style={{ color: 'var(--rust)', borderColor: 'var(--rust)', background: 'var(--rust-soft)' }}>
             {gaps.filter(g => g.severity === "high").length > 0
               ? `${gaps.filter(g => g.severity === "high").length} high`
               : `${gaps.length} found`}
@@ -412,34 +413,35 @@ export default function Dashboard() {
   return (
     <div className="space-y-8 max-w-5xl animate-in fade-in slide-in-from-bottom-4 duration-500">
 
-      {/* Briefing Header */}
-      <div className="space-y-2">
-        <div className="text-sm font-mono text-muted-foreground uppercase tracking-wider">
+      {/* Briefing Header — VELLUM page-head pattern */}
+      <div className="space-y-0">
+        <span className="eyebrow">
           {briefing
             ? format(new Date(briefing.date || new Date()), "EEEE, MMMM do, yyyy")
             : briefingError
             ? format(new Date(), "EEEE, MMMM do, yyyy")
-            : <Skeleton className="h-4 w-40" />}
-        </div>
-        <h1 className="text-4xl font-serif font-semibold tracking-tight text-foreground">
+            : <Skeleton className="h-3 w-40 inline-block align-middle" />}
+        </span>
+        <h1 className="vellum-h1">
           {loadingBriefing
-            ? <Skeleton className="h-10 w-64" />
+            ? <Skeleton className="h-9 w-64" />
             : briefing?.greeting || "Good morning."}
         </h1>
+        <div className="gilt-rule w-32" />
         {loadingBriefing ? (
-          <Skeleton className="h-6 w-3/4 mt-4" />
+          <Skeleton className="h-5 w-3/4 mt-3" />
         ) : briefingError ? (
-          <p className="text-sm text-muted-foreground font-mono mt-2 flex items-center gap-2">
-            <span className="text-destructive/70">⚠ Could not load workspace briefing.</span>
+          <p className="text-sm font-mono mt-2 flex items-center gap-2" style={{ color: 'var(--rust)' }}>
+            <span>⚠ Could not load workspace briefing.</span>
             <button
               onClick={() => refetchBriefing()}
-              className="underline underline-offset-2 hover:text-foreground transition-colors"
+              className="underline underline-offset-2 hover:opacity-75 transition-opacity"
             >
               Retry
             </button>
           </p>
         ) : (
-          <p className="text-xl text-muted-foreground font-serif italic mt-2 max-w-3xl leading-relaxed">
+          <p className="text-[15px] font-serif italic leading-relaxed max-w-3xl mt-2" style={{ color: 'var(--ink-soft)' }}>
             {briefing?.summary?.work_count
               ? `You have ${briefing.summary.work_count} active work${briefing.summary.work_count !== 1 ? "s" : ""} and ${briefing.summary.pending_task_count ?? 0} pending task${briefing.summary.pending_task_count !== 1 ? "s" : ""} requiring attention.`
               : "Your workspace is ready."}
@@ -490,52 +492,57 @@ export default function Dashboard() {
             </>
           ) : (
             <>
-              {/* CANON */}
+              {/* CANON — forest green tier */}
               <Link href="/library?tier=canon">
-                <div className="group p-4 rounded-xl border border-violet-200/60 bg-violet-50/50 hover:border-violet-300 hover:bg-violet-50 transition-colors cursor-pointer space-y-1 text-center">
-                  <Star className="w-4 h-4 text-violet-500 mx-auto" />
-                  <div className="text-2xl font-serif font-bold text-violet-700">{tierCounts.canon ?? 0}</div>
-                  <div className="text-[9px] font-mono uppercase tracking-wider text-violet-600">Canon</div>
+                <div className="vellum-card tap spring-scale p-4 cursor-pointer space-y-1 text-center"
+                     style={{ background: 'var(--green-soft)', borderColor: 'var(--t-canon)' }}>
+                  <Star className="w-4 h-4 mx-auto" style={{ color: 'var(--t-canon)' }} />
+                  <div className="text-2xl font-serif font-bold" style={{ color: 'var(--t-canon)' }}>{tierCounts.canon ?? 0}</div>
+                  <div className="text-[9px] font-mono uppercase tracking-wider" style={{ color: 'var(--t-canon)' }}>Canon</div>
                 </div>
               </Link>
-              {/* SOURCE */}
+              {/* SOURCE — gilt tier */}
               <Link href="/library?tier=source">
-                <div className="group p-4 rounded-xl border border-blue-200/60 bg-blue-50/50 hover:border-blue-300 hover:bg-blue-50 transition-colors cursor-pointer space-y-1 text-center">
-                  <Library className="w-4 h-4 text-blue-500 mx-auto" />
-                  <div className="text-2xl font-serif font-bold text-blue-700">{tierCounts.source ?? 0}</div>
-                  <div className="text-[9px] font-mono uppercase tracking-wider text-blue-600">Source</div>
+                <div className="vellum-card tap spring-scale p-4 cursor-pointer space-y-1 text-center"
+                     style={{ background: 'var(--gilt-soft)', borderColor: 'var(--gilt-line)' }}>
+                  <Library className="w-4 h-4 mx-auto" style={{ color: 'var(--t-source)' }} />
+                  <div className="text-2xl font-serif font-bold" style={{ color: 'var(--t-source)' }}>{tierCounts.source ?? 0}</div>
+                  <div className="text-[9px] font-mono uppercase tracking-wider" style={{ color: 'var(--t-source)' }}>Source</div>
                 </div>
               </Link>
-              {/* ARTIFACT */}
+              {/* ARTIFACT — warm grey tier */}
               <Link href="/library?tier=artifact">
-                <div className="group p-4 rounded-xl border border-amber-200/60 bg-amber-50/50 hover:border-amber-300 hover:bg-amber-50 transition-colors cursor-pointer space-y-1 text-center">
-                  <FileText className="w-4 h-4 text-amber-500 mx-auto" />
-                  <div className="text-2xl font-serif font-bold text-amber-700">{(tierCounts.artifact ?? 0) + (tierCounts.system ?? 0)}</div>
-                  <div className="text-[9px] font-mono uppercase tracking-wider text-amber-600">Artifact</div>
+                <div className="vellum-card tap spring-scale p-4 cursor-pointer space-y-1 text-center">
+                  <FileText className="w-4 h-4 mx-auto" style={{ color: 'var(--t-artifact)' }} />
+                  <div className="text-2xl font-serif font-bold" style={{ color: 'var(--t-artifact)' }}>{(tierCounts.artifact ?? 0) + (tierCounts.system ?? 0)}</div>
+                  <div className="text-[9px] font-mono uppercase tracking-wider" style={{ color: 'var(--t-artifact)' }}>Artifact</div>
                 </div>
               </Link>
-              {/* Books in progress */}
+              {/* Books in progress — medium green */}
               <Link href="/books">
-                <div className="group p-4 rounded-xl border border-emerald-200/60 bg-emerald-50/50 hover:border-emerald-300 hover:bg-emerald-50 transition-colors cursor-pointer space-y-1 text-center">
-                  <BookMarked className="w-4 h-4 text-emerald-500 mx-auto" />
-                  <div className="text-2xl font-serif font-bold text-emerald-700">{booksInProgress}</div>
-                  <div className="text-[9px] font-mono uppercase tracking-wider text-emerald-600">Books</div>
+                <div className="vellum-card tap spring-scale p-4 cursor-pointer space-y-1 text-center"
+                     style={{ background: 'var(--green-soft)', borderColor: 'var(--line)' }}>
+                  <BookMarked className="w-4 h-4 mx-auto" style={{ color: 'var(--green-2)' }} />
+                  <div className="text-2xl font-serif font-bold" style={{ color: 'var(--green-2)' }}>{booksInProgress}</div>
+                  <div className="text-[9px] font-mono uppercase tracking-wider" style={{ color: 'var(--green-2)' }}>Books</div>
                 </div>
               </Link>
-              {/* Concepts mastered */}
+              {/* Concepts mastered — gilt accent */}
               <Link href="/learn">
-                <div className="group p-4 rounded-xl border border-rose-200/60 bg-rose-50/50 hover:border-rose-300 hover:bg-rose-50 transition-colors cursor-pointer space-y-1 text-center">
-                  <GraduationCap className="w-4 h-4 text-rose-500 mx-auto" />
-                  <div className="text-2xl font-serif font-bold text-rose-700">{conceptsMastered}</div>
-                  <div className="text-[9px] font-mono uppercase tracking-wider text-rose-600">Mastered</div>
+                <div className="vellum-card tap spring-scale p-4 cursor-pointer space-y-1 text-center"
+                     style={{ background: 'var(--gilt-soft)', borderColor: 'var(--gilt-line)' }}>
+                  <GraduationCap className="w-4 h-4 mx-auto" style={{ color: 'var(--gilt)' }} />
+                  <div className="text-2xl font-serif font-bold" style={{ color: 'var(--gilt)' }}>{conceptsMastered}</div>
+                  <div className="text-[9px] font-mono uppercase tracking-wider" style={{ color: 'var(--gilt)' }}>Mastered</div>
                 </div>
               </Link>
-              {/* Knowledge */}
+              {/* Knowledge — forest green primary */}
               <Link href="/works">
-                <div className="group p-4 rounded-xl border border-border/50 bg-card hover:border-primary/30 transition-colors cursor-pointer space-y-1 text-center">
-                  <Target className="w-4 h-4 text-primary mx-auto" />
-                  <div className="text-2xl font-serif font-bold">{summary?.knowledge_count ?? 0}</div>
-                  <div className="text-[9px] font-mono uppercase tracking-wider text-muted-foreground">Knowledge</div>
+                <div className="vellum-card tap spring-scale p-4 cursor-pointer space-y-1 text-center"
+                     style={{ background: 'var(--green-soft)', borderColor: 'var(--line)' }}>
+                  <Target className="w-4 h-4 mx-auto" style={{ color: 'var(--green-raw)' }} />
+                  <div className="text-2xl font-serif font-bold" style={{ color: 'var(--green-raw)' }}>{summary?.knowledge_count ?? 0}</div>
+                  <div className="text-[9px] font-mono uppercase tracking-wider" style={{ color: 'var(--green-raw)' }}>Knowledge</div>
                 </div>
               </Link>
             </>
@@ -553,7 +560,7 @@ export default function Dashboard() {
         {/* Recent Works */}
         <div className="md:col-span-2 space-y-4">
           <div className="flex items-center justify-between">
-            <h2 className="text-2xl font-serif font-semibold">Active Works</h2>
+            <h2 className="text-2xl font-serif font-semibold text-balance">Active Works</h2>
             <Button asChild variant="outline" size="sm" className="font-mono text-xs uppercase tracking-wider">
               <Link href="/works">View All</Link>
             </Button>
@@ -568,7 +575,7 @@ export default function Dashboard() {
             <div className="grid gap-3">
               {summary.recent_works.map((work) => (
                 <Link key={work.id} href={`/works/${work.id}`}>
-                  <Card className="hover-elevate cursor-pointer transition-colors hover:border-primary/50 group">
+                  <Card className="vellum-card tap spring-scale cursor-pointer group" data-interactive>
                     <CardContent className="p-4 flex items-center justify-between">
                       <div className="space-y-1 min-w-0 flex-1">
                         <div className="flex items-center gap-2 flex-wrap">
@@ -657,7 +664,7 @@ export default function Dashboard() {
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <MessageSquare className="w-4 h-4 text-muted-foreground" />
-                <h2 className="text-lg font-serif font-semibold">Conversations</h2>
+                <h2 className="text-lg font-serif font-semibold text-balance">Conversations</h2>
               </div>
               <Button asChild variant="ghost" size="sm" className="h-6 text-xs font-mono text-muted-foreground">
                 <Link href="/chat">View all</Link>
@@ -688,7 +695,9 @@ export default function Dashboard() {
                 ))}
               </div>
             ) : (
-              <p className="text-xs text-muted-foreground italic px-1">No conversations yet.</p>
+              <div className="py-6 text-center" style={{ border: '1px dashed var(--gilt-line)', borderRadius: '12px', background: 'var(--gilt-soft)' }}>
+                <p className="text-[12px] font-mono" style={{ color: 'var(--ink-soft)' }}>No conversations yet.</p>
+              </div>
             )}
           </div>
 
@@ -696,7 +705,7 @@ export default function Dashboard() {
           <div className="space-y-3">
             <div className="flex items-center gap-2">
               <Activity className="w-4 h-4 text-muted-foreground" />
-              <h2 className="text-lg font-serif font-semibold">Activity</h2>
+              <h2 className="text-lg font-serif font-semibold text-balance">Activity</h2>
             </div>
 
             <Card className="bg-muted/10">
@@ -744,8 +753,8 @@ export default function Dashboard() {
                     })}
                   </div>
                 ) : (
-                  <div className="p-8 text-center text-sm text-muted-foreground">
-                    No recent activity to show.
+                  <div className="p-8 text-center">
+                    <p className="text-[12px] font-mono" style={{ color: 'var(--ink-faint)' }}>No recent activity to show.</p>
                   </div>
                 )}
               </CardContent>
