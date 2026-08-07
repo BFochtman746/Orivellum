@@ -91,6 +91,13 @@ function authSource(uri: string) {
   };
 }
 
+/** Format seconds as M:SS for the output list subtitle. */
+function fmtOutputDuration(sec: number): string {
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
+
 function serveUrl(path: string) {
   return `${API}/studio/outputs/serve?path=${encodeURIComponent(path)}`;
 }
@@ -2651,7 +2658,9 @@ function OutputsPanel({
                     {out.name}
                   </Text>
                   <Text style={{ color: colors.mutedForeground, fontSize: 11, fontFamily: 'Inter_400Regular' }}>
-                    {out.kind} · {out.size_bytes >= 1_048_576 ? `${(out.size_bytes / 1_048_576).toFixed(1)} MB` : `${Math.round(out.size_bytes / 1024)} KB`}
+                    {out.label ?? out.kind}
+                    {out.duration_sec != null ? ` · ${fmtOutputDuration(out.duration_sec)}` : ''}
+                    {` · ${out.size_bytes >= 1_048_576 ? `${(out.size_bytes / 1_048_576).toFixed(1)} MB` : `${Math.round(out.size_bytes / 1024)} KB`}`}
                   </Text>
                 </View>
                 {isAudio && (

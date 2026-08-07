@@ -97,6 +97,52 @@ def _rotate_outputs(out_dir: Path) -> None:
         logger.warning("Output rotation failed: %s", exc)
 
 
+# ── Audio duration cache ───────────────────────────────────────────────────────
+# Keyed by (absolute_path_str, mtime_ns) so stale entries auto-invalidate when
+# a file changes.  Process-lifetime cache — small enough that eviction isn't
+# needed (at most _MAX_OUTPUTS entries).
+_OUTPUT_DURATION_CACHE: dict[tuple[str, int], "float | None"] = {}
+
+
+def _probe_duration(path: Path) -> "float | None":
+    """Return audio/video duration in seconds via ffprobe.
+
+    Non-fatal — returns None when ffprobe is absent or the file is unreadable.
+    Results are cached by (path, mtime_ns) so repeated list calls are free.
+    """
+    try:
+        key = (str(path), path.stat().st_mtime_ns)
+    except OSError:
+        return None
+    if key in _OUTPUT_DURATION_CACHE:
+        return _OUTPUT_DURATION_CACHE[key]
+    try:
+        r = subprocess.run(
+            [
+                "ffprobe", "-v", "quiet",
+                "-print_format", "json",
+                "-show_entries", "format=duration",
+                str(path),
+            ],
+            capture_output=True,
+            timeout=3,
+        )
+        dur: "float | None" = None
+        if r.returncode == 0:
+            import json as _jmod
+            data = _jmod.loads(r.stdout)
+            raw = data.get("format", {}).get("duration")
+            if raw is not None:
+                try:
+                    dur = float(raw)
+                except (TypeError, ValueError):
+                    dur = None
+    except Exception:
+        dur = None
+    _OUTPUT_DURATION_CACHE[key] = dur
+    return dur
+
+
 # ── Kokoro ONNX — lazy singleton ─────────────────────────────────────────────
 # Loaded once on first TTS call; models (~500 MB) auto-download to HF cache.
 _kokoro_lock = threading.Lock()
@@ -2633,6 +2679,9 @@ def list_outputs():
         return {"outputs": [], "count": 0}
     files = sorted(out_dir.rglob("*"), key=lambda f: f.stat().st_mtime, reverse=True)
     result = []
+    # Limit ffprobe calls per request; the in-process cache makes subsequent
+    # calls free after the first probe of each file.
+    probe_budget = 10
     for f in files[:200]:
         if not f.is_file():
             continue
@@ -2648,12 +2697,36 @@ def list_outputs():
             kind = "image"
         else:
             kind = "file"
+
+        # ── Human-readable label ──────────────────────────────────────────
+        # Distinguish merged narrations (tts_full_*.mp3), audiobook TTS files
+        # (named after the document title), and raw synthesis clips (tmp*.mp3).
+        name = f.name
+        if kind == "audio":
+            if name.startswith("tts_full_"):
+                label: "str | None" = "Full narration"
+            elif name.startswith("tmp") and name.endswith(".mp3"):
+                label = "Clip"
+            else:
+                label = "Audiobook"
+        else:
+            label = None
+
+        # ── Duration (best-effort) ────────────────────────────────────────
+        duration_sec: "float | None" = None
+        if kind == "audio" and probe_budget > 0:
+            duration_sec = _probe_duration(f)
+            if duration_sec is not None or probe_budget > 0:
+                probe_budget -= 1
+
         rel = str(f.relative_to(out_dir))
         result.append({
             "name": f.name,
             "path": rel,
             "size_bytes": sz,
             "kind": kind,
+            "label": label,
+            "duration_sec": duration_sec,
             "mtime": f.stat().st_mtime,
         })
         if len(result) >= 100:

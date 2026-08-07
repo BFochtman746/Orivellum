@@ -920,6 +920,12 @@ function OutputsGallery() {
     return b >= 1_048_576 ? `${(b / 1_048_576).toFixed(1)} MB` : `${Math.round(b / 1024)} KB`;
   }
 
+  function fmtDuration(sec: number): string {
+    const m = Math.floor(sec / 60);
+    const s = Math.floor(sec % 60);
+    return `${m}:${String(s).padStart(2, "0")}`;
+  }
+
   const images = outputs.filter(o => o.kind === "image");
   const others = outputs.filter(o => o.kind !== "image");
 
@@ -1045,7 +1051,14 @@ function OutputsGallery() {
                   <div className="min-w-0 flex-1">
                     <p className="text-xs font-medium truncate">{out.name}</p>
                     <div className="flex items-center gap-2 mt-0.5">
-                      <Badge variant="outline" className="text-[9px] font-mono uppercase">{out.kind}</Badge>
+                      <Badge variant="outline" className="text-[9px] font-mono uppercase">
+                        {out.label ?? out.kind}
+                      </Badge>
+                      {out.duration_sec != null && (
+                        <span className="text-[10px] font-mono text-muted-foreground">
+                          {fmtDuration(out.duration_sec)}
+                        </span>
+                      )}
                       <span className="text-[10px] font-mono text-muted-foreground">{fmtSize(out.size_bytes)}</span>
                       {playing === out.path && (
                         <span className="text-[10px] font-mono text-primary animate-pulse">▶ playing</span>
