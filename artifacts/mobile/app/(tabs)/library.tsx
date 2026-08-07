@@ -3,7 +3,6 @@ import { mobileFetch } from '@/lib/api';
 import { getApiToken } from '@/lib/token';
 import { readCache, writeCache } from '@/lib/cache';
 import {
-  ActivityIndicator,
   Alert,
   FlatList,
   Platform,
@@ -23,20 +22,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { font } from '@/lib/typography';
 import { useRouter } from 'expo-router';
 import { OfflineBanner, ErrorScreen } from '@/components/OfflineBanner';
-
-const READINESS_COLOR: Record<string, string> = {
-  ready: '#22c55e',
-  imported: '#f59e0b',
-  error: '#ef4444',
-  no_text: '#ef4444',
-};
-
-const READINESS_LABEL: Record<string, string> = {
-  ready: 'Ready',
-  imported: 'Processing',
-  error: 'Error',
-  no_text: 'No Text',
-};
+import { useVellumTokens } from '@/lib/tokens';
+import { SkeletonItem } from '@/components/SkeletonItem';
+import { EmptyState } from '@/components/EmptyState';
 
 const KIND_ICON: Record<string, string> = {
   pdf: 'file-text',
@@ -50,9 +38,35 @@ const KIND_ICON: Record<string, string> = {
   image: 'image',
 };
 
-function DocItem({ doc, colors, onPress, onReprocess }: { doc: any; colors: any; onPress: () => void; onReprocess?: () => void }) {
+const READINESS_LABEL: Record<string, string> = {
+  ready: 'Ready',
+  imported: 'Processing',
+  error: 'Error',
+  no_text: 'No Text',
+};
+
+function DocItem({ doc, colors, T, onPress, onReprocess }: { doc: any; colors: any; T: any; onPress: () => void; onReprocess?: () => void }) {
   const readiness: string = doc.readiness ?? 'imported';
-  const statusColor = READINESS_COLOR[readiness] ?? colors.mutedForeground;
+
+  // Map readiness states to VELLUM tokens
+  const statusColor: string =
+    readiness === 'ready'
+      ? T.green
+      : readiness === 'imported'
+      ? T.gilt
+      : readiness === 'error' || readiness === 'no_text'
+      ? T.rust
+      : colors.mutedForeground;
+
+  const statusBg: string =
+    readiness === 'ready'
+      ? T.greenSoft
+      : readiness === 'imported'
+      ? T.giltSoft
+      : readiness === 'error' || readiness === 'no_text'
+      ? T.rustSoft
+      : 'transparent';
+
   const statusLabel = READINESS_LABEL[readiness] ?? readiness;
   const icon = KIND_ICON[doc.kind ?? 'file'] ?? 'file';
   const title = doc.title || doc.source?.split('/').pop() || 'Untitled';
@@ -62,7 +76,7 @@ function DocItem({ doc, colors, onPress, onReprocess }: { doc: any; colors: any;
       onPress={onPress}
       style={({ pressed }) => [
         styles.docRow,
-        { backgroundColor: colors.card, borderColor: colors.border, opacity: pressed ? 0.7 : 1 },
+        { backgroundColor: colors.card, borderColor: colors.border, opacity: pressed ? 0.7 : 1, minHeight: 44 },
       ]}
     >
       <View style={[styles.docIcon, { backgroundColor: colors.muted }]}>
@@ -80,11 +94,11 @@ function DocItem({ doc, colors, onPress, onReprocess }: { doc: any; colors: any;
           <Text style={[styles.statusLabel, { color: statusColor }]}>{statusLabel}</Text>
           {doc.lifecycle && doc.lifecycle !== 'draft' ? (
             <Text style={[styles.lifecycleBadge, {
-              color: doc.lifecycle === 'canonical' ? '#16a34a'
-                   : doc.lifecycle === 'superseded' ? '#6b7280'
+              color: doc.lifecycle === 'canonical' ? T.green
+                   : doc.lifecycle === 'superseded' ? colors.mutedForeground
                    : colors.mutedForeground,
-              borderColor: doc.lifecycle === 'canonical' ? '#16a34a44'
-                         : doc.lifecycle === 'superseded' ? '#6b728044'
+              borderColor: doc.lifecycle === 'canonical' ? T.giltLine
+                         : doc.lifecycle === 'superseded' ? colors.border
                          : colors.border,
             }]}>
               {doc.lifecycle}
@@ -99,7 +113,7 @@ function DocItem({ doc, colors, onPress, onReprocess }: { doc: any; colors: any;
               matching rather than keyword — helps users understand why a doc
               appeared even though the query words aren't in the title. */}
           {doc.match_type === 'semantic' && (
-            <Text style={[styles.lifecycleBadge, { color: '#7c3aed', borderColor: '#7c3aed44' }]}>
+            <Text style={[styles.lifecycleBadge, { color: T.gilt, borderColor: T.giltLine }]}>
               semantic
             </Text>
           )}
@@ -108,9 +122,12 @@ function DocItem({ doc, colors, onPress, onReprocess }: { doc: any; colors: any;
       {onReprocess && (doc.readiness === 'error' || doc.readiness === 'no_text') && (
         <Pressable
           onPress={(e) => { e.stopPropagation?.(); onReprocess(); }}
-          hitSlop={8}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
           style={({ pressed }) => ({
-            padding: 6,
+            minHeight: 44,
+            minWidth: 44,
+            alignItems: 'center',
+            justifyContent: 'center',
             borderRadius: 6,
             backgroundColor: colors.muted,
             opacity: pressed ? 0.6 : 1,
@@ -127,6 +144,7 @@ function DocItem({ doc, colors, onPress, onReprocess }: { doc: any; colors: any;
 
 export default function LibraryScreen() {
   const colors = useColors();
+  const T = useVellumTokens();
   const insets = useSafeAreaInsets();
   const isWeb = Platform.OS === 'web';
   const router = useRouter();
@@ -387,7 +405,7 @@ export default function LibraryScreen() {
   }, [rawDocs, sortBy, isSearching]);
   const hasData = rawDocs.length > 0 || (listData?.documents?.length ?? 0) > 0;
 
-  const topPad = isWeb ? 67 : 0;
+  const topPad = isWeb ? 67 : insets.top;
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
@@ -416,12 +434,13 @@ export default function LibraryScreen() {
               flexDirection: 'row',
               alignItems: 'center',
               gap: 6,
-              opacity: uploading ? 0.6 : 1,
+              opacity: uploading ? 0.38 : 1,
               marginTop: 4,
+              minHeight: 44,
             })}
           >
             <Feather name={uploading ? 'loader' : 'upload'} size={14} color="#fff" />
-            <Text style={{ color: '#fff', fontSize: 13, fontFamily: 'Inter_600SemiBold' }}>
+            <Text style={{ color: '#fff', fontSize: 13, ...font('semibold') }}>
               {uploading
                 ? uploadTotal > 1
                   ? `Uploading ${uploadIndex} of ${uploadTotal}…`
@@ -437,7 +456,7 @@ export default function LibraryScreen() {
               style={{
                 height: '100%',
                 width: `${uploadProgress}%`,
-                backgroundColor: colors.primary,
+                backgroundColor: T.gilt,
                 borderRadius: 2,
               }}
             />
@@ -449,7 +468,7 @@ export default function LibraryScreen() {
       <View style={[styles.searchRow, { borderBottomColor: colors.border, backgroundColor: colors.background }]}>
         <Feather name="search" size={15} color={colors.mutedForeground} style={styles.searchIcon} />
         <TextInput
-          style={[styles.searchInput, { color: colors.foreground, fontFamily: 'Inter_400Regular' }]}
+          style={[styles.searchInput, { color: colors.foreground, ...font('regular') }]}
           placeholder="Search documents…"
           placeholderTextColor={colors.mutedForeground}
           value={search}
@@ -457,14 +476,14 @@ export default function LibraryScreen() {
           returnKeyType="search"
         />
         {search.length > 0 && (
-          <Pressable onPress={() => setSearch('')} hitSlop={8}>
+          <Pressable onPress={() => setSearch('')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
             <Feather name="x" size={15} color={colors.mutedForeground} />
           </Pressable>
         )}
         {!isSearching && (
           <Pressable
             onPress={() => setShowFilters(v => !v)}
-            hitSlop={8}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
             style={{
               marginLeft: 6,
               paddingHorizontal: 8, paddingVertical: 4,
@@ -490,7 +509,7 @@ export default function LibraryScreen() {
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
-          contentContainerStyle={{ flexDirection: 'row', paddingHorizontal: 12, paddingVertical: 5, gap: 6 }}
+          contentContainerStyle={{ flexDirection: 'row', paddingHorizontal: 16, paddingVertical: 5, gap: 6 }}
           style={{ borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border }}
         >
           {(['hybrid', 'keyword', 'semantic'] as const).map((mode) => {
@@ -508,11 +527,15 @@ export default function LibraryScreen() {
                   borderWidth: 1,
                   borderColor: active ? colors.primary : colors.border,
                   backgroundColor: active ? colors.primary + '18' : 'transparent',
+                  minHeight: 44,
+                  alignItems: 'center',
+                  justifyContent: 'center',
                 }}
               >
                 <Text style={{
                   fontSize: 12,
-                  fontWeight: '500',
+                  lineHeight: 18,
+                  ...font('medium'),
                   color: active ? colors.primary : colors.mutedForeground,
                 }}>
                   {label}
@@ -528,13 +551,13 @@ export default function LibraryScreen() {
       {isSearching && embeddingsDown && searchMode !== 'keyword' && !embeddingsBannerDismissed && (
         <View style={{
           flexDirection: 'row', alignItems: 'center', gap: 8,
-          paddingHorizontal: 14, paddingVertical: 9,
-          backgroundColor: '#92400e12',
+          paddingHorizontal: 16, paddingVertical: 9,
+          backgroundColor: T.giltSoft,
           borderBottomWidth: StyleSheet.hairlineWidth,
-          borderBottomColor: '#f59e0b44',
+          borderBottomColor: T.giltLine,
         }}>
-          <Feather name="alert-triangle" size={13} color="#d97706" />
-          <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: '#92400e', flex: 1 }}>
+          <Feather name="alert-triangle" size={13} color={T.gilt} />
+          <Text style={{ fontSize: 12, lineHeight: 18, ...font('regular'), color: T.gilt, flex: 1 }}>
             Semantic search is offline — showing keyword results only
           </Text>
           <Pressable
@@ -543,7 +566,7 @@ export default function LibraryScreen() {
             accessibilityLabel="Dismiss notice"
             accessibilityRole="button"
           >
-            <Feather name="x" size={14} color="#d97706" />
+            <Feather name="x" size={14} color={T.gilt} />
           </Pressable>
         </View>
       )}
@@ -555,7 +578,7 @@ export default function LibraryScreen() {
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={{
             flexDirection: 'row',
-            paddingHorizontal: 12,
+            paddingHorizontal: 16,
             paddingVertical: 6,
             gap: 6,
           }}
@@ -574,11 +597,15 @@ export default function LibraryScreen() {
               borderWidth: 1,
               borderColor: !workFilter ? colors.primary : colors.border,
               backgroundColor: !workFilter ? colors.primary + '18' : 'transparent',
+              minHeight: 44,
+              alignItems: 'center',
+              justifyContent: 'center',
             }}
           >
             <Text style={{
               fontSize: 12,
-              fontWeight: '500',
+              lineHeight: 18,
+              ...font('medium'),
               color: !workFilter ? colors.primary : colors.mutedForeground,
             }}>All</Text>
           </Pressable>
@@ -594,12 +621,16 @@ export default function LibraryScreen() {
                 borderWidth: 1,
                 borderColor: workFilter === w.id ? colors.primary : colors.border,
                 backgroundColor: workFilter === w.id ? colors.primary + '18' : 'transparent',
+                minHeight: 44,
+                alignItems: 'center',
+                justifyContent: 'center',
               }}
             >
               <Text
                 style={{
                   fontSize: 12,
-                  fontWeight: '500',
+                  lineHeight: 18,
+                  ...font('medium'),
                   color: workFilter === w.id ? colors.primary : colors.mutedForeground,
                   maxWidth: 100,
                 }}
@@ -629,15 +660,16 @@ export default function LibraryScreen() {
             borderWidth: 1,
             borderColor: colors.border,
             backgroundColor: pressed ? colors.muted : colors.card,
+            minHeight: 44,
           })}
           accessibilityRole="link"
           accessibilityLabel="Browse by Topic"
         >
           <Feather name="layers" size={15} color={colors.primary} />
-          <Text style={{ flex: 1, fontSize: 13, fontFamily: 'Inter_500Medium', color: colors.foreground }}>
+          <Text style={{ flex: 1, fontSize: 13, lineHeight: 20, ...font('medium'), color: colors.foreground }}>
             Browse by Topic
           </Text>
-          <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: colors.mutedForeground }}>
+          <Text style={{ fontSize: 11, lineHeight: 18, ...font('regular'), color: colors.mutedForeground }}>
             Semantic clusters
           </Text>
           <Feather name="chevron-right" size={14} color={colors.mutedForeground} />
@@ -649,7 +681,7 @@ export default function LibraryScreen() {
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
-          contentContainerStyle={{ flexDirection: 'row', paddingHorizontal: 12, paddingVertical: 5, gap: 6 }}
+          contentContainerStyle={{ flexDirection: 'row', paddingHorizontal: 16, paddingVertical: 5, gap: 6 }}
           style={{ borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border }}
         >
           {(['newest', 'oldest', 'az', 'za'] as const).map((opt) => {
@@ -667,9 +699,12 @@ export default function LibraryScreen() {
                   borderWidth: 1,
                   borderColor: active ? colors.primary : colors.border,
                   backgroundColor: active ? colors.primary + '18' : 'transparent',
+                  minHeight: 44,
+                  alignItems: 'center',
+                  justifyContent: 'center',
                 }}
               >
-                <Text style={{ fontSize: 12, fontWeight: '500', color: active ? colors.primary : colors.mutedForeground }}>
+                <Text style={{ fontSize: 12, lineHeight: 18, ...font('medium'), color: active ? colors.primary : colors.mutedForeground }}>
                   {label}
                 </Text>
               </Pressable>
@@ -688,8 +723,8 @@ export default function LibraryScreen() {
 
       {/* Body */}
       {isLoading && !hasData ? (
-        <View style={styles.centered}>
-          <ActivityIndicator color={colors.primary} />
+        <View style={{ flex: 1, paddingHorizontal: 16, paddingTop: 12 }}>
+          {[...Array(4)].map((_, i) => <SkeletonItem key={i} />)}
         </View>
       ) : listError && !hasData ? (
         <ErrorScreen
@@ -698,15 +733,11 @@ export default function LibraryScreen() {
           onRetry={refetchList}
         />
       ) : docs.length === 0 ? (
-        <View style={styles.centered}>
-          <Feather name="inbox" size={44} color={colors.mutedForeground} />
-          <Text style={[styles.emptyTitle, { color: colors.foreground }]}>
-            {isSearching ? 'No results' : 'No documents yet'}
-          </Text>
-          <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
-            {isSearching ? 'Try a different search term' : 'Tap Import above to add a document'}
-          </Text>
-        </View>
+        <EmptyState
+          icon="folder"
+          title="No documents"
+          body="Import files from the Dashboard or use the + button."
+        />
       ) : (
         <FlatList
           data={docs}
@@ -715,6 +746,7 @@ export default function LibraryScreen() {
             <DocItem
               doc={item}
               colors={colors}
+              T={T}
               onPress={() => router.push(`/library/${item.id}`)}
               onReprocess={
                 item.readiness === 'error' || item.readiness === 'no_text'
@@ -737,7 +769,7 @@ export default function LibraryScreen() {
           contentContainerStyle={{
             paddingHorizontal: 16,
             paddingTop: 12,
-            paddingBottom: isWeb ? 34 + 50 : insets.bottom + 24,
+            paddingBottom: insets.bottom + 24,
           }}
           showsVerticalScrollIndicator={false}
           ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
@@ -763,9 +795,10 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     borderBottomWidth: 1,
     gap: 8,
+    minHeight: 44,
   },
   searchIcon: {},
-  searchInput: { flex: 1, fontSize: 15, ...font('regular'), paddingVertical: 0 },
+  searchInput: { flex: 1, fontSize: 15, lineHeight: 22, ...font('regular'), paddingVertical: 0 },
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 10, padding: 32 },
   emptyTitle: { fontSize: 17, ...font('semibold'), lineHeight: 22, textAlign: 'center' },
   emptyText: { fontSize: 15, ...font('regular'), textAlign: 'center', lineHeight: 22 },
@@ -776,6 +809,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     padding: 14,
     gap: 12,
+    minHeight: 44,
   },
   docIcon: {
     width: 36,
@@ -786,15 +820,16 @@ const styles = StyleSheet.create({
     flexShrink: 0,
   },
   docMeta: { flex: 1 },
-  docTitle: { fontSize: 14, fontFamily: 'Inter_600SemiBold', marginBottom: 4 },
+  docTitle: { fontSize: 15, lineHeight: 22, ...font('semibold'), marginBottom: 4 },
   docBadges: { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
-  kindBadge: { fontSize: 10, fontFamily: 'Inter_500Medium' },
+  kindBadge: { fontSize: 11, letterSpacing: 0.6, ...font('medium') },
   statusDot: { width: 6, height: 6, borderRadius: 3 },
-  statusLabel: { fontSize: 10, fontFamily: 'Inter_500Medium' },
-  wordCount: { fontSize: 10, fontFamily: 'Inter_400Regular' },
+  statusLabel: { fontSize: 12, lineHeight: 18, ...font('medium') },
+  wordCount: { fontSize: 12, lineHeight: 18, ...font('regular') },
   lifecycleBadge: {
-    fontSize: 10,
-    fontFamily: 'Inter_500Medium',
+    fontSize: 11,
+    lineHeight: 16,
+    ...font('medium'),
     borderWidth: 1,
     borderRadius: 4,
     paddingHorizontal: 5,
