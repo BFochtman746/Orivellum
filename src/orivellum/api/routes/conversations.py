@@ -376,13 +376,21 @@ async def get_memory(
     """
     db = get_db()
     if q and q.strip():
-        # Hybrid three-channel retrieval path
+        # Hybrid retrieval + three-stage reranking path
         try:
-            from orivellum.capabilities.memory import search_memories
-            facts = search_memories(q.strip(), db, limit=20)
+            from orivellum.capabilities.memory import search_and_rerank_memories
+            facts, rmeta = search_and_rerank_memories(q.strip(), db, limit=20)
         except Exception:
-            facts = []
-        return {"facts": facts, "total": len(facts), "query": q.strip()}
+            facts, rmeta = [], {}
+        resp: dict = {
+            "facts":            facts,
+            "total":            len(facts),
+            "query":            q.strip(),
+            "retrieval_stages": rmeta.get("retrieval_stages", []),
+            "complexity_score": rmeta.get("complexity_score", 0),
+            "react_used":       rmeta.get("react_used", False),
+        }
+        return resp
 
     # Original path — all current facts ordered by recency
     try:
@@ -3698,16 +3706,19 @@ def _handle_recall_query(
     """
     from orivellum.capabilities.embeddings import semantic_search_conversations
     from orivellum.capabilities.embeddings import hybrid_search_knowledge
-    from orivellum.capabilities.memory import search_memories
+    from orivellum.capabilities.memory import search_and_rerank_memories
 
-    # ── 1. Hybrid memory retrieval (semantic + lexical + graph) ───────────────
-    fact_hits: list[dict] = []
+    # ── 1. Hybrid memory retrieval + three-stage reranking ────────────────────
+    fact_hits:     list[dict] = []
+    recall_stages: dict       = {}
     try:
-        fact_hits = search_memories(user_text, db, limit=8)
+        fact_hits, recall_stages = search_and_rerank_memories(
+            user_text, db, limit=8
+        )
     except Exception:
         # Hard fallback: keyword overlap filter on all current facts
         all_facts = db.get_current_memory_facts(limit=20)
-        q_words = {w for w in user_text.lower().split() if len(w) > 3}
+        q_words   = {w for w in user_text.lower().split() if len(w) > 3}
         fact_hits = [
             f for f in all_facts
             if any(w in f["value"].lower() or w in f["key"].lower()
@@ -3810,11 +3821,21 @@ def _handle_recall_query(
     if sources:
         meta["sources"] = sources
     if fact_hits:
-        # Expose retrieval_source metadata so callers can show provenance
+        # Expose retrieval_source + reranking metadata for provenance
         meta["memory_hits"] = [
-            {"key": f["key"], "retrieval_source": f.get("retrieval_source", "unknown")}
+            {
+                "key":              f["key"],
+                "retrieval_source": f.get("retrieval_source", "unknown"),
+                "rrf_score":        f.get("rrf_score"),
+                "rerank_score":     f.get("rerank_score"),
+                "cross_encoder_score": f.get("cross_encoder_score"),
+            }
             for f in fact_hits[:5]
         ]
+    if recall_stages:
+        meta["retrieval_stages"] = recall_stages.get("retrieval_stages", [])
+        meta["complexity_score"]  = recall_stages.get("complexity_score", 0)
+        meta["react_used"]        = recall_stages.get("react_used", False)
     return reply, meta
 
 
