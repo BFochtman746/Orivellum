@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import {
   Animated,
+  Platform,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -8,6 +9,7 @@ import {
   Text,
   View,
 } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import { useColors } from '@/hooks/useColors';
 import { Feather } from '@expo/vector-icons';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -167,7 +169,12 @@ function WorkCard({ work }: { work: LearnWork }) {
 
   return (
     <Pressable
-      onPress={() => router.push(`/works/${work.id}` as any)}
+      onPress={() => {
+        if (Platform.OS !== 'web') {
+          Haptics.selectionAsync().catch(() => {});
+        }
+        router.push(`/works/${work.id}` as any);
+      }}
       style={({ pressed }) => [
         styles.card,
         { backgroundColor: colors.card, borderColor: colors.border, opacity: pressed ? 0.85 : 1 },

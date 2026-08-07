@@ -38,6 +38,7 @@ import { font } from '@/lib/typography';
 import { SkeletonItem } from '@/components/SkeletonItem';
 import { EmptyState } from '@/components/EmptyState';
 import { mobileFetch } from '@/lib/api';
+import * as Haptics from 'expo-haptics';
 
 const SWIPE_THRESHOLD = 60;  // px to commit a swipe decision
 const SWIPE_EXIT     = 450;  // px card travels before it leaves screen
@@ -210,6 +211,15 @@ function ReviewCard({
   const translateX = useSharedValue(0);
 
   const resolve = async (decision: 'approve' | 'reject' | 'defer') => {
+    // Haptic fires on the JS thread — works whether triggered by button or by
+    // swipe (which already called runOnJS(resolve)).
+    if (Platform.OS !== 'web') {
+      if (decision === 'approve' || decision === 'reject') {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+      } else {
+        Haptics.selectionAsync().catch(() => {});
+      }
+    }
     setPending(decision);
     try {
       const r = await mobileFetch(`${API}/review/${item.id}/resolve`, {

@@ -337,6 +337,10 @@ export default function MemoryScreen() {
   const handleDeleteFact = useCallback((fact: MemoryFact) => {
     // Cancel any active edit for this card before deleting
     if (editingId === fact.id) cancelEdit();
+    // Medium impact when opening the destructive confirmation dialog
+    if (Platform.OS !== 'web') {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+    }
     Alert.alert(
       'Delete memory?',
       `"${fact.key}" will be permanently removed. The AI won't remember this fact in future chats.`,
@@ -354,6 +358,10 @@ export default function MemoryScreen() {
               );
               if (!res.ok) throw new Error(`status ${res.status}`);
               setFacts(prev => prev.filter(f => f.id !== fact.id));
+              // Success notification confirms the fact is permanently gone
+              if (Platform.OS !== 'web') {
+                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+              }
             } catch {
               Alert.alert('Error', 'Could not delete fact. Please try again.');
             } finally {

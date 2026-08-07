@@ -255,6 +255,10 @@ function KnowledgeRow({ item, onReviewed, onDelete }: { item: KnowledgeItem; onR
   const isRejected = status === 'rejected';
 
   const review = async (action: 'approve' | 'reject') => {
+    // Selection haptic on each knowledge review decision
+    if (Platform.OS !== 'web') {
+      Haptics.selectionAsync().catch(() => {});
+    }
     setReviewing(true);
     try {
       const domain = process.env.EXPO_PUBLIC_DOMAIN;
@@ -276,6 +280,9 @@ function KnowledgeRow({ item, onReviewed, onDelete }: { item: KnowledgeItem; onR
 
   const handleLongPress = () => {
     if (!onDelete) return;
+    if (Platform.OS !== 'web') {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+    }
     Alert.alert('Delete Knowledge Item', 'Remove this item?', [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Delete', style: 'destructive', onPress: onDelete },
@@ -349,6 +356,9 @@ function TaskRow({ task, onDelete, onToggle }: { task: Task; onDelete?: () => vo
   const done = task.status === 'done' || task.status === 'complete' || task.status === 'completed';
   const handleLongPress = () => {
     if (!onDelete) return;
+    if (Platform.OS !== 'web') {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+    }
     Alert.alert('Delete Task', `Remove "${task.text}"?`, [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Delete', style: 'destructive', onPress: onDelete },
@@ -2844,7 +2854,10 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
 
   const submitAnswer = async () => {
     if (!session || !answer.trim()) return;
-    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    // Heavy impact on quiz submit — the most committed action in the study session
+    if (Platform.OS !== 'web') {
+      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+    }
     setPhase('assessing');
     try {
       const r = await mobileFetch(`${apiBase}/works/${workId}/learning/assess`, {

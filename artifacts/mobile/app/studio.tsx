@@ -32,6 +32,7 @@ import { font, fontSerif } from '@/lib/typography';
 import { SkeletonItem } from '@/components/SkeletonItem';
 import { mobileFetch } from '@/lib/api';
 import { getApiToken } from '@/lib/token';
+import * as Haptics from 'expo-haptics';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const DOMAIN = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
@@ -795,6 +796,10 @@ function useSharedAudio() {
   };
 
   const toggle = (key: string, uri: string) => {
+    // Light impact on every play/pause action
+    if (Platform.OS !== 'web') {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    }
     if (playingKey === key) {
       stop();
       return;
