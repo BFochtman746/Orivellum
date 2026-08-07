@@ -7,12 +7,14 @@
  * AI knows about them, and lets them:
  *   • Tap a card to edit the value inline (PATCH /api/system/user-memory/{id})
  *   • Long-press or tap the trash icon to delete
+ *   • Swipe left to reveal a delete action
  *   • Clear all at once
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Animated,
   FlatList,
   Platform,
   Pressable,
@@ -22,6 +24,8 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { Swipeable } from 'react-native-gesture-handler';
+import * as Haptics from 'expo-haptics';
 import { useColors } from '@/hooks/useColors';
 import { Feather } from '@expo/vector-icons';
 import { mobileFetch } from '@/lib/api';
@@ -30,7 +34,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useVellumTokens } from '@/lib/tokens';
 import { SkeletonItem } from '@/components/SkeletonItem';
 import { EmptyState } from '@/components/EmptyState';
-import { font } from '@/lib/typography';
+import { font, fontSerif } from '@/lib/typography';
 
 const DOMAIN = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
 const API = `https://${DOMAIN}/api`;
@@ -45,6 +49,197 @@ interface MemoryFact {
   created_at?: string | null;
   updated_at?: string | null;
 }
+
+// ── FactCard component ─────────────────────────────────────────────────────────
+// Wraps each fact row in a Swipeable with its own ref and drag-hint animation.
+
+interface FactCardProps {
+  item: MemoryFact;
+  colors: ReturnType<typeof useColors>;
+  T: ReturnType<typeof useVellumTokens>;
+  isDeleting: boolean;
+  onEdit: (fact: MemoryFact) => void;
+  onDelete: (fact: MemoryFact) => void;
+  formatDate: (iso: string | null | undefined) => string;
+}
+
+function FactCard({ item, colors, T, isDeleting, onEdit, onDelete, formatDate }: FactCardProps) {
+  const swipeRef = useRef<Swipeable>(null);
+  const dragHint = useRef(new Animated.Value(0)).current;
+
+  // Brief drag-hint animation on first mount: slide 8px left then back
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      Animated.sequence([
+        Animated.timing(dragHint, {
+          toValue: -8,
+          duration: 180,
+          useNativeDriver: true,
+        }),
+        Animated.spring(dragHint, {
+          toValue: 0,
+          friction: 6,
+          useNativeDriver: true,
+        }),
+      ]).start();
+    }, 600);
+    return () => clearTimeout(timer);
+  }, [dragHint]);
+
+  const renderRightActions = (
+    progress: Animated.AnimatedInterpolation<number>,
+    dragX: Animated.AnimatedInterpolation<number>,
+  ) => {
+    const scale = dragX.interpolate({
+      inputRange: [-80, -40],
+      outputRange: [1, 0.8],
+      extrapolate: 'clamp',
+    });
+    return (
+      <Pressable
+        onPress={() => {
+          swipeRef.current?.close();
+          onDelete(item);
+        }}
+        style={{
+          width: 72,
+          backgroundColor: T.rust,
+          alignItems: 'center',
+          justifyContent: 'center',
+          borderRadius: 12,
+          marginLeft: 6,
+        }}
+      >
+        <Animated.View style={{ transform: [{ scale }] }}>
+          <Feather name="trash-2" size={20} color="#fff" />
+        </Animated.View>
+        <Text style={{ color: '#fff', fontSize: 11, marginTop: 2, fontFamily: 'Inter_500Medium' }}>
+          Delete
+        </Text>
+      </Pressable>
+    );
+  };
+
+  return (
+    <Swipeable
+      ref={swipeRef}
+      renderRightActions={renderRightActions}
+      rightThreshold={40}
+      overshootRight={false}
+      friction={2}
+      onSwipeableWillOpen={() => {
+        if (Platform.OS !== 'web') {
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+        }
+      }}
+    >
+      <Animated.View style={{ transform: [{ translateX: dragHint }] }}>
+        <Pressable
+          onPress={() => onEdit(item)}
+          onLongPress={() => onDelete(item)}
+          delayLongPress={400}
+          style={({ pressed }) => [
+            styles.factCard,
+            {
+              backgroundColor: colors.card,
+              borderColor: colors.border,
+              opacity: isDeleting || pressed ? 0.5 : 1,
+            },
+          ]}
+          accessibilityLabel={`${item.key}: ${item.value}. Tap to edit. Long press or swipe left to delete.`}
+          accessibilityHint="Tap to edit this memory"
+        >
+          <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
+            <View style={{ flex: 1 }}>
+              {/* Key */}
+              <Text style={[styles.factKey, { color: colors.primary }]} numberOfLines={1}>
+                {item.key}
+              </Text>
+              {/* Current value */}
+              <Text style={[styles.factValue, { color: colors.foreground }]}>
+                {item.value}
+              </Text>
+              {/* Previous value — struck through to show the superseded fact */}
+              {!!item.prev_value && (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 4 }}>
+                  <Feather name="clock" size={10} color={colors.mutedForeground} />
+                  <Text
+                    style={[styles.factPrev, { color: colors.mutedForeground }]}
+                    numberOfLines={1}
+                  >
+                    Previously: {item.prev_value}
+                  </Text>
+                </View>
+              )}
+              {/* Footer: source + date */}
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 6 }}>
+                {item.source ? (
+                  <Text style={[styles.factMeta, { color: colors.mutedForeground }]} numberOfLines={1}>
+                    {item.source}
+                  </Text>
+                ) : <View />}
+                {(item.updated_at ?? item.created_at) && (
+                  <Text style={[styles.factMeta, { color: colors.mutedForeground }]}>
+                    {formatDate(item.updated_at ?? item.created_at)}
+                  </Text>
+                )}
+              </View>
+            </View>
+
+            {/* Action buttons */}
+            <View style={{ gap: 4 }}>
+              {/* Edit button */}
+              <Pressable
+                onPress={() => onEdit(item)}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                disabled={isDeleting}
+                style={({ pressed }) => ({
+                  padding: 6,
+                  marginLeft: 8,
+                  borderRadius: 6,
+                  minHeight: 44,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  backgroundColor: pressed ? colors.primary + '20' : 'transparent',
+                  opacity: isDeleting ? 0.4 : 1,
+                })}
+                accessibilityLabel="Edit this memory"
+                accessibilityRole="button"
+              >
+                <Feather name="edit-2" size={14} color={colors.primary} />
+              </Pressable>
+
+              {/* Delete button */}
+              <Pressable
+                onPress={() => onDelete(item)}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                disabled={isDeleting}
+                style={({ pressed }) => ({
+                  padding: 6,
+                  marginLeft: 8,
+                  borderRadius: 6,
+                  minHeight: 44,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  backgroundColor: pressed ? T.rustSoft : 'transparent',
+                  opacity: isDeleting ? 0.4 : 1,
+                })}
+                accessibilityLabel="Delete this memory"
+                accessibilityRole="button"
+              >
+                {isDeleting
+                  ? <ActivityIndicator size="small" color={colors.mutedForeground} />
+                  : <Feather name="trash-2" size={14} color={T.rust} />}
+              </Pressable>
+            </View>
+          </View>
+        </Pressable>
+      </Animated.View>
+    </Swipeable>
+  );
+}
+
+// ── Main screen ────────────────────────────────────────────────────────────────
 
 export default function MemoryScreen() {
   const colors = useColors();
@@ -295,106 +490,15 @@ export default function MemoryScreen() {
     }
 
     return (
-      <Pressable
-        onPress={() => startEdit(item)}
-        onLongPress={() => handleDeleteFact(item)}
-        delayLongPress={400}
-        style={({ pressed }) => [
-          styles.factCard,
-          {
-            backgroundColor: colors.card,
-            borderColor: colors.border,
-            opacity: isDeleting || pressed ? 0.5 : 1,
-          },
-        ]}
-        accessibilityLabel={`${item.key}: ${item.value}. Tap to edit. Long press to delete.`}
-        accessibilityHint="Tap to edit this memory"
-      >
-        <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
-          <View style={{ flex: 1 }}>
-            {/* Key */}
-            <Text style={[styles.factKey, { color: colors.primary }]} numberOfLines={1}>
-              {item.key}
-            </Text>
-            {/* Current value */}
-            <Text style={[styles.factValue, { color: colors.foreground }]}>
-              {item.value}
-            </Text>
-            {/* Previous value — struck through to show the superseded fact */}
-            {!!item.prev_value && (
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 4 }}>
-                <Feather name="clock" size={10} color={colors.mutedForeground} />
-                <Text
-                  style={[styles.factPrev, { color: colors.mutedForeground }]}
-                  numberOfLines={1}
-                >
-                  Previously: {item.prev_value}
-                </Text>
-              </View>
-            )}
-            {/* Footer: source + date */}
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 6 }}>
-              {item.source ? (
-                <Text style={[styles.factMeta, { color: colors.mutedForeground }]} numberOfLines={1}>
-                  {item.source}
-                </Text>
-              ) : <View />}
-              {(item.updated_at ?? item.created_at) && (
-                <Text style={[styles.factMeta, { color: colors.mutedForeground }]}>
-                  {formatDate(item.updated_at ?? item.created_at)}
-                </Text>
-              )}
-            </View>
-          </View>
-
-          {/* Action buttons */}
-          <View style={{ gap: 4 }}>
-            {/* Edit button */}
-            <Pressable
-              onPress={() => startEdit(item)}
-              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-              disabled={isDeleting}
-              style={({ pressed }) => ({
-                padding: 6,
-                marginLeft: 8,
-                borderRadius: 6,
-                minHeight: 44,
-                alignItems: 'center',
-                justifyContent: 'center',
-                backgroundColor: pressed ? colors.primary + '20' : 'transparent',
-                opacity: isDeleting ? 0.4 : 1,
-              })}
-              accessibilityLabel="Edit this memory"
-              accessibilityRole="button"
-            >
-              <Feather name="edit-2" size={14} color={colors.primary} />
-            </Pressable>
-
-            {/* Delete button */}
-            <Pressable
-              onPress={() => handleDeleteFact(item)}
-              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-              disabled={isDeleting}
-              style={({ pressed }) => ({
-                padding: 6,
-                marginLeft: 8,
-                borderRadius: 6,
-                minHeight: 44,
-                alignItems: 'center',
-                justifyContent: 'center',
-                backgroundColor: pressed ? T.rustSoft : 'transparent',
-                opacity: isDeleting ? 0.4 : 1,
-              })}
-              accessibilityLabel="Delete this memory"
-              accessibilityRole="button"
-            >
-              {isDeleting
-                ? <ActivityIndicator size="small" color={colors.mutedForeground} />
-                : <Feather name="trash-2" size={14} color={T.rust} />}
-            </Pressable>
-          </View>
-        </View>
-      </Pressable>
+      <FactCard
+        item={item}
+        colors={colors}
+        T={T}
+        isDeleting={isDeleting}
+        onEdit={startEdit}
+        onDelete={handleDeleteFact}
+        formatDate={formatDate}
+      />
     );
   };
 
@@ -457,7 +561,7 @@ export default function MemoryScreen() {
       {/* Caption */}
       <Text style={[styles.caption, { color: colors.mutedForeground }]}>
         Facts captured automatically as you chat. Tap to edit,{' '}
-        long-press or tap <Feather name="trash-2" size={11} color={colors.mutedForeground} /> to delete.
+        swipe left or long-press <Feather name="trash-2" size={11} color={colors.mutedForeground} /> to delete.
       </Text>
 
       {/* Body */}
@@ -523,7 +627,7 @@ const styles = StyleSheet.create({
     paddingBottom: 12,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  title: { fontSize: 22, ...font('bold') },
+  title: { fontSize: 22, ...fontSerif('bold') },
   caption: {
     fontSize: 12,
     lineHeight: 18,
