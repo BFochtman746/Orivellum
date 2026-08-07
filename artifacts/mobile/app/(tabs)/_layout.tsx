@@ -519,11 +519,16 @@ function NavBottomSheet({ visible, onClose, audiobookActive = false }: NavBottom
         }),
       ]).start();
     } else {
+      // Close: overdamped spring (tension 180, friction 26) instead of the
+      // old linear 220 ms timing.  High friction prevents any overshoot while
+      // the higher tension makes the sheet snap away faster, giving the same
+      // physical feel as the open spring.
       Animated.parallel([
-        Animated.timing(slideAnim, {
+        Animated.spring(slideAnim, {
           toValue: SHEET_CONTENT_HEIGHT + 60,
-          duration: 220,
           useNativeDriver: true,
+          tension: 180,
+          friction: 26,
         }),
         Animated.timing(fadeAnim, {
           toValue: 0,
