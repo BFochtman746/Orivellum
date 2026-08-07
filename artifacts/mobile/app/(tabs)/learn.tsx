@@ -1,7 +1,5 @@
 import React, { useState } from 'react';
 import {
-  ActivityIndicator,
-  Linking,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -16,6 +14,10 @@ import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { mobileFetch } from '@/lib/api';
 import Svg, { Circle } from 'react-native-svg';
+import { useVellumTokens } from '@/lib/tokens';
+import { SkeletonItem } from '@/components/SkeletonItem';
+import { EmptyState } from '@/components/EmptyState';
+import { font } from '@/lib/typography';
 
 interface LearnWork {
   id: string;
@@ -28,9 +30,10 @@ interface LearnWork {
 }
 
 function MasteryRing({ pct, size = 44 }: { pct: number; size?: number }) {
+  const T = useVellumTokens();
   const r = (size - 6) / 2;
   const circ = 2 * Math.PI * r;
-  const stroke = pct >= 80 ? '#22c55e' : pct >= 50 ? '#f59e0b' : '#6366f1';
+  const stroke = pct >= 80 ? T.green : pct >= 50 ? T.gilt : T.gilt;
 
   return (
     <Svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}
@@ -55,6 +58,7 @@ interface LearnHealth {
 
 function LearningHealthCard() {
   const colors = useColors();
+  const T = useVellumTokens();
   const domain = process.env.EXPO_PUBLIC_DOMAIN;
   const apiBase = domain ? `https://${domain}/api` : 'http://localhost:8000/api';
   const { data } = useQuery<LearnHealth>({
@@ -75,19 +79,19 @@ function LearningHealthCard() {
       icon: 'clock' as const,
       value: data.total_due,
       label: 'due for review',
-      color: data.total_due > 0 ? '#d97706' : colors.mutedForeground,
+      color: data.total_due > 0 ? T.gilt : colors.mutedForeground,
     },
     {
       icon: 'alert-triangle' as const,
       value: data.stuck_count,
       label: 'stuck',
-      color: data.stuck_count > 0 ? '#ef4444' : colors.mutedForeground,
+      color: data.stuck_count > 0 ? T.rust : colors.mutedForeground,
     },
     {
       icon: 'award' as const,
       value: data.graduating_this_week,
       label: 'graduated this week',
-      color: data.graduating_this_week > 0 ? '#16a34a' : colors.mutedForeground,
+      color: data.graduating_this_week > 0 ? T.green : colors.mutedForeground,
     },
   ];
 
@@ -100,7 +104,7 @@ function LearningHealthCard() {
     >
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 10 }}>
         <Feather name="activity" size={13} color={colors.primary} />
-        <Text style={{ fontSize: 10, fontFamily: 'Inter_600SemiBold', color: colors.mutedForeground, letterSpacing: 1 }}>
+        <Text style={{ fontSize: 11, letterSpacing: 0.6, textTransform: 'uppercase', color: colors.mutedForeground, ...font('semibold') }}>
           LEARNING HEALTH
         </Text>
       </View>
@@ -114,10 +118,10 @@ function LearningHealthCard() {
             ]}
           >
             <Feather name={m.icon} size={13} color={m.color} />
-            <Text style={{ fontSize: 18, fontFamily: 'Merriweather_700Bold', color: m.color }}>
+            <Text style={{ fontSize: 18, color: m.color, ...font('bold') }}>
               {m.value}
             </Text>
-            <Text style={{ fontSize: 9, fontFamily: 'Inter_400Regular', color: colors.mutedForeground, textAlign: 'center' }}>
+            <Text style={{ fontSize: 12, lineHeight: 18, color: colors.mutedForeground, textAlign: 'center', ...font('regular') }}>
               {m.label}
             </Text>
           </View>
@@ -129,6 +133,7 @@ function LearningHealthCard() {
 
 function WorkCard({ work }: { work: LearnWork }) {
   const colors = useColors();
+  const T = useVellumTokens();
   const router = useRouter();
   const hasC = work.concept_count > 0;
   const label = work.mastery_pct >= 100 ? 'Mastered'
@@ -136,9 +141,9 @@ function WorkCard({ work }: { work: LearnWork }) {
     : work.mastery_pct >= 50 ? 'In progress'
     : work.mastery_pct > 0 ? 'Getting started'
     : hasC ? 'Not started' : 'No concepts';
-  const labelColor = work.mastery_pct >= 80 ? '#16a34a'
-    : work.mastery_pct >= 50 ? '#b45309'
-    : '#6366f1';
+  const labelColor = work.mastery_pct >= 80 ? T.green
+    : work.mastery_pct >= 50 ? T.gilt
+    : T.rust;
 
   return (
     <Pressable
@@ -251,20 +256,20 @@ export default function LearnScreen() {
       {!isLoading && <LearningHealthCard />}
 
       {isLoading ? (
-        <ActivityIndicator color={colors.primary} style={{ marginTop: 48 }} />
+        <>
+          {[...Array(4)].map((_, i) => <SkeletonItem key={i} lines={2} />)}
+        </>
       ) : isError ? (
         <View style={styles.emptyBox}>
           <Feather name="wifi-off" size={28} color={colors.mutedForeground} />
           <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>Could not load data</Text>
         </View>
       ) : works.length === 0 ? (
-        <View style={styles.emptyBox}>
-          <Feather name="award" size={36} color={colors.mutedForeground} />
-          <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>No Works yet</Text>
-          <Text style={[styles.emptyHint, { color: colors.mutedForeground }]}>
-            Create a Work and import documents to start learning
-          </Text>
-        </View>
+        <EmptyState
+          icon="award"
+          title="Nothing to learn yet"
+          body="Add Works and documents to build your learning curriculum."
+        />
       ) : (
         <>
           {withConcepts.length > 0 && (
@@ -277,7 +282,8 @@ export default function LearnScreen() {
             <>
               <Pressable
                 onPress={() => setShowReadyToSeed((v: boolean) => !v)}
-                style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4, marginBottom: showReadyToSeed ? 8 : 4 }}
+                style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4, marginBottom: showReadyToSeed ? 8 : 4, minHeight: 44 }}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
               >
                 <Text style={[styles.sectionLabel, { color: colors.mutedForeground, marginBottom: 0, marginTop: 0 }]}>
                   READY TO SEED ({withKnowledge.length})
@@ -291,7 +297,8 @@ export default function LearnScreen() {
             <>
               <Pressable
                 onPress={() => setShowImportFirst((v: boolean) => !v)}
-                style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4, marginBottom: showImportFirst ? 8 : 4 }}
+                style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4, marginBottom: showImportFirst ? 8 : 4, minHeight: 44 }}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
               >
                 <Text style={[styles.sectionLabel, { color: colors.mutedForeground, marginBottom: 0, marginTop: 0 }]}>
                   IMPORT DOCS FIRST ({empty.length})
@@ -311,32 +318,33 @@ const styles = StyleSheet.create({
   root: { flex: 1 },
   content: { paddingHorizontal: 16, paddingTop: 16 },
   headerRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 4 },
-  pageTitle: { fontSize: 26, fontFamily: 'Merriweather_700Bold' },
-  pageSubtitle: { fontSize: 13, fontFamily: 'Inter_400Regular', marginBottom: 16 },
+  pageTitle: { fontSize: 26, lineHeight: 32, ...font('bold') },
+  pageSubtitle: { fontSize: 15, lineHeight: 22, marginBottom: 16, ...font('regular') },
   statsCard: {
     flexDirection: 'row', borderRadius: 12, borderWidth: 1,
     marginBottom: 20, overflow: 'hidden',
   },
   statCell: { flex: 1, padding: 14, alignItems: 'center', gap: 2 },
-  statValue: { fontSize: 22, fontFamily: 'Merriweather_700Bold' },
-  statLabel: { fontSize: 10, fontFamily: 'Inter_400Regular', textTransform: 'uppercase', letterSpacing: 0.5 },
+  statValue: { fontSize: 22, lineHeight: 28, ...font('bold') },
+  statLabel: { fontSize: 11, letterSpacing: 0.6, textTransform: 'uppercase', ...font('regular') },
   sectionLabel: {
-    fontSize: 10, fontFamily: 'Inter_600SemiBold', letterSpacing: 1.2,
+    fontSize: 11, letterSpacing: 0.6,
     textTransform: 'uppercase', marginBottom: 8, marginTop: 4,
+    ...font('semibold'),
   },
-  card: { borderRadius: 12, borderWidth: 1, padding: 14, marginBottom: 10 },
+  card: { borderRadius: 12, borderWidth: 1, padding: 14, marginBottom: 10, minHeight: 44 },
   cardInner: { flexDirection: 'row', alignItems: 'center', gap: 14 },
   ringWrap: { position: 'relative', width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
-  ringPct: { position: 'absolute', fontSize: 10, fontFamily: 'Inter_600SemiBold' },
+  ringPct: { position: 'absolute', fontSize: 10, ...font('semibold') },
   ringPlaceholder: {
     width: 44, height: 44, borderRadius: 22, borderWidth: 2,
     borderStyle: 'dashed', alignItems: 'center', justifyContent: 'center',
   },
   cardContent: { flex: 1, gap: 2 },
-  cardTitle: { fontSize: 15, fontFamily: 'Inter_600SemiBold' },
-  cardLabel: { fontSize: 12, fontFamily: 'Inter_400Regular' },
-  cardStats: { fontSize: 11, fontFamily: 'Inter_400Regular' },
+  cardTitle: { fontSize: 15, lineHeight: 22, ...font('semibold') },
+  cardLabel: { fontSize: 12, lineHeight: 18, ...font('regular') },
+  cardStats: { fontSize: 12, lineHeight: 18, ...font('regular') },
   emptyBox: { alignItems: 'center', paddingTop: 64, gap: 12 },
-  emptyText: { fontSize: 15, fontFamily: 'Inter_500Medium' },
-  emptyHint: { fontSize: 12, fontFamily: 'Inter_400Regular', textAlign: 'center', maxWidth: 240 },
+  emptyText: { fontSize: 15, lineHeight: 22, ...font('medium') },
+  emptyHint: { fontSize: 12, lineHeight: 18, textAlign: 'center', maxWidth: 240, ...font('regular') },
 });
