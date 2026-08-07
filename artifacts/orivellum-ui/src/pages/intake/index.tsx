@@ -71,33 +71,36 @@ export default function IntakePage() {
   // ── No doc ID — show the empty state / prompt ──────────────────────────────
   if (!docId) {
     return (
-      <div className="max-w-xl mx-auto py-20 text-center space-y-6 animate-in fade-in duration-300">
-        <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-primary/10 border border-primary/20">
-          <Inbox className="w-8 h-8 text-primary" />
+      <div className="max-w-xl mx-auto py-16 text-center space-y-6 animate-in fade-in duration-300">
+        <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl"
+             style={{ background: 'var(--green-soft)', border: '1px solid var(--line)' }}>
+          <Inbox className="w-8 h-8" style={{ color: 'var(--green-raw)' }} />
         </div>
-        <div className="space-y-2">
-          <h1 className="text-2xl font-serif font-semibold">Load anything</h1>
-          <p className="text-muted-foreground text-sm leading-relaxed max-w-sm mx-auto">
+        <div className="space-y-0">
+          <span className="eyebrow">Universal Intake</span>
+          <h1 className="vellum-h1">Load anything</h1>
+          <div className="gilt-rule w-24 mx-auto" />
+          <p className="text-[13px] leading-relaxed max-w-sm mx-auto mt-2.5" style={{ color: 'var(--ink-soft)' }}>
             Import a document to Orivellum and get an instant Intake Profile — what it is,
             where it belongs, and suggested next actions.
           </p>
         </div>
         <div className="flex flex-col sm:flex-row gap-3 justify-center">
           <Button
-            className="gap-2"
+            className="gap-2 min-h-[44px]"
             onClick={() => setLocation("/library?import=1")}
           >
             <Upload className="w-4 h-4" />
             Import a Document
           </Button>
-          <Button variant="outline" className="gap-2" asChild>
+          <Button variant="outline" className="gap-2 min-h-[44px]" asChild>
             <Link href="/library">
               <Library className="w-4 h-4" />
               Browse Library
             </Link>
           </Button>
         </div>
-        <p className="text-xs text-muted-foreground font-mono">
+        <p className="eyebrow" style={{ letterSpacing: '0.12em', opacity: 0.7 }}>
           After import, a toast will link here with the Intake Profile.
         </p>
       </div>
@@ -109,7 +112,7 @@ export default function IntakePage() {
     <div className="max-w-2xl mx-auto space-y-6 animate-in fade-in duration-300">
       {/* Back nav */}
       <div className="flex items-center gap-2">
-        <Button variant="ghost" size="sm" className="gap-1.5 text-muted-foreground" asChild>
+        <Button variant="ghost" size="sm" className="gap-1.5 text-muted-foreground min-h-[44px]" asChild>
           <Link href="/library">
             <ArrowLeft className="w-4 h-4" />
             Library
@@ -117,14 +120,20 @@ export default function IntakePage() {
         </Button>
       </div>
 
-      {/* Page header */}
-      <div className="space-y-1">
-        <div className="flex items-center gap-2">
-          <Sparkles className="w-4 h-4 text-primary" />
-          <h1 className="text-xl font-serif font-semibold">Intake Profile</h1>
-        </div>
-        <p className="text-sm text-muted-foreground font-mono">
-          doc: <code className="bg-muted px-1.5 py-0.5 rounded text-xs">{docId}</code>
+      {/* Page header — VELLUM pattern */}
+      <div>
+        <span className="eyebrow mb-1">Universal Intake</span>
+        <h1 className="vellum-h1 flex items-center gap-2">
+          <Sparkles className="w-5 h-5 shrink-0" style={{ color: 'var(--gilt)' }} />
+          Intake Profile
+        </h1>
+        <div className="gilt-rule w-28" />
+        <p className="text-[12px] mt-1 font-mono" style={{ color: 'var(--ink-faint)' }}>
+          doc:{' '}
+          <code className="px-1.5 py-0.5 rounded text-xs"
+                style={{ background: 'var(--green-soft)', color: 'var(--green-raw)' }}>
+            {docId}
+          </code>
         </p>
       </div>
 
