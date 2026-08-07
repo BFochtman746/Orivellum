@@ -804,12 +804,85 @@ function NativeAppLayout() {
   );
 }
 
+// ── Animated tab bar icon (web) ────────────────────────────────────────────────
+
+/**
+ * Wraps a Feather icon in a React Native core Animated.View for the web tab bar.
+ *
+ * On native the NavBottomSheet uses Reanimated sharedValues; here we use the
+ * react-native Animated API which translates to CSS transitions via
+ * react-native-web — reliably supported without extra Reanimated web config.
+ *
+ * When the tab is selected the icon springs 1 → 1.15 → 1.
+ * When deselected mid-animation it snaps back to 1 immediately.
+ * All motion is suppressed when reduceMotion=true.
+ */
+function AnimatedTabIcon({
+  name,
+  color,
+  size,
+  focused,
+  reduceMotion,
+}: {
+  name: string;
+  color: string;
+  size: number;
+  focused: boolean;
+  reduceMotion: boolean;
+}) {
+  const scale      = useRef(new Animated.Value(1)).current;
+  const prevFocused = useRef(focused);
+
+  useEffect(() => {
+    const wasActive = prevFocused.current;
+    prevFocused.current = focused;
+
+    if (reduceMotion) {
+      scale.setValue(1);
+      return;
+    }
+
+    if (focused && !wasActive) {
+      // Tab selected — spring pulse up then back
+      Animated.sequence([
+        Animated.spring(scale, {
+          toValue: 1.15,
+          useNativeDriver: true,
+          speed: 28,
+          bounciness: 10,
+        }),
+        Animated.spring(scale, {
+          toValue: 1.0,
+          useNativeDriver: true,
+          speed: 22,
+          bounciness: 4,
+        }),
+      ]).start();
+    } else if (!focused && wasActive) {
+      // Tab deselected mid-animation — spring immediately back to rest
+      Animated.spring(scale, {
+        toValue: 1.0,
+        useNativeDriver: true,
+        speed: 22,
+        bounciness: 4,
+      }).start();
+    }
+  }, [focused, reduceMotion]);
+
+  return (
+    <Animated.View style={{ transform: [{ scale }] }}>
+      <Feather name={name as any} size={size} color={color} />
+    </Animated.View>
+  );
+}
+
 // ── Web layout — classic tab bar ───────────────────────────────────────────────
 
 function WebTabLayout() {
-  const colors = useColors();
-  const insets = useSafeAreaInsets();
+  const colors      = useColors();
+  const insets      = useSafeAreaInsets();
   const reviewCount = useReviewCount();
+  const reduceMotion = useReduceMotion();
 
   return (
     <Tabs
@@ -831,15 +904,17 @@ function WebTabLayout() {
         name="index"
         options={{
           title: 'Dashboard',
-          tabBarIcon: ({ color }) => <Feather name="home" size={22} color={color} />,
+          tabBarIcon: ({ color, size, focused }) => (
+            <AnimatedTabIcon name="home" color={color} size={size} focused={focused} reduceMotion={reduceMotion} />
+          ),
         }}
       />
       <Tabs.Screen
         name="conversations"
         options={{
           title: 'Chats',
-          tabBarIcon: ({ color }) => (
-            <Feather name="message-circle" size={22} color={color} />
+          tabBarIcon: ({ color, size, focused }) => (
+            <AnimatedTabIcon name="message-circle" color={color} size={size} focused={focused} reduceMotion={reduceMotion} />
           ),
         }}
       />
@@ -847,7 +922,9 @@ function WebTabLayout() {
         name="works"
         options={{
           title: 'Works',
-          tabBarIcon: ({ color }) => <Feather name="book-open" size={22} color={color} />,
+          tabBarIcon: ({ color, size, focused }) => (
+            <AnimatedTabIcon name="book-open" color={color} size={size} focused={focused} reduceMotion={reduceMotion} />
+          ),
           tabBarBadge: reviewCount > 0 ? reviewCount : undefined,
         }}
       />
@@ -855,42 +932,54 @@ function WebTabLayout() {
         name="intake"
         options={{
           title: 'Load',
-          tabBarIcon: ({ color }) => <Feather name="inbox" size={22} color={color} />,
+          tabBarIcon: ({ color, size, focused }) => (
+            <AnimatedTabIcon name="inbox" color={color} size={size} focused={focused} reduceMotion={reduceMotion} />
+          ),
         }}
       />
       <Tabs.Screen
         name="books"
         options={{
           title: 'Books',
-          tabBarIcon: ({ color }) => <Feather name="book" size={22} color={color} />,
+          tabBarIcon: ({ color, size, focused }) => (
+            <AnimatedTabIcon name="book" color={color} size={size} focused={focused} reduceMotion={reduceMotion} />
+          ),
         }}
       />
       <Tabs.Screen
         name="learn"
         options={{
           title: 'Learn',
-          tabBarIcon: ({ color }) => <Feather name="award" size={22} color={color} />,
+          tabBarIcon: ({ color, size, focused }) => (
+            <AnimatedTabIcon name="award" color={color} size={size} focused={focused} reduceMotion={reduceMotion} />
+          ),
         }}
       />
       <Tabs.Screen
         name="library"
         options={{
           title: 'Library',
-          tabBarIcon: ({ color }) => <Feather name="folder" size={22} color={color} />,
+          tabBarIcon: ({ color, size, focused }) => (
+            <AnimatedTabIcon name="folder" color={color} size={size} focused={focused} reduceMotion={reduceMotion} />
+          ),
         }}
       />
       <Tabs.Screen
         name="write"
         options={{
           title: 'Write',
-          tabBarIcon: ({ color }) => <Feather name="edit-3" size={22} color={color} />,
+          tabBarIcon: ({ color, size, focused }) => (
+            <AnimatedTabIcon name="edit-3" color={color} size={size} focused={focused} reduceMotion={reduceMotion} />
+          ),
         }}
       />
       <Tabs.Screen
         name="actions"
         options={{
           title: 'Actions',
-          tabBarIcon: ({ color }) => <Feather name="zap" size={22} color={color} />,
+          tabBarIcon: ({ color, size, focused }) => (
+            <AnimatedTabIcon name="zap" color={color} size={size} focused={focused} reduceMotion={reduceMotion} />
+          ),
         }}
       />
     </Tabs>
