@@ -786,10 +786,9 @@ async def recommend_voices(body: VoiceRecommendRequest):
     # Fetch top knowledge items for richer context
     with db._lock:
         ki_rows = db._conn.execute(
-            """SELECT ki.title, ki.content FROM knowledge_items ki
-               JOIN objects o ON o.id = ki.id
-               WHERE ki.work_id=? AND ki.review_status != 'rejected'
-               ORDER BY o.created_at DESC LIMIT 12""",
+            """SELECT subject, text FROM knowledge
+               WHERE work_id=? AND review_status != 'rejected'
+               ORDER BY created_at DESC LIMIT 12""",
             (body.work_id,),
         ).fetchall()
         # Fetch a sample of text chunks from work documents
@@ -799,9 +798,25 @@ async def recommend_voices(body: VoiceRecommendRequest):
                WHERE d.work_id=? ORDER BY d.rowid, c.page LIMIT 8""",
             (body.work_id,),
         ).fetchall()
+        # Count all documents linked to this work (including uploaded/processing
+        # ones that haven't produced chunks yet) so we don't misclassify a work
+        # whose documents are still being extracted as having no content.
+        doc_count: int = db._conn.execute(
+            "SELECT COUNT(*) FROM documents WHERE work_id=?",
+            (body.work_id,),
+        ).fetchone()[0]
+
+    # ── Sparse-content early exit ──────────────────────────────────────────────
+    # Skip the LLM only when the work truly has nothing to analyse: no documents
+    # (not even in-flight ones), no knowledge items, and no description text.
+    # Works that have uploaded/processing documents are left to the LLM path so
+    # the user is not told to add documents they have already added.
+    has_content = bool(doc_count or ki_rows or work_desc.strip())
+    if not has_content:
+        return _fallback_recommendation(work_title, body.top_n, no_content=True)
 
     knowledge_text = "\n".join(
-        f"- {r['title']}: {(r['content'] or '')[:200]}" for r in ki_rows
+        f"- {r['subject']}: {(r['text'] or '')[:200]}" for r in ki_rows
     ) or "(no knowledge items yet)"
 
     sample_text = " ".join(r["text"][:300] for r in chunk_rows)[:800] or "(no document text)"
@@ -869,7 +884,7 @@ Return exactly {body.top_n} recommendations, ranked best first."""
 
     if not result.ok or not result.text:
         # Deterministic fallback — score by genre tag overlap
-        return _fallback_recommendation(work_title, body.top_n)
+        return _fallback_recommendation(work_title, body.top_n, no_content=False)
 
     # Parse JSON response
     try:
@@ -897,14 +912,22 @@ Return exactly {body.top_n} recommendations, ranked best first."""
             "genre_analysis": data.get("genre_analysis", ""),
             "narrator_profile": data.get("narrator_profile", ""),
             "recommendations": enriched,
+            "no_content": False,
         }
     except Exception as exc:
         logger.warning("Voice recommend JSON parse failed: %s", exc)
-        return _fallback_recommendation(work_title, body.top_n)
+        return _fallback_recommendation(work_title, body.top_n, no_content=False)
 
 
-def _fallback_recommendation(work_title: str, top_n: int) -> dict:
-    """Return sensible defaults when the LLM is unavailable."""
+def _fallback_recommendation(
+    work_title: str, top_n: int, *, no_content: bool = False
+) -> dict:
+    """Return sensible defaults when the LLM is unavailable or content is sparse.
+
+    ``no_content=True`` signals to the client that the Work has no analysable
+    content yet, so it can display a helpful prompt rather than presenting the
+    curated defaults as personalised AI recommendations.
+    """
     defaults = ["bm_george", "am_puck", "af_sarah", "bf_emma", "am_adam"]
     recs = []
     for vid in defaults[:top_n]:
@@ -918,12 +941,18 @@ def _fallback_recommendation(work_title: str, top_n: int) -> dict:
                 "dimension_match": "Well-rounded dimensions suitable for most audiobook narration",
                 "voice": v,
             })
+    genre_analysis = (
+        "No document content yet — add documents to this Work for a personalised analysis."
+        if no_content
+        else "AI analysis unavailable — showing curated defaults"
+    )
     return {
         "work_id": "",
         "work_title": work_title,
-        "genre_analysis": "AI analysis unavailable — showing curated defaults",
+        "genre_analysis": genre_analysis,
         "narrator_profile": "Well-rounded narrator voices that suit most content",
         "recommendations": recs,
+        "no_content": no_content,
     }
 
 

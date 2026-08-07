@@ -1205,6 +1205,8 @@ interface RecommendResult {
   genre_analysis: string;
   narrator_profile: string;
   recommendations: RecommendRec[];
+  /** True when the Work has no documents/knowledge — curated defaults, not AI picks. */
+  no_content?: boolean;
 }
 
 /**
@@ -1427,8 +1429,21 @@ function VoiceRecommenderCard({
       {/* Results */}
       {result && !loading && (
         <View style={{ gap: 10 }}>
-          {/* Genre analysis */}
-          {!!result.genre_analysis && (
+          {/* No-content notice — shown when the Work has no documents yet */}
+          {result.no_content && (
+            <View style={[vdStyles.infoBox, {
+              borderColor: '#f59e0b55',
+              backgroundColor: '#f59e0b0d',
+            }]}>
+              <Feather name="alert-circle" size={12} color="#f59e0b" />
+              <Text style={{ color: '#f59e0b', fontSize: 12, fontFamily: 'Inter_400Regular', flex: 1, lineHeight: 17 }}>
+                Not enough content to analyse yet — add documents to this Work first. These are curated defaults, not personalised picks.
+              </Text>
+            </View>
+          )}
+
+          {/* Genre analysis — only shown when content exists (AI path) */}
+          {!!result.genre_analysis && !result.no_content && (
             <View style={[vdStyles.infoBox, {
               borderColor: colors.primary + '33',
               backgroundColor: colors.primary + '08',
@@ -1441,7 +1456,7 @@ function VoiceRecommenderCard({
           )}
 
           {/* Narrator profile */}
-          {!!result.narrator_profile && (
+          {!!result.narrator_profile && !result.no_content && (
             <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: colors.mutedForeground, lineHeight: 17 }}>
               Ideal narrator: {result.narrator_profile}
             </Text>
