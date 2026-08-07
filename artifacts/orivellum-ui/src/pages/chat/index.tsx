@@ -1054,6 +1054,12 @@ function MemoryPanel({ apiBase }: { apiBase: string }) {
   const [expandedEvidence, setExpandedEvidence] = useState<Set<string>>(new Set());
   const [showConflicts, setShowConflicts] = useState(false);
   const [resolvingId, setResolvingId] = useState<string | null>(null);
+  // Inline editing
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editValue, setEditValue] = useState("");
+  const [savingId, setSavingId] = useState<string | null>(null);
+  // prevValues keyed by fact key (key is stable across edits; id changes after update)
+  const [prevValues, setPrevValues] = useState<Record<string, string>>({});
 
   const { data, isLoading, refetch, isRefetching } = useQuery<{ facts: MemoryFact[]; total: number }>({
     queryKey: ["memory-facts"],
@@ -1086,6 +1092,46 @@ function MemoryPanel({ apiBase }: { apiBase: string }) {
       next.has(id) ? next.delete(id) : next.add(id);
       return next;
     });
+
+  const startEdit = (f: MemoryFact) => {
+    setEditingId(f.id);
+    setEditValue(f.value);
+    // Collapse evidence panel for the fact being edited
+    setExpandedEvidence(prev => {
+      const next = new Set(prev);
+      next.delete(f.id ?? f.key);
+      return next;
+    });
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setEditValue("");
+  };
+
+  const saveFact = async (factId: string, factKey: string, oldValue: string) => {
+    const trimmed = editValue.trim();
+    if (!trimmed) { cancelEdit(); return; }
+    if (trimmed === oldValue) { cancelEdit(); return; }
+    setSavingId(factId);
+    try {
+      const r = await fetch(`${apiBase}/system/user-memory/${factId}`, {
+        method: "PATCH",
+        headers: { ...buildAuthHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({ value: trimmed }),
+      });
+      if (!r.ok) throw new Error("Failed");
+      // Record the old value keyed by fact key — key is stable after the update
+      setPrevValues(pv => ({ ...pv, [factKey]: oldValue }));
+      setEditingId(null);
+      refetch();
+      toast.success("Memory updated");
+    } catch {
+      toast.error("Could not update memory");
+    } finally {
+      setSavingId(null);
+    }
+  };
 
   const resolveConflict = async (conflictId: string, resolution: string) => {
     setResolvingId(conflictId);
@@ -1215,33 +1261,95 @@ function MemoryPanel({ apiBase }: { apiBase: string }) {
             const typeStyle = MEMORY_TYPE_STYLE[f.memory_type ?? "semantic"] ?? MEMORY_TYPE_STYLE.semantic;
             const hasEvidence = Boolean(f.evidence_text);
             const evidenceOpen = expandedEvidence.has(fid);
+            const isEditing = editingId === fid;
+            const prevVal = prevValues[f.key];
+
             return (
               <div key={fid} className="text-[11px] leading-snug">
-                <div className="flex items-start gap-1 flex-wrap">
-                  <span className={`text-[9px] font-mono font-semibold px-1 py-0.5 rounded shrink-0 mt-px ${typeStyle.cls}`}>
-                    {typeStyle.label}
-                  </span>
-                  <span className="font-mono text-violet-600/80 dark:text-violet-400/80 shrink-0">
-                    {f.key}:
-                  </span>
-                  <span className="text-foreground/80 flex-1">{f.value}</span>
-                  {hasEvidence && (
+                {isEditing ? (
+                  /* ── Edit mode ────────────────────────────────────────── */
+                  <div className="space-y-1.5">
+                    <div className="flex items-center gap-1">
+                      <span className={`text-[9px] font-mono font-semibold px-1 py-0.5 rounded shrink-0 ${typeStyle.cls}`}>
+                        {typeStyle.label}
+                      </span>
+                      <span className="font-mono text-violet-600/80 dark:text-violet-400/80 shrink-0">
+                        {f.key}:
+                      </span>
+                    </div>
+                    <input
+                      // eslint-disable-next-line jsx-a11y/no-autofocus
+                      autoFocus
+                      value={editValue}
+                      onChange={e => setEditValue(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === "Enter") saveFact(fid, f.key, f.value);
+                        if (e.key === "Escape") cancelEdit();
+                      }}
+                      className="w-full text-[11px] border border-violet-400/40 rounded px-2 py-1 bg-background focus:outline-none focus:ring-1 focus:ring-violet-400/50"
+                    />
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        onClick={() => saveFact(fid, f.key, f.value)}
+                        disabled={savingId === fid || !editValue.trim() || editValue.trim() === f.value}
+                        className="text-[9px] px-1.5 py-0.5 rounded bg-violet-500/80 hover:bg-violet-500 text-white disabled:opacity-40 transition-colors flex items-center gap-0.5"
+                      >
+                        {savingId === fid
+                          ? <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                          : <Check className="w-2.5 h-2.5" />}
+                        Save
+                      </button>
+                      <button
+                        onClick={cancelEdit}
+                        className="text-[9px] px-1.5 py-0.5 rounded border border-border/50 hover:bg-muted/50 transition-colors"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  /* ── View mode ────────────────────────────────────────── */
+                  <div className="flex items-start gap-1 flex-wrap group">
+                    <span className={`text-[9px] font-mono font-semibold px-1 py-0.5 rounded shrink-0 mt-px ${typeStyle.cls}`}>
+                      {typeStyle.label}
+                    </span>
+                    <span className="font-mono text-violet-600/80 dark:text-violet-400/80 shrink-0">
+                      {f.key}:
+                    </span>
+                    <span className="text-foreground/80 flex-1">{f.value}</span>
                     <button
-                      onClick={() => toggleEvidence(fid)}
-                      title={evidenceOpen ? "Hide source" : "Show source"}
-                      className="ml-auto shrink-0 text-muted-foreground/40 hover:text-muted-foreground/70 transition-colors"
+                      onClick={() => startEdit(f)}
+                      title="Edit this memory"
+                      className="shrink-0 text-transparent group-hover:text-muted-foreground/40 hover:!text-muted-foreground/70 transition-colors"
                     >
-                      <ChevronDown className={`w-3 h-3 transition-transform ${evidenceOpen ? "rotate-180" : ""}`} />
+                      <Pencil className="w-2.5 h-2.5" />
                     </button>
-                  )}
-                </div>
-                {f.valid_from && (
+                    {hasEvidence && (
+                      <button
+                        onClick={() => toggleEvidence(fid)}
+                        title={evidenceOpen ? "Hide source" : "Show source"}
+                        className="shrink-0 text-muted-foreground/40 hover:text-muted-foreground/70 transition-colors"
+                      >
+                        <ChevronDown className={`w-3 h-3 transition-transform ${evidenceOpen ? "rotate-180" : ""}`} />
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                {/* Previously row — shown after a successful edit */}
+                {!isEditing && prevVal && (
+                  <div className="text-[9px] text-muted-foreground/40 mt-0.5 font-mono truncate">
+                    Previously: {prevVal}
+                  </div>
+                )}
+
+                {!isEditing && f.valid_from && (
                   <div className="text-[9px] text-muted-foreground/40 mt-0.5 font-mono">
                     valid from {f.valid_from.slice(0, 10)}
                     {f.valid_to ? ` → ${f.valid_to.slice(0, 10)}` : ""}
                   </div>
                 )}
-                {hasEvidence && evidenceOpen && (
+                {!isEditing && hasEvidence && evidenceOpen && (
                   <div className="mt-1.5 rounded border border-border/40 bg-muted/30 p-2 space-y-1">
                     <div className="text-[9px] font-semibold text-muted-foreground/60 uppercase tracking-wide">
                       Source · {f.evidence_source_type ?? "conversation"}
