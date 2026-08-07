@@ -18,6 +18,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
@@ -289,6 +290,58 @@ export default function WorkIntelligenceScreen() {
   const [loadingChapterKnowledge,setLoadingChapterKnowledge]= useState<Record<string, boolean>>({});
   // Track which chapters we've already started a fetch for (avoids duplicate requests)
   const fetchedChaptersRef = React.useRef<Set<string>>(new Set());
+
+  // ── Chapter search / filter ────────────────────────────────────────────────
+  const [chapterQuery, setChapterQuery] = useState('');
+  const normalizedQuery = chapterQuery.trim().toLowerCase();
+
+  // When the query changes, auto-expand any chapter whose already-loaded
+  // knowledge contains a match so the user immediately sees the items.
+  useEffect(() => {
+    if (!normalizedQuery) return;
+    const toExpand = new Set<string>();
+    for (const [chId, items] of Object.entries(chapterKnowledge)) {
+      if (items.some(
+        (item: any) =>
+          (item.text    ?? '').toLowerCase().includes(normalizedQuery) ||
+          (item.subject ?? '').toLowerCase().includes(normalizedQuery),
+      )) {
+        toExpand.add(chId);
+      }
+    }
+    if (toExpand.size > 0) {
+      setExpandedChapters(prev => {
+        const next = new Set(prev);
+        toExpand.forEach(chId => next.add(chId));
+        return next;
+      });
+    }
+  }, [normalizedQuery, chapterKnowledge]);
+
+  // Returns true when a chapter row should be visible for the current query.
+  const chapterMatchesQuery = (ch: any): boolean => {
+    if (!normalizedQuery) return true;
+    if ((ch.title ?? '').toLowerCase().includes(normalizedQuery)) return true;
+    const items = chapterKnowledge[ch.id];
+    if (items) {
+      return items.some(
+        (item: any) =>
+          (item.text    ?? '').toLowerCase().includes(normalizedQuery) ||
+          (item.subject ?? '').toLowerCase().includes(normalizedQuery),
+      );
+    }
+    return false;
+  };
+
+  // Filters knowledge items within an expanded panel to matching items only.
+  const filterKnowledge = (items: any[]): any[] => {
+    if (!normalizedQuery) return items;
+    return items.filter(
+      (item: any) =>
+        (item.text    ?? '').toLowerCase().includes(normalizedQuery) ||
+        (item.subject ?? '').toLowerCase().includes(normalizedQuery),
+    );
+  };
 
   const fetchAll = useCallback(async () => {
     setLoading(true);
@@ -667,94 +720,144 @@ export default function WorkIntelligenceScreen() {
       {/* ── Chapter Structure ─────────────────────────────────────────────── */}
       {chapters && chapters.total_chapters > 0 && (
         <Section title={`Chapter Structure (${chapters.total_chapters})`}>
-          {(chapters.documents as any[]).map((doc: any) => (
-            <View key={doc.doc_id} style={{ gap: 6 }}>
-              {/* Only show the doc label when there are multiple source documents */}
-              {chapters.documents.length > 1 && (
-                <Text
-                  style={[s.docGroupLabel, { color: colors.mutedForeground }]}
-                  numberOfLines={1}
-                >
-                  {doc.doc_title}
-                </Text>
-              )}
-              {(doc.chapters as any[]).map((ch: any) => {
-                const isExpanded     = expandedChapters.has(ch.id);
-                const hasKnowledge   = ch.knowledge_count > 0;
-                const knData         = chapterKnowledge[ch.id] ?? null;
-                const knLoading      = loadingChapterKnowledge[ch.id] ?? false;
 
-                return (
-                  <View key={ch.id}>
-                    <Pressable
-                      onPress={hasKnowledge ? () => toggleChapter(ch.id) : undefined}
-                      style={({ pressed }) => [
-                        s.chapterRow,
-                        {
-                          borderColor: isExpanded ? colors.primary + '40' : colors.border,
-                          backgroundColor: isExpanded ? colors.primary + '08' : 'transparent',
-                          opacity: pressed ? 0.7 : 1,
-                        },
-                      ]}
-                    >
-                      {/* Sequence number badge */}
-                      <View style={[s.chapterSeqBadge, { backgroundColor: colors.muted }]}>
-                        <Text style={[s.chapterSeq, { color: colors.mutedForeground }]}>
-                          {ch.seq + 1}
-                        </Text>
-                      </View>
+          {/* Search bar */}
+          <View style={[s.chapterSearchRow, { borderColor: colors.border, backgroundColor: colors.muted + '60' }]}>
+            <Feather name="search" size={13} color={colors.mutedForeground} />
+            <TextInput
+              style={[s.chapterSearchInput, { color: colors.foreground }]}
+              placeholder="Search characters, events, settings…"
+              placeholderTextColor={colors.mutedForeground}
+              value={chapterQuery}
+              onChangeText={setChapterQuery}
+              returnKeyType="search"
+              clearButtonMode="while-editing"
+              autoCorrect={false}
+            />
+            {chapterQuery.length > 0 && (
+              <Pressable onPress={() => setChapterQuery('')} hitSlop={8}>
+                <Feather name="x" size={13} color={colors.mutedForeground} />
+              </Pressable>
+            )}
+          </View>
 
-                      {/* Title */}
-                      <Text
-                        style={[s.chapterTitle, { color: colors.foreground }]}
-                        numberOfLines={2}
-                      >
-                        {ch.title || `Chapter ${ch.seq + 1}`}
-                      </Text>
+          {/* Chapter list */}
+          {(chapters.documents as any[]).map((doc: any) => {
+            // Filter chapters for this document
+            const visibleChapters = (doc.chapters as any[]).filter(chapterMatchesQuery);
+            if (visibleChapters.length === 0) return null;
+            return (
+              <View key={doc.doc_id} style={{ gap: 6 }}>
+                {/* Only show the doc label when there are multiple source documents */}
+                {chapters.documents.length > 1 && (
+                  <Text
+                    style={[s.docGroupLabel, { color: colors.mutedForeground }]}
+                    numberOfLines={1}
+                  >
+                    {doc.doc_title}
+                  </Text>
+                )}
+                {visibleChapters.map((ch: any) => {
+                  const isExpanded   = expandedChapters.has(ch.id);
+                  const hasKnowledge = ch.knowledge_count > 0;
+                  const knData       = chapterKnowledge[ch.id] ?? null;
+                  const knLoading    = loadingChapterKnowledge[ch.id] ?? false;
+                  // When a query is active, filter the displayed knowledge items too
+                  const visibleKn    = knData ? filterKnowledge(knData) : knData;
 
-                      {/* Knowledge count badge + chevron (or dash if empty) */}
-                      {hasKnowledge ? (
-                        <>
-                          <View
-                            style={[
-                              s.knowledgeCountBadge,
-                              {
-                                backgroundColor: colors.primary + '18',
-                                borderColor: colors.primary + '40',
-                              },
-                            ]}
-                          >
-                            <Text style={[s.knowledgeCountText, { color: colors.primary }]}>
-                              {ch.knowledge_count}
-                            </Text>
-                          </View>
-                          <Feather
-                            name={isExpanded ? 'chevron-up' : 'chevron-down'}
-                            size={14}
-                            color={colors.mutedForeground}
-                          />
-                        </>
-                      ) : (
-                        <Text style={[s.noKnowledge, { color: colors.mutedForeground }]}>—</Text>
-                      )}
-                    </Pressable>
-
-                    {/* Expanded knowledge panel */}
-                    {isExpanded && hasKnowledge && (
-                      <View
-                        style={[
-                          s.chapterKnowledgeArea,
-                          { borderColor: colors.primary + '40' },
+                  return (
+                    <View key={ch.id}>
+                      <Pressable
+                        onPress={hasKnowledge ? () => toggleChapter(ch.id) : undefined}
+                        style={({ pressed }) => [
+                          s.chapterRow,
+                          {
+                            borderColor: isExpanded ? colors.primary + '40' : colors.border,
+                            backgroundColor: isExpanded ? colors.primary + '08' : 'transparent',
+                            opacity: pressed ? 0.7 : 1,
+                          },
                         ]}
                       >
-                        <ChapterKnowledgePanel knowledge={knData} loading={knLoading} />
-                      </View>
-                    )}
-                  </View>
-                );
-              })}
+                        {/* Sequence number badge */}
+                        <View style={[s.chapterSeqBadge, { backgroundColor: colors.muted }]}>
+                          <Text style={[s.chapterSeq, { color: colors.mutedForeground }]}>
+                            {ch.seq + 1}
+                          </Text>
+                        </View>
+
+                        {/* Title */}
+                        <Text
+                          style={[s.chapterTitle, { color: colors.foreground }]}
+                          numberOfLines={2}
+                        >
+                          {ch.title || `Chapter ${ch.seq + 1}`}
+                        </Text>
+
+                        {/* Knowledge count badge + chevron (or dash if empty) */}
+                        {hasKnowledge ? (
+                          <>
+                            <View
+                              style={[
+                                s.knowledgeCountBadge,
+                                {
+                                  backgroundColor: colors.primary + '18',
+                                  borderColor: colors.primary + '40',
+                                },
+                              ]}
+                            >
+                              <Text style={[s.knowledgeCountText, { color: colors.primary }]}>
+                                {normalizedQuery && visibleKn != null
+                                  ? `${visibleKn.length}/${ch.knowledge_count}`
+                                  : ch.knowledge_count}
+                              </Text>
+                            </View>
+                            <Feather
+                              name={isExpanded ? 'chevron-up' : 'chevron-down'}
+                              size={14}
+                              color={colors.mutedForeground}
+                            />
+                          </>
+                        ) : (
+                          <Text style={[s.noKnowledge, { color: colors.mutedForeground }]}>—</Text>
+                        )}
+                      </Pressable>
+
+                      {/* Expanded knowledge panel */}
+                      {isExpanded && hasKnowledge && (
+                        <View
+                          style={[
+                            s.chapterKnowledgeArea,
+                            { borderColor: colors.primary + '40' },
+                          ]}
+                        >
+                          <ChapterKnowledgePanel knowledge={visibleKn} loading={knLoading} />
+                        </View>
+                      )}
+                    </View>
+                  );
+                })}
+              </View>
+            );
+          })}
+
+          {/* No-results state when query filters everything out */}
+          {normalizedQuery !== '' &&
+            (chapters.documents as any[]).every(
+              (doc: any) => (doc.chapters as any[]).filter(chapterMatchesQuery).length === 0,
+            ) && (
+            <View style={{ alignItems: 'center', paddingVertical: 16, gap: 6 }}>
+              <Feather name="search" size={20} color={colors.mutedForeground} />
+              <Text style={[s.emptyText, { color: colors.mutedForeground, fontSize: 13, marginTop: 0 }]}>
+                No chapters match "{chapterQuery}"
+              </Text>
+              <Pressable onPress={() => setChapterQuery('')} hitSlop={8}>
+                <Text style={{ fontSize: 12, color: colors.primary, fontFamily: 'Inter_500Medium' }}>
+                  Clear search
+                </Text>
+              </Pressable>
             </View>
-          ))}
+          )}
+
         </Section>
       )}
     </ScrollView>
@@ -873,6 +976,18 @@ const s = StyleSheet.create({
   graphBtnIcon:  { width: 38, height: 38, borderRadius: 9, alignItems: 'center', justifyContent: 'center' },
   graphBtnTitle: { fontSize: 14, fontFamily: 'Inter_600SemiBold', marginBottom: 2 },
   graphBtnSub:   { fontSize: 12, fontFamily: 'Inter_400Regular' },
+
+  // Chapter search bar
+  chapterSearchRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    borderWidth: 1, borderRadius: 8,
+    paddingHorizontal: 10, paddingVertical: 7,
+    marginBottom: 4,
+  },
+  chapterSearchInput: {
+    flex: 1, fontSize: 13, fontFamily: 'Inter_400Regular',
+    paddingVertical: 0, // remove default Android padding
+  },
 
   // Chapter structure
   docGroupLabel: {
