@@ -1628,17 +1628,22 @@ def _pass_memory_promote(db: "OrivellumDB", report: list[str]) -> None:
                     # but memory_type upgraded to 'semantic'.  Preserving
                     # source_conv_id and source_evidence_id keeps the Evidence-
                     # Before-Belief guarantee intact after promotion.
+                    promoted_id = str(uuid.uuid4())
                     db._conn.execute(
                         """INSERT INTO user_memory
                                (id, key, value, memory_type,
                                 valid_from, valid_to, txn_time, created_at,
                                 source_conv_id, source_evidence_id)
                            VALUES (?,?,?,?,?,NULL,?,?,?,?)""",
-                        (str(uuid.uuid4()), key, value, "semantic",
+                        (promoted_id, key, value, "semantic",
                          now, now, now,
                          source_conv_id, source_evidence_id),
                     )
                     db._conn.commit()
+                # Sync the new promoted row into user_memory_fts (v101+).
+                # Called outside the lock because _sync_memory_fts acquires
+                # its own lock internally.
+                db._sync_memory_fts(promoted_id, key, value)
                 promoted += 1
                 logger.debug(
                     "Memory promote: key=%s episodic_count=%d → semantic",

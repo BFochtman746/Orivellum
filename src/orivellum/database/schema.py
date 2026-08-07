@@ -1700,4 +1700,25 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         CREATE INDEX IF NOT EXISTS mc_mem_a    ON memory_conflicts(memory_id_a);
         CREATE INDEX IF NOT EXISTS mc_mem_b    ON memory_conflicts(memory_id_b);
     """),
+
+    # v101 — user_memory FTS5 virtual table for lexical (BM25) recall.
+    #
+    # Both the CREATE and the backfill INSERT are included in this single
+    # version so:
+    #   • The schema_version counter advances only 100 → 101 (never to a
+    #     4-digit value that would permanently skip future v102+ migrations).
+    #   • No gap migration can land between table creation and backfill.
+    #
+    # The migration runner splits on ";" and runs each non-empty statement,
+    # which handles the two-statement body correctly.  SQLite triggers cannot
+    # be expressed here (BEGIN…END contains internal ";"), so FTS sync is
+    # handled in Python by db._sync_memory_fts(), called from every memory
+    # write path: upsert_memory_fact, update_memory_fact, and the nightly
+    # promotion pass.
+    (101, "user_memory FTS5 virtual table for BM25 lexical recall + backfill", """
+        CREATE VIRTUAL TABLE IF NOT EXISTS user_memory_fts
+        USING fts5(key, value, memory_id UNINDEXED, tokenize='porter ascii');
+        INSERT INTO user_memory_fts(rowid, key, value, memory_id)
+        SELECT rowid, key, value, id FROM user_memory
+    """),
 ]

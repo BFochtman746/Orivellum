@@ -4014,6 +4014,31 @@ class OrivellumDB:
     # Bi-temporal memory (v98+)
     # -------------------------------------------------------------------------
 
+    def _sync_memory_fts(self, memory_id: str, key: str, value: str) -> None:
+        """Append the new row to user_memory_fts (v101+).
+
+        Called immediately after an INSERT into user_memory so the FTS index
+        stays in sync without requiring a SQLite trigger (triggers can't be
+        expressed in the semicolon-split migration runner).  Non-fatal on any
+        error — FTS is best-effort; the LIKE fallback in
+        search_memories_lexical kicks in if the table is missing/corrupt.
+        """
+        try:
+            # Fetch the rowid of the row we just inserted (rowid == integer
+            # primary key alias in SQLite; user_memory uses TEXT pk so rowid is
+            # implicit).  We need rowid for the FTS content table link.
+            row = self._conn.execute(
+                "SELECT rowid FROM user_memory WHERE id=?", (memory_id,)
+            ).fetchone()
+            if row:
+                self._conn.execute(
+                    "INSERT INTO user_memory_fts(rowid, key, value, memory_id)"
+                    " VALUES (?,?,?,?)",
+                    (row["rowid"], key, value, memory_id),
+                )
+        except Exception as exc:
+            logger.debug("_sync_memory_fts failed (non-fatal): %s", exc)
+
     def upsert_memory_fact(
         self,
         key: str,
@@ -4029,6 +4054,9 @@ class OrivellumDB:
         with the updated value.  Old rows are never overwritten — they form
         an immutable timeline.
 
+        Also syncs the new row into user_memory_fts (v101+) so the lexical
+        recall channel stays up-to-date without a separate trigger.
+
         Returns True if a change was written, False if the value is unchanged.
         """
         key   = str(key).strip()[:80]
@@ -4038,6 +4066,7 @@ class OrivellumDB:
         if not key or not value:
             return False
         now = _now()
+        new_id = _uuid()
         with self._lock:
             existing = self._conn.execute(
                 "SELECT id, value FROM user_memory WHERE key=? AND valid_to IS NULL",
@@ -4058,10 +4087,12 @@ class OrivellumDB:
                         txn_time, source_conv_id, source_evidence_id, created_at)
                    VALUES (?,?,?,?,?,NULL,?,?,?,?)""",
                 (
-                    _uuid(), key, value, memory_type, now, now,
+                    new_id, key, value, memory_type, now, now,
                     source_conv_id, source_evidence_id, now,
                 ),
             )
+            # Sync FTS index (v101+) — best-effort, non-fatal
+            self._sync_memory_fts(new_id, key, value)
             self._conn.commit()
         return True
 
@@ -4104,13 +4135,16 @@ class OrivellumDB:
                 (now, key),
             )
             # Insert corrected row as the new current version
+            corrected_id = _uuid()
             self._conn.execute(
                 """INSERT INTO user_memory
                        (id, key, value, memory_type, valid_from, valid_to,
                         txn_time, source_conv_id, created_at)
                    VALUES (?,?,?,?,?,NULL,?,NULL,?)""",
-                (_uuid(), key, value, mtype, now, now, now),
+                (corrected_id, key, value, mtype, now, now, now),
             )
+            # Sync FTS index (v101+) — best-effort, non-fatal
+            self._sync_memory_fts(corrected_id, key, value)
             self._conn.commit()
         return True
 
@@ -4190,6 +4224,160 @@ class OrivellumDB:
                     (key,),
                 ).fetchall()
         return [dict(r) for r in rows]
+
+    def search_memories_lexical(
+        self,
+        query: str,
+        limit: int = 20,
+    ) -> list[dict]:
+        """BM25 FTS5 lexical search over current user-memory facts (v101+).
+
+        Queries ``user_memory_fts`` with a sanitized MATCH expression, then
+        JOINs back to ``user_memory`` to filter current (valid_to IS NULL)
+        rows and return the full fact shape.
+
+        bm25() returns *negative* values; ORDER BY ASC places best matches
+        first.  Falls back to a plain LIKE search when the FTS table is not
+        yet available (pre-v101 schema or test isolation DBs).
+
+        Returns an empty list on any error so callers degrade gracefully.
+        """
+        if not query or not query.strip():
+            return []
+
+        # Build a safe FTS5 MATCH expression: each word becomes a quoted
+        # prefix term (e.g. "python"*) joined with OR so any word match
+        # surfaces a candidate.  Quoting handles punctuation that FTS5 would
+        # otherwise treat as query syntax.
+        words = [w.strip() for w in query.split() if len(w.strip()) >= 2][:10]
+        if not words:
+            return []
+        match_expr = " OR ".join(
+            '"{}*"'.format(w.replace('"', '""')) for w in words
+        )
+
+        full_row_sql = """
+            SELECT um.id, um.key, um.value, um.memory_type,
+                   um.valid_from, um.valid_to, um.txn_time,
+                   um.source_conv_id, um.source_evidence_id, um.created_at,
+                   bm25(user_memory_fts) AS bm25_score
+            FROM user_memory_fts
+            JOIN user_memory um ON um.rowid = user_memory_fts.rowid
+            WHERE user_memory_fts MATCH ?
+              AND um.valid_to IS NULL
+            ORDER BY bm25_score ASC
+            LIMIT ?
+        """
+        fallback_sql = """
+            SELECT id, key, value, memory_type,
+                   valid_from, valid_to, txn_time,
+                   source_conv_id, source_evidence_id, created_at
+            FROM user_memory
+            WHERE valid_to IS NULL
+              AND (key LIKE ? OR value LIKE ?)
+            ORDER BY created_at DESC
+            LIMIT ?
+        """
+        with self._lock:
+            try:
+                rows = self._conn.execute(full_row_sql, (match_expr, limit)).fetchall()
+            except Exception:
+                # FTS table not yet built (pre-v101) — plain LIKE fallback
+                like_pat = f"%{query.strip()[:50]}%"
+                try:
+                    rows = self._conn.execute(
+                        fallback_sql, (like_pat, like_pat, limit)
+                    ).fetchall()
+                except Exception:
+                    return []
+        return [dict(r) for r in rows]
+
+    def search_memories_graph(
+        self,
+        query: str,
+        limit: int = 20,
+    ) -> list[dict]:
+        """Graph-channel memory retrieval (v101+).
+
+        Algorithm:
+        1. Tokenise the query into candidate entity terms (≥ 3 chars, no
+           stopwords).
+        2. Look up matching entities in the ``entities`` table (LIKE match
+           on name).
+        3. Traverse one hop along ``edges`` to collect neighbour entity names.
+        4. Scan current memory facts for any mention of the collected entity
+           names (case-insensitive substring match on key + value text).
+        5. Rank by number of matching entities; return top *limit* results.
+
+        Returns [] when no entities can be derived from the query or when
+        the entity graph tables are not present.
+        """
+        _STOPWORDS = frozenset({
+            "the", "is", "in", "on", "at", "to", "a", "an", "and", "or",
+            "for", "of", "with", "by", "from", "about", "what", "how",
+            "when", "where", "who", "do", "does", "did", "my", "me", "i",
+            "you", "it", "this", "that", "was", "are", "be", "been", "has",
+            "have", "had", "not", "but", "so", "if", "can", "get", "got",
+        })
+        terms = [
+            w.lower() for w in query.split()
+            if len(w) >= 3 and w.lower() not in _STOPWORDS
+        ][:8]
+        if not terms:
+            return []
+
+        # ── Step 1–2: find matching entities and their neighbours ──────────
+        entity_names: set[str] = set()
+        try:
+            with self._lock:
+                for term in terms:
+                    rows = self._conn.execute(
+                        "SELECT id, name FROM entities WHERE lower(name) LIKE ? LIMIT 5",
+                        (f"%{term}%",),
+                    ).fetchall()
+                    for r in rows:
+                        entity_names.add(r["name"].lower())
+                        # One-hop: follow outgoing edges to immediate neighbours
+                        nbrs = self._conn.execute(
+                            """SELECT e2.name FROM edges ed
+                               JOIN entities e2 ON e2.id = ed.target_id
+                               WHERE ed.source_id = ? LIMIT 10""",
+                            (r["id"],),
+                        ).fetchall()
+                        for nb in nbrs:
+                            entity_names.add(nb["name"].lower())
+        except Exception as exc:
+            logger.debug("search_memories_graph entity lookup failed: %s", exc)
+            return []
+
+        if not entity_names:
+            return []
+
+        # ── Step 3: scan current memory facts ────────────────────────────
+        try:
+            with self._lock:
+                raw = self._conn.execute(
+                    """SELECT id, key, value, memory_type,
+                              valid_from, valid_to, txn_time,
+                              source_conv_id, source_evidence_id, created_at
+                       FROM user_memory WHERE valid_to IS NULL""",
+                ).fetchall()
+        except Exception as exc:
+            logger.debug("search_memories_graph fact scan failed: %s", exc)
+            return []
+
+        results: list[dict] = []
+        for row in raw:
+            fact = dict(row)
+            text = (fact.get("key", "") + " " + fact.get("value", "")).lower()
+            matched = [e for e in entity_names if e in text]
+            if matched:
+                fact["_graph_matched"] = matched
+                fact["_graph_score"] = len(matched) / max(1, len(entity_names))
+                results.append(fact)
+
+        results.sort(key=lambda x: x["_graph_score"], reverse=True)
+        return results[:limit]
 
     def cleanup_working_memory_ttl(self, ttl_minutes: int | None = None) -> int:
         """Soft-expire working-memory rows that have exceeded their TTL.

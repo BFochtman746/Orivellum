@@ -356,15 +356,35 @@ def delete_conversation(conv_id: str):
 
 
 @router.get("/memory")
-async def get_memory(include_evidence: bool = False) -> dict:
+async def get_memory(
+    q: str | None = None,
+    include_evidence: bool = False,
+) -> dict:
     """Return current (non-superseded) user memory facts, newest first.
+
+    When ``?q=<query>`` is supplied, runs the three-channel hybrid retrieval
+    (semantic + lexical + graph) and returns ranked results with a
+    ``retrieval_source`` field per item ('semantic' | 'lexical' | 'graph' |
+    'multi') and an ``rrf_score`` for each hit.  Without ``?q``, returns all
+    current facts ordered by recency (original behaviour).
 
     Pass ``?include_evidence=1`` (or ``?include_evidence=true``) to include
     the raw source passage that triggered each fact's inference.  Evidence
     fields are prefixed ``evidence_``.  Facts captured before v99 have
     ``source_evidence_id=null`` and all evidence fields will be null.
+    Note: ``include_evidence`` is only applied for the non-query path.
     """
     db = get_db()
+    if q and q.strip():
+        # Hybrid three-channel retrieval path
+        try:
+            from orivellum.capabilities.memory import search_memories
+            facts = search_memories(q.strip(), db, limit=20)
+        except Exception:
+            facts = []
+        return {"facts": facts, "total": len(facts), "query": q.strip()}
+
+    # Original path — all current facts ordered by recency
     try:
         facts = db.get_current_memory_facts(limit=50, include_evidence=include_evidence)
     except Exception:
@@ -3665,23 +3685,38 @@ def _handle_recall_output(
 def _handle_recall_query(
     db: Any, user_text: str, base_url: str, model: str
 ) -> tuple[str, dict]:
-    """Handle a recall intent — semantic search + synthesis with source citations.
+    """Handle a recall intent — hybrid three-channel memory search + synthesis.
 
     Searches:
-      1. Conversation chunks (semantic, with FTS fallback)
-      2. Current user memory facts
-      3. Knowledge items
+      1. User memory facts via ``search_memories`` (semantic + lexical + graph)
+      2. Conversation chunks (semantic, with keyword fallback) for context
+      3. Knowledge items (hybrid FTS + semantic)
 
     Returns (reply_text, meta_dict) where meta contains a ``sources`` list
-    with clickable conversation links.
+    with clickable conversation links and a ``memory_hits`` list with the
+    retrieval_source-annotated memory facts used in the answer.
     """
     from orivellum.capabilities.embeddings import semantic_search_conversations
     from orivellum.capabilities.embeddings import hybrid_search_knowledge
+    from orivellum.capabilities.memory import search_memories
 
-    # ── 1. Search conversation chunks (semantic AND keyword, always combined) ──
-    # Both paths run every time so that chunks without vectors (stored during an
-    # embedding-endpoint outage) are still surfaced via keyword match even when
-    # semantic results exist.  Results are deduplicated by chunk id.
+    # ── 1. Hybrid memory retrieval (semantic + lexical + graph) ───────────────
+    fact_hits: list[dict] = []
+    try:
+        fact_hits = search_memories(user_text, db, limit=8)
+    except Exception:
+        # Hard fallback: keyword overlap filter on all current facts
+        all_facts = db.get_current_memory_facts(limit=20)
+        q_words = {w for w in user_text.lower().split() if len(w) > 3}
+        fact_hits = [
+            f for f in all_facts
+            if any(w in f["value"].lower() or w in f["key"].lower()
+                   for w in q_words)
+        ]
+
+    # ── 2. Conversation chunks (semantic AND keyword, always combined) ─────────
+    # Both paths run so chunks without vectors (stored during an outage) are
+    # still surfaced via keyword match.  Results are deduplicated by chunk id.
     sem_hits: list[dict] = []
     try:
         sem_hits = semantic_search_conversations(user_text, db, limit=5)
@@ -3696,14 +3731,6 @@ def _handle_recall_query(
             seen_chunk_ids.add(cid)
             conv_hits.append(h)
     conv_hits = conv_hits[:5]
-
-    # ── 2. Memory facts that overlap with the query topic ─────────────────────
-    all_facts = db.get_current_memory_facts(limit=20)
-    q_words = {w for w in user_text.lower().split() if len(w) > 3}
-    fact_hits = [
-        f for f in all_facts
-        if any(w in f["value"].lower() or w in f["key"].lower() for w in q_words)
-    ]
 
     # ── 3. Knowledge items ────────────────────────────────────────────────────
     kn_hits: list[dict] = []
@@ -3731,6 +3758,9 @@ def _handle_recall_query(
             line = f"• {f['key']}: {f['value']}"
             if f.get("prev_value"):
                 line += f"  *(previously: {f['prev_value']})*"
+            src_tag = f.get("retrieval_source")
+            if src_tag and src_tag != "semantic":
+                line += f"  [{src_tag}]"
             fact_lines.append(line)
         sections.append("**Stored memory:**\n" + "\n".join(fact_lines))
 
@@ -3779,6 +3809,12 @@ def _handle_recall_query(
     meta: dict = {"intent": "recall", "query": user_text}
     if sources:
         meta["sources"] = sources
+    if fact_hits:
+        # Expose retrieval_source metadata so callers can show provenance
+        meta["memory_hits"] = [
+            {"key": f["key"], "retrieval_source": f.get("retrieval_source", "unknown")}
+            for f in fact_hits[:5]
+        ]
     return reply, meta
 
 
