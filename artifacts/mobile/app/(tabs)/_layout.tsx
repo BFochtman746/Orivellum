@@ -15,8 +15,10 @@ import {
 } from 'react-native';
 import { useAudiobookJobActive } from '@/hooks/useAudiobookJobActive';
 import { useColors } from '@/hooks/useColors';
+import { fontSerif } from '@/lib/typography';
 import { Feather } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
+import { LinearGradient } from 'expo-linear-gradient';
 import { Tabs, usePathname, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
@@ -178,10 +180,49 @@ function AppHeader({ onMenuPress, reviewCount = 0 }: AppHeaderProps) {
         />
       )}
 
+      {/* iOS 26 Liquid Glass — top specular shimmer strip */}
+      {Platform.OS === 'ios' && (
+        <LinearGradient
+          colors={[
+            isDark ? 'rgba(255,255,255,0.10)' : 'rgba(255,255,255,0.22)',
+            isDark ? 'rgba(255,255,255,0.03)' : 'rgba(255,255,255,0.06)',
+            'rgba(255,255,255,0)',
+          ]}
+          locations={[0, 0.3, 1]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 0, y: 1 }}
+          style={{
+            position: 'absolute',
+            left: 0, right: 0, top: 0,
+            height: 2.5,
+            zIndex: 10,
+          }}
+        />
+      )}
+
+      {/* iOS 26 Liquid Glass — bottom edge shimmer */}
+      {Platform.OS === 'ios' && (
+        <LinearGradient
+          colors={[
+            isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.30)',
+            'rgba(255,255,255,0)',
+          ]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 0 }}
+          style={{
+            position: 'absolute',
+            left: 0, right: 0,
+            bottom: 0,
+            height: StyleSheet.hairlineWidth + 0.5,
+            zIndex: 10,
+          }}
+        />
+      )}
+
       {/* Content row */}
       <View style={styles.headerRow}>
         {/* App wordmark */}
-        <Text style={[styles.headerWordmark, { color: colors.primary }]}>
+        <Text style={[styles.headerWordmark, { color: colors.primary, ...fontSerif('bold') }]}>
           Orivellum
         </Text>
 
@@ -364,6 +405,10 @@ function NavBottomSheet({ visible, onClose, audiobookActive = false }: NavBottom
       >
         {/* Drag handle */}
         <View style={[styles.sheetHandle, { backgroundColor: colors.border }]} />
+
+        <Text style={[styles.sheetTitle, { color: colors.foreground }]}>
+          Orivellum
+        </Text>
 
         <Text style={[styles.sheetLabel, { color: colors.mutedForeground }]}>
           Navigate to
@@ -827,6 +872,14 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
     marginBottom: 18,
     marginTop: 6,
+  },
+  sheetTitle: {
+    fontSize: 22,
+    fontFamily: 'Fraunces_700Bold',
+    fontWeight: '700',
+    letterSpacing: -0.3,
+    paddingHorizontal: 4,
+    marginBottom: 4,
   },
   sheetLabel: {
     fontSize: 11,
