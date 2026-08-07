@@ -22,6 +22,7 @@ import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system';
 import Markdown from 'react-native-markdown-display';
 import { useColors } from '@/hooks/useColors';
+import { useVellumTokens, alpha } from '@/lib/tokens';
 import { Feather } from '@expo/vector-icons';
 import {
   useGetConversation,
@@ -41,6 +42,7 @@ import type { Message } from '@workspace/api-client-react';
 import { OfflineBanner } from '@/components/OfflineBanner';
 import { readCache, writeCache } from '@/lib/cache';
 import { queueMessage, flushMessageQueue, getOutboxForConversation } from '@/lib/offlineCache';
+import { font } from '@/lib/typography';
 
 const LAST_MODEL_KEY = 'orivellum:lastModel';
 
@@ -50,7 +52,7 @@ const LAST_MODEL_KEY = 'orivellum:lastModel';
 // which breaks for identical repeated messages).
 type LocalMessage = Message & { isError?: boolean; localImageUri?: string; queued?: boolean; msgId?: string };
 
-function MessageBubble({ message, colors, isDark, onResend, onRetry, highlighted }: { message: LocalMessage; colors: any; isDark: boolean; onResend?: () => void; onRetry?: () => void; highlighted?: boolean }) {
+function MessageBubble({ message, colors, T, isDark, onResend, onRetry, highlighted }: { message: LocalMessage; colors: any; T: ReturnType<typeof useVellumTokens>; isDark: boolean; onResend?: () => void; onRetry?: () => void; highlighted?: boolean }) {
   const isUser = message.role === 'user';
   const isErr = (message as any).isError;
   const textColor = isUser ? colors.primaryForeground : isErr ? colors.mutedForeground : colors.foreground;
@@ -293,13 +295,13 @@ function MessageBubble({ message, colors, isDark, onResend, onRetry, highlighted
                   paddingHorizontal: 8,
                   paddingVertical: 3,
                   borderRadius: 4,
-                  backgroundColor: '#f97316' + '18',
+                  backgroundColor: T.giltSoft,
                   borderWidth: 1,
-                  borderColor: '#f97316' + '44',
+                  borderColor: T.giltLine,
                 }}
               >
-                <Feather name="rotate-ccw" size={9} color="#f97316" />
-                <Text style={{ fontSize: 10, fontFamily: 'Inter_500Medium', color: '#f97316' }}>Retry</Text>
+                <Feather name="rotate-ccw" size={9} color={T.gilt} />
+                <Text style={{ fontSize: 10, fontFamily: 'Inter_500Medium', color: T.gilt }}>Retry</Text>
               </Pressable>
             )}
           </View>
@@ -412,8 +414,8 @@ function MessageBubble({ message, colors, isDark, onResend, onRetry, highlighted
                 padding: 12,
                 borderRadius: 10,
                 borderWidth: 1,
-                borderColor: '#16a34a44',
-                backgroundColor: pressed ? '#16a34a18' : '#16a34a0c',
+                borderColor: alpha(T.green, 0.32),
+                backgroundColor: pressed ? T.greenSoft : alpha(T.green, 0.06),
               })}
             >
               <Text style={{ fontSize: 22 }}>{icon}</Text>
@@ -425,7 +427,7 @@ function MessageBubble({ message, colors, isDark, onResend, onRetry, highlighted
                   {gd.format.toUpperCase()} · {kb} KB — tap to download
                 </Text>
               </View>
-              <Feather name="download" size={18} color="#16a34a" />
+              <Feather name="download" size={18} color={T.green} />
             </Pressable>
           );
         })()}
@@ -600,7 +602,7 @@ function ReasoningBlock({ text, colors }: { text: string; colors: any }) {
 }
 
 // stallLevel: 0 = normal typing dots, 1 = "Taking longer…" (≥15 s), 2 = "This is taking a while…" (≥30 s)
-function TypingIndicator({ colors, stallLevel = 0 }: { colors: any; stallLevel?: 0 | 1 | 2 }) {
+function TypingIndicator({ colors, T, stallLevel = 0 }: { colors: any; T: ReturnType<typeof useVellumTokens>; stallLevel?: 0 | 1 | 2 }) {
   const stallText =
     stallLevel === 2
       ? 'This is taking a while — you can retry if it hangs'
@@ -618,19 +620,19 @@ function TypingIndicator({ colors, stallLevel = 0 }: { colors: any; stallLevel?:
           styles.bubble,
           {
             backgroundColor: colors.card,
-            borderColor: stallLevel > 0 ? '#f97316' + '55' : colors.border,
+            borderColor: stallLevel > 0 ? T.giltLine : colors.border,
             borderWidth: 1,
             gap: stallText ? 6 : 0,
           },
         ]}
       >
-        <ActivityIndicator size="small" color={stallLevel > 0 ? '#f97316' : colors.mutedForeground} />
+        <ActivityIndicator size="small" color={stallLevel > 0 ? T.gilt : colors.mutedForeground} />
         {!!stallText && (
           <Text
             style={{
               fontSize: 11,
               fontFamily: 'Inter_400Regular',
-              color: '#f97316',
+              color: T.gilt,
               fontStyle: 'italic',
               maxWidth: 220,
             }}
@@ -645,6 +647,7 @@ function TypingIndicator({ colors, stallLevel = 0 }: { colors: any; stallLevel?:
 
 export default function ChatScreen() {
   const colors = useColors();
+  const T = useVellumTokens();
   const insets = useSafeAreaInsets();
   const isWeb = Platform.OS === 'web';
   const colorScheme = useColorScheme();
@@ -1513,22 +1516,22 @@ export default function ChatScreen() {
             borderTopWidth: 1,
             borderColor: colors.border,
             paddingTop: 20,
-            paddingHorizontal: 20,
+            paddingHorizontal: 16,
             paddingBottom: insets.bottom + 20,
             maxHeight: '75%',
           }}>
             {/* Header */}
             <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16 }}>
-              <Text style={{ fontSize: 16, fontFamily: 'Inter_700Bold', color: colors.foreground, flex: 1 }}>
+              <Text style={{ fontSize: 16, ...font('bold'), color: colors.foreground, flex: 1 }}>
                 Context
               </Text>
-              <Pressable onPress={() => setContextSheetOpen(false)} hitSlop={8}>
+              <Pressable onPress={() => setContextSheetOpen(false)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
                 <Feather name="x" size={18} color={colors.mutedForeground} />
               </Pressable>
             </View>
 
             {/* Scope toggle */}
-            <Text style={{ fontSize: 11, fontFamily: 'Inter_500Medium', color: colors.mutedForeground, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 8 }}>
+            <Text style={{ fontSize: 11, ...font('medium'), color: colors.mutedForeground, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 8 }}>
               Knowledge scope
             </Text>
             <View style={{ flexDirection: 'row', gap: 8, marginBottom: 20 }}>
@@ -1540,16 +1543,18 @@ export default function ChatScreen() {
                     flex: 1,
                     paddingVertical: 10,
                     paddingHorizontal: 14,
+                    minHeight: 44,
                     borderRadius: 10,
                     borderWidth: 1.5,
                     borderColor: scopeAll === value ? colors.primary : colors.border,
                     backgroundColor: pressed ? colors.muted : scopeAll === value ? colors.primary + '10' : 'transparent',
                     alignItems: 'center',
+                    justifyContent: 'center',
                   })}
                 >
                   <Text style={{
                     fontSize: 13,
-                    fontFamily: scopeAll === value ? 'Inter_600SemiBold' : 'Inter_400Regular',
+                    ...font(scopeAll === value ? 'semibold' : 'regular'),
                     color: scopeAll === value ? colors.primary : colors.mutedForeground,
                   }}>
                     {label}
@@ -1560,22 +1565,22 @@ export default function ChatScreen() {
 
             {/* Pinned documents from work */}
             <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
-              <Text style={{ fontSize: 11, fontFamily: 'Inter_500Medium', color: colors.mutedForeground, textTransform: 'uppercase', letterSpacing: 0.8, flex: 1 }}>
+              <Text style={{ fontSize: 11, ...font('medium'), color: colors.mutedForeground, textTransform: 'uppercase', letterSpacing: 0.8, flex: 1 }}>
                 Pin documents
               </Text>
               {pinnedDocIds.size > 0 && (
                 <Pressable onPress={() => setPinnedDocIds(new Set())} hitSlop={8}>
-                  <Text style={{ fontSize: 11, color: colors.primary, fontFamily: 'Inter_500Medium' }}>Clear all</Text>
+                  <Text style={{ fontSize: 11, color: colors.primary, ...font('medium') }}>Clear all</Text>
                 </Pressable>
               )}
             </View>
 
             {!convWorkId ? (
-              <Text style={{ fontSize: 13, color: colors.mutedForeground, fontFamily: 'Inter_400Regular', textAlign: 'center', paddingVertical: 20 }}>
+              <Text style={{ fontSize: 13, color: colors.mutedForeground, ...font('regular'), textAlign: 'center', paddingVertical: 20 }}>
                 No work linked to this conversation
               </Text>
             ) : !workDocsData?.documents?.length ? (
-              <Text style={{ fontSize: 13, color: colors.mutedForeground, fontFamily: 'Inter_400Regular', textAlign: 'center', paddingVertical: 20 }}>
+              <Text style={{ fontSize: 13, color: colors.mutedForeground, ...font('regular'), textAlign: 'center', paddingVertical: 20 }}>
                 No documents in this work yet
               </Text>
             ) : (
@@ -1600,6 +1605,7 @@ export default function ChatScreen() {
                         paddingVertical: 11,
                         paddingHorizontal: 12,
                         marginBottom: 6,
+                        minHeight: 44,
                         borderRadius: 10,
                         borderWidth: 1,
                         borderColor: pinned ? colors.primary + '55' : colors.border,
@@ -1615,10 +1621,10 @@ export default function ChatScreen() {
                         {pinned && <Feather name="check" size={11} color={colors.primaryForeground} />}
                       </View>
                       <View style={{ flex: 1 }}>
-                        <Text style={{ fontSize: 13, fontFamily: 'Inter_500Medium', color: colors.foreground }} numberOfLines={1}>
+                        <Text style={{ fontSize: 13, ...font('medium'), color: colors.foreground }} numberOfLines={1}>
                           {doc.title || doc.source?.split('/').pop() || 'Untitled'}
                         </Text>
-                        <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: colors.mutedForeground }}>
+                        <Text style={{ fontSize: 11, ...font('regular'), color: colors.mutedForeground }}>
                           {(doc.kind ?? doc.readiness ?? '').replace(/_/g, ' ')}
                         </Text>
                       </View>
@@ -1718,12 +1724,12 @@ export default function ChatScreen() {
                 alignItems: 'center',
                 gap: 5,
                 flex: 1,
-                paddingHorizontal: 12,
+                paddingHorizontal: 16,
                 paddingVertical: 5,
               }}
             >
               <Feather name="book-open" size={11} color={colors.primary} />
-              <Text style={{ fontSize: 11, fontFamily: 'Inter_500Medium', color: colors.primary, flex: 1 }} numberOfLines={1}>
+              <Text style={{ fontSize: 11, ...font('medium'), color: colors.primary, flex: 1 }} numberOfLines={1}>
                 {(conversation as any).work_title ?? 'Work'}
               </Text>
             </Pressable>
@@ -1751,7 +1757,7 @@ export default function ChatScreen() {
               />
               <Text style={{
                 fontSize: 10,
-                fontFamily: 'Inter_500Medium',
+                ...font('medium'),
                 color: (pinnedDocIds.size > 0 || scopeAll) ? colors.primary : colors.mutedForeground,
               }}>
                 {scopeAll ? 'All Works' : pinnedDocIds.size > 0 ? `${pinnedDocIds.size} pinned` : 'Context'}
@@ -1783,6 +1789,7 @@ export default function ChatScreen() {
               <MessageBubble
                 message={item}
                 colors={colors}
+                T={T}
                 isDark={isDark}
                 highlighted={item.id === highlightedMsgId}
                 onResend={isCutShort ? () => handleContinue(item.id ?? '') : undefined}
@@ -1814,7 +1821,7 @@ export default function ChatScreen() {
               }
             }, 200);
           }}
-          ListHeaderComponent={sending ? <TypingIndicator colors={colors} stallLevel={stallLevel} /> : null}
+          ListHeaderComponent={sending ? <TypingIndicator colors={colors} T={T} stallLevel={stallLevel} /> : null}
           ListEmptyComponent={
             !sending ? (
               <View style={styles.emptyWrap}>
@@ -1831,7 +1838,7 @@ export default function ChatScreen() {
                 flexDirection: 'row',
                 alignItems: 'center',
                 gap: 8,
-                paddingHorizontal: 20,
+                paddingHorizontal: 16,
                 paddingVertical: 12,
               }}>
                 <View style={{ flex: 1, height: 1, backgroundColor: colors.border, opacity: 0.4 }} />
@@ -1849,7 +1856,7 @@ export default function ChatScreen() {
                   <Feather name="clock" size={10} color={colors.mutedForeground} style={{ opacity: 0.6 }} />
                   <Text style={{
                     fontSize: 10,
-                    fontFamily: 'Inter_400Regular',
+                    ...font('regular'),
                     color: colors.mutedForeground,
                     opacity: 0.7,
                   }}>
@@ -1901,10 +1908,10 @@ export default function ChatScreen() {
                 paddingHorizontal: 10, paddingVertical: 6,
               }}>
                 <Feather name="file-text" size={13} color={colors.primary} />
-                <Text style={{ flex: 1, fontSize: 12, fontFamily: 'Inter_500Medium', color: colors.foreground }} numberOfLines={1}>
+                <Text style={{ flex: 1, fontSize: 12, ...font('medium'), color: colors.foreground }} numberOfLines={1}>
                   {pendingFile.name}
                 </Text>
-                <Text style={{ fontSize: 10, fontFamily: 'Inter_400Regular', color: colors.mutedForeground }}>
+                <Text style={{ fontSize: 10, ...font('regular'), color: colors.mutedForeground }}>
                   {pendingFile.text.length.toLocaleString()} chars
                 </Text>
               </View>
@@ -1998,13 +2005,13 @@ export default function ChatScreen() {
             style={[
               styles.deepToggle,
               docGenLoading
-                ? { backgroundColor: '#16a34a18', borderColor: '#16a34a44' }
+                ? { backgroundColor: T.greenSoft, borderColor: alpha(T.green, 0.32) }
                 : { backgroundColor: colors.muted, borderColor: colors.border },
             ]}
           >
             {docGenLoading
-              ? <ActivityIndicator size="small" color="#16a34a" style={{ width: 14, height: 14 }} />
-              : <Feather name="file-plus" size={14} color={docGenLoading ? '#16a34a' : colors.mutedForeground} />
+              ? <ActivityIndicator size="small" color={T.green} style={{ width: 14, height: 14 }} />
+              : <Feather name="file-plus" size={14} color={docGenLoading ? T.green : colors.mutedForeground} />
             }
           </Pressable>
           <TextInput
@@ -2093,8 +2100,9 @@ const styles = StyleSheet.create({
   modelRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 20,
+    paddingHorizontal: 16,
     paddingVertical: 14,
+    minHeight: 44,
     borderBottomWidth: 1,
     gap: 12,
   },
@@ -2134,15 +2142,15 @@ const styles = StyleSheet.create({
   },
   inputBar: {
     flexDirection: 'column',
-    paddingHorizontal: 12,
+    paddingHorizontal: 16,
     paddingTop: 10,
     borderTopWidth: 1,
   },
   input: {
     flex: 1,
-    minHeight: 42,
+    minHeight: 44,
     maxHeight: 120,
-    borderRadius: 21,
+    borderRadius: 22,
     borderWidth: 1,
     paddingHorizontal: 16,
     paddingTop: 10,
@@ -2150,9 +2158,9 @@ const styles = StyleSheet.create({
     fontSize: 16,
   },
   sendBtn: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -2169,6 +2177,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     paddingVertical: 10,
     borderRadius: 20,
+    minHeight: 44,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   retryBtnText: { fontSize: 14, fontFamily: 'Inter_600SemiBold' },
 });

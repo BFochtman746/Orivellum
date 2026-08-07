@@ -50,6 +50,7 @@ const PERSONAS = [
 
 type PersonaId = (typeof PERSONAS)[number]['id'];
 import { useColors } from '@/hooks/useColors';
+import { useVellumTokens } from '@/lib/tokens';
 import { Feather } from '@expo/vector-icons';
 import {
   useListConversations,
@@ -66,6 +67,8 @@ import type { Conversation } from '@workspace/api-client-react';
 import { OfflineBanner, ErrorScreen } from '@/components/OfflineBanner';
 import { stripMarkdown } from '@/lib/stripMarkdown';
 import { readCache, writeCache } from '@/lib/cache';
+import { SkeletonItem } from '@/components/SkeletonItem';
+import { EmptyState } from '@/components/EmptyState';
 
 function ConversationItem({ item, onArchive, onDelete, onRename }: { item: Conversation; onArchive?: (id: string) => void; onDelete?: (id: string) => void; onRename?: (id: string, title: string) => void }) {
   const colors = useColors();
@@ -130,7 +133,7 @@ function ConversationItem({ item, onArchive, onDelete, onRename }: { item: Conve
           {(item as any).work_id && (
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
               <Feather name="book-open" size={11} color={colors.primary} />
-              <Text style={{ fontSize: 11, fontWeight: '400', color: colors.primary }} numberOfLines={1}>
+              <Text style={{ fontSize: 11, ...font('regular'), color: colors.primary }} numberOfLines={1}>
                 {(item as any).work_title ?? 'work'}
               </Text>
             </View>
@@ -141,12 +144,12 @@ function ConversationItem({ item, onArchive, onDelete, onRename }: { item: Conve
             return p ? (
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2 }}>
                 <Text style={{ fontSize: 10 }}>{p.emoji}</Text>
-                <Text style={{ fontSize: 10, fontWeight: '400', color: colors.mutedForeground }}>{p.label}</Text>
+                <Text style={{ fontSize: 10, ...font('regular'), color: colors.mutedForeground }}>{p.label}</Text>
               </View>
             ) : null;
           })()}
           {(item as any).model && (
-            <Text style={{ fontSize: 11, fontWeight: '400', color: colors.mutedForeground, opacity: 0.7 }}>
+            <Text style={{ fontSize: 11, ...font('regular'), color: colors.mutedForeground, opacity: 0.7 }}>
               {String((item as any).model).split('/').pop()?.split('-').slice(0, 3).join('-')}
             </Text>
           )}
@@ -159,6 +162,7 @@ function ConversationItem({ item, onArchive, onDelete, onRename }: { item: Conve
 
 export default function ConversationsScreen() {
   const colors = useColors();
+  const T = useVellumTokens();
   const insets = useSafeAreaInsets();
   const isWeb = Platform.OS === 'web';
   const router = useRouter();
@@ -350,7 +354,7 @@ export default function ConversationsScreen() {
     }
   };
 
-  const topPad = isWeb ? 67 : 0;
+  const topPad = isWeb ? 67 : insets.top;
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
@@ -378,7 +382,7 @@ export default function ConversationsScreen() {
                 borderColor: showArchived ? colors.primary + '55' : colors.border,
               }}
             >
-              <Text style={{ fontSize: 12, fontWeight: '500', color: showArchived ? colors.primary : colors.mutedForeground }}>
+              <Text style={{ fontSize: 12, ...font('medium'), color: showArchived ? colors.primary : colors.mutedForeground }}>
                 {showArchived ? 'Archived' : 'Active'}
               </Text>
             </Pressable>
@@ -386,9 +390,9 @@ export default function ConversationsScreen() {
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
             <Pressable
               onPress={openMemorySheet}
-              hitSlop={8}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
               style={({ pressed }) => ({
-                width: 36, height: 36, borderRadius: 18,
+                width: 44, height: 44, borderRadius: 22,
                 alignItems: 'center', justifyContent: 'center',
                 backgroundColor: colors.muted,
                 borderWidth: 1, borderColor: colors.border,
@@ -443,8 +447,8 @@ export default function ConversationsScreen() {
 
       {/* Body */}
       {isLoading && !hasData ? (
-        <View style={styles.centered}>
-          <ActivityIndicator color={colors.primary} />
+        <View style={{ paddingHorizontal: 16, paddingTop: 12 }}>
+          {[...Array(4)].map((_, i) => <SkeletonItem key={i} />)}
         </View>
       ) : isError && !hasData ? (
         // Hard error — no cached data at all
@@ -456,17 +460,15 @@ export default function ConversationsScreen() {
       ) : isSearchMode ? (
         /* ── API full-text search results (query >= 2 chars) ─────────── */
         msgSearchFetching ? (
-          <View style={styles.centered}>
-            <ActivityIndicator color={colors.primary} />
+          <View style={{ paddingHorizontal: 16, paddingTop: 12 }}>
+            {[...Array(4)].map((_, i) => <SkeletonItem key={i} />)}
           </View>
         ) : !msgSearchData?.results?.length ? (
-          <View style={styles.centered}>
-            <Feather name="search" size={36} color={colors.mutedForeground} />
-            <Text style={[styles.emptyTitle, { color: colors.foreground }]}>No messages found</Text>
-            <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
-              Nothing matched "{debouncedSearch}"
-            </Text>
-          </View>
+          <EmptyState
+            icon="search"
+            title="No messages found"
+            body={`Nothing matched "${debouncedSearch}"`}
+          />
         ) : (
           <FlatList
             data={msgSearchData.results}
@@ -517,15 +519,19 @@ export default function ConversationsScreen() {
           />
         )
       ) : conversations.length === 0 ? (
-        <View style={styles.centered}>
-          <Feather name="message-square" size={44} color={colors.mutedForeground} />
-          <Text style={[styles.emptyTitle, { color: colors.foreground }]}>
-            {debouncedSearch ? 'No matching conversations' : 'No conversations yet'}
-          </Text>
-          <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
-            {debouncedSearch ? `Nothing matched "${debouncedSearch}"` : 'Tap + to start a new one'}
-          </Text>
-        </View>
+        debouncedSearch ? (
+          <EmptyState
+            icon="search"
+            title="No matching conversations"
+            body={`Nothing matched "${debouncedSearch}"`}
+          />
+        ) : (
+          <EmptyState
+            icon="message-circle"
+            title="No conversations yet"
+            body="Start a chat from any Work or the Dashboard."
+          />
+        )
       ) : (
         <FlatList
           data={conversations}
@@ -559,7 +565,7 @@ export default function ConversationsScreen() {
             onPress={(e) => e.stopPropagation()}
             style={{ backgroundColor: colors.card, borderRadius: 12, padding: 20, gap: 14 }}
           >
-            <Text style={{ fontSize: 16, fontFamily: 'Inter_600SemiBold', color: colors.foreground }}>
+            <Text style={{ fontSize: 16, ...font('semibold'), color: colors.foreground }}>
               Rename conversation
             </Text>
             <TextInput
@@ -567,9 +573,9 @@ export default function ConversationsScreen() {
               value={renameText}
               onChangeText={setRenameText}
               style={{
-                height: 40, borderWidth: 1, borderColor: colors.primary,
+                height: 44, borderWidth: 1, borderColor: colors.primary,
                 borderRadius: 8, paddingHorizontal: 10, fontSize: 14,
-                fontFamily: 'Inter_400Regular', color: colors.foreground,
+                ...font('regular'), color: colors.foreground,
               }}
               autoFocus
               returnKeyType="done"
@@ -578,15 +584,15 @@ export default function ConversationsScreen() {
             <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10 }}>
               <Pressable
                 onPress={() => setRenameModal(null)}
-                style={{ paddingHorizontal: 16, paddingVertical: 8, borderRadius: 8, borderWidth: 1, borderColor: colors.border }}
+                style={{ paddingHorizontal: 16, paddingVertical: 10, minHeight: 44, justifyContent: 'center', borderRadius: 8, borderWidth: 1, borderColor: colors.border }}
               >
-                <Text style={{ fontSize: 14, color: colors.mutedForeground }}>Cancel</Text>
+                <Text style={{ fontSize: 14, ...font('regular'), color: colors.mutedForeground }}>Cancel</Text>
               </Pressable>
               <Pressable
                 onPress={() => renameModal && handleRename(renameModal.id, renameText)}
-                style={{ paddingHorizontal: 16, paddingVertical: 8, borderRadius: 8, backgroundColor: colors.primary }}
+                style={{ paddingHorizontal: 16, paddingVertical: 10, minHeight: 44, justifyContent: 'center', borderRadius: 8, backgroundColor: colors.primary }}
               >
-                <Text style={{ fontSize: 14, fontFamily: 'Inter_600SemiBold', color: colors.primaryForeground }}>Save</Text>
+                <Text style={{ fontSize: 14, ...font('semibold'), color: colors.primaryForeground }}>Save</Text>
               </Pressable>
             </View>
           </Pressable>
@@ -609,18 +615,18 @@ export default function ConversationsScreen() {
             borderTopWidth: 1,
             borderColor: colors.border,
             paddingTop: 20,
-            paddingHorizontal: 20,
+            paddingHorizontal: 16,
             paddingBottom: insets.bottom + 24,
           }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
-              <Text style={{ fontSize: 16, fontFamily: 'Inter_700Bold', color: colors.foreground, flex: 1 }}>
+              <Text style={{ fontSize: 16, ...font('bold'), color: colors.foreground, flex: 1 }}>
                 Choose a persona
               </Text>
-              <Pressable onPress={() => setPersonaSheetOpen(false)} hitSlop={8}>
+              <Pressable onPress={() => setPersonaSheetOpen(false)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
                 <Feather name="x" size={18} color={colors.mutedForeground} />
               </Pressable>
             </View>
-            <Text style={{ fontSize: 12, color: colors.mutedForeground, fontFamily: 'Inter_400Regular', marginBottom: 16 }}>
+            <Text style={{ fontSize: 12, ...font('regular'), color: colors.mutedForeground, marginBottom: 16 }}>
               Sets the AI's role and communication style for this conversation.
             </Text>
             {PERSONAS.map((p) => (
@@ -634,6 +640,7 @@ export default function ConversationsScreen() {
                   paddingVertical: 12,
                   paddingHorizontal: 14,
                   marginBottom: 8,
+                  minHeight: 44,
                   borderRadius: 12,
                   borderWidth: 1.5,
                   borderColor: selectedPersona === p.id ? colors.primary : colors.border,
@@ -646,10 +653,10 @@ export default function ConversationsScreen() {
               >
                 <Text style={{ fontSize: 22 }}>{p.emoji}</Text>
                 <View style={{ flex: 1 }}>
-                  <Text style={{ fontSize: 14, fontFamily: 'Inter_600SemiBold', color: colors.foreground }}>
+                  <Text style={{ fontSize: 14, ...font('semibold'), color: colors.foreground }}>
                     {p.label}
                   </Text>
-                  <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: colors.mutedForeground }}>
+                  <Text style={{ fontSize: 12, ...font('regular'), color: colors.mutedForeground }}>
                     {p.description}
                   </Text>
                 </View>
@@ -674,7 +681,7 @@ export default function ConversationsScreen() {
               {creating ? (
                 <ActivityIndicator color={colors.primaryForeground} />
               ) : (
-                <Text style={{ fontSize: 15, fontFamily: 'Inter_600SemiBold', color: colors.primaryForeground }}>
+                <Text style={{ fontSize: 15, ...font('semibold'), color: colors.primaryForeground }}>
                   Start conversation
                 </Text>
               )}
@@ -695,19 +702,21 @@ export default function ConversationsScreen() {
           <View style={[styles.memorySheet, { backgroundColor: colors.card, borderColor: colors.border, paddingBottom: insets.bottom + 16 }]}>
             <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
               <Text style={{ fontSize: 18, marginRight: 8 }}>✨</Text>
-              <Text style={{ fontSize: 16, fontFamily: 'Inter_700Bold', color: colors.foreground, flex: 1 }}>Memory</Text>
-              <Pressable onPress={() => setMemoryOpen(false)} hitSlop={8}>
+              <Text style={{ fontSize: 16, ...font('bold'), color: colors.foreground, flex: 1 }}>Memory</Text>
+              <Pressable onPress={() => setMemoryOpen(false)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
                 <Feather name="x" size={18} color={colors.mutedForeground} />
               </Pressable>
             </View>
-            <Text style={{ fontSize: 12, color: colors.mutedForeground, fontFamily: 'Inter_400Regular', marginBottom: 14 }}>
+            <Text style={{ fontSize: 12, ...font('regular'), color: colors.mutedForeground, marginBottom: 14 }}>
               Facts captured automatically during your conversations.
             </Text>
             {memoryLoading ? (
-              <ActivityIndicator color={colors.primary} />
+              <View style={{ paddingVertical: 12 }}>
+                {[...Array(3)].map((_, i) => <SkeletonItem key={i} lines={1} />)}
+              </View>
             ) : memoryFacts.length === 0 ? (
               <View style={{ alignItems: 'center', paddingVertical: 24 }}>
-                <Text style={{ fontSize: 13, color: colors.mutedForeground, fontFamily: 'Inter_400Regular', textAlign: 'center' }}>
+                <Text style={{ fontSize: 13, ...font('regular'), color: colors.mutedForeground, textAlign: 'center' }}>
                   No facts yet — share preferences in chat and they'll appear here.
                 </Text>
               </View>
@@ -719,11 +728,11 @@ export default function ConversationsScreen() {
                 ItemSeparatorComponent={() => <View style={{ height: 1, backgroundColor: colors.border }} />}
                 renderItem={({ item }) => (
                   <View style={{ paddingVertical: 10 }}>
-                    <Text style={{ fontSize: 11, fontFamily: 'Inter_700Bold', color: colors.mutedForeground, letterSpacing: 0.5, marginBottom: 2 }}>
+                    <Text style={{ fontSize: 11, ...font('bold'), color: colors.mutedForeground, letterSpacing: 0.5, marginBottom: 2 }}>
                       {(item.key ?? '').toUpperCase()}
                     </Text>
-                    <Text style={{ fontSize: 13, fontFamily: 'Inter_400Regular', color: colors.foreground }}>{item.value}</Text>
-                    {item.source ? <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: colors.mutedForeground, marginTop: 2 }}>From: {item.source}</Text> : null}
+                    <Text style={{ fontSize: 13, ...font('regular'), color: colors.foreground }}>{item.value}</Text>
+                    {item.source ? <Text style={{ fontSize: 11, ...font('regular'), color: colors.mutedForeground, marginTop: 2 }}>From: {item.source}</Text> : null}
                   </View>
                 )}
               />
@@ -745,7 +754,7 @@ const styles = StyleSheet.create({
   },
   searchRow: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
-    borderWidth: 1, borderRadius: 9, paddingHorizontal: 10, height: 36,
+    borderWidth: 1, borderRadius: 9, paddingHorizontal: 10, height: 44,
   },
   searchInput: {
     flex: 1, fontSize: 15, ...font('regular'),
@@ -788,13 +797,14 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 16,
     borderTopRightRadius: 16,
     borderTopWidth: 1,
-    paddingHorizontal: 20,
+    paddingHorizontal: 16,
     paddingTop: 18,
   },
   msgResultRow: {
     borderRadius: 10,
     borderWidth: 1,
     padding: 14,
+    minHeight: 44,
   },
   msgResultTitle: { fontSize: 14, ...font('semibold'), lineHeight: 18, flex: 1 },
   msgResultWork: { fontSize: 12, ...font('regular'), lineHeight: 18 },
