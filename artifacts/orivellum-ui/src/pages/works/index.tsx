@@ -333,7 +333,7 @@ export default function WorksList() {
             <button
               key={s}
               onClick={() => setStatusFilter(s)}
-              className={`px-3 py-1.5 rounded-md text-xs font-mono uppercase tracking-wider transition-colors
+              className={`px-3 py-2 rounded-md text-xs font-mono uppercase tracking-wider transition-colors min-h-[36px] touch-manipulation
                 ${statusFilter === s ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"}`}
             >
               {s}
@@ -345,18 +345,18 @@ export default function WorksList() {
       {/* List */}
       {isLoading ? (
         <div className="grid gap-4">
-          {[1, 2, 3].map(i => <Skeleton key={i} className="h-32 w-full" />)}
+          {[1, 2, 3].map(i => <Skeleton key={i} className="h-32 w-full rounded-xl" />)}
         </div>
       ) : filteredWorks && filteredWorks.length > 0 ? (
         <div className="grid gap-4">
           {filteredWorks.map(work => (
             <Link key={work.id} href={`/works/${work.id}`}>
-              <Card className="hover-elevate cursor-pointer transition-all hover:border-primary/50 group">
+              <Card className="vellum-card tap spring-scale cursor-pointer group" data-interactive>
                 <CardContent className="p-6">
                   <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                     <div className="space-y-2 flex-1 min-w-0">
                       <div className="flex items-center gap-3 flex-wrap">
-                        <h2 className="text-2xl font-serif font-medium group-hover:text-primary transition-colors truncate">
+                        <h2 className="text-2xl font-serif font-medium group-hover:text-primary transition-colors truncate text-balance">
                           {work.title}
                         </h2>
                         <Badge variant="outline" className="font-mono text-[10px] uppercase tracking-wider bg-primary/5 text-primary border-primary/20 shrink-0">
@@ -447,22 +447,25 @@ function WorkReadinessBadge({ work }: { work: WorkWithReadiness }) {
   let label: string;
   let cls: string;
 
+  let badgeStyle: React.CSSProperties;
+
   if (error_doc_count > 0) {
-    label = `${error_doc_count} error${error_doc_count !== 1 ? "s" : ""}`;
-    cls   = "border-red-200 text-red-700 bg-red-50";
+    label      = `${error_doc_count} error${error_doc_count !== 1 ? "s" : ""}`;
+    badgeStyle = { borderColor: 'var(--rust)', color: 'var(--rust)', background: 'var(--rust-soft)' };
   } else if (processing_doc_count > 0) {
-    label = "Processing";
-    cls   = "border-amber-200 text-amber-700 bg-amber-50";
+    label      = "Processing";
+    badgeStyle = { borderColor: 'var(--gilt-line)', color: 'var(--gilt)', background: 'var(--gilt-soft)' };
   } else if (ready_doc_count === doc_count) {
-    label = "Ready";
-    cls   = "border-emerald-200 text-emerald-700 bg-emerald-50";
+    label      = "Ready";
+    badgeStyle = { borderColor: 'var(--green-2)', color: 'var(--green-2)', background: 'var(--green-soft)' };
   } else {
-    label = `${ready_doc_count}/${doc_count} ready`;
-    cls   = "border-blue-200 text-blue-700 bg-blue-50";
+    label      = `${ready_doc_count}/${doc_count} ready`;
+    badgeStyle = { borderColor: 'var(--line-2)', color: 'var(--ink-soft)', background: 'transparent' };
   }
 
   return (
-    <span className={`inline-flex items-center px-2 py-0.5 rounded border text-[10px] font-mono font-medium shrink-0 ${cls}`}>
+    <span className="inline-flex items-center px-2 py-0.5 rounded border text-[10px] font-mono font-medium shrink-0"
+          style={badgeStyle}>
       {label}
     </span>
   );
