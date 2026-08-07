@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { mobileFetch } from '@/lib/api';
 import { getApiToken } from '@/lib/token';
+import { createAudioPlayer, setAudioModeAsync, type AudioPlayer } from 'expo-audio';
 import * as Clipboard from 'expo-clipboard';
 import {
   ActivityIndicator,
@@ -1292,6 +1293,74 @@ function TrailerStatusBadgeMobile({ status, phase, colors }: { status: string; p
 function TrailerPackageViewMobile({ pkg, colors }: { pkg: TrailerPkgMobile; colors: any }) {
   const [activeDoc, setActiveDoc] = useState<string | null>(null);
 
+  // ── Narration playback ──────────────────────────────────────────────────────
+  type NarrState = 'idle' | 'loading' | 'playing';
+  const [narrState, setNarrState] = useState<NarrState>('idle');
+  const narrPlayerRef = useRef<AudioPlayer | null>(null);
+  const narrDomain = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
+
+  useEffect(() => {
+    return () => { narrPlayerRef.current?.remove(); };
+  }, []);
+
+  const handlePlayNarration = async () => {
+    const text = pkg.docs?.narration_script;
+    if (!text) return;
+
+    // Stop — tap while playing
+    if (narrState === 'playing') {
+      narrPlayerRef.current?.remove();
+      narrPlayerRef.current = null;
+      setNarrState('idle');
+      return;
+    }
+
+    setNarrState('loading');
+    try {
+      await setAudioModeAsync({ playsInSilentMode: true });
+      const token = getApiToken();
+
+      // Synthesise via the same endpoint TtsContext uses (return_url → JSON path)
+      const ttsRes = await mobileFetch(`https://${narrDomain}/api/studio/tts`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, voice: 'af_heart', speed: 1.0, return_url: true }),
+      });
+      if (!ttsRes.ok) {
+        const err = await ttsRes.json().catch(() => ({}));
+        throw new Error((err as any).detail ?? `TTS error (${ttsRes.status})`);
+      }
+      const { path } = await ttsRes.json() as { path: string };
+
+      const serveUri =
+        `https://${narrDomain}/api/studio/outputs/serve?path=${encodeURIComponent(path)}`;
+
+      const player = createAudioPlayer({
+        uri: serveUri,
+        headers: token ? { authorization: `Bearer ${token}` } : undefined,
+      });
+      narrPlayerRef.current = player;
+      player.play();
+      setNarrState('playing');
+
+      player.addListener('playbackStatusUpdate', (status) => {
+        // Guard against stale callbacks from a replaced player
+        if (narrPlayerRef.current !== player) return;
+        if (!status.playing && status.currentTime > 0 && status.duration > 0
+            && status.currentTime >= status.duration - 0.5) {
+          player.remove();
+          narrPlayerRef.current = null;
+          setNarrState('idle');
+        }
+      });
+    } catch (e: any) {
+      narrPlayerRef.current?.remove();
+      narrPlayerRef.current = null;
+      setNarrState('idle');
+      Alert.alert('Playback failed', e?.message ?? 'Could not play narration');
+    }
+  };
+
   const statusReady      = pkg.status === 'READY';
   const criticalFindings = (pkg.validation.findings ?? []).filter(f => f.severity === 'critical');
   const docKeys          = Object.keys(pkg.docs ?? {});
@@ -1453,6 +1522,39 @@ function TrailerPackageViewMobile({ pkg, colors }: { pkg: TrailerPkgMobile; colo
               </View>
             </View>
           ) : null}
+        </View>
+      ) : null}
+
+      {/* ── Play Narration — shown when narration_script is in the package ── */}
+      {pkg.docs?.narration_script ? (
+        <View style={{
+          flexDirection: 'row', alignItems: 'center', gap: 10,
+          paddingHorizontal: 12, paddingVertical: 10, borderRadius: 8, borderWidth: 1,
+          borderColor: colors.primary + '44', backgroundColor: colors.primary + '0a',
+        }}>
+          <Pressable
+            onPress={handlePlayNarration}
+            disabled={narrState === 'loading'}
+            style={({ pressed }) => ({
+              flexDirection: 'row', alignItems: 'center', gap: 6,
+              paddingHorizontal: 12, paddingVertical: 7, borderRadius: 7,
+              backgroundColor: pressed ? colors.primary + 'cc' : colors.primary,
+              opacity: narrState === 'loading' ? 0.6 : 1,
+            })}
+            accessibilityRole="button"
+            accessibilityLabel={narrState === 'playing' ? 'Stop narration' : 'Play narration'}
+          >
+            {narrState === 'loading'
+              ? <ActivityIndicator size="small" color="#fff" />
+              : <Feather name={narrState === 'playing' ? 'square' : 'play'} size={13} color="#fff" />
+            }
+            <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: '#fff' }}>
+              {narrState === 'loading' ? 'Synthesising…' : narrState === 'playing' ? 'Stop' : 'Play Narration'}
+            </Text>
+          </Pressable>
+          <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: colors.mutedForeground, flex: 1 }}>
+            {narrState === 'playing' ? 'Playing narration script…' : 'Listen to the trailer narration'}
+          </Text>
         </View>
       ) : null}
 
