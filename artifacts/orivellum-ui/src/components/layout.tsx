@@ -749,6 +749,171 @@ function useRouteTitle(): string {
   return "Orivellum";
 }
 
+// ─── Nav Rail (tablet tier: 560px–1023px container width) ─────────────────────
+
+const RAIL_ITEMS = [
+  { label: "Today",    href: "/",           icon: Activity      },
+  { label: "Chat",     href: "/chat",        icon: MessageSquare },
+  { label: "Works",    href: "/works",       icon: BookOpen      },
+  { label: "Library",  href: "/library",     icon: Library       },
+  { label: "Studio",   href: "/studio",      icon: Mic           },
+  { label: "Write",    href: "/write",       icon: Feather       },
+  { label: "Review",   href: "/review",      icon: Inbox         },
+  { label: "System",   href: "/system",      icon: HardDrive     },
+] as const;
+
+function NavRail({
+  onProgressOpen,
+  activeJobCount,
+  serverOk,
+  aiOk,
+  healthFetching,
+}: {
+  onProgressOpen: () => void;
+  activeJobCount: number;
+  serverOk: boolean;
+  aiOk: boolean;
+  healthFetching: boolean;
+}) {
+  const [location, setLocation] = useLocation();
+  // Review-queue badge count
+  const { data: reviewQueue } = useQuery<{ count: number }>({
+    queryKey: ["review-queue-count"],
+    queryFn: async () => {
+      const r = await apiFetch(
+        `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "") + "/review/queue?limit=1"
+      );
+      if (!r.ok) throw new Error("review queue count failed");
+      return r.json();
+    },
+    refetchInterval: 60_000,
+    staleTime: 55_000,
+  });
+  const reviewCount = reviewQueue?.count ?? 0;
+
+  return (
+    <nav
+      aria-label="Primary navigation rail"
+      /* Hidden at phone (<560px) and desktop sidebar width (≥1024px) */
+      className="hidden @[560px]:flex @[1024px]:hidden flex-col items-center gap-0.5 py-2 px-1 w-16 shrink-0 border-r overflow-y-auto"
+      style={{ background: "var(--paper-2)", borderColor: "var(--line)" }}
+    >
+      {/* Brand sigil */}
+      <Link href="/" aria-label="Home">
+        <div
+          className="w-9 h-9 rounded-[10px] flex items-center justify-center font-serif font-bold text-sm mb-1 shrink-0 text-[#F4EEE1] mt-1"
+          style={{ background: "var(--green-raw)" }}
+        >
+          <span style={{ fontVariationSettings: '"opsz" 40' }}>O</span>
+        </div>
+      </Link>
+
+      <div className="h-px w-8 my-1 shrink-0" style={{ background: "var(--line)" }} />
+
+      {/* Primary nav items */}
+      {RAIL_ITEMS.map(({ label, href, icon: Icon }) => {
+        const isActive =
+          location === href || (href !== "/" && location.startsWith(href));
+        const showBadge = href === "/review" && reviewCount > 0;
+        return (
+          <button
+            key={href}
+            onClick={() => setLocation(href)}
+            className={[
+              "relative flex flex-col items-center justify-center gap-0.5 w-14 min-h-[52px] rounded-xl transition-colors",
+              "touch-manipulation",
+              isActive
+                ? ""
+                : "text-muted-foreground hover:bg-muted/50 active:bg-muted/70",
+            ].join(" ")}
+            style={
+              isActive
+                ? { background: "var(--green-soft)", color: "var(--green)" }
+                : {}
+            }
+            aria-label={label}
+            aria-current={isActive ? "page" : undefined}
+            title={label}
+          >
+            <Icon
+              className="w-[18px] h-[18px] shrink-0"
+              style={isActive ? { color: "var(--gilt)" } : {}}
+            />
+            <span
+              className="text-[8px] font-mono uppercase tracking-wider leading-tight text-center"
+              style={isActive ? { color: "var(--green)" } : {}}
+            >
+              {label}
+            </span>
+            {showBadge && (
+              <span
+                className="absolute top-1 right-1.5 min-w-[14px] h-3.5 px-0.5 rounded-full text-[7px] font-bold flex items-center justify-center leading-none"
+                style={{ background: "var(--rust)", color: "#fefcf6" }}
+              >
+                {reviewCount > 9 ? "9+" : reviewCount}
+              </span>
+            )}
+          </button>
+        );
+      })}
+
+      {/* Spacer pushes status to bottom */}
+      <div className="flex-1" />
+
+      {/* Background jobs */}
+      <button
+        onClick={onProgressOpen}
+        className={[
+          "flex flex-col items-center justify-center gap-0.5 w-14 min-h-[44px] rounded-xl transition-colors touch-manipulation",
+          activeJobCount > 0 ? "" : "text-muted-foreground hover:bg-muted/50",
+        ].join(" ")}
+        style={activeJobCount > 0 ? { color: "var(--green)" } : {}}
+        aria-label={
+          activeJobCount > 0 ? `${activeJobCount} jobs running` : "View background jobs"
+        }
+        title="Background jobs"
+      >
+        {activeJobCount > 0 ? (
+          <span className="relative inline-flex">
+            <Loader2 className="w-4 h-4 animate-spin" />
+            <span
+              className="absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full text-[7px] font-bold flex items-center justify-center leading-none"
+              style={{ background: "var(--rust)", color: "#fefcf6" }}
+            >
+              {activeJobCount > 9 ? "9+" : activeJobCount}
+            </span>
+          </span>
+        ) : (
+          <Activity className="w-4 h-4" />
+        )}
+        <span className="text-[7.5px] font-mono uppercase tracking-wider">Jobs</span>
+      </button>
+
+      {/* Server health dot */}
+      <span
+        className={[
+          "w-2 h-2 rounded-full mb-2 shrink-0 transition-colors",
+          healthFetching ? "animate-pulse" : "",
+        ].join(" ")}
+        style={{
+          background: !serverOk
+            ? "var(--rust)"
+            : !aiOk
+            ? "#f59e0b"
+            : "var(--green-2)",
+        }}
+        title={
+          !serverOk
+            ? "Server unreachable"
+            : !aiOk
+            ? "Server online — AI degraded"
+            : "Server online"
+        }
+      />
+    </nav>
+  );
+}
+
 // ─── Mobile navigation bottom sheet ───────────────────────────────────────────
 
 const NAV_ITEMS = [
@@ -843,7 +1008,7 @@ function MobileHeader({
   const title = useRouteTitle();
   return (
     <div
-      className="lg:hidden flex items-center px-2 z-10 shrink-0 glass-vellum"
+      className="flex @[560px]:hidden items-center px-2 z-10 shrink-0 glass-vellum"
       style={{ paddingTop: "max(0.75rem, var(--sai-top))", paddingBottom: "0.75rem", borderBottom: '1px solid var(--line)' }}
     >
       {/* App-menu button — ≥44×44pt touch target per HIG */}
@@ -944,10 +1109,20 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
 
       {/* Height is driven by --visual-viewport-height (set by the inline VisualViewport
           controller in index.html) so the shell stays inside the visible viewport on
-          iPhone Safari regardless of address bar state. */}
-      <div className="flex w-full overflow-hidden" style={{ height: "var(--visual-viewport-height, 100dvh)" }}>
-        {/* Desktop sidebar — hidden on mobile */}
-        <Sidebar className="hidden lg:flex border-r border-border/50 bg-sidebar flex-col w-56 shrink-0">
+          iPhone Safari regardless of address bar state.
+
+          @container gives descendants container-query breakpoints keyed off the
+          app's own inline-size, not the viewport — so Split View / Stage Manager
+          at any fraction reflows correctly:
+            < 560px  → phone layout (MobileHeader + bottom sheet)
+            ≥ 560px  → compact two-pane: NavRail + single content column
+            ≥ 1024px → full desktop: ShadCN Sidebar + content column           */}
+      <div
+        className="@container flex w-full overflow-hidden"
+        style={{ height: "var(--visual-viewport-height, 100dvh)" }}
+      >
+        {/* Desktop sidebar — visible at container ≥ 1024px (replaces lg:flex) */}
+        <Sidebar className="hidden @[1024px]:flex border-r border-border/50 bg-sidebar flex-col w-56 shrink-0">
           <SidebarHeader className="px-5 py-3.5 flex flex-row items-center gap-3 border-b shrink-0" style={{ borderColor: 'var(--line)' }}>
             {/* Forest-green sigil */}
             <div className="w-7 h-7 rounded-[8px] flex items-center justify-center font-serif font-bold text-base shrink-0 text-[#F4EEE1]" style={{ background: 'var(--green-raw)' }}>
@@ -963,9 +1138,18 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
           </SidebarContent>
         </Sidebar>
 
+        {/* Nav Rail — tablet tier only (560px–1023px container width) */}
+        <NavRail
+          onProgressOpen={() => setProgressOpen(true)}
+          activeJobCount={activeJobCount}
+          serverOk={serverOk}
+          aiOk={aiOk}
+          healthFetching={healthFetching}
+        />
+
         {/* Main content column */}
-        <main className="flex-1 overflow-hidden bg-background selection:bg-primary/20 flex flex-col">
-          {/* Mobile compact header — replaces the old left-drawer trigger bar */}
+        <main className="flex-1 overflow-hidden bg-background selection:bg-primary/20 flex flex-col min-w-0">
+          {/* Mobile compact header — visible only at container < 560px */}
           <MobileHeader
             onMenuOpen={() => setMobileOpen(true)}
             onProgressOpen={() => setProgressOpen(true)}
@@ -976,7 +1160,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
           />
 
           {/* Desktop progress badge — fixed top-right, never overlaps content */}
-          <div className="fixed top-4 right-6 z-20 pointer-events-none hidden lg:flex">
+          <div className="fixed top-4 right-6 z-20 pointer-events-none hidden @[1024px]:flex">
             <button
               onClick={() => setProgressOpen(true)}
               className={`pointer-events-auto flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-mono border shadow-sm transition-all
@@ -996,10 +1180,11 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
           {/* Content area: flex-1 + min-h-0 let full-height pages (chat, write desk)
               fill the available space exactly; overflow-auto gives normal pages a
               scrollbar. This div is the ONLY vertically scrolling surface for
-              non-chat pages — html/body have overflow:hidden. */}
+              non-chat pages — html/body have overflow:hidden.
+              Padding scales with container tiers so text stays 60–75ch at any width. */}
           <div
             ref={contentRef}
-            className="flex-1 min-h-0 overflow-auto w-full max-w-[1400px] mx-auto px-6 lg:px-8 py-6 lg:py-8 flex flex-col"
+            className="flex-1 min-h-0 overflow-auto w-full max-w-[1400px] mx-auto px-4 @[560px]:px-6 @[1024px]:px-8 py-4 @[560px]:py-6 @[1024px]:py-8 flex flex-col"
           >
             {children}
           </div>

@@ -34,8 +34,8 @@ export default defineConfig({
         start_url: `${basePath}`,
         scope: `${basePath}`,
         display: 'standalone',
-        background_color: '#0b0b0f',
-        theme_color: '#0b0b0f',
+        background_color: '#F4EEE1',
+        theme_color: '#274633',
         icons: [
           { src: 'icon-192.png', sizes: '192x192', type: 'image/png' },
           { src: 'icon-512.png', sizes: '512x512', type: 'image/png' },
@@ -81,6 +81,34 @@ export default defineConfig({
   build: {
     outDir: path.resolve(import.meta.dirname, 'dist/public'),
     emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        // Split the monolithic bundle so no single chunk exceeds Workbox's
+        // 2 MiB precache limit (~2.11 MB before splitting).
+        manualChunks: (id) => {
+          // React core + react-dom — hot path, cached long-term
+          if (id.includes('node_modules/react/') || id.includes('node_modules/react-dom/')) {
+            return 'vendor-react';
+          }
+          // Radix UI primitives (bulk of the UI library weight)
+          if (id.includes('@radix-ui')) {
+            return 'vendor-radix';
+          }
+          // TanStack Query + Wouter routing
+          if (id.includes('@tanstack') || id.includes('wouter')) {
+            return 'vendor-query';
+          }
+          // Lucide icons are large — isolate them
+          if (id.includes('lucide-react')) {
+            return 'vendor-icons';
+          }
+          // date-fns, sonner, and other utilities
+          if (id.includes('node_modules/')) {
+            return 'vendor-misc';
+          }
+        },
+      },
+    },
   },
   server: {
     port,

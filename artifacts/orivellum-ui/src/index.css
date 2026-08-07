@@ -286,14 +286,28 @@ body {
 
 /* ── iOS input font-size guard ────────────────────────────────────────────────
    iOS Safari zooms the viewport when an input is focused if its computed
-   font-size is < 16px.  This rule enforces the minimum on all small screens
-   without touching the desktop size scale.                                    */
-@media (max-width: 1023px) {
+   font-size is < 16px.  Use pointer:coarse rather than a fixed viewport
+   breakpoint so this fires on iPads in Split View at any fraction — container
+   queries make the layout tier, but this guard needs to be viewport-agnostic. */
+@media (pointer: coarse) {
   input:not([type='hidden']):not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file']),
   select,
   textarea {
     font-size: max(1rem, 16px) !important;
   }
+}
+
+/* ── Touch-action: manipulation — prevents double-tap zoom on nav buttons ─── */
+.touch-manipulation {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* ── Tablet/wide content measure clamp ────────────────────────────────────────
+   Keeps readable line-length (60–75ch) for prose containers at all widths.
+   Applied by pages that want the constraint; not applied globally.            */
+.prose-measure {
+  max-width: clamp(45ch, 100%, 75ch);
 }
 
 /* ── Chat message body ────────────────────────────────────────────────────────

@@ -1,9 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Animated,
   ActivityIndicator,
   Alert,
   AppState,
   Modal,
+  PanResponder,
   Platform,
   Pressable,
   ScrollView,
@@ -3928,6 +3930,307 @@ const wsStyles = StyleSheet.create({
   },
 });
 
+// ── Saved-to-Files browser ────────────────────────────────────────────────────
+
+interface SavedFile {
+  uri: string;
+  name: string;
+  size: number;    // bytes
+  modTime: number; // ms since epoch, 0 if unavailable
+}
+
+/** Scans documentDirectory for .mp3 files, sorted newest first. */
+function useSavedAudiobookFiles() {
+  const [files, setFiles]     = useState<SavedFile[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  const refresh = useCallback(async () => {
+    if (Platform.OS === 'web') return;
+    setLoading(true);
+    try {
+      const FileSystem = await import('expo-file-system/legacy');
+      const dir = FileSystem.documentDirectory;
+      if (!dir) return;
+      let entries: string[] = [];
+      try { entries = await FileSystem.readDirectoryAsync(dir); } catch { /* dir empty on first run */ }
+      const mp3Names = entries.filter(e => e.toLowerCase().endsWith('.mp3'));
+      const infos = await Promise.all(
+        mp3Names.map(async (name) => {
+          const uri  = `${dir}${name}`;
+          // InfoOptions only accepts { md5? } — size and modificationTime are
+          // always present in FileInfo when exists === true (no option needed).
+          const info = await FileSystem.getInfoAsync(uri);
+          return {
+            uri,
+            name,
+            size:    info.exists ? (info.size            ?? 0) : 0,
+            modTime: info.exists ? ((info.modificationTime ?? 0) * 1000) : 0,
+          } as SavedFile;
+        }),
+      );
+      // Filter out zero-byte files, sort newest first
+      infos.sort((a, b) => b.modTime - a.modTime);
+      setFiles(infos.filter(f => f.size > 0));
+    } catch {
+      // silent — directory might not exist yet
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { refresh(); }, [refresh]);
+
+  const deleteFile = useCallback(async (uri: string) => {
+    if (Platform.OS === 'web') return;
+    const FileSystem = await import('expo-file-system/legacy');
+    await FileSystem.deleteAsync(uri, { idempotent: true });
+    setFiles(prev => prev.filter(f => f.uri !== uri));
+  }, []);
+
+  return { files, loading, refresh, deleteFile };
+}
+
+/** Compact share button that shares a local file:// URI directly (no download). */
+function ShareLocalFileButton({ uri, name }: { uri: string; name: string }) {
+  const colors = useColors();
+  const [state, setState] = useState<'idle' | 'sharing' | 'done'>('idle');
+
+  const handleShare = async () => {
+    if (state === 'sharing') return;
+    setState('sharing');
+    try {
+      const Sharing = await import('expo-sharing');
+      const canShare = await Sharing.isAvailableAsync();
+      if (canShare) {
+        await Sharing.shareAsync(uri, { mimeType: 'audio/mpeg', dialogTitle: name, UTI: 'public.mp3' });
+        setState('done');
+        setTimeout(() => setState('idle'), 2500);
+      } else {
+        Alert.alert('Share unavailable', 'Sharing is not supported on this device.');
+        setState('idle');
+      }
+    } catch (e: any) {
+      setState('idle');
+      Alert.alert('Could not share audio', e?.message ?? 'Sharing failed');
+    }
+  };
+
+  return (
+    <Pressable onPress={handleShare} hitSlop={8} style={styles.iconBtn} disabled={state === 'sharing'}>
+      {state === 'sharing' ? (
+        <ActivityIndicator size="small" color={colors.primary} />
+      ) : (
+        <Feather
+          name={state === 'done' ? 'check' : 'share-2'}
+          size={16}
+          color={state === 'done' ? '#22c55e' : colors.primary}
+        />
+      )}
+    </Pressable>
+  );
+}
+
+const _SWIPE_REVEAL_PX  = 72;
+const _SWIPE_THRESHOLD  = 36; // how far left before snapping open
+
+/**
+ * A single row in the Saved-to-Files list.
+ *
+ * Gesture: swipe left to reveal the delete button underneath; swipe right (or
+ * tap play) to snap back closed.  Implemented with Animated + PanResponder so
+ * no extra gesture-handler dependency is required.
+ */
+function SavedFileRow({
+  file,
+  audio,
+  onDelete,
+}: {
+  file: SavedFile;
+  audio: ReturnType<typeof useSharedAudio>;
+  onDelete: () => void;
+}) {
+  const colors     = useColors();
+  const translateX = useRef(new Animated.Value(0)).current;
+  const isOpenRef  = useRef(false);
+  const playKey    = `saved-file-${file.uri}`;
+  const isPlaying  = audio.playingKey === playKey;
+
+  const snapTo = useCallback((toValue: number) => {
+    Animated.spring(translateX, { toValue, useNativeDriver: true, bounciness: 0 }).start();
+    isOpenRef.current = toValue < 0;
+  }, [translateX]);
+
+  const panResponder = useRef(
+    PanResponder.create({
+      onMoveShouldSetPanResponder: (_, { dx, dy }) =>
+        Math.abs(dx) > 6 && Math.abs(dx) > Math.abs(dy) * 1.5,
+      onPanResponderGrant: () => {
+        // Flatten any in-progress spring so the offset calculation is accurate.
+        translateX.stopAnimation();
+        translateX.setOffset((translateX as any)._value);
+        translateX.setValue(0);
+      },
+      onPanResponderMove: (_, { dx }) => {
+        // The offset (set in onPanResponderGrant) already carries the open/closed
+        // starting position.  We must NOT re-add it here — doing so would double-
+        // count -72px and make the row jump past the delete button on a right-swipe.
+        // Instead: compute the desired *total* position, then subtract the offset
+        // so setValue only sets the delta from that captured baseline.
+        const offset  = isOpenRef.current ? -_SWIPE_REVEAL_PX : 0;
+        const total   = Math.min(0, Math.max(-_SWIPE_REVEAL_PX, offset + dx));
+        translateX.setValue(total - offset);
+      },
+      onPanResponderRelease: () => {
+        translateX.flattenOffset();
+        const current = (translateX as any)._value as number;
+        snapTo(current < -_SWIPE_THRESHOLD ? -_SWIPE_REVEAL_PX : 0);
+      },
+    }),
+  ).current;
+
+  const fmtSize = (bytes: number) =>
+    bytes >= 1_048_576
+      ? `${(bytes / 1_048_576).toFixed(1)} MB`
+      : `${Math.round(bytes / 1024)} KB`;
+
+  const fmtDate = (ms: number) => {
+    if (!ms) return '';
+    return new Date(ms).toLocaleDateString(undefined, {
+      month: 'short', day: 'numeric', year: 'numeric',
+    });
+  };
+
+  return (
+    <View style={{ overflow: 'hidden', borderRadius: 8 }}>
+      {/* Delete action revealed on swipe-left */}
+      <View style={{
+        position: 'absolute', right: 0, top: 0, bottom: 0,
+        width: _SWIPE_REVEAL_PX, borderRadius: 8,
+        backgroundColor: '#ef4444',
+        alignItems: 'center', justifyContent: 'center',
+      }}>
+        <Pressable onPress={onDelete} hitSlop={4}
+          style={{ alignItems: 'center', gap: 3, paddingHorizontal: 10 }}
+        >
+          <Feather name="trash-2" size={16} color="#fff" />
+          <Text style={{ color: '#fff', fontSize: 10, fontFamily: 'Inter_500Medium' }}>Delete</Text>
+        </Pressable>
+      </View>
+
+      {/* Swipeable row */}
+      <Animated.View
+        {...panResponder.panHandlers}
+        style={[
+          styles.outputRow,
+          {
+            borderColor:     isPlaying ? colors.primary : colors.border,
+            backgroundColor: isPlaying ? colors.primary + '10' : colors.background,
+            transform: [{ translateX }],
+          },
+        ]}
+      >
+        {/* Play / Pause button */}
+        <Pressable
+          onPress={() => { snapTo(0); audio.toggle(playKey, file.uri); }}
+          hitSlop={6}
+          style={{
+            width: 36, height: 36, borderRadius: 18,
+            alignItems: 'center', justifyContent: 'center',
+            backgroundColor: isPlaying ? colors.primary : colors.muted,
+          }}
+        >
+          <Feather
+            name={isPlaying ? 'pause' : 'play'}
+            size={14}
+            color={isPlaying ? colors.primaryForeground : colors.mutedForeground}
+          />
+        </Pressable>
+
+        {/* File info */}
+        <View style={{ flex: 1 }}>
+          <Text numberOfLines={1} style={{
+            fontSize: 13, fontFamily: 'Inter_500Medium', color: colors.foreground,
+          }}>
+            {file.name}
+          </Text>
+          <Text style={{
+            fontSize: 11, fontFamily: 'Inter_400Regular', color: colors.mutedForeground,
+          }}>
+            {fmtSize(file.size)}{file.modTime ? ` · ${fmtDate(file.modTime)}` : ''}
+          </Text>
+        </View>
+
+        {/* Share */}
+        <ShareLocalFileButton uri={file.uri} name={file.name} />
+      </Animated.View>
+    </View>
+  );
+}
+
+/**
+ * "Saved to Files" section shown in the Audiobook tab.
+ *
+ * Lists every .mp3 file in `documentDirectory` — the same directory that
+ * `saveAudioToFiles` writes to.  Each row plays the file inline and exposes a
+ * swipe-left-to-delete gesture that removes the file from the device.
+ */
+function SavedFilesPanel({ audio }: { audio: ReturnType<typeof useSharedAudio> }) {
+  const colors = useColors();
+  const { files, loading, refresh, deleteFile } = useSavedAudiobookFiles();
+
+  // Not meaningful on web — file:// URIs are iOS/Android only.
+  if (Platform.OS === 'web') return null;
+
+  const handleDelete = (file: SavedFile) => {
+    if (audio.playingKey === `saved-file-${file.uri}`) audio.stop();
+    Alert.alert(
+      'Delete file',
+      `Remove "${file.name}" from your device?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Delete', style: 'destructive', onPress: () => deleteFile(file.uri) },
+      ],
+    );
+  };
+
+  return (
+    <SectionCard
+      title="Saved to Files"
+      icon="folder"
+      right={
+        <Pressable onPress={refresh} hitSlop={8} style={styles.iconBtn} disabled={loading}>
+          <Feather name="refresh-cw" size={14} color={loading ? colors.mutedForeground + '55' : colors.mutedForeground} />
+        </Pressable>
+      }
+    >
+      {loading && files.length === 0 ? (
+        <ActivityIndicator color={colors.primary} style={{ marginVertical: 16 }} />
+      ) : files.length === 0 ? (
+        <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
+          No audiobooks saved yet.{'\n'}Tap "Save to Files" after generating an audiobook.
+        </Text>
+      ) : (
+        <View style={{ gap: 8 }}>
+          <Text style={{
+            fontSize: 11, fontFamily: 'Inter_400Regular',
+            color: colors.mutedForeground, marginBottom: 2,
+          }}>
+            Swipe left to delete · Tap to play
+          </Text>
+          {files.map(file => (
+            <SavedFileRow
+              key={file.uri}
+              file={file}
+              audio={audio}
+              onDelete={() => handleDelete(file)}
+            />
+          ))}
+        </View>
+      )}
+    </SectionCard>
+  );
+}
+
 // ── Screen ──────────────────────────────────────────────────────────────────────
 
 type StudioTab = 'voice' | 'image' | 'workshop' | 'audiobook';
@@ -4064,6 +4367,7 @@ export default function StudioScreen() {
               audio={audio}
               outputs={outputs}
             />
+            <SavedFilesPanel audio={audio} />
             <OutputsPanel
               outputs={outputs.filter(o => o.kind === 'audio')}
               loading={loadingOutputs}
