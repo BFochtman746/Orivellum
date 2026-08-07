@@ -38,6 +38,16 @@ const SEV: Record<string, { bg: string; text: string; border: string }> = {
 
 const WORKER_STAGES = new Set(['B0', 'B1', 'B2', 'B3', 'B4', 'B5']);
 
+// ─── chapter kind colours (mirrors web KIND_COLOR) ────────────────────────────
+
+const KIND_COLOR_RN: Record<string, { bg: string; text: string; border: string }> = {
+  character:     { bg: '#f5f3ff', text: '#6d28d9', border: '#ddd6fe' },
+  event:         { bg: '#eff6ff', text: '#1d4ed8', border: '#bfdbfe' },
+  setting:       { bg: '#ecfdf5', text: '#065f46', border: '#a7f3d0' },
+  theme:         { bg: '#fff1f2', text: '#9f1239', border: '#fecdd3' },
+  foreshadowing: { bg: '#eef2ff', text: '#3730a3', border: '#c7d2fe' },
+};
+
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
@@ -85,6 +95,78 @@ function ActionButton({
       <Feather name={icon as any} size={11} color={color ?? colors.primary} />
       <Text style={[s.actionBtnLabel, { color: color ?? colors.primary }]}>{label}</Text>
     </Pressable>
+  );
+}
+
+// ─── chapter knowledge panel ─────────────────────────────────────────────────
+
+function ChapterKnowledgePanel({
+  knowledge,
+  loading,
+}: {
+  knowledge: any[] | null;
+  loading: boolean;
+}) {
+  const colors = useColors();
+
+  if (loading) {
+    return (
+      <ActivityIndicator size="small" color={colors.primary} style={{ marginVertical: 8 }} />
+    );
+  }
+  if (!knowledge || knowledge.length === 0) {
+    return (
+      <Text style={[s.emptyText, { color: colors.mutedForeground, fontSize: 12, marginTop: 0 }]}>
+        No knowledge items extracted for this chapter yet.
+      </Text>
+    );
+  }
+
+  // Group by kind, preserve consistent order
+  const KIND_ORDER = ['character', 'event', 'setting', 'theme', 'foreshadowing'];
+  const grouped: Record<string, any[]> = {};
+  for (const item of knowledge) {
+    if (!grouped[item.kind]) grouped[item.kind] = [];
+    grouped[item.kind].push(item);
+  }
+  const kinds = [
+    ...KIND_ORDER.filter(k => grouped[k]),
+    ...Object.keys(grouped).filter(k => !KIND_ORDER.includes(k)).sort(),
+  ];
+
+  return (
+    <View style={{ gap: 8 }}>
+      {kinds.map(kind => {
+        const kc = KIND_COLOR_RN[kind] ?? { bg: '#f9fafb', text: '#374151', border: '#e5e7eb' };
+        return (
+          <View key={kind} style={{ gap: 4 }}>
+            <Text style={[s.kindLabel, { color: kc.text }]}>{kind.toUpperCase()}</Text>
+            {grouped[kind].map((item: any, i: number) => (
+              <View key={i} style={[s.knowledgeItem, { backgroundColor: kc.bg, borderColor: kc.border }]}>
+                <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 6 }}>
+                  <Text
+                    style={[s.knowledgeText, { color: colors.foreground, flex: 1 }]}
+                    numberOfLines={4}
+                  >
+                    {item.subject ? `${item.subject}: ${item.text}` : item.text}
+                  </Text>
+                  {item.confidence != null && (
+                    <Text
+                      style={[
+                        s.confidenceBadge,
+                        { color: kc.text, backgroundColor: kc.bg, borderColor: kc.border },
+                      ]}
+                    >
+                      {Math.round(item.confidence * 100)}%
+                    </Text>
+                  )}
+                </View>
+              </View>
+            ))}
+          </View>
+        );
+      })}
+    </View>
   );
 }
 
@@ -200,26 +282,40 @@ export default function WorkIntelligenceScreen() {
   // Pipeline advance state
   const [advancing, setAdvancing] = useState(false);
 
+  // Chapter structure + per-chapter knowledge (lazy-loaded on expand)
+  const [chapters,               setChapters]               = useState<any>(null);
+  const [expandedChapters,       setExpandedChapters]       = useState<Set<string>>(new Set());
+  const [chapterKnowledge,       setChapterKnowledge]       = useState<Record<string, any[]>>({});
+  const [loadingChapterKnowledge,setLoadingChapterKnowledge]= useState<Record<string, boolean>>({});
+  // Track which chapters we've already started a fetch for (avoids duplicate requests)
+  const fetchedChaptersRef = React.useRef<Set<string>>(new Set());
+
   const fetchAll = useCallback(async () => {
     setLoading(true);
     setError(false);
     try {
-      const [cRes, gRes, stRes, plRes] = await Promise.all([
+      const [cRes, gRes, stRes, plRes, chRes] = await Promise.all([
         mobileFetch(`${base}/works/${id}/completeness`),
         mobileFetch(`${base}/works/${id}/gaps`),
         mobileFetch(`${base}/works/${id}/stats`),
         mobileFetch(`${base}/works/${id}/pipeline`),
+        mobileFetch(`${base}/works/${id}/chapters`),
       ]);
-      const [cData, gData, stData, plData] = await Promise.all([
+      const [cData, gData, stData, plData, chData] = await Promise.all([
         cRes.ok  ? cRes.json()  : null,
         gRes.ok  ? gRes.json()  : null,
         stRes.ok ? stRes.json() : null,
         plRes.ok ? plRes.json() : null,
+        chRes.ok ? chRes.json() : null,
       ]);
       setCompleteness(cData);
       setGaps(gData);
       setStats(stData);
       setPipeline(plData?.pipeline ?? null);
+      setChapters(chData);
+      // Reset chapter expansion on full refresh so stale knowledge is re-fetched
+      setExpandedChapters(new Set());
+      fetchedChaptersRef.current.clear();
     } catch {
       setError(true);
     } finally {
@@ -265,6 +361,27 @@ export default function WorkIntelligenceScreen() {
       Alert.alert('Rescore failed', 'Check your connection and try again.');
     } finally {
       setRescoring(false);
+    }
+  };
+
+  // ── Chapter expand/collapse (lazy-loads knowledge on first open) ───────────
+  const toggleChapter = async (chapterId: string) => {
+    setExpandedChapters(prev => {
+      const next = new Set(prev);
+      if (next.has(chapterId)) { next.delete(chapterId); } else { next.add(chapterId); }
+      return next;
+    });
+    if (fetchedChaptersRef.current.has(chapterId)) return; // already fetched or in flight
+    fetchedChaptersRef.current.add(chapterId);
+    setLoadingChapterKnowledge(prev => ({ ...prev, [chapterId]: true }));
+    try {
+      const res = await mobileFetch(`${base}/works/${id}/chapters/${chapterId}/knowledge`);
+      const data = res.ok ? await res.json() : null;
+      setChapterKnowledge(prev => ({ ...prev, [chapterId]: data?.knowledge ?? [] }));
+    } catch {
+      setChapterKnowledge(prev => ({ ...prev, [chapterId]: [] }));
+    } finally {
+      setLoadingChapterKnowledge(prev => ({ ...prev, [chapterId]: false }));
     }
   };
 
@@ -546,6 +663,100 @@ export default function WorkIntelligenceScreen() {
           </View>
         )}
       </Section>
+
+      {/* ── Chapter Structure ─────────────────────────────────────────────── */}
+      {chapters && chapters.total_chapters > 0 && (
+        <Section title={`Chapter Structure (${chapters.total_chapters})`}>
+          {(chapters.documents as any[]).map((doc: any) => (
+            <View key={doc.doc_id} style={{ gap: 6 }}>
+              {/* Only show the doc label when there are multiple source documents */}
+              {chapters.documents.length > 1 && (
+                <Text
+                  style={[s.docGroupLabel, { color: colors.mutedForeground }]}
+                  numberOfLines={1}
+                >
+                  {doc.doc_title}
+                </Text>
+              )}
+              {(doc.chapters as any[]).map((ch: any) => {
+                const isExpanded     = expandedChapters.has(ch.id);
+                const hasKnowledge   = ch.knowledge_count > 0;
+                const knData         = chapterKnowledge[ch.id] ?? null;
+                const knLoading      = loadingChapterKnowledge[ch.id] ?? false;
+
+                return (
+                  <View key={ch.id}>
+                    <Pressable
+                      onPress={hasKnowledge ? () => toggleChapter(ch.id) : undefined}
+                      style={({ pressed }) => [
+                        s.chapterRow,
+                        {
+                          borderColor: isExpanded ? colors.primary + '40' : colors.border,
+                          backgroundColor: isExpanded ? colors.primary + '08' : 'transparent',
+                          opacity: pressed ? 0.7 : 1,
+                        },
+                      ]}
+                    >
+                      {/* Sequence number badge */}
+                      <View style={[s.chapterSeqBadge, { backgroundColor: colors.muted }]}>
+                        <Text style={[s.chapterSeq, { color: colors.mutedForeground }]}>
+                          {ch.seq + 1}
+                        </Text>
+                      </View>
+
+                      {/* Title */}
+                      <Text
+                        style={[s.chapterTitle, { color: colors.foreground }]}
+                        numberOfLines={2}
+                      >
+                        {ch.title || `Chapter ${ch.seq + 1}`}
+                      </Text>
+
+                      {/* Knowledge count badge + chevron (or dash if empty) */}
+                      {hasKnowledge ? (
+                        <>
+                          <View
+                            style={[
+                              s.knowledgeCountBadge,
+                              {
+                                backgroundColor: colors.primary + '18',
+                                borderColor: colors.primary + '40',
+                              },
+                            ]}
+                          >
+                            <Text style={[s.knowledgeCountText, { color: colors.primary }]}>
+                              {ch.knowledge_count}
+                            </Text>
+                          </View>
+                          <Feather
+                            name={isExpanded ? 'chevron-up' : 'chevron-down'}
+                            size={14}
+                            color={colors.mutedForeground}
+                          />
+                        </>
+                      ) : (
+                        <Text style={[s.noKnowledge, { color: colors.mutedForeground }]}>—</Text>
+                      )}
+                    </Pressable>
+
+                    {/* Expanded knowledge panel */}
+                    {isExpanded && hasKnowledge && (
+                      <View
+                        style={[
+                          s.chapterKnowledgeArea,
+                          { borderColor: colors.primary + '40' },
+                        ]}
+                      >
+                        <ChapterKnowledgePanel knowledge={knData} loading={knLoading} />
+                      </View>
+                    )}
+                  </View>
+                );
+              })}
+            </View>
+          ))}
+        </Section>
+      )}
     </ScrollView>
   );
 }
@@ -662,4 +873,48 @@ const s = StyleSheet.create({
   graphBtnIcon:  { width: 38, height: 38, borderRadius: 9, alignItems: 'center', justifyContent: 'center' },
   graphBtnTitle: { fontSize: 14, fontFamily: 'Inter_600SemiBold', marginBottom: 2 },
   graphBtnSub:   { fontSize: 12, fontFamily: 'Inter_400Regular' },
+
+  // Chapter structure
+  docGroupLabel: {
+    fontSize: 10, fontFamily: 'Inter_600SemiBold', letterSpacing: 0.4,
+    marginBottom: 2, marginTop: 4,
+  },
+  chapterRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    paddingVertical: 9, paddingHorizontal: 10,
+    borderRadius: 8, borderWidth: 1,
+  },
+  chapterSeqBadge: {
+    width: 24, height: 24, borderRadius: 6,
+    alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+  },
+  chapterSeq:   { fontSize: 11, fontFamily: 'Inter_600SemiBold' },
+  chapterTitle: { fontSize: 13, fontFamily: 'Inter_500Medium', lineHeight: 18, flex: 1 },
+  knowledgeCountBadge: {
+    borderWidth: 1, borderRadius: 10,
+    paddingHorizontal: 6, paddingVertical: 2, flexShrink: 0,
+  },
+  knowledgeCountText: { fontSize: 11, fontFamily: 'Inter_600SemiBold' },
+  noKnowledge: { fontSize: 12, fontFamily: 'Inter_400Regular', flexShrink: 0 },
+  chapterKnowledgeArea: {
+    borderWidth: 1, borderTopWidth: 0,
+    borderBottomLeftRadius: 8, borderBottomRightRadius: 8,
+    padding: 10, gap: 6,
+  },
+
+  // Knowledge items inside expanded chapter
+  kindLabel: {
+    fontSize: 9, fontFamily: 'Inter_600SemiBold', letterSpacing: 0.8,
+    marginBottom: 2, marginTop: 2,
+  },
+  knowledgeItem: {
+    borderWidth: 1, borderRadius: 6, padding: 8,
+  },
+  knowledgeText: { fontSize: 12, fontFamily: 'Inter_400Regular', lineHeight: 17 },
+  confidenceBadge: {
+    fontSize: 9, fontFamily: 'Inter_600SemiBold',
+    borderWidth: 1, borderRadius: 4,
+    paddingHorizontal: 4, paddingVertical: 2,
+    flexShrink: 0, textAlign: 'center',
+  },
 });
