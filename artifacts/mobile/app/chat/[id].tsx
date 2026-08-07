@@ -617,11 +617,13 @@ function MessageSkeletonRow({ align = 'left', width = '70%' }: { align?: 'left' 
   return (
     <View style={{ paddingHorizontal: 16, paddingVertical: 6, alignItems: align === 'right' ? 'flex-end' : 'flex-start' }}>
       <Animated.View
-        style={{
-          height: 40, width, borderRadius: 18,
-          backgroundColor: colors.muted,
-          opacity,
-        }}
+        // eslint-disable-next-line react-native/no-inline-styles
+        style={[
+          // width is a percentage string (e.g. '70%') — cast to satisfy the
+          // Animated.View style union which expects DimensionValue, not string.
+          { height: 40, width: width as import('react-native').DimensionValue, borderRadius: 18, backgroundColor: colors.muted },
+          { opacity },
+        ]}
       />
     </View>
   );
