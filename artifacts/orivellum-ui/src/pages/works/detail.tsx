@@ -2868,6 +2868,61 @@ function CompletenessTab({ workId }: { workId: string }) {
             </div>
           </div>
         )}
+
+        {/* ── Word-count + chapter progress bars ─────────────────────────── */}
+        {!editingTargets && (() => {
+          const contentDim = data.dimensions.find((d) => d.name === "content");
+          const structDim  = data.dimensions.find((d) => d.name === "structure");
+          if (!contentDim && !structDim) return null;
+
+          const barColor = (pct: number): string =>
+            pct >= 70 ? "var(--green-2)" : pct >= 30 ? "var(--gilt)" : "var(--rust)";
+
+          return (
+            <div className="mt-3 space-y-2.5">
+              {contentDim && contentDim.target > 0 && (() => {
+                const pct = Math.min(100, Math.round((contentDim.current / contentDim.target) * 100));
+                return (
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-[11px] font-mono text-muted-foreground">Words</span>
+                      <span className="text-[11px] font-mono text-muted-foreground">
+                        {Number(contentDim.current).toLocaleString()} / {Number(contentDim.target).toLocaleString()}
+                        <span className="ml-1.5 opacity-60">({pct}%)</span>
+                      </span>
+                    </div>
+                    <div className="h-1.5 bg-muted rounded-full overflow-hidden">
+                      <div
+                        className="h-full rounded-full transition-all duration-700"
+                        style={{ width: `${pct}%`, background: barColor(pct) }}
+                      />
+                    </div>
+                  </div>
+                );
+              })()}
+              {structDim && structDim.target > 0 && (() => {
+                const pct = Math.min(100, Math.round((structDim.current / structDim.target) * 100));
+                return (
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-[11px] font-mono text-muted-foreground">Chapters</span>
+                      <span className="text-[11px] font-mono text-muted-foreground">
+                        {structDim.current} / {structDim.target}
+                        <span className="ml-1.5 opacity-60">({pct}%)</span>
+                      </span>
+                    </div>
+                    <div className="h-1.5 bg-muted rounded-full overflow-hidden">
+                      <div
+                        className="h-full rounded-full transition-all duration-700"
+                        style={{ width: `${pct}%`, background: barColor(pct) }}
+                      />
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+          );
+        })()}
       </div>
 
       {/* Dimension breakdown */}
