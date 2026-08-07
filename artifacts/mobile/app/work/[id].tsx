@@ -8,6 +8,7 @@ import {
   Alert,
   Animated,
   FlatList,
+  LayoutAnimation,
   Modal,
   Platform,
   Pressable,
@@ -47,7 +48,7 @@ import { readCache, writeCache } from '@/lib/cache';
 import { KnowledgeGraphView } from '@/components/KnowledgeGraphView';
 import { SkeletonItem } from '@/components/SkeletonItem';
 import { EmptyState } from '@/components/EmptyState';
-import { font } from '@/lib/typography';
+import { font, fontSerif } from '@/lib/typography';
 
 type Tab = 'overview' | 'docs' | 'knowledge' | 'tasks' | 'conversations' | 'learn' | 'gaps' | 'book' | 'brainstorm' | 'intelligence' | 'trailer' | 'genesis' | 'graph';
 
@@ -69,6 +70,38 @@ const SECONDARY_TABS: { key: Tab; label: string }[] = [
   { key: 'genesis',      label: 'Genesis' },
   { key: 'graph',        label: 'Graph'   },
 ];
+
+// All tab keys in display order — used by TabDotIndicator
+const TAB_ORDER: Tab[] = [
+  ...PRIMARY_TABS.map(t => t.key),
+  ...SECONDARY_TABS.map(t => t.key),
+];
+
+function TabDotIndicator({ tabs, activeTab }: { tabs: Tab[]; activeTab: Tab }) {
+  const colors = useColors();
+  const T = useVellumTokens();
+  return (
+    <View style={{
+      flexDirection: 'row', justifyContent: 'center', alignItems: 'center',
+      gap: 6, paddingVertical: 5, backgroundColor: colors.background,
+    }}>
+      {tabs.map(tab => {
+        const isActive = tab === activeTab;
+        return (
+          <View
+            key={tab}
+            style={{
+              width: isActive ? 18 : 5,
+              height: 4,
+              borderRadius: 2,
+              backgroundColor: isActive ? T.gilt : colors.border,
+            }}
+          />
+        );
+      })}
+    </View>
+  );
+}
 
 function TabBar({ active, onSelect, colors, badges = {}, onNavigateGraph }: {
   active: Tab;
@@ -5229,6 +5262,14 @@ export default function WorkDetailScreen() {
   const validTabs: Tab[] = ['overview','docs','knowledge','tasks','conversations','learn','gaps','book','brainstorm','intelligence'];
   const initTab: Tab = validTabs.includes(tabParam as Tab) ? (tabParam as Tab) : 'overview';
   const [activeTab, setActiveTab] = useState<Tab>(initTab);
+
+  // Animate the dot indicator width transition when switching tabs
+  const handleTabSelect = useCallback((newTab: Tab) => {
+    if (Platform.OS !== 'web') {
+      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    }
+    setActiveTab(newTab);
+  }, []);
   // Badge count for the Intelligence tab — updated when the tab loads its gap data
   const [intelHighGaps, setIntelHighGaps] = useState(0);
   const [newTaskText, setNewTaskText] = useState('');
@@ -6135,7 +6176,7 @@ export default function WorkDetailScreen() {
 
       <TabBar
         active={activeTab}
-        onSelect={setActiveTab}
+        onSelect={handleTabSelect}
         colors={colors}
         badges={{
           tasks: (tasksData?.tasks ?? []).filter((t: any) => t.status !== 'completed').length || undefined,
@@ -6147,6 +6188,7 @@ export default function WorkDetailScreen() {
           router.push(`/graph?work_id=${id}&work_title=${encodeURIComponent(work?.title ?? '')}` as any)
         }
       />
+      <TabDotIndicator tabs={TAB_ORDER} activeTab={activeTab} />
 
       {/* Review notification chip — shown under the tab bar when Overview is active */}
       {activeTab === 'overview' && reviewItems.length > 0 && (
@@ -6303,7 +6345,7 @@ export default function WorkDetailScreen() {
 const styles = StyleSheet.create({
   screen: { flex: 1 },
   workHeader: {},
-  workTitle: { fontSize: 22, fontFamily: 'Inter_700Bold', marginBottom: 6 },
+  workTitle: { fontSize: 22, ...fontSerif('bold'), marginBottom: 6 },
   typeBadge: {
     alignSelf: 'flex-start',
     paddingHorizontal: 10,
