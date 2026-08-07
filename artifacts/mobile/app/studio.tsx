@@ -26,6 +26,9 @@ import { Feather } from '@expo/vector-icons';
 import { Stack, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useColors } from '@/hooks/useColors';
+import { useVellumTokens } from '@/lib/tokens';
+import { font } from '@/lib/typography';
+import { SkeletonItem } from '@/components/SkeletonItem';
 import { mobileFetch } from '@/lib/api';
 import { getApiToken } from '@/lib/token';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -167,6 +170,7 @@ async function saveImageToPhotos(uri: string, name = `orivellum_${Date.now()}.pn
 /** Small "save to Photos" icon button with busy/done states. */
 function SavePhotoButton({ uri, name, compact }: { uri: string; name?: string; compact?: boolean }) {
   const colors = useColors();
+  const T = useVellumTokens();
   const [state, setState] = useState<'idle' | 'saving' | 'done'>('idle');
 
   const handleSave = async () => {
@@ -184,11 +188,11 @@ function SavePhotoButton({ uri, name, compact }: { uri: string; name?: string; c
 
   if (compact) {
     return (
-      <Pressable onPress={handleSave} hitSlop={8} style={styles.iconBtn} disabled={state === 'saving'}>
+      <Pressable onPress={handleSave} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} style={styles.iconBtn} disabled={state === 'saving'}>
         {state === 'saving' ? (
           <ActivityIndicator size="small" color={colors.primary} />
         ) : (
-          <Feather name={state === 'done' ? 'check' : 'download'} size={16} color={state === 'done' ? '#22c55e' : colors.primary} />
+          <Feather name={state === 'done' ? 'check' : 'download'} size={16} color={state === 'done' ? T.green : colors.primary} />
         )}
       </Pressable>
     );
@@ -206,9 +210,9 @@ function SavePhotoButton({ uri, name, compact }: { uri: string; name?: string; c
       {state === 'saving' ? (
         <ActivityIndicator size="small" color={colors.primary} />
       ) : (
-        <Feather name={state === 'done' ? 'check' : 'download'} size={15} color={state === 'done' ? '#22c55e' : colors.primary} />
+        <Feather name={state === 'done' ? 'check' : 'download'} size={15} color={state === 'done' ? T.green : colors.primary} />
       )}
-      <Text style={[styles.saveButtonText, { color: state === 'done' ? '#22c55e' : colors.primary }]}>
+      <Text style={[styles.saveButtonText, { color: state === 'done' ? T.green : colors.primary }]}>
         {state === 'saving' ? 'Saving…' : state === 'done' ? 'Saved to Photos' : Platform.OS === 'web' ? 'Download image' : 'Save to Photos'}
       </Text>
     </Pressable>
@@ -343,6 +347,7 @@ async function saveAudioToFiles(uri: string, name = `orivellum_${Date.now()}.mp3
 /** Full-width "Save to Files" button with busy / saved feedback matching SavePhotoButton. */
 function SaveAudioFilesButton({ uri, name }: { uri: string; name?: string }) {
   const colors = useColors();
+  const T = useVellumTokens();
   const [state, setState] = useState<'idle' | 'saving' | 'done'>('idle');
 
   const handleSave = async () => {
@@ -373,10 +378,10 @@ function SaveAudioFilesButton({ uri, name }: { uri: string; name?: string }) {
         <Feather
           name={state === 'done' ? 'check' : 'folder'}
           size={15}
-          color={state === 'done' ? '#22c55e' : colors.primary}
+          color={state === 'done' ? T.green : colors.primary}
         />
       )}
-      <Text style={[styles.saveButtonText, { color: state === 'done' ? '#22c55e' : colors.primary }]}>
+      <Text style={[styles.saveButtonText, { color: state === 'done' ? T.green : colors.primary }]}>
         {state === 'saving'
           ? 'Saving…'
           : state === 'done'
@@ -392,6 +397,7 @@ function SaveAudioFilesButton({ uri, name }: { uri: string; name?: string }) {
 /** Small share icon button for audio rows — busy/done feedback matches SavePhotoButton. */
 function ShareAudioButton({ uri, name, compact }: { uri: string; name?: string; compact?: boolean }) {
   const colors = useColors();
+  const T = useVellumTokens();
   const [state, setState] = useState<'idle' | 'sharing' | 'done'>('idle');
 
   const handleShare = async () => {
@@ -409,14 +415,14 @@ function ShareAudioButton({ uri, name, compact }: { uri: string; name?: string; 
 
   if (compact) {
     return (
-      <Pressable onPress={handleShare} hitSlop={8} style={styles.iconBtn} disabled={state === 'sharing'}>
+      <Pressable onPress={handleShare} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} style={styles.iconBtn} disabled={state === 'sharing'}>
         {state === 'sharing' ? (
           <ActivityIndicator size="small" color={colors.primary} />
         ) : (
           <Feather
             name={state === 'done' ? 'check' : 'share-2'}
             size={16}
-            color={state === 'done' ? '#22c55e' : colors.primary}
+            color={state === 'done' ? T.green : colors.primary}
           />
         )}
       </Pressable>
@@ -438,10 +444,10 @@ function ShareAudioButton({ uri, name, compact }: { uri: string; name?: string; 
         <Feather
           name={state === 'done' ? 'check' : 'share-2'}
           size={15}
-          color={state === 'done' ? '#22c55e' : colors.primary}
+          color={state === 'done' ? T.green : colors.primary}
         />
       )}
-      <Text style={[styles.saveButtonText, { color: state === 'done' ? '#22c55e' : colors.primary }]}>
+      <Text style={[styles.saveButtonText, { color: state === 'done' ? T.green : colors.primary }]}>
         {state === 'sharing' ? 'Sharing…' : state === 'done' ? 'Shared!' : Platform.OS === 'web' ? 'Download' : 'Share'}
       </Text>
     </Pressable>
@@ -549,10 +555,11 @@ function VoiceBrowserCard({
   audio: ReturnType<typeof useSharedAudio>;
 }) {
   const colors = useColors();
+  const T = useVellumTokens();
   const selected = voices.find((v) => v.id === selectedId) ?? voices[0];
 
   const accentColor = (v: VoiceEntry) =>
-    v.accent === 'british' ? '#3b82f6' : '#f59e0b';
+    v.accent === 'british' ? '#3b82f6' : T.gilt;
 
   const genderSymbol = (v: VoiceEntry) =>
     v.gender === 'feminine' ? '♀' : v.gender === 'masculine' ? '♂' : '◆';
@@ -705,7 +712,7 @@ const voiceCardStyles = StyleSheet.create({
     gap: 6,
   },
   nameRow: { flexDirection: 'row', alignItems: 'center', gap: 3 },
-  name: { fontSize: 13, fontFamily: 'Inter_600SemiBold', flex: 1 },
+  name: { fontSize: 13, ...font('semibold'), flex: 1 },
   gender: { fontSize: 11 },
   accentBadge: {
     alignSelf: 'flex-start',
@@ -714,7 +721,7 @@ const voiceCardStyles = StyleSheet.create({
     borderRadius: 4,
     borderWidth: 1,
   },
-  accentText: { fontSize: 9, fontFamily: 'Inter_600SemiBold' },
+  accentText: { fontSize: 9, ...font('semibold') },
   playBtn: {
     width: 26,
     height: 26,
@@ -729,18 +736,18 @@ const voiceCardStyles = StyleSheet.create({
     borderWidth: 1,
     padding: 10,
   },
-  selectedName: { fontSize: 13, fontFamily: 'Inter_600SemiBold' },
-  selectedMeta: { fontSize: 11, fontFamily: 'Inter_400Regular' },
+  selectedName: { fontSize: 13, ...font('semibold') },
+  selectedMeta: { fontSize: 11, ...font('regular') },
   tag: {
     borderRadius: 4,
     borderWidth: 1,
     paddingHorizontal: 6,
     paddingVertical: 2,
   },
-  tagText: { fontSize: 9, fontFamily: 'Inter_400Regular' },
+  tagText: { fontSize: 9, ...font('regular') },
   generatingLabel: {
     fontSize: 9,
-    fontFamily: 'Inter_400Regular',
+    ...font('regular'),
     fontStyle: 'italic',
     opacity: 0.7,
   },
@@ -885,6 +892,7 @@ function VoiceDesignerCard({
   onUseVoice: (id: string) => void;
 }) {
   const colors = useColors();
+  const T = useVellumTokens();
   const [open, setOpen] = useState(false);
   const [description, setDescription] = useState('');
   const [loading, setLoading] = useState(false);
@@ -1015,9 +1023,9 @@ function VoiceDesignerCard({
 
       {/* Error state */}
       {!!errorMsg && (
-        <View style={[vdStyles.infoBox, { borderColor: '#ef444444', backgroundColor: '#ef444410' }]}>
-          <Feather name="alert-circle" size={12} color="#ef4444" />
-          <Text style={{ color: '#ef4444', fontSize: 12, fontFamily: 'Inter_400Regular', flex: 1, lineHeight: 17 }}>
+        <View style={[vdStyles.infoBox, { borderColor: T.rust + '44', backgroundColor: T.rustSoft }]}>
+          <Feather name="alert-circle" size={12} color={T.rust} />
+          <Text style={{ color: T.rust, fontSize: 12, ...font('regular'), flex: 1, lineHeight: 17 }}>
             {errorMsg}
           </Text>
         </View>
@@ -1045,10 +1053,10 @@ function VoiceDesignerCard({
             const isPlaying = audio.playingKey === `sample-${v.id}`;
             const isLoading = audio.loadingKey === `sample-${v.id}`;
             const sampleUri = `${API}/studio/voices/${encodeURIComponent(v.id)}/sample`;
-            const accentCol = v.accent === 'british' ? '#3b82f6' : '#f59e0b';
+            const accentCol = v.accent === 'british' ? '#3b82f6' : T.gilt;
             const genderSym = v.gender === 'feminine' ? '♀' : v.gender === 'masculine' ? '♂' : '◆';
             const score = m.match_score ?? 0;
-            const scoreColor = score >= 85 ? '#22c55e' : score >= 70 ? '#f59e0b' : colors.mutedForeground;
+            const scoreColor = score >= 85 ? T.green : score >= 70 ? T.gilt : colors.mutedForeground;
 
             return (
               <View
@@ -1206,6 +1214,7 @@ const vdStyles = StyleSheet.create({
     paddingVertical: 9,
     borderRadius: 8,
     borderWidth: 1,
+    minHeight: 44,
   },
 });
 
@@ -1251,6 +1260,7 @@ function VoiceRecommenderCard({
   onUseVoice: (id: string) => void;
 }) {
   const colors = useColors();
+  const T = useVellumTokens();
   const [open, setOpen]           = useState(false);
   const [loading, setLoading]     = useState(false);
   const [result, setResult]       = useState<RecommendResult | null>(null);
@@ -1428,9 +1438,9 @@ function VoiceRecommenderCard({
       {/* Error with retry */}
       {!!errorMsg && !loading && (
         <View style={{ gap: 8 }}>
-          <View style={[vdStyles.infoBox, { borderColor: '#ef444444', backgroundColor: '#ef444410' }]}>
-            <Feather name="alert-circle" size={12} color="#ef4444" />
-            <Text style={{ color: '#ef4444', fontSize: 12, fontFamily: 'Inter_400Regular', flex: 1, lineHeight: 17 }}>
+          <View style={[vdStyles.infoBox, { borderColor: T.rust + '44', backgroundColor: T.rustSoft }]}>
+            <Feather name="alert-circle" size={12} color={T.rust} />
+            <Text style={{ color: T.rust, fontSize: 12, ...font('regular'), flex: 1, lineHeight: 17 }}>
               {errorMsg}
             </Text>
           </View>
@@ -1453,11 +1463,11 @@ function VoiceRecommenderCard({
           {/* No-content notice — shown when the Work has no documents yet */}
           {result.no_content && (
             <View style={[vdStyles.infoBox, {
-              borderColor: '#f59e0b55',
-              backgroundColor: '#f59e0b0d',
+              borderColor: T.giltLine,
+              backgroundColor: T.giltSoft,
             }]}>
-              <Feather name="alert-circle" size={12} color="#f59e0b" />
-              <Text style={{ color: '#f59e0b', fontSize: 12, fontFamily: 'Inter_400Regular', flex: 1, lineHeight: 17 }}>
+              <Feather name="alert-circle" size={12} color={T.gilt} />
+              <Text style={{ color: T.gilt, fontSize: 12, ...font('regular'), flex: 1, lineHeight: 17 }}>
                 Not enough content to analyse yet — add documents to this Work first. These are curated defaults, not personalised picks.
               </Text>
             </View>
@@ -1491,10 +1501,10 @@ function VoiceRecommenderCard({
             const isPlaying  = audio.playingKey === `sample-${v.id}`;
             const isLoading  = audio.loadingKey === `sample-${v.id}`;
             const sampleUri  = `${API}/studio/voices/${encodeURIComponent(v.id)}/sample`;
-            const accentCol  = v.accent === 'british' ? '#3b82f6' : '#f59e0b';
+            const accentCol  = v.accent === 'british' ? '#3b82f6' : T.gilt;
             const genderSym  = v.gender === 'feminine' ? '♀' : v.gender === 'masculine' ? '♂' : '◆';
             const score      = rec.score ?? 0;
-            const scoreColor = score >= 85 ? '#22c55e' : score >= 70 ? '#f59e0b' : colors.mutedForeground;
+            const scoreColor = score >= 85 ? T.green : score >= 70 ? T.gilt : colors.mutedForeground;
 
             return (
               <View
@@ -2013,6 +2023,7 @@ function TTSPanel({
   audio: ReturnType<typeof useSharedAudio>;
 }) {
   const colors = useColors();
+  const T = useVellumTokens();
   const [text, setText] = useState('');
   const [voice, setVoice] = useState(voices[0]?.id ?? 'af_heart');
   const [speed, setSpeed] = useState(1.0);
@@ -2049,7 +2060,7 @@ function TTSPanel({
       <View style={styles.field}>
         <View style={styles.rowBetween}>
           <FieldLabel>Text</FieldLabel>
-          <Text style={{ fontSize: 11, color: overLimit ? '#ef4444' : colors.mutedForeground, fontFamily: 'Inter_400Regular' }}>
+          <Text style={{ fontSize: 11, color: overLimit ? T.rust : colors.mutedForeground, ...font('regular') }}>
             {text.length.toLocaleString()} / 10,000
           </Text>
         </View>
@@ -2151,7 +2162,7 @@ function TTSPanel({
         style={({ pressed }) => [
           styles.primaryButton,
           {
-            backgroundColor: tts.isActive ? '#ef4444' : colors.primary,
+            backgroundColor: tts.isActive ? T.rust : colors.primary,
             opacity: (!text.trim() || overLimit) && !tts.isActive ? 0.5 : pressed ? 0.85 : 1,
           },
         ]}
@@ -2177,7 +2188,7 @@ function TTSPanel({
               style={[
                 ttsStreamStyles.fill,
                 {
-                  backgroundColor: tts.phase === 'done' ? '#22c55e' : colors.primary,
+                  backgroundColor: tts.phase === 'done' ? T.green : tts.phase === 'loading' ? T.gilt : colors.primary,
                   width: tts.phase === 'loading' ? '3%'
                        : tts.phase === 'done'    ? '100%'
                        : `${Math.max(3, progressPct)}%`,
@@ -2211,15 +2222,15 @@ function TTSPanel({
               <>
                 {tts.concatOk === false && tts.segTotal > 1 ? (
                   <>
-                    <Feather name="alert-triangle" size={13} color="#f59e0b" />
-                    <Text style={[ttsStreamStyles.statusText, { color: '#f59e0b' }]}>
+                    <Feather name="alert-triangle" size={13} color={T.gilt} />
+                    <Text style={[ttsStreamStyles.statusText, { color: T.gilt }]}>
                       Partial — last segment only
                     </Text>
                   </>
                 ) : (
                   <>
-                    <Feather name="check-circle" size={13} color="#22c55e" />
-                    <Text style={[ttsStreamStyles.statusText, { color: '#22c55e' }]}>
+                    <Feather name="check-circle" size={13} color={T.green} />
+                    <Text style={[ttsStreamStyles.statusText, { color: T.green }]}>
                       Done{tts.segTotal > 1 ? ` — ${tts.segTotal} segments` : ''}
                     </Text>
                   </>
@@ -2247,9 +2258,9 @@ function TTSPanel({
 
       {/* Error state */}
       {tts.phase === 'error' && !!tts.errorMsg && (
-        <View style={[ttsStreamStyles.errorBox, { borderColor: '#ef444433', backgroundColor: '#ef444410' }]}>
-          <Feather name="alert-circle" size={13} color="#ef4444" />
-          <Text style={[ttsStreamStyles.errorText, { color: '#ef4444' }]} numberOfLines={3}>
+        <View style={[ttsStreamStyles.errorBox, { borderColor: T.rust + '44', backgroundColor: T.rustSoft }]}>
+          <Feather name="alert-circle" size={13} color={T.rust} />
+          <Text style={[ttsStreamStyles.errorText, { color: T.rust }]} numberOfLines={3}>
             {tts.errorMsg}
           </Text>
         </View>
@@ -2263,18 +2274,19 @@ const ttsStreamStyles = StyleSheet.create({
   track:     { height: 4, borderRadius: 2, overflow: 'hidden' },
   fill:      { height: 4, borderRadius: 2 },
   statusRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  statusText: { fontSize: 12, fontFamily: 'Inter_400Regular' },
+  statusText: { fontSize: 12, ...font('regular') },
   errorBox: {
     flexDirection: 'row', alignItems: 'flex-start', gap: 8,
     padding: 10, borderRadius: 8, borderWidth: 1,
   },
-  errorText: { fontSize: 12, fontFamily: 'Inter_400Regular', flex: 1, lineHeight: 17 },
+  errorText: { fontSize: 12, ...font('regular'), flex: 1, lineHeight: 17 },
 });
 
 // ── Image generation panel ───────────────────────────────────────────────────────
 
 function ImagePanel({ onGenerated }: { onGenerated: () => void }) {
   const colors = useColors();
+  const T = useVellumTokens();
   const [prompt, setPrompt] = useState('');
   const [negPrompt, setNegPrompt] = useState('');
   const [size, setSize] = useState(512);
@@ -2421,17 +2433,17 @@ function ImagePanel({ onGenerated }: { onGenerated: () => void }) {
                   <View key={i} style={[imgSettingsStyles.backendRow, { borderColor: colors.border }]}>
                     <View style={{
                       width: 7, height: 7, borderRadius: 4,
-                      backgroundColor: b.online ? '#22c55e' : colors.mutedForeground,
+                      backgroundColor: b.online ? T.green : colors.mutedForeground,
                     }} />
                     <View style={{ flex: 1 }}>
-                      <Text style={{ fontSize: 13, fontFamily: 'Inter_500Medium', color: colors.foreground }}>
+                      <Text style={{ fontSize: 13, ...font('medium'), color: colors.foreground }}>
                         {b.name}
                       </Text>
-                      <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: colors.mutedForeground }} numberOfLines={1}>
+                      <Text style={{ fontSize: 11, ...font('regular'), color: colors.mutedForeground }} numberOfLines={1}>
                         {b.url}
                       </Text>
                     </View>
-                    <Text style={{ fontSize: 11, fontFamily: 'Inter_500Medium', color: b.online ? '#22c55e' : colors.mutedForeground }}>
+                    <Text style={{ fontSize: 11, ...font('medium'), color: b.online ? T.green : colors.mutedForeground }}>
                       {b.online ? 'Online' : 'Offline'}
                     </Text>
                   </View>
@@ -2470,9 +2482,9 @@ function ImagePanel({ onGenerated }: { onGenerated: () => void }) {
         icon="image"
         right={
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <View style={[styles.statusPill, { borderColor: anyOnline ? '#22c55e55' : colors.border, backgroundColor: anyOnline ? '#22c55e18' : 'transparent' }]}>
-              <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: anyOnline ? '#22c55e' : colors.mutedForeground }} />
-              <Text style={{ fontSize: 10, fontFamily: 'Inter_500Medium', color: anyOnline ? '#22c55e' : colors.mutedForeground }}>
+            <View style={[styles.statusPill, { borderColor: anyOnline ? T.green + '55' : colors.border, backgroundColor: anyOnline ? T.greenSoft : 'transparent' }]}>
+              <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: anyOnline ? T.green : colors.mutedForeground }} />
+              <Text style={{ fontSize: 10, ...font('medium'), color: anyOnline ? T.green : colors.mutedForeground }}>
                 {anyOnline ? 'Backend online' : 'No backend'}
               </Text>
             </View>
@@ -2559,17 +2571,17 @@ const imgSettingsStyles = StyleSheet.create({
   },
   title: {
     fontSize: 17,
-    fontFamily: 'Inter_600SemiBold',
+    ...font('semibold'),
     marginBottom: 4,
   },
   subtitle: {
     fontSize: 12,
-    fontFamily: 'Inter_400Regular',
+    ...font('regular'),
     lineHeight: 18,
   },
   label: {
     fontSize: 11,
-    fontFamily: 'Inter_500Medium',
+    ...font('medium'),
     textTransform: 'uppercase',
     letterSpacing: 0.6,
     marginBottom: 6,
@@ -2580,7 +2592,7 @@ const imgSettingsStyles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 10,
     fontSize: 14,
-    fontFamily: 'Inter_400Regular',
+    ...font('regular'),
   },
   backendRow: {
     flexDirection: 'row',
@@ -2621,6 +2633,7 @@ function OutputsPanel({
   audio: ReturnType<typeof useSharedAudio>;
 }) {
   const colors = useColors();
+  const T = useVellumTokens();
 
   const handleDelete = (out: any) => {
     Alert.alert('Delete output', `Remove "${out.name}"?`, [
@@ -2647,7 +2660,7 @@ function OutputsPanel({
   return (
     <SectionCard title="Recent Outputs" icon="clock">
       {loading && outputs.length === 0 ? (
-        <ActivityIndicator color={colors.primary} style={{ marginVertical: 20 }} />
+        <>{[...Array(3)].map((_, i) => <SkeletonItem key={i} lines={2} />)}</>
       ) : outputs.length === 0 ? (
         <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
           No outputs yet — synthesize speech or generate an image above.
@@ -2659,7 +2672,7 @@ function OutputsPanel({
             const isAudio = out.kind === 'audio';
             const isPlaying = audio.playingKey === out.path;
             return (
-              <View key={out.path} style={[styles.outputRow, { borderColor: colors.border, backgroundColor: colors.background }]}>
+              <View key={out.path} style={[styles.outputRow, { borderColor: colors.border, backgroundColor: colors.background, minHeight: 44 }]}>
                 {isImage ? (
                   <Image source={authSource(serveUrl(out.path))} style={styles.thumb} contentFit="cover" />
                 ) : (
@@ -2668,23 +2681,23 @@ function OutputsPanel({
                   </View>
                 )}
                 <View style={{ flex: 1 }}>
-                  <Text style={{ color: colors.foreground, fontSize: 13, fontFamily: 'Inter_500Medium' }} numberOfLines={1}>
+                  <Text style={{ color: colors.foreground, fontSize: 13, ...font('medium') }} numberOfLines={1}>
                     {out.name}
                   </Text>
-                  <Text style={{ color: colors.mutedForeground, fontSize: 11, fontFamily: 'Inter_400Regular' }}>
+                  <Text style={{ color: colors.mutedForeground, fontSize: 11, ...font('regular') }}>
                     {out.label ?? out.kind}
                     {out.duration_sec != null ? ` · ${fmtOutputDuration(out.duration_sec)}` : ''}
                     {` · ${out.size_bytes >= 1_048_576 ? `${(out.size_bytes / 1_048_576).toFixed(1)} MB` : `${Math.round(out.size_bytes / 1024)} KB`}`}
                   </Text>
                 </View>
                 {isAudio && (
-                  <Pressable onPress={() => audio.toggle(out.path, serveUrl(out.path))} hitSlop={8} style={styles.iconBtn}>
+                  <Pressable onPress={() => audio.toggle(out.path, serveUrl(out.path))} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} style={styles.iconBtn}>
                     <Feather name={isPlaying ? 'pause' : 'play'} size={16} color={colors.primary} />
                   </Pressable>
                 )}
                 {isAudio && <ShareAudioButton uri={serveUrl(out.path)} name={out.name} compact />}
                 {isImage && <SavePhotoButton uri={serveUrl(out.path)} name={out.name} compact />}
-                <Pressable onPress={() => handleDelete(out)} hitSlop={8} style={styles.iconBtn}>
+                <Pressable onPress={() => handleDelete(out)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} style={styles.iconBtn}>
                   <Feather name="trash-2" size={16} color={colors.destructive} />
                 </Pressable>
               </View>
@@ -2735,6 +2748,7 @@ const PROGRESS_PHASES: { label: string; icon: string }[] = [
 
 function WorkshopPanel() {
   const colors = useColors();
+  const T = useVellumTokens();
   const [goal, setGoal] = useState('');
   const [workId, setWorkId] = useState<string | null>(null);
   const [works, setWorks] = useState<{ id: string; title: string }[]>([]);
@@ -2899,18 +2913,18 @@ function WorkshopPanel() {
         <View style={{ gap: 12 }}>
 
           {/* Success banner — filename + Library reference */}
-          <View style={[wsStyles.banner, { borderColor: '#22c55e44', backgroundColor: '#22c55e0a' }]}>
-            <Feather name="check-circle" size={15} color="#22c55e" />
+          <View style={[wsStyles.banner, { borderColor: T.green + '44', backgroundColor: T.greenSoft }]}>
+            <Feather name="check-circle" size={15} color={T.green} />
             <View style={{ flex: 1, gap: 3 }}>
-              <Text style={{ color: '#22c55e', fontSize: 14, fontFamily: 'Inter_600SemiBold' }}>
+              <Text style={{ color: T.green, fontSize: 14, ...font('semibold') }}>
                 {resultFilename || 'document.docx'}
               </Text>
               {resultDocId ? (
-                <Text style={{ color: '#22c55e99', fontSize: 11, fontFamily: 'Inter_400Regular' }}>
+                <Text style={{ color: T.green + '99', fontSize: 11, ...font('regular') }}>
                   Saved to Library · ID {resultDocId}
                 </Text>
               ) : (
-                <Text style={{ color: '#22c55e99', fontSize: 11, fontFamily: 'Inter_400Regular' }}>
+                <Text style={{ color: T.green + '99', fontSize: 11, ...font('regular') }}>
                   Generated successfully
                 </Text>
               )}
@@ -2987,21 +3001,21 @@ function WorkshopPanel() {
             return (
               <View key={i} style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
                 <View style={[wsStyles.phaseIcon, {
-                  backgroundColor: done ? '#22c55e22' : active ? colors.primary + '22' : colors.muted,
-                  borderColor:     done ? '#22c55e55' : active ? colors.primary + '55' : colors.border,
+                  backgroundColor: done ? T.greenSoft : active ? T.giltSoft : colors.muted,
+                  borderColor:     done ? T.green + '55' : active ? T.gilt + '55' : colors.border,
                 }]}>
                   {done ? (
-                    <Feather name="check" size={11} color="#22c55e" />
+                    <Feather name="check" size={11} color={T.green} />
                   ) : active ? (
-                    <ActivityIndicator size="small" color={colors.primary} style={{ transform: [{ scale: 0.6 }] }} />
+                    <ActivityIndicator size="small" color={T.gilt} style={{ transform: [{ scale: 0.6 }] }} />
                   ) : (
                     <Feather name={p.icon as any} size={11} color={colors.mutedForeground} />
                   )}
                 </View>
                 <Text style={{
                   fontSize: 13, lineHeight: 18,
-                  fontFamily: active ? 'Inter_500Medium' : 'Inter_400Regular',
-                  color: done ? '#22c55e' : active ? colors.foreground : colors.mutedForeground,
+                  ...font(active ? 'medium' : 'regular'),
+                  color: done ? T.green : active ? colors.foreground : colors.mutedForeground,
                 }}>
                   {p.label}
                 </Text>
@@ -3081,9 +3095,9 @@ function WorkshopPanel() {
     return (
       <SectionCard title="Document Workshop" icon="edit-3">
         <View style={{ gap: 12 }}>
-          <View style={[wsStyles.intentBadge, { borderColor: '#ef444444', backgroundColor: '#ef444410' }]}>
-            <Feather name="alert-circle" size={12} color="#ef4444" />
-            <Text style={{ color: '#ef4444', fontSize: 12, fontFamily: 'Inter_400Regular', flex: 1, lineHeight: 17 }}>
+          <View style={[wsStyles.intentBadge, { borderColor: T.rust + '44', backgroundColor: T.rustSoft }]}>
+            <Feather name="alert-circle" size={12} color={T.rust} />
+            <Text style={{ color: T.rust, fontSize: 12, ...font('regular'), flex: 1, lineHeight: 17 }}>
               {errorMsg}
             </Text>
           </View>
@@ -3193,6 +3207,7 @@ function AudiobookPanel({
   outputs: any[];
 }) {
   const colors = useColors();
+  const T = useVellumTokens();
   const [works, setWorks] = useState<{ id: string; title: string }[]>([]);
   const [workId, setWorkId] = useState<string | null>(null);
   const [voice, setVoice] = useState(DEFAULT_NARRATOR);
@@ -3607,7 +3622,7 @@ function AudiobookPanel({
                 height: 6,
                 width: hasProgress ? `${Math.round(pct * 100)}%` : '0%',
                 borderRadius: 3,
-                backgroundColor: colors.primary,
+                backgroundColor: T.gilt,
               }} />
             </View>
             {hasProgress && (
@@ -3645,13 +3660,13 @@ function AudiobookPanel({
       <SectionCard title="Audiobook Ready" icon="headphones">
         <View style={{ gap: 12 }}>
           {/* Success banner */}
-          <View style={[wsStyles.banner, { borderColor: '#22c55e44', backgroundColor: '#22c55e0a' }]}>
-            <Feather name="check-circle" size={15} color="#22c55e" />
+          <View style={[wsStyles.banner, { borderColor: T.green + '44', backgroundColor: T.greenSoft }]}>
+            <Feather name="check-circle" size={15} color={T.green} />
             <View style={{ flex: 1, gap: 3 }}>
-              <Text style={{ color: '#22c55e', fontSize: 14, fontFamily: 'Inter_600SemiBold' }}>
+              <Text style={{ color: T.green, fontSize: 14, ...font('semibold') }}>
                 {result.work_title}
               </Text>
-              <Text style={{ color: '#22c55e99', fontSize: 11, fontFamily: 'Inter_400Regular' }}>
+              <Text style={{ color: T.green + '99', fontSize: 11, ...font('regular') }}>
                 {result.filename} · ACX-mastered MP3
               </Text>
             </View>
@@ -3735,10 +3750,10 @@ function AudiobookPanel({
     return (
       <SectionCard title="Audiobook Builder" icon="headphones">
         <View style={{ gap: 12 }}>
-          <View style={[wsStyles.intentBadge, { borderColor: '#f9731644', backgroundColor: '#f9731610' }]}>
-            <Feather name="alert-triangle" size={12} color="#f97316" />
+          <View style={[wsStyles.intentBadge, { borderColor: T.giltLine, backgroundColor: T.giltSoft }]}>
+            <Feather name="alert-triangle" size={12} color={T.gilt} />
             <Text style={{
-              color: '#f97316', fontSize: 12, fontFamily: 'Inter_400Regular',
+              color: T.gilt, fontSize: 12, ...font('regular'),
               flex: 1, lineHeight: 17,
             }}>
               Generation was interrupted — the server restarted while your audiobook was being built.
@@ -3763,9 +3778,9 @@ function AudiobookPanel({
     return (
       <SectionCard title="Audiobook Builder" icon="headphones">
         <View style={{ gap: 12 }}>
-          <View style={[wsStyles.intentBadge, { borderColor: '#ef444444', backgroundColor: '#ef444410' }]}>
-            <Feather name="alert-circle" size={12} color="#ef4444" />
-            <Text style={{ color: '#ef4444', fontSize: 12, fontFamily: 'Inter_400Regular', flex: 1, lineHeight: 17 }}>
+          <View style={[wsStyles.intentBadge, { borderColor: T.rust + '44', backgroundColor: T.rustSoft }]}>
+            <Feather name="alert-circle" size={12} color={T.rust} />
+            <Text style={{ color: T.rust, fontSize: 12, ...font('regular'), flex: 1, lineHeight: 17 }}>
               {errorMsg}
             </Text>
           </View>
@@ -3945,7 +3960,7 @@ const wsStyles = StyleSheet.create({
   critiqueBox: { borderRadius: 8, borderWidth: 1, maxHeight: 200 },
   actionBtn: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    gap: 6, paddingVertical: 11, borderRadius: 8, borderWidth: 1,
+    gap: 6, paddingVertical: 11, borderRadius: 8, borderWidth: 1, minHeight: 44,
   },
   phaseIcon: {
     width: 26, height: 26, borderRadius: 13, borderWidth: 1,
@@ -3965,7 +3980,7 @@ const wsStyles = StyleSheet.create({
   },
   tabPill: {
     flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    gap: 5, paddingVertical: 9, borderRadius: 8, borderWidth: 1,
+    gap: 5, paddingVertical: 9, borderRadius: 8, borderWidth: 1, minHeight: 44,
   },
 });
 
@@ -4044,6 +4059,7 @@ function useSavedAudiobookFiles() {
 /** Compact share button that shares a local file:// URI directly (no download). */
 function ShareLocalFileButton({ uri, name }: { uri: string; name: string }) {
   const colors = useColors();
+  const T = useVellumTokens();
   const [state, setState] = useState<'idle' | 'sharing' | 'done'>('idle');
 
   const handleShare = async () => {
@@ -4067,14 +4083,14 @@ function ShareLocalFileButton({ uri, name }: { uri: string; name: string }) {
   };
 
   return (
-    <Pressable onPress={handleShare} hitSlop={8} style={styles.iconBtn} disabled={state === 'sharing'}>
+    <Pressable onPress={handleShare} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} style={styles.iconBtn} disabled={state === 'sharing'}>
       {state === 'sharing' ? (
         <ActivityIndicator size="small" color={colors.primary} />
       ) : (
         <Feather
           name={state === 'done' ? 'check' : 'share-2'}
           size={16}
-          color={state === 'done' ? '#22c55e' : colors.primary}
+          color={state === 'done' ? T.green : colors.primary}
         />
       )}
     </Pressable>
@@ -4161,6 +4177,7 @@ function SavedFileRow({
   onRename: (newName: string) => Promise<void>;
 }) {
   const colors     = useColors();
+  const T          = useVellumTokens();
   const translateX = useRef(new Animated.Value(0)).current;
   const isOpenRef  = useRef(false);
   const playKey    = `saved-file-${file.uri}`;
@@ -4311,7 +4328,7 @@ function SavedFileRow({
       <View style={{
         position: 'absolute', right: 0, top: 0, bottom: 0,
         width: _SWIPE_REVEAL_PX, borderRadius: 8,
-        backgroundColor: '#ef4444',
+        backgroundColor: T.rust,
         alignItems: 'center', justifyContent: 'center',
       }}>
         <Pressable onPress={onDelete} hitSlop={4}
@@ -4415,7 +4432,7 @@ function SavedFilesPanel({ audio }: { audio: ReturnType<typeof useSharedAudio> }
       }
     >
       {loading && files.length === 0 ? (
-        <ActivityIndicator color={colors.primary} style={{ marginVertical: 16 }} />
+        <>{[...Array(2)].map((_, i) => <SkeletonItem key={i} lines={2} />)}</>
       ) : files.length === 0 ? (
         <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
           No audiobooks saved yet.{'\n'}Tap "Save to Files" after generating an audiobook.
@@ -4456,6 +4473,7 @@ const STUDIO_TABS: { id: StudioTab; label: string; icon: string }[] = [
 
 export default function StudioScreen() {
   const colors = useColors();
+  const T = useVellumTokens();
   const insets = useSafeAreaInsets();
   const isWeb = Platform.OS === 'web';
   const audio = useSharedAudio();
@@ -4517,7 +4535,7 @@ export default function StudioScreen() {
       <ScrollView
         contentContainerStyle={{
           paddingTop: topPad + 8,
-          paddingBottom: (isWeb ? 34 : insets.bottom) + 40,
+          paddingBottom: insets.bottom + 24,
           paddingHorizontal: 16,
           gap: 16,
         }}
@@ -4597,8 +4615,8 @@ export default function StudioScreen() {
 }
 
 const styles = StyleSheet.create({
-  title: { fontSize: 28, fontFamily: 'Inter_700Bold', letterSpacing: -0.5 },
-  subtitle: { fontSize: 13, fontFamily: 'Inter_400Regular', marginTop: 2 },
+  title: { fontSize: 28, ...font('bold'), letterSpacing: -0.5 },
+  subtitle: { fontSize: 13, ...font('regular'), marginTop: 2 },
   card: {
     borderRadius: 10,
     borderWidth: 1,
@@ -4611,13 +4629,13 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   cardHeaderLeft: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  cardTitle: { fontSize: 16, fontFamily: 'Inter_600SemiBold' },
+  cardTitle: { fontSize: 16, ...font('semibold') },
   field: { gap: 8 },
   fieldLabel: {
     fontSize: 11,
-    fontFamily: 'Inter_600SemiBold',
+    ...font('semibold'),
     textTransform: 'uppercase',
-    letterSpacing: 0.5,
+    letterSpacing: 0.6,
   },
   rowBetween: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   textArea: {
@@ -4625,7 +4643,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     padding: 12,
     fontSize: 14,
-    fontFamily: 'Inter_400Regular',
+    ...font('regular'),
     minHeight: 90,
     textAlignVertical: 'top',
   },
@@ -4636,8 +4654,9 @@ const styles = StyleSheet.create({
     gap: 8,
     paddingVertical: 13,
     borderRadius: 8,
+    minHeight: 44,
   },
-  primaryButtonText: { fontSize: 14, fontFamily: 'Inter_600SemiBold' },
+  primaryButtonText: { fontSize: 14, ...font('semibold') },
   playRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -4656,7 +4675,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   imageResult: { borderRadius: 8, borderWidth: 1, overflow: 'hidden' },
-  resultImage: { width: '100%', height: 280, backgroundColor: '#00000010' },
+  resultImage: { width: '100%', height: 280 },
   saveButton: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -4666,9 +4685,10 @@ const styles = StyleSheet.create({
     paddingVertical: 9,
     borderRadius: 8,
     borderWidth: 1,
+    minHeight: 44,
   },
-  saveButtonText: { fontSize: 13, fontFamily: 'Inter_500Medium' },
-  emptyText: { fontSize: 13, fontFamily: 'Inter_400Regular', textAlign: 'center', paddingVertical: 20, lineHeight: 19 },
+  saveButtonText: { fontSize: 13, ...font('medium') },
+  emptyText: { fontSize: 13, ...font('regular'), textAlign: 'center', paddingVertical: 20, lineHeight: 19 },
   outputRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -4679,5 +4699,5 @@ const styles = StyleSheet.create({
   },
   thumb: { width: 44, height: 44, borderRadius: 6 },
   thumbIcon: { alignItems: 'center', justifyContent: 'center' },
-  iconBtn: { padding: 6 },
+  iconBtn: { padding: 6, minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center' },
 });
