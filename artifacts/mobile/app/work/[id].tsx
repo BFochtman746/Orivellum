@@ -45,6 +45,9 @@ import type { Document, KnowledgeItem, Task } from '@workspace/api-client-react'
 import { OfflineBanner, ErrorScreen } from '@/components/OfflineBanner';
 import { readCache, writeCache } from '@/lib/cache';
 import { KnowledgeGraphView } from '@/components/KnowledgeGraphView';
+import { SkeletonItem } from '@/components/SkeletonItem';
+import { EmptyState } from '@/components/EmptyState';
+import { font } from '@/lib/typography';
 
 type Tab = 'overview' | 'docs' | 'knowledge' | 'tasks' | 'conversations' | 'learn' | 'gaps' | 'book' | 'brainstorm' | 'intelligence' | 'trailer' | 'genesis' | 'graph';
 
@@ -74,6 +77,7 @@ function TabBar({ active, onSelect, colors, badges = {}, onNavigateGraph }: {
   badges?: Partial<Record<Tab, number>>;
   onNavigateGraph?: () => void;
 }) {
+  const T = useVellumTokens();
   const isSecondaryActive = SECONDARY_TABS.some(t => t.key === active);
   const activeSecondaryLabel = SECONDARY_TABS.find(t => t.key === active)?.label;
 
@@ -153,7 +157,7 @@ function TabBar({ active, onSelect, colors, badges = {}, onNavigateGraph }: {
                 {isSecondaryActive ? activeSecondaryLabel : '•••'}
               </Text>
               {!isSecondaryActive && secondaryBadgeTotal > 0 && (
-                <View style={{ backgroundColor: VELLUM_LIGHT.rust, borderRadius: 8, minWidth: 16, paddingHorizontal: 3, alignItems: 'center' }}>
+                <View style={{ backgroundColor: T.rust, borderRadius: 8, minWidth: 16, paddingHorizontal: 3, alignItems: 'center' }}>
                   <Text style={{ color: '#fff', fontSize: 9, fontFamily: 'Inter_700Bold', lineHeight: 14 }}>
                     {secondaryBadgeTotal}
                   </Text>
@@ -169,12 +173,13 @@ function TabBar({ active, onSelect, colors, badges = {}, onNavigateGraph }: {
 
 function DocItem({ doc, onReprocess }: { doc: Document; onReprocess?: (docId: string) => void }) {
   const colors = useColors();
+  const T = useVellumTokens();
   const router = useRouter();
   const isStuck = doc.readiness === 'error' || doc.readiness === 'no_text' || doc.readiness === 'imported';
   return (
     <Pressable
       onPress={() => router.push(`/library/${doc.id}` as any)}
-      style={({ pressed }) => [styles.listItem, { borderColor: colors.border, opacity: pressed ? 0.7 : 1, flexDirection: 'column', gap: 0 }]}
+      style={({ pressed }) => [styles.listItem, { borderColor: colors.border, opacity: pressed ? 0.7 : 1, flexDirection: 'column', gap: 0, minHeight: 44 }]}
     >
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
         <View style={[styles.itemIcon, { backgroundColor: colors.muted }]}>
@@ -193,10 +198,10 @@ function DocItem({ doc, onReprocess }: { doc: Document; onReprocess?: (docId: st
       {isStuck && onReprocess && (
         <Pressable
           onPress={(e) => { e.stopPropagation?.(); onReprocess(doc.id ?? ''); }}
-          style={{ flexDirection: 'row', alignItems: 'center', gap: 4, alignSelf: 'flex-end', marginTop: 6, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, backgroundColor: VELLUM_LIGHT.giltSoft, borderWidth: 1, borderColor: VELLUM_LIGHT.giltLine }}
+          style={{ flexDirection: 'row', alignItems: 'center', gap: 4, alignSelf: 'flex-end', marginTop: 6, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, backgroundColor: T.giltSoft, borderWidth: 1, borderColor: T.giltLine, minHeight: 44 }}
         >
-          <Feather name="refresh-cw" size={11} color={VELLUM_LIGHT.gilt} />
-          <Text style={{ fontSize: 11, fontFamily: 'Inter_600SemiBold', color: VELLUM_LIGHT.gilt }}>Re-extract</Text>
+          <Feather name="refresh-cw" size={11} color={T.gilt} />
+          <Text style={{ fontSize: 11, ...font('semibold'), color: T.gilt }}>Re-extract</Text>
         </Pressable>
       )}
     </Pressable>
@@ -205,6 +210,7 @@ function DocItem({ doc, onReprocess }: { doc: Document; onReprocess?: (docId: st
 
 function KnowledgeRow({ item, onReviewed, onDelete }: { item: KnowledgeItem; onReviewed?: () => void; onDelete?: () => void }) {
   const colors = useColors();
+  const T = useVellumTokens();
   const confRaw = (item.confidence ?? 0) * 100;  // unrounded — used for tier classification
   const conf = Math.round(confRaw);               // rounded — used for display only
   const confTier = confRaw >= 80 ? 'High' : confRaw >= 50 ? 'Med' : 'Low';
@@ -250,7 +256,7 @@ function KnowledgeRow({ item, onReviewed, onDelete }: { item: KnowledgeItem; onR
       style={[styles.listItem, { borderColor: colors.border, opacity: isRejected ? 0.45 : 1 }]}
     >
       <View style={[styles.itemIcon, { backgroundColor: colors.muted }]}>
-        <Feather name="cpu" size={14} color={isAiAuto ? VELLUM_LIGHT.gilt : colors.primary} />
+        <Feather name="cpu" size={14} color={isAiAuto ? T.gilt : colors.primary} />
       </View>
       <View style={styles.itemBody}>
         <Text style={[styles.itemTitle, { color: colors.foreground }]} numberOfLines={3}>
@@ -270,14 +276,15 @@ function KnowledgeRow({ item, onReviewed, onDelete }: { item: KnowledgeItem; onR
                 alignItems: 'center',
                 gap: 4,
                 paddingHorizontal: 10,
-                paddingVertical: 4,
+                paddingVertical: 6,
                 borderRadius: 6,
-                backgroundColor: VELLUM_LIGHT.greenSoft,
-                opacity: reviewing ? 0.5 : 1,
+                backgroundColor: T.greenSoft,
+                opacity: reviewing ? 0.38 : 1,
+                minHeight: 44,
               }}
             >
-              <Feather name="thumbs-up" size={12} color={VELLUM_LIGHT.green} />
-              <Text style={{ fontSize: 11, color: VELLUM_LIGHT.green, fontFamily: 'Inter_600SemiBold' }}>Approve</Text>
+              <Feather name="thumbs-up" size={12} color={T.green} />
+              <Text style={{ fontSize: 11, color: T.green, ...font('semibold') }}>Approve</Text>
             </Pressable>
             <Pressable
               onPress={() => review('reject')}
@@ -287,14 +294,15 @@ function KnowledgeRow({ item, onReviewed, onDelete }: { item: KnowledgeItem; onR
                 alignItems: 'center',
                 gap: 4,
                 paddingHorizontal: 10,
-                paddingVertical: 4,
+                paddingVertical: 6,
                 borderRadius: 6,
-                backgroundColor: VELLUM_LIGHT.rustSoft,
-                opacity: reviewing ? 0.5 : 1,
+                backgroundColor: T.rustSoft,
+                opacity: reviewing ? 0.38 : 1,
+                minHeight: 44,
               }}
             >
-              <Feather name="thumbs-down" size={12} color={VELLUM_LIGHT.rust} />
-              <Text style={{ fontSize: 11, color: VELLUM_LIGHT.rust, fontFamily: 'Inter_600SemiBold' }}>Reject</Text>
+              <Feather name="thumbs-down" size={12} color={T.rust} />
+              <Text style={{ fontSize: 11, color: T.rust, ...font('semibold') }}>Reject</Text>
             </Pressable>
           </View>
         )}
@@ -316,10 +324,10 @@ function TaskRow({ task, onDelete, onToggle }: { task: Task; onDelete?: () => vo
   return (
     <Pressable
       onLongPress={handleLongPress}
-      style={[styles.listItem, { borderColor: colors.border }]}
+      style={[styles.listItem, { borderColor: colors.border, minHeight: 44 }]}
       delayLongPress={400}
     >
-      <Pressable onPress={onToggle} hitSlop={8}>
+      <Pressable onPress={onToggle} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
         <Feather
           name={done ? 'check-circle' : 'circle'}
           size={18}
@@ -363,6 +371,7 @@ function ConvSwipeRow({
   onPress: () => void;
   onArchive: (id: string, title: string) => void;
 }) {
+  const T = useVellumTokens();
   const swipeRef = useRef<Swipeable>(null);
 
   const renderRightActions = (_progress: any, dragX: Animated.AnimatedInterpolation<number>) => {
@@ -376,7 +385,7 @@ function ConvSwipeRow({
             onArchive(conv.id, conv.title ?? 'Untitled');
           }}
           style={{
-            backgroundColor: VELLUM_LIGHT.gilt,
+            backgroundColor: T.gilt,
             borderRadius: 10,
             paddingHorizontal: 18,
             paddingVertical: 10,
@@ -398,7 +407,7 @@ function ConvSwipeRow({
       onPress={onPress}
       style={({ pressed }: { pressed: boolean }) => [
         styles.listItem,
-        { borderColor: colors.border, opacity: pressed ? 0.7 : 1 },
+        { borderColor: colors.border, opacity: pressed ? 0.7 : 1, minHeight: 44 },
       ]}
     >
       <View style={[styles.itemIcon, { backgroundColor: colors.muted }]}>
@@ -566,12 +575,12 @@ function IdeaCard({
             hitSlop={8}
             style={({ pressed }) => ({
               flexDirection: 'row', alignItems: 'center', gap: 4,
-              paddingHorizontal: 10, paddingVertical: 5,
+              paddingHorizontal: 10, paddingVertical: 8,
               borderRadius: 6, borderWidth: 1,
               borderColor: colors.primary + '55',
               backgroundColor: pressed ? colors.primary + '14' : 'transparent',
-              opacity: isApproving ? 0.6 : 1,
-              minHeight: 30,
+              opacity: isApproving ? 0.38 : 1,
+              minHeight: 44,
             })}
           >
             {isApproving
@@ -587,6 +596,7 @@ function IdeaCard({
 
 function BrainstormTab({ workId, colors, initialSeed, initialContext }: { workId: string; colors: any; initialSeed?: string; initialContext?: string }) {
   const T = useVellumTokens();
+  const insets = useSafeAreaInsets();
   const domain = process.env.EXPO_PUBLIC_DOMAIN ?? '';
 
   const [seed,         setSeed]         = React.useState(initialSeed ?? '');
@@ -675,7 +685,7 @@ function BrainstormTab({ workId, colors, initialSeed, initialContext }: { workId
 
   return (
     <ScrollView
-      contentContainerStyle={{ padding: 16, paddingBottom: 80 }}
+      contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 16, paddingBottom: insets.bottom + 24 }}
       showsVerticalScrollIndicator={false}
       keyboardShouldPersistTaps="handled"
     >
@@ -760,17 +770,18 @@ function BrainstormTab({ workId, colors, initialSeed, initialContext }: { workId
         disabled={!seed.trim() || running}
         style={({ pressed }) => ({
           flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-          gap: 8, paddingVertical: 13, borderRadius: 10,
+          gap: 8, paddingVertical: 13, borderRadius: 10, minHeight: 44,
           backgroundColor: (!seed.trim() || running)
             ? colors.muted
             : pressed ? colors.primary + 'cc' : colors.primary,
+          opacity: (!seed.trim() || running) ? 0.38 : 1,
         })}
       >
         {running
           ? <ActivityIndicator color="#fff" size="small" />
           : <Feather name="zap" size={16} color={(!seed.trim()) ? colors.mutedForeground : '#fff'} />}
         <Text style={{
-          fontSize: 14, fontWeight: '600',
+          fontSize: 14, ...font('semibold'),
           color: (!seed.trim() || running) ? colors.mutedForeground : '#fff',
         }}>
           {running ? 'Generating ideas…' : 'Generate ideas'}
@@ -927,6 +938,7 @@ function GapsTab({
 }) {
   const domain = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
   const T = useVellumTokens();
+  const insets = useSafeAreaInsets();
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
@@ -949,20 +961,20 @@ function GapsTab({
 
   if (loading) {
     return (
-      <View style={styles.centered}>
-        <ActivityIndicator color={colors.primary} />
+      <View style={{ flex: 1, paddingTop: 8 }}>
+        {[...Array(5)].map((_, i) => <SkeletonItem key={i} lines={2} />)}
       </View>
     );
   }
   if (error) {
     return (
-      <View style={styles.centered}>
-        <Feather name="alert-circle" size={32} color={colors.mutedForeground} />
-        <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>Could not load gaps</Text>
-        <Pressable onPress={fetchGaps} style={[styles.retryBtn, { borderColor: colors.border }]}>
-          <Text style={{ color: colors.primary, fontSize: 13, fontFamily: 'Inter_500Medium' }}>Retry</Text>
-        </Pressable>
-      </View>
+      <EmptyState
+        icon="alert-circle"
+        title="Could not load gaps"
+        body="Check your connection and try again."
+        cta="Retry"
+        onCta={fetchGaps}
+      />
     );
   }
 
@@ -977,7 +989,7 @@ function GapsTab({
 
   return (
     <ScrollView
-      contentContainerStyle={[styles.listPad, { paddingBottom: 32 }]}
+      contentContainerStyle={[styles.listPad, { paddingBottom: insets.bottom + 24 }]}
       showsVerticalScrollIndicator={false}
       refreshControl={<RefreshControl refreshing={loading} onRefresh={fetchGaps} tintColor={colors.primary} />}
     >
@@ -1044,12 +1056,13 @@ function GapsTab({
                     onPress={() => onCreateTask(`Research gap: ${gapTitle}`)}
                     style={({ pressed }) => ({
                       flexDirection: 'row', alignItems: 'center', gap: 4,
-                      paddingHorizontal: 10, paddingVertical: 5, borderRadius: 6,
+                      paddingHorizontal: 10, paddingVertical: 8, borderRadius: 6,
                       backgroundColor: colors.muted, opacity: pressed ? 0.7 : 1,
+                      minHeight: 44,
                     })}
                   >
                     <Feather name="plus" size={12} color={colors.primary} />
-                    <Text style={{ fontSize: 12, color: colors.primary, fontFamily: 'Inter_600SemiBold' }}>
+                    <Text style={{ fontSize: 12, color: colors.primary, ...font('semibold') }}>
                       Add Task
                     </Text>
                   </Pressable>
@@ -1057,12 +1070,13 @@ function GapsTab({
                     onPress={() => onResearch(gapTitle)}
                     style={({ pressed }) => ({
                       flexDirection: 'row', alignItems: 'center', gap: 4,
-                      paddingHorizontal: 10, paddingVertical: 5, borderRadius: 6,
+                      paddingHorizontal: 10, paddingVertical: 8, borderRadius: 6,
                       backgroundColor: colors.primary, opacity: pressed ? 0.7 : 1,
+                      minHeight: 44,
                     })}
                   >
                     <Feather name="message-circle" size={12} color={colors.primaryForeground} />
-                    <Text style={{ fontSize: 12, color: colors.primaryForeground, fontFamily: 'Inter_600SemiBold' }}>
+                    <Text style={{ fontSize: 12, color: colors.primaryForeground, ...font('semibold') }}>
                       Discuss →
                     </Text>
                   </Pressable>
@@ -1070,14 +1084,15 @@ function GapsTab({
                     onPress={() => onBrainstorm(gapTitle)}
                     style={({ pressed }) => ({
                       flexDirection: 'row', alignItems: 'center', gap: 4,
-                      paddingHorizontal: 10, paddingVertical: 5, borderRadius: 6,
+                      paddingHorizontal: 10, paddingVertical: 8, borderRadius: 6,
                       borderWidth: 1, borderColor: T.giltLine,
                       backgroundColor: pressed ? T.giltSoft : 'transparent',
                       opacity: pressed ? 0.7 : 1,
+                      minHeight: 44,
                     })}
                   >
                     <Feather name="zap" size={12} color={T.gilt} />
-                    <Text style={{ fontSize: 12, color: T.gilt, fontFamily: 'Inter_600SemiBold' }}>
+                    <Text style={{ fontSize: 12, color: T.gilt, ...font('semibold') }}>
                       Brainstorm
                     </Text>
                   </Pressable>
@@ -1691,6 +1706,7 @@ function TrailerItemMobile({ trailer, workId, colors }: { trailer: TrailerListIt
 
 function TrailerTab({ workId, colors }: { workId: string; colors: any }) {
   const domain = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
+  const insets = useSafeAreaInsets();
   const [trailers, setTrailers]     = useState<TrailerListItemMobile[]>([]);
   const [loading, setLoading]       = useState(true);
   const [generating, setGenerating] = useState(false);
@@ -1746,7 +1762,7 @@ function TrailerTab({ workId, colors }: { workId: string; colors: any }) {
 
   return (
     <ScrollView
-      contentContainerStyle={{ padding: 16, paddingBottom: 80 }}
+      contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 16, paddingBottom: insets.bottom + 24 }}
       refreshControl={
         <RefreshControl refreshing={loading} onRefresh={fetchTrailers} tintColor={colors.primary} />
       }
@@ -1770,11 +1786,12 @@ function TrailerTab({ workId, colors }: { workId: string; colors: any }) {
           disabled={generating || hasRunning}
           style={({ pressed }) => ({
             flexDirection: 'row', alignItems: 'center', gap: 6,
-            paddingHorizontal: 12, paddingVertical: 7, borderRadius: 8,
+            paddingHorizontal: 12, paddingVertical: 10, borderRadius: 8,
             borderWidth: 1, borderColor: colors.primary + '55',
             backgroundColor: pressed || generating || hasRunning
               ? colors.primary + '14' : colors.primary + '0a',
-            opacity: generating || hasRunning ? 0.7 : 1,
+            opacity: generating || hasRunning ? 0.38 : 1,
+            minHeight: 44,
           })}
         >
           {generating || hasRunning
@@ -1788,29 +1805,19 @@ function TrailerTab({ workId, colors }: { workId: string; colors: any }) {
 
       {/* Content */}
       {fetchError ? (
-        <View style={{ alignItems: 'center', paddingVertical: 32, gap: 8 }}>
-          <Feather name="wifi-off" size={28} color={colors.mutedForeground} />
-          <Text style={{ fontSize: 13, fontFamily: 'Inter_400Regular', color: colors.mutedForeground, textAlign: 'center' }}>
-            Could not load trailers. Check your connection.
-          </Text>
-          <Pressable
-            onPress={fetchTrailers}
-            style={{ paddingHorizontal: 16, paddingVertical: 8, borderRadius: 8, borderWidth: 1, borderColor: colors.border, marginTop: 4 }}
-          >
-            <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: colors.foreground }}>Retry</Text>
-          </Pressable>
-        </View>
+        <EmptyState
+          icon="wifi-off"
+          title="Could not load trailers"
+          body="Check your connection and try again."
+          cta="Retry"
+          onCta={fetchTrailers}
+        />
       ) : trailers.length === 0 ? (
-        <View style={{
-          alignItems: 'center', paddingVertical: 40,
-          borderWidth: 1, borderColor: colors.border, borderRadius: 12,
-          borderStyle: 'dashed',
-        }}>
-          <Feather name="film" size={28} color={colors.mutedForeground} />
-          <Text style={{ fontSize: 13, fontFamily: 'Inter_400Regular', color: colors.mutedForeground, textAlign: 'center', marginTop: 10, paddingHorizontal: 24 }}>
-            No trailers yet. Add at least one processed document, then tap Generate Trailer.
-          </Text>
-        </View>
+        <EmptyState
+          icon="film"
+          title="No trailers yet"
+          body="Add at least one processed document, then tap Generate Trailer."
+        />
       ) : (
         trailers.map(t => (
           <TrailerItemMobile key={t.id} trailer={t} workId={workId} colors={colors} />
@@ -1952,6 +1959,7 @@ function OverviewTab({ workId, onStartDiscussion, starting, onNavigateToTab, boo
 }) {
   const colors = useColors();
   const T = useVellumTokens();
+  const insets = useSafeAreaInsets();
   const { data: workData, isLoading, isError, refetch } = useGetWork(workId);
   const work = workData?.work;
   const queryClient = useQueryClient();
@@ -2061,8 +2069,8 @@ function OverviewTab({ workId, onStartDiscussion, starting, onNavigateToTab, boo
 
   if (isLoading && !work) {
     return (
-      <View style={styles.centered}>
-        <ActivityIndicator color={colors.primary} />
+      <View style={{ flex: 1, paddingTop: 8 }}>
+        {[...Array(6)].map((_, i) => <SkeletonItem key={i} lines={2} />)}
       </View>
     );
   }
@@ -2079,7 +2087,7 @@ function OverviewTab({ workId, onStartDiscussion, starting, onNavigateToTab, boo
 
   return (
     <ScrollView
-      contentContainerStyle={styles.overviewPad}
+      contentContainerStyle={[styles.overviewPad, { paddingBottom: insets.bottom + 24 }]}
       showsVerticalScrollIndicator={false}
       refreshControl={<RefreshControl refreshing={isLoading} onRefresh={refetch} tintColor={colors.primary} />}
     >
@@ -2647,6 +2655,7 @@ interface MobileAssessResult {
 
 function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
   const T = useVellumTokens();
+  const insets = useSafeAreaInsets();
   const router = useRouter();
   const [phase, setPhase]       = useState<MobileLearnPhase>('loading');
   const [session, setSession]   = useState<MobileSession | null>(null);
@@ -2865,11 +2874,8 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
   // ── Loading / seeding ────────────────────────────────────────────────────
   if (phase === 'loading' || phase === 'seeding') {
     return (
-      <View style={[styles.centered, { flex: 1 }]}>
-        <ActivityIndicator color={colors.primary} />
-        <Text style={[styles.emptyText, { color: colors.mutedForeground, marginTop: 10 }]}>
-          {phase === 'seeding' ? 'Seeding concepts from your knowledge…' : 'Loading session…'}
-        </Text>
+      <View style={{ flex: 1, paddingTop: 8 }}>
+        {[...Array(5)].map((_, i) => <SkeletonItem key={i} lines={2} />)}
       </View>
     );
   }
@@ -3093,7 +3099,7 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
   // ── Active session ──────────────────────────────────────────────────────
   return (
     <ScrollView
-      contentContainerStyle={[styles.listPad, { paddingTop: 16, paddingBottom: 80 }]}
+      contentContainerStyle={[styles.listPad, { paddingTop: 16, paddingBottom: insets.bottom + 24 }]}
       keyboardShouldPersistTaps="handled"
       showsVerticalScrollIndicator={false}
     >
@@ -3148,16 +3154,15 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
       {/* Concepts list — shown when learnView === 'concepts' */}
       {learnView === 'concepts' && (
         conceptsLoading ? (
-          <View style={[styles.centered, { paddingVertical: 40 }]}>
-            <ActivityIndicator color={colors.primary} />
+          <View>
+            {[...Array(5)].map((_, i) => <SkeletonItem key={i} lines={2} />)}
           </View>
         ) : concepts.length === 0 ? (
-          <View style={[styles.centered, { paddingVertical: 40 }]}>
-            <Feather name="book-open" size={32} color={colors.mutedForeground} />
-            <Text style={[styles.emptyText, { color: colors.mutedForeground, textAlign: 'center', maxWidth: 240 }]}>
-              No concepts yet — start a study session to generate them.
-            </Text>
-          </View>
+          <EmptyState
+            icon="book-open"
+            title="No concepts yet"
+            body="Start a study session to generate concepts."
+          />
         ) : (
           <>
             <Text style={{ fontSize: 11, fontFamily: 'Inter_600SemiBold', color: colors.mutedForeground, letterSpacing: 0.6, textTransform: 'uppercase', marginBottom: 10 }}>
@@ -3284,19 +3289,15 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
       {/* Dependency map — layered depth list grouped by prerequisite order */}
       {learnView === 'graph' && (
         graphLoading ? (
-          <View style={[styles.centered, { paddingVertical: 40 }]}>
-            <ActivityIndicator color={colors.primary} />
-            <Text style={[styles.emptyText, { color: colors.mutedForeground, marginTop: 10 }]}>
-              Loading dependency map…
-            </Text>
+          <View>
+            {[...Array(5)].map((_, i) => <SkeletonItem key={i} lines={2} />)}
           </View>
         ) : graphNodes.length === 0 ? (
-          <View style={[styles.centered, { paddingVertical: 40 }]}>
-            <Feather name="git-branch" size={32} color={colors.mutedForeground} />
-            <Text style={[styles.emptyText, { color: colors.mutedForeground, textAlign: 'center', maxWidth: 240 }]}>
-              No prerequisite relationships defined yet.
-            </Text>
-          </View>
+          <EmptyState
+            icon="git-branch"
+            title="No dependency map yet"
+            body="No prerequisite relationships defined yet."
+          />
         ) : (() => {
           // Compute BFS depth for each node
           const depth: Record<string, number> = {};
@@ -3880,6 +3881,7 @@ function BookIntelTab({
   chaptersLoading?: boolean;
 }) {
   const T = useVellumTokens();
+  const insets = useSafeAreaInsets();
   // Derive bookIntel sections so they can be conditionally included inside a
   // single ScrollView — avoids early returns that would suppress the chapter
   // outline when bookIntel hasn't loaded yet.
@@ -3903,12 +3905,14 @@ function BookIntelTab({
   const chaptersReady = !chaptersLoading && chapters !== undefined;
   if (loading && !hasIntel && !chaptersReady) {
     return (
-      <ActivityIndicator color={colors.primary} style={{ marginTop: 48 }} />
+      <View style={{ flex: 1, paddingTop: 8 }}>
+        {[...Array(5)].map((_, i) => <SkeletonItem key={i} lines={2} />)}
+      </View>
     );
   }
 
   return (
-    <ScrollView contentContainerStyle={{ padding: 16, gap: 16 }}>
+    <ScrollView contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 16, paddingBottom: insets.bottom + 24, gap: 16 }}>
 
       {/* ── "No intelligence yet" placeholder — shown inline when bookIntel
            hasn't loaded, so the chapter outline below still renders ──── */}
@@ -4674,6 +4678,7 @@ function GenesisGateRow({
 
 function GenesisTab({ workId, colors }: { workId: string; colors: any }) {
   const T = useVellumTokens();
+  const insets = useSafeAreaInsets();
   const domain = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
   const [book, setBook] = useState<GenesisBook | null>(null);
   const [loading, setLoading] = useState(true);
@@ -4786,18 +4791,22 @@ function GenesisTab({ workId, colors }: { workId: string; colors: any }) {
   // ── Render ──────────────────────────────────────────────────────────────────
 
   if (loading) {
-    return <View style={styles.centered}><ActivityIndicator color={colors.primary} /></View>;
+    return (
+      <View style={{ flex: 1, paddingTop: 8 }}>
+        {[...Array(5)].map((_, i) => <SkeletonItem key={i} lines={2} />)}
+      </View>
+    );
   }
 
   if (fetchError) {
     return (
-      <View style={styles.centered}>
-        <Feather name="alert-circle" size={28} color={colors.mutedForeground} />
-        <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>{fetchError}</Text>
-        <Pressable onPress={fetchBook} style={[styles.retryBtn, { borderColor: colors.border }]}>
-          <Text style={{ color: colors.primary, fontSize: 13, fontFamily: 'Inter_500Medium' }}>Retry</Text>
-        </Pressable>
-      </View>
+      <EmptyState
+        icon="alert-circle"
+        title="Could not load Genesis"
+        body={fetchError}
+        cta="Retry"
+        onCta={fetchBook}
+      />
     );
   }
 
@@ -4898,7 +4907,7 @@ function GenesisTab({ workId, colors }: { workId: string; colors: any }) {
 
   return (
     <ScrollView
-      contentContainerStyle={{ padding: 16, paddingBottom: 40 }}
+      contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 16, paddingBottom: insets.bottom + 24 }}
       showsVerticalScrollIndicator={false}
       refreshControl={<RefreshControl refreshing={loading} onRefresh={fetchBook} tintColor={colors.primary} />}
     >
@@ -5054,6 +5063,7 @@ function GenesisTab({ workId, colors }: { workId: string; colors: any }) {
 function IntelligenceTab({ workId, onHighGapCount }: { workId: string; onHighGapCount?: (n: number) => void }) {
   const colors = useColors();
   const T = useVellumTokens();
+  const insets = useSafeAreaInsets();
   const router = useRouter();
   const [completeness, setCompleteness] = useState<any>(null);
   const [gaps, setGaps] = useState<any>(null);
@@ -5086,9 +5096,8 @@ function IntelligenceTab({ workId, onHighGapCount }: { workId: string; onHighGap
 
   if (loading) {
     return (
-      <View style={{ alignItems: 'center', paddingTop: 56 }}>
-        <ActivityIndicator color={colors.primary} />
-        <Text style={{ color: colors.mutedForeground, marginTop: 10, fontSize: 13 }}>Analysing…</Text>
+      <View style={{ flex: 1, paddingTop: 8 }}>
+        {[...Array(5)].map((_, i) => <SkeletonItem key={i} lines={2} />)}
       </View>
     );
   }
@@ -5106,7 +5115,7 @@ function IntelligenceTab({ workId, onHighGapCount }: { workId: string; onHighGap
 
   return (
     <ScrollView
-      contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 32, paddingTop: 12 }}
+      contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: insets.bottom + 24, paddingTop: 12 }}
       refreshControl={<RefreshControl refreshing={false} onRefresh={fetchData} tintColor={colors.primary} />}
     >
       {/* Stats strip */}
@@ -5164,7 +5173,7 @@ function IntelligenceTab({ workId, onHighGapCount }: { workId: string; onHighGap
           {gapList.length === 0 ? (
             <Text style={{ fontSize: 13, color: colors.mutedForeground }}>No gaps detected — great coverage!</Text>
           ) : (
-            [{ label: 'CRITICAL', items: critGaps, color: VELLUM_LIGHT.rust }, { label: 'HIGH', items: highGaps, color: VELLUM_LIGHT.rust }, { label: 'MEDIUM', items: medGaps, color: VELLUM_LIGHT.gilt }]
+            [{ label: 'CRITICAL', items: critGaps, color: T.rust }, { label: 'HIGH', items: highGaps, color: T.rust }, { label: 'MEDIUM', items: medGaps, color: T.gilt }]
               .filter(grp => grp.items.length > 0)
               .map(grp => (
                 <View key={grp.label} style={{ marginBottom: 10 }}>
@@ -5211,6 +5220,7 @@ function IntelligenceTab({ workId, onHighGapCount }: { workId: string; onHighGap
 
 export default function WorkDetailScreen() {
   const colors = useColors();
+  const T = useVellumTokens();
   const insets = useSafeAreaInsets();
   const isWeb = Platform.OS === 'web';
   const { id, tab: tabParam, q: qParam } = useLocalSearchParams<{ id: string; tab?: string; q?: string }>();
@@ -5689,10 +5699,9 @@ export default function WorkDetailScreen() {
                 <RefreshControl refreshing={docsLoading} onRefresh={refetchDocs} tintColor={colors.primary} />
               }
               ListEmptyComponent={
-                <View style={styles.centered}>
-                  <Feather name="file-text" size={36} color={colors.mutedForeground} />
-                  <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>No documents</Text>
-                </View>
+                docsLoading
+                  ? <>{[...Array(5)].map((_, i) => <SkeletonItem key={i} lines={2} />)}</>
+                  : <EmptyState icon="file-text" title="No documents" body="Link documents to this Work to get started." />
               }
             />
           </>
@@ -5765,12 +5774,13 @@ export default function WorkDetailScreen() {
                 <RefreshControl refreshing={knLoading} onRefresh={refetchKn} tintColor={colors.primary} />
               }
               ListEmptyComponent={
-                <View style={styles.centered}>
-                  <Feather name="cpu" size={36} color={colors.mutedForeground} />
-                  <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
-                    {knSearch.trim() || knKindFilter !== 'all' ? 'No matching knowledge items' : 'No knowledge nodes'}
-                  </Text>
-                </View>
+                knLoading
+                  ? <>{[...Array(5)].map((_, i) => <SkeletonItem key={i} lines={2} />)}</>
+                  : <EmptyState
+                      icon="cpu"
+                      title={knSearch.trim() || knKindFilter !== 'all' ? 'No matching knowledge items' : 'No knowledge nodes'}
+                      body={knSearch.trim() || knKindFilter !== 'all' ? 'Try adjusting your search or filters.' : 'Process documents to extract knowledge.'}
+                    />
               }
             />
           </>
@@ -6044,7 +6054,7 @@ export default function WorkDetailScreen() {
                   hitSlop={8}
                   style={({ pressed }: { pressed: boolean }) => ({
                     paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8,
-                    backgroundColor: VELLUM_LIGHT.gilt, opacity: pressed ? 0.8 : 1, marginLeft: 12,
+                    backgroundColor: T.gilt, opacity: pressed ? 0.8 : 1, marginLeft: 12,
                   })}
                 >
                   <Text style={{ color: '#fff', fontSize: 13, fontFamily: 'Inter_700Bold' }}>Undo</Text>
@@ -6166,7 +6176,7 @@ export default function WorkDetailScreen() {
         <View style={{
           position: 'absolute', bottom: insets.bottom + 24, left: 16, right: 16,
           flexDirection: 'row', alignItems: 'center', gap: 8,
-          backgroundColor: VELLUM_LIGHT.gilt, borderRadius: 12,
+          backgroundColor: T.gilt, borderRadius: 12,
           paddingVertical: 12, paddingHorizontal: 16,
           shadowColor: '#000', shadowOffset: { width: 0, height: 4 },
           shadowOpacity: 0.25, shadowRadius: 8, elevation: 8,
@@ -6243,7 +6253,7 @@ export default function WorkDetailScreen() {
                 ItemSeparatorComponent={() => <View style={{ height: 1, backgroundColor: colors.border }} />}
                 renderItem={({ item }) => {
                   const isResolving = resolvingId === item.id;
-                  const typeColor: Record<string, string> = { knowledge: VELLUM_LIGHT.gilt, reclassify: VELLUM_LIGHT.gilt, suggestion: '#3b82f6', duplicate: VELLUM_LIGHT.rust };
+                  const typeColor: Record<string, string> = { knowledge: T.gilt, reclassify: T.gilt, suggestion: '#3b82f6', duplicate: T.rust };
                   const tc = typeColor[item.item_type] ?? colors.primary;
                   return (
                     <View style={{ paddingVertical: 12 }}>
@@ -6264,13 +6274,14 @@ export default function WorkDetailScreen() {
                               onPress={() => resolveReviewItem(item.id, d)}
                               style={({ pressed }) => ({
                                 flex: 1, paddingVertical: 7, borderRadius: 8, alignItems: 'center',
-                                backgroundColor: d === 'approve' ? colors.primary + '18' : d === 'reject' ? VELLUM_LIGHT.rustSoft : colors.muted,
+                                backgroundColor: d === 'approve' ? colors.primary + '18' : d === 'reject' ? T.rustSoft : colors.muted,
                                 borderWidth: 1,
-                                borderColor: d === 'approve' ? colors.primary + '55' : d === 'reject' ? VELLUM_LIGHT.rust + '55' : colors.border,
+                                borderColor: d === 'approve' ? colors.primary + '55' : d === 'reject' ? T.rust + '55' : colors.border,
                                 opacity: pressed ? 0.7 : 1,
+                                minHeight: 44,
                               })}
                             >
-                              <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: d === 'approve' ? colors.primary : d === 'reject' ? VELLUM_LIGHT.rust : colors.mutedForeground }}>
+                              <Text style={{ fontSize: 12, ...font('semibold'), color: d === 'approve' ? colors.primary : d === 'reject' ? T.rust : colors.mutedForeground }}>
                                 {d.charAt(0).toUpperCase() + d.slice(1)}
                               </Text>
                             </Pressable>
@@ -6301,9 +6312,9 @@ const styles = StyleSheet.create({
   },
   typeBadgeText: { fontSize: 12, fontFamily: 'Inter_500Medium', textTransform: 'capitalize' },
   tabBar: { flexDirection: 'row', borderBottomWidth: 1 },
-  tab: { flex: 1, alignItems: 'center', paddingVertical: 12 },
-  tabLabel: { fontSize: 13 },
-  overviewPad: { padding: 16, paddingBottom: 80 },
+  tab: { flex: 1, alignItems: 'center', paddingVertical: 12, minHeight: 44, justifyContent: 'center' },
+  tabLabel: { fontSize: 13, ...font('regular') },
+  overviewPad: { paddingHorizontal: 16, paddingTop: 16, paddingBottom: 80 },
   taskInputRow: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
     paddingHorizontal: 16, paddingVertical: 10, borderBottomWidth: 1,
@@ -6369,6 +6380,7 @@ const styles = StyleSheet.create({
     marginTop: 24,
     paddingVertical: 14,
     borderRadius: 12,
+    minHeight: 44,
   },
   discussBtnText: { fontSize: 15, fontFamily: 'Inter_600SemiBold' },
   retryBtn: {
