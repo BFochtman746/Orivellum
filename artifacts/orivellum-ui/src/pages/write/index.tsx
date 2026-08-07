@@ -610,7 +610,9 @@ export default function WriteDeskPage() {
   const [loading, setLoading]     = useState(true);
   const [saving, setSaving]       = useState(false);
   const [focusMode, setFocusMode] = useState(false);
-  const [aiPanelOpen, setAiPanelOpen] = useState(true);
+  const [aiPanelOpen, setAiPanelOpen] = useState(() =>
+    typeof window !== 'undefined' ? window.innerWidth >= 640 : true
+  );
   // mobileSidebarOpen: controls the slide-over on viewports < 640 px.
   // Defaults to false — on narrow phones the sidebar auto-hides so the editor
   // gets the full width without the user needing to find focus mode.
