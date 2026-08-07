@@ -77,20 +77,18 @@ function StatusPill({ label, available, detail, note, warning }: {
    *  signal degraded-but-functional state (e.g. espeak fallback active). */
   warning?: boolean;
 }) {
-  const color = (!available)
-    ? "border-amber-200 text-amber-700 bg-amber-50/60"
-    : warning
-      ? "border-amber-200 text-amber-700 bg-amber-50/60"
-      : "border-emerald-200 text-emerald-700 bg-emerald-50/60";
-  const dot = (!available)
-    ? "bg-amber-400 animate-pulse"
-    : warning
-      ? "bg-amber-400 animate-pulse"
-      : "bg-emerald-500";
+  const isUnavailableOrWarn = !available || !!warning;
+  const pillStyle: React.CSSProperties = isUnavailableOrWarn
+    ? { borderColor: "var(--gilt-line)", color: "var(--gilt)", background: "var(--gilt-soft)" }
+    : { borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)", color: "var(--green-2)", background: "var(--green-soft)" };
+  const dotStyle: React.CSSProperties = isUnavailableOrWarn
+    ? { background: "var(--gilt)" }
+    : { background: "var(--green-2)" };
   return (
-    <span className={`inline-flex items-center gap-1.5 text-[11px] font-mono px-2.5 py-1 rounded-full border ${color}`}
-      title={note}>
-      <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${dot}`} />
+    <span className="inline-flex items-center gap-1.5 text-[11px] font-mono px-2.5 py-1 rounded-full border"
+      style={pillStyle} title={note}>
+      <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isUnavailableOrWarn ? "animate-pulse" : ""}`}
+        style={dotStyle} />
       <span className="font-semibold">{label}</span>
       {detail && <span className="opacity-70">— {detail}</span>}
     </span>
@@ -295,12 +293,9 @@ function TTSPanel() {
           <div className="flex flex-wrap gap-1.5 pt-1">
             {ttsStrategies.map((s) => (
               <span key={s.key}
-                className={`inline-flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-full border ${
-                  s.available
-                    ? "border-emerald-200 text-emerald-700 bg-emerald-50/60"
-                    : "border-border/40 text-muted-foreground/50"
-                }`}>
-                <span className={`w-1.5 h-1.5 rounded-full ${s.available ? "bg-emerald-500" : "bg-muted-foreground/30"}`} />
+                className={`inline-flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-full border ${s.available ? "" : "border-border/40 text-muted-foreground/50"}`}
+                style={s.available ? { borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)", color: "var(--green-2)", background: "var(--green-soft)" } : undefined}>
+                <span className="w-1.5 h-1.5 rounded-full" style={{ background: s.available ? "var(--green-2)" : undefined }} />
                 {s.name}
                 {s.available && s.latency_ms != null && (
                   <span className="opacity-60">{s.latency_ms}ms</span>
@@ -308,7 +303,7 @@ function TTSPanel() {
               </span>
             ))}
             {!ttsAvailable && ttsStrategies.length > 0 && (
-              <span className="text-[10px] font-mono text-amber-600">
+              <span className="text-[10px] font-mono" style={{ color: "var(--gilt)" }}>
                 No TTS backend available — check System Settings
               </span>
             )}
@@ -342,7 +337,7 @@ function TTSPanel() {
             ) : voicesError ? (
               <button
                 onClick={() => refetchVoices()}
-                className="h-9 w-full text-xs font-mono text-red-600 bg-red-50 border border-red-200 rounded-md px-3 flex items-center gap-2 hover:bg-red-100 transition-colors"
+                className="h-9 w-full text-xs font-mono rounded-md border px-3 flex items-center gap-2 transition-colors" style={{ color: "var(--rust)", background: "var(--rust-soft)", borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)" }}
               >
                 <span>⚠</span> Could not load voices — click to retry
               </button>
@@ -590,7 +585,7 @@ function AudiobookPanel() {
             {loadingVoices ? <Skeleton className="h-9 w-full" /> : voicesError ? (
               <button
                 onClick={() => refetchVoices()}
-                className="h-9 w-full text-xs font-mono text-red-600 bg-red-50 border border-red-200 rounded-md px-3 flex items-center gap-2 hover:bg-red-100 transition-colors"
+                className="h-9 w-full text-xs font-mono rounded-md border px-3 flex items-center gap-2 transition-colors" style={{ color: "var(--rust)", background: "var(--rust-soft)", borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)" }}
               >
                 <span>⚠</span> Could not load voices — click to retry
               </button>
@@ -733,17 +728,14 @@ function ImageGenPanel() {
         <div className="flex flex-wrap gap-1.5 pt-1">
           {backends.map((b) => (
             <span key={b.name}
-              className={`inline-flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-full border ${
-                b.online
-                  ? "border-emerald-200 text-emerald-700 bg-emerald-50/60"
-                  : "border-border/40 text-muted-foreground/50"
-              }`}>
-              <span className={`w-1.5 h-1.5 rounded-full ${b.online ? "bg-emerald-500" : "bg-muted-foreground/30"}`} />
+              className={`inline-flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-full border ${b.online ? "" : "border-border/40 text-muted-foreground/50"}`}
+              style={b.online ? { borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)", color: "var(--green-2)", background: "var(--green-soft)" } : undefined}>
+              <span className="w-1.5 h-1.5 rounded-full" style={{ background: b.online ? "var(--green-2)" : undefined }} />
               {b.name}
             </span>
           ))}
           {!anyOnline && backends.length > 0 && (
-            <span className="text-[10px] font-mono text-amber-600">
+            <span className="text-[10px] font-mono" style={{ color: "var(--gilt)" }}>
               No image backend online — install Automatic1111 or ComfyUI, or set a custom URL in System Settings
             </span>
           )}
@@ -1126,13 +1118,13 @@ const FORMAT_LABELS: Record<string, string> = {
 };
 
 function ScoreBadge({ label, value }: { label: string; value: number }) {
-  const color = value >= 8
-    ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+  const scoreStyle: React.CSSProperties = value >= 8
+    ? { color: "var(--green-2)", background: "var(--green-soft)", borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)" }
     : value >= 6
-    ? "bg-amber-50 text-amber-700 border-amber-200"
-    : "bg-red-50 text-red-700 border-red-200";
+    ? { color: "var(--gilt)", background: "var(--gilt-soft)", borderColor: "var(--gilt-line)" }
+    : { color: "var(--rust)", background: "var(--rust-soft)", borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)" };
   return (
-    <span className={`inline-flex gap-1 items-center text-[11px] font-mono px-2 py-0.5 rounded-full border ${color}`}>
+    <span className="inline-flex gap-1 items-center text-[11px] font-mono px-2 py-0.5 rounded-full border" style={scoreStyle}>
       <span className="font-semibold">{value}/10</span>
       <span className="opacity-70">{label}</span>
     </span>
@@ -1226,7 +1218,7 @@ function DocumentWorkshopPanel() {
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between gap-3">
           <CardTitle className="flex items-center gap-2 font-serif text-lg">
-            <Wand2 className="w-5 h-5 text-violet-500" />
+            <Wand2 className="w-5 h-5" style={{ color: "var(--gilt)" }} />
             Document Workshop
             <Badge variant="secondary" className="text-[10px] font-mono">AI</Badge>
           </CardTitle>
@@ -1309,13 +1301,13 @@ function DocumentWorkshopPanel() {
         {step === "questions" && session && (
           <div className="space-y-5">
             {/* Intent summary */}
-            <div className="rounded-lg border border-violet-200 bg-violet-50/60 px-4 py-3 space-y-1">
-              <p className="text-xs font-semibold text-violet-700 flex items-center gap-1.5">
+            <div className="rounded-lg border px-4 py-3 space-y-1" style={{ borderColor: "var(--gilt-line)", background: "var(--gilt-soft)" }}>
+              <p className="text-xs font-semibold flex items-center gap-1.5" style={{ color: "var(--gilt)" }}>
                 <Sparkles className="w-3.5 h-3.5" /> Understood intent
               </p>
-              <p className="text-sm text-violet-900">{session.detected_intent}</p>
+              <p className="text-sm" style={{ color: "var(--gilt)" }}>{session.detected_intent}</p>
               <div className="flex items-center gap-2 mt-1">
-                <span className="flex items-center gap-1 text-[11px] text-violet-600">
+                <span className="flex items-center gap-1 text-[11px]" style={{ color: "var(--gilt)" }}>
                   {FORMAT_ICONS[session.format]}{FORMAT_LABELS[session.format] ?? session.format}
                 </span>
               </div>
@@ -1361,11 +1353,8 @@ function DocumentWorkshopPanel() {
                               const next = active ? sel.filter(x => x !== o) : [...sel, o];
                               setAnswers(a => ({ ...a, [q.id]: next.join(",") }));
                             }}
-                            className={`text-xs px-3 py-1 rounded-full border transition-colors
-                              ${active
-                                ? "border-violet-400 bg-violet-100 text-violet-800"
-                                : "border-border text-muted-foreground hover:border-violet-300"
-                              }`}
+                            className={`text-xs px-3 py-1 rounded-full border transition-colors ${active ? "" : "border-border text-muted-foreground"}`}
+                            style={active ? { borderColor: "var(--gilt-line)", background: "var(--gilt-soft)", color: "var(--gilt)" } : undefined}
                           >
                             {o}
                           </button>
@@ -1384,7 +1373,7 @@ function DocumentWorkshopPanel() {
               ))}
             </div>
 
-            <Button onClick={handleGenerate} className="w-full gap-2 bg-violet-600 hover:bg-violet-700">
+            <Button onClick={handleGenerate} className="w-full gap-2" style={{ background: "var(--gilt)", color: "#fff" }}>
               <Wand2 className="w-4 h-4" /> Generate Document
             </Button>
             <p className="text-[11px] text-muted-foreground text-center">
@@ -1396,8 +1385,8 @@ function DocumentWorkshopPanel() {
         {/* ── Step 3: Generating ──────────────────────────────────────── */}
         {step === "generating" && (
           <div className="py-10 text-center space-y-4">
-            <div className="w-14 h-14 rounded-full bg-violet-100 flex items-center justify-center mx-auto">
-              <Loader2 className="w-7 h-7 text-violet-600 animate-spin" />
+            <div className="w-14 h-14 rounded-full flex items-center justify-center mx-auto" style={{ background: "var(--gilt-soft)" }}>
+              <Loader2 className="w-7 h-7 animate-spin" style={{ color: "var(--gilt)" }} />
             </div>
             <div>
               <p className="font-semibold text-sm">Generating your document…</p>
@@ -1406,9 +1395,9 @@ function DocumentWorkshopPanel() {
               </p>
             </div>
             <div className="flex justify-center gap-6 text-[11px] text-muted-foreground font-mono">
-              <span className="flex items-center gap-1"><ChevronRight className="w-3 h-3 text-violet-500" />Writing code</span>
-              <span className="flex items-center gap-1"><ChevronRight className="w-3 h-3 text-violet-500" />Executing</span>
-              <span className="flex items-center gap-1"><ChevronRight className="w-3 h-3 text-violet-500" />Critiquing</span>
+              <span className="flex items-center gap-1"><ChevronRight className="w-3 h-3" style={{ color: "var(--gilt)" }} />Writing code</span>
+              <span className="flex items-center gap-1"><ChevronRight className="w-3 h-3" style={{ color: "var(--gilt)" }} />Executing</span>
+              <span className="flex items-center gap-1"><ChevronRight className="w-3 h-3" style={{ color: "var(--gilt)" }} />Critiquing</span>
             </div>
           </div>
         )}
@@ -1417,15 +1406,15 @@ function DocumentWorkshopPanel() {
         {step === "result" && result?.ok && (
           <div className="space-y-4">
             {/* Download card */}
-            <div className="rounded-lg border border-emerald-200 bg-emerald-50/60 p-4 flex items-center gap-4">
-              <div className="w-10 h-10 rounded-full bg-emerald-100 flex items-center justify-center shrink-0">
-                <CheckCircle2 className="w-5 h-5 text-emerald-600" />
+            <div className="rounded-lg border p-4 flex items-center gap-4" style={{ borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)", background: "var(--green-soft)" }}>
+              <div className="w-10 h-10 rounded-full flex items-center justify-center shrink-0" style={{ background: "var(--green-soft)" }}>
+                <CheckCircle2 className="w-5 h-5" style={{ color: "var(--green-2)" }} />
               </div>
               <div className="min-w-0 flex-1">
-                <p className="text-sm font-semibold text-emerald-800">Document ready</p>
-                <p className="text-xs text-emerald-700 truncate mt-0.5">{result.filename}</p>
+                <p className="text-sm font-semibold" style={{ color: "var(--green-2)" }}>Document ready</p>
+                <p className="text-xs truncate mt-0.5" style={{ color: "var(--green-2)" }}>{result.filename}</p>
                 {result.size_bytes && (
-                  <p className="text-[10px] font-mono text-emerald-600 mt-0.5">
+                  <p className="text-[10px] font-mono mt-0.5" style={{ color: "var(--green-2)" }}>
                     {result.size_bytes >= 1_048_576
                       ? `${(result.size_bytes / 1_048_576).toFixed(1)} MB`
                       : `${Math.round(result.size_bytes / 1024)} KB`}
@@ -1437,7 +1426,7 @@ function DocumentWorkshopPanel() {
                 download={result.filename}
                 className="shrink-0"
               >
-                <Button size="sm" className="gap-2 bg-emerald-600 hover:bg-emerald-700">
+                <Button size="sm" className="gap-2" style={{ background: "var(--green-2)", color: "#fff" }}>
                   <Download className="w-3.5 h-3.5" /> Download
                 </Button>
               </a>
@@ -1447,14 +1436,13 @@ function DocumentWorkshopPanel() {
             {critique && (
               <div className="rounded-lg border border-border/50 bg-muted/10 p-4 space-y-3">
                 <div className="flex items-center gap-2">
-                  <Sparkles className="w-4 h-4 text-violet-500" />
+                  <Sparkles className="w-4 h-4" style={{ color: "var(--gilt)" }} />
                   <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Quality critique</p>
                   {overallScore !== null && (
                     <Badge
                       variant="secondary"
-                      className={`ml-auto text-xs font-mono ${
-                        overallScore >= 8 ? "text-emerald-700" : overallScore >= 6 ? "text-amber-700" : "text-red-700"
-                      }`}
+                      className="ml-auto text-xs font-mono"
+                      style={{ color: overallScore >= 8 ? "var(--green-2)" : overallScore >= 6 ? "var(--gilt)" : "var(--rust)" }}
                     >
                       {overallScore}/10 overall
                     </Badge>
@@ -1475,10 +1463,10 @@ function DocumentWorkshopPanel() {
 
                 {critique.strengths && critique.strengths.length > 0 && (
                   <div className="space-y-1">
-                    <p className="text-[11px] font-semibold text-emerald-700 uppercase tracking-wide">Strengths</p>
+                    <p className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: "var(--green-2)" }}>Strengths</p>
                     {critique.strengths.map((s, i) => (
                       <p key={i} className="text-xs text-foreground/70 flex gap-1.5">
-                        <CheckCircle2 className="w-3 h-3 text-emerald-500 shrink-0 mt-0.5" />{s}
+                        <CheckCircle2 className="w-3 h-3 shrink-0 mt-0.5" style={{ color: "var(--green-2)" }} />{s}
                       </p>
                     ))}
                   </div>
@@ -1486,10 +1474,10 @@ function DocumentWorkshopPanel() {
 
                 {critique.gaps && critique.gaps.length > 0 && (
                   <div className="space-y-1">
-                    <p className="text-[11px] font-semibold text-amber-700 uppercase tracking-wide">Gaps</p>
+                    <p className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: "var(--gilt)" }}>Gaps</p>
                     {critique.gaps.map((g, i) => (
                       <p key={i} className="text-xs text-foreground/70 flex gap-1.5">
-                        <AlertTriangle className="w-3 h-3 text-amber-500 shrink-0 mt-0.5" />{g}
+                        <AlertTriangle className="w-3 h-3 shrink-0 mt-0.5" style={{ color: "var(--gilt)" }} />{g}
                       </p>
                     ))}
                   </div>
@@ -1497,7 +1485,7 @@ function DocumentWorkshopPanel() {
 
                 {critique.suggestions && critique.suggestions.length > 0 && (
                   <div className="space-y-1">
-                    <p className="text-[11px] font-semibold text-violet-700 uppercase tracking-wide">Improvement suggestions</p>
+                    <p className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: "var(--gilt)" }}>Improvement suggestions</p>
                     {critique.suggestions.map((s, i) => (
                       <button
                         key={i}
@@ -1509,7 +1497,7 @@ function DocumentWorkshopPanel() {
                         className="w-full text-left text-xs text-foreground/70 flex gap-1.5 items-start rounded px-2 py-1 hover:bg-muted/30 transition-colors group"
                         title="Click to restart with this improvement"
                       >
-                        <ChevronRight className="w-3 h-3 text-violet-400 shrink-0 mt-0.5 group-hover:text-violet-600 transition-colors" />{s}
+                        <ChevronRight className="w-3 h-3 shrink-0 mt-0.5 transition-colors" style={{ color: "var(--gilt)" }} />{s}
                       </button>
                     ))}
                   </div>

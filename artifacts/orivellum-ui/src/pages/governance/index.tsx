@@ -50,10 +50,10 @@ function getConfidenceTier(c: number | null): "high" | "medium" | "low" {
   return "high";
 }
 
-const TIER_BADGE: Record<string, string> = {
-  high:   "border-emerald-200 text-emerald-700 bg-emerald-50/70",
-  medium: "border-amber-200   text-amber-700   bg-amber-50/70",
-  low:    "border-red-200     text-red-600     bg-red-50/70",
+const TIER_BADGE_STYLE: Record<string, React.CSSProperties> = {
+  high:   { borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)", color: "var(--green-2)", background: "var(--green-soft)" },
+  medium: { borderColor: "var(--gilt-line)", color: "var(--gilt)", background: "var(--gilt-soft)" },
+  low:    { borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)", color: "var(--rust)", background: "var(--rust-soft)" },
 };
 const TIER_LABEL: Record<string, string> = { high: "High", medium: "Med", low: "Low" };
 
@@ -178,8 +178,8 @@ function ConflictsSection() {
   return (
     <div className="space-y-2.5">
       <div className="flex items-center gap-2">
-        <AlertTriangle className="w-4 h-4 text-amber-600" />
-        <h2 className="text-sm font-mono font-semibold text-amber-700">
+        <AlertTriangle className="w-4 h-4" style={{ color: "var(--gilt)" }} />
+        <h2 className="text-sm font-mono font-semibold" style={{ color: "var(--gilt)" }}>
           Contradicting claims ({conflicts.length})
         </h2>
       </div>
@@ -187,9 +187,9 @@ function ConflictsSection() {
         {conflicts.map((c) => {
           const busy = resolving.has(c.id);
           return (
-            <div key={c.id} className="rounded-lg border border-amber-200/70 bg-amber-50/30 p-3 space-y-2">
+            <div key={c.id} className="rounded-lg border p-3 space-y-2" style={{ borderColor: "var(--gilt-line)", background: "var(--gilt-soft)" }}>
               <div className="flex items-center gap-2 text-[11px] font-mono text-muted-foreground">
-                <Badge variant="outline" className="border-amber-300 text-amber-700 text-[10px]">
+                <Badge variant="outline" className="text-[10px]" style={{ borderColor: "var(--gilt-line)", color: "var(--gilt)" }}>
                   {c.conflict_type === "negation" ? "Negation" : "Conflicting values"}
                 </Badge>
                 {c.work_title && <span>{c.work_title}</span>}
@@ -207,7 +207,7 @@ function ConflictsSection() {
                       </span>
                       <Button size="sm" variant="outline" disabled={busy}
                         onClick={() => resolve(c.id, res)}
-                        className="h-6 text-[11px] gap-1 border-emerald-200 text-emerald-700 hover:bg-emerald-50">
+                        className="h-6 text-[11px] gap-1" style={{ borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)", color: "var(--green-2)" }}>
                         {busy ? <Spin /> : <ThumbsUp className="w-3 h-3" />} Keep {label}
                       </Button>
                     </div>
@@ -288,8 +288,8 @@ function RegressionsSection() {
     <div className="space-y-2.5">
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <div className="flex items-center gap-2">
-          <TrendingDown className="w-4 h-4 text-red-600" />
-          <h2 className="text-sm font-mono font-semibold text-red-700">
+          <TrendingDown className="w-4 h-4" style={{ color: "var(--rust)" }} />
+          <h2 className="text-sm font-mono font-semibold" style={{ color: "var(--rust)" }}>
             Benchmark Regressions{visible.length > 0 ? ` (${visible.length})` : ""}
           </h2>
         </div>
@@ -321,7 +321,7 @@ function RegressionsSection() {
         </div>
       ) : visible.length === 0 ? (
         <div className="rounded-lg border border-dashed border-border/50 p-6 text-center text-muted-foreground">
-          <CheckCircle2 className="w-6 h-6 mx-auto mb-2 opacity-40 text-emerald-500" />
+          <CheckCircle2 className="w-6 h-6 mx-auto mb-2 opacity-40" style={{ color: "var(--green-2)" }} />
           <p className="text-sm">No benchmark regressions</p>
         </div>
       ) : (
@@ -332,18 +332,15 @@ function RegressionsSection() {
             return (
               <div key={reg.run_id}
                 className={`rounded-lg border p-3 flex items-center gap-3 ${
-                  reg.acknowledged
-                    ? "border-border/50 bg-muted/10 opacity-60"
-                    : "border-red-200/70 bg-red-50/30"
-                }`}>
+                  reg.acknowledged ? "border-border/50 bg-muted/10 opacity-60" : ""
+                }`} style={!reg.acknowledged ? { borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)", background: "var(--rust-soft)" } : undefined}>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
-                    {reg.acknowledged && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />}
-                    <Badge variant="outline" className={`text-[10px] shrink-0 ${
-                      reg.kind === "prompt"
-                        ? "border-violet-300 text-violet-700 dark:text-violet-400 dark:border-violet-900"
-                        : "border-border/60 text-muted-foreground"
-                    }`}>
+                    {reg.acknowledged && <CheckCircle2 className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--green-2)" }} />}
+                    <Badge variant="outline"
+                      className="text-[10px] shrink-0"
+                      style={reg.kind === "prompt" ? { borderColor: "var(--gilt-line)", color: "var(--gilt)" } : undefined}
+                    >
                       {reg.kind === "prompt" ? "Prompt" : "Benchmark"}
                     </Badge>
                     <button
@@ -358,7 +355,7 @@ function RegressionsSection() {
                     <span>{fmtRegTime(reg.finished_at)}</span>
                     <span>{reg.avg_score != null ? `${Math.round(reg.avg_score * 100)}%` : "—"}</span>
                     {deltaPts != null && (
-                      <span className="text-red-600 dark:text-red-400 font-semibold">
+                      <span className="font-semibold" style={{ color: "var(--rust)" }}>
                         {deltaPts > 0 ? "+" : ""}{deltaPts} pts
                       </span>
                     )}
@@ -423,32 +420,32 @@ function AuditChainSection() {
         <div className="h-12 rounded-lg bg-muted/20 animate-pulse" />
       ) : isError ? (
         <div className="rounded-lg border border-dashed border-border/60 p-3 flex items-center gap-2 text-xs text-muted-foreground">
-          <AlertTriangle className="w-3.5 h-3.5 shrink-0 text-amber-500" />
+          <AlertTriangle className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--gilt)" }} />
           Could not reach audit-chain endpoint.
         </div>
       ) : data?.ok ? (
-        <div className="rounded-lg border border-emerald-200/70 bg-emerald-50/30 dark:bg-emerald-950/20 dark:border-emerald-900/50 p-3 flex items-center gap-2.5">
-          <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
+        <div className="rounded-lg border p-3 flex items-center gap-2.5" style={{ borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)", background: "var(--green-soft)" }}>
+          <ShieldCheck className="w-4 h-4 shrink-0" style={{ color: "var(--green-2)" }} />
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium text-emerald-800 dark:text-emerald-300">
+            <p className="text-sm font-medium" style={{ color: "var(--green-2)" }}>
               Chain intact
             </p>
-            <p className="text-[11px] font-mono text-emerald-700/70 dark:text-emerald-400/70 mt-0.5">
+            <p className="text-[11px] font-mono mt-0.5" style={{ color: "color-mix(in srgb, var(--green-2) 70%, transparent)" }}>
               {data.checked_rows.toLocaleString()} row{data.checked_rows !== 1 ? "s" : ""} verified — no tampering detected
             </p>
           </div>
         </div>
       ) : (
-        <div className="rounded-lg border border-red-300/70 bg-red-50/40 dark:bg-red-950/20 dark:border-red-900/50 p-3 flex items-start gap-2.5">
-          <ShieldAlert className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+        <div className="rounded-lg border p-3 flex items-start gap-2.5" style={{ borderColor: "color-mix(in srgb, var(--rust) 40%, transparent)", background: "var(--rust-soft)" }}>
+          <ShieldAlert className="w-4 h-4 shrink-0 mt-0.5" style={{ color: "var(--rust)" }} />
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-semibold text-red-800 dark:text-red-300">
+            <p className="text-sm font-semibold" style={{ color: "var(--rust)" }}>
               Chain integrity broken
             </p>
-            <p className="text-[11px] font-mono text-red-700/80 dark:text-red-400/80 mt-0.5 break-words">
+            <p className="text-[11px] font-mono mt-0.5 break-words" style={{ color: "color-mix(in srgb, var(--rust) 80%, transparent)" }}>
               {data?.reason ?? "Unknown reason"}
             </p>
-            <p className="text-[10px] font-mono text-red-600/60 mt-1">
+            <p className="text-[10px] font-mono mt-1" style={{ color: "color-mix(in srgb, var(--rust) 60%, transparent)" }}>
               {(data?.checked_rows ?? 0).toLocaleString()} rows checked
             </p>
           </div>
@@ -487,16 +484,16 @@ function OutboxSection() {
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-2">
-        <Inbox className="w-4 h-4 text-amber-600" />
-        <h2 className="text-sm font-mono font-semibold text-amber-700">
+        <Inbox className="w-4 h-4" style={{ color: "var(--gilt)" }} />
+        <h2 className="text-sm font-mono font-semibold" style={{ color: "var(--gilt)" }}>
           Outbox Backlog ({data?.count ?? events.length})
         </h2>
       </div>
 
-      <div className="rounded-lg border border-amber-200/60 bg-amber-50/30 dark:bg-amber-950/20 dark:border-amber-900/50 divide-y divide-border/30">
+      <div className="rounded-lg border divide-y divide-border/30" style={{ borderColor: "var(--gilt-line)", background: "var(--gilt-soft)" }}>
         {events.slice(0, 10).map((ev) => (
           <div key={ev.id} className="px-3 py-2 flex items-center gap-3 text-xs font-mono">
-            <span className="shrink-0 px-1.5 py-0.5 rounded bg-amber-100/80 dark:bg-amber-900/40 text-amber-800 dark:text-amber-300 text-[10px]">
+            <span className="shrink-0 px-1.5 py-0.5 rounded text-[10px]" style={{ background: "var(--gilt-soft)", color: "var(--gilt)" }}>
               {ev.event_type}
             </span>
             <span className="flex-1 truncate text-muted-foreground">
@@ -538,11 +535,11 @@ interface Finding {
   resolved_by: string | null;
 }
 
-const SEVERITY_BADGE: Record<string, string> = {
-  critical: "border-red-400   text-red-800   bg-red-100/80   dark:bg-red-950/40 dark:text-red-300",
-  high:     "border-orange-300 text-orange-800 bg-orange-100/70 dark:bg-orange-950/40 dark:text-orange-300",
-  warning:  "border-amber-200 text-amber-700 bg-amber-50/70   dark:bg-amber-950/30 dark:text-amber-300",
-  info:     "border-border/60 text-muted-foreground bg-muted/30",
+const SEVERITY_BADGE_STYLE: Record<string, React.CSSProperties> = {
+  critical: { borderColor: "color-mix(in srgb, var(--rust) 60%, transparent)", color: "var(--rust)", background: "var(--rust-soft)" },
+  high:     { borderColor: "color-mix(in srgb, var(--rust) 40%, transparent)", color: "var(--rust)", background: "var(--rust-soft)" },
+  warning:  { borderColor: "var(--gilt-line)", color: "var(--gilt)", background: "var(--gilt-soft)" },
+  info:     {},
 };
 
 function FindingsSection() {
@@ -590,11 +587,11 @@ function FindingsSection() {
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-2">
-        <AlertTriangle className="w-4 h-4 text-orange-600" />
-        <h2 className="text-sm font-mono font-semibold text-orange-700 dark:text-orange-400">
+        <AlertTriangle className="w-4 h-4" style={{ color: "var(--gilt)" }} />
+        <h2 className="text-sm font-mono font-semibold" style={{ color: "var(--gilt)" }}>
           Open Findings ({findings.length})
           {blocking.length > 0 && (
-            <span className="ml-2 text-[10px] font-normal text-red-600 dark:text-red-400">
+            <span className="ml-2 text-[10px] font-normal" style={{ color: "var(--rust)" }}>
               · {blocking.length} blocking
             </span>
           )}
@@ -607,22 +604,21 @@ function FindingsSection() {
           return (
             <div
               key={f.id}
-              className={`rounded-lg border p-3 flex items-start gap-3 ${
-                f.severity === "critical" || f.severity === "high"
-                  ? "border-orange-200/60 bg-orange-50/30 dark:bg-orange-950/20 dark:border-orange-900/40"
-                  : "border-border/40 bg-muted/10"
-              }`}
+              className="rounded-lg border p-3 flex items-start gap-3"
+              style={(f.severity === "critical" || f.severity === "high")
+                ? { borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)", background: "var(--rust-soft)" }
+                : { borderColor: undefined, background: undefined }}
             >
               <div className="flex-1 min-w-0 space-y-1">
                 <div className="flex items-center gap-2 flex-wrap">
-                  <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-mono border ${SEVERITY_BADGE[f.severity] ?? SEVERITY_BADGE.info}`}>
+                  <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-mono border" style={SEVERITY_BADGE_STYLE[f.severity] ?? SEVERITY_BADGE_STYLE.info}>
                     {f.severity}
                   </span>
                   <span className="text-[10px] font-mono text-muted-foreground/70 bg-muted/40 px-1.5 py-0.5 rounded border border-border/30">
                     {f.object_type}
                   </span>
                   {(f.severity === "high" || f.severity === "critical") && (
-                    <span className="text-[10px] font-mono text-red-600 dark:text-red-400">
+                    <span className="text-[10px] font-mono" style={{ color: "var(--rust)" }}>
                       blocks transitions
                     </span>
                   )}
@@ -637,7 +633,7 @@ function FindingsSection() {
                 variant="outline"
                 disabled={busy}
                 onClick={() => resolve(f.id)}
-                className="h-7 text-[11px] gap-1 shrink-0 border-emerald-200 text-emerald-700 hover:bg-emerald-50 dark:border-emerald-900 dark:text-emerald-400"
+                className="h-7 text-[11px] gap-1 shrink-0" style={{ borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)", color: "var(--green-2)" }}
               >
                 {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle2 className="w-3 h-3" />}
                 Resolve
@@ -818,13 +814,13 @@ export default function GovernancePage() {
       {statsData && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           {[
-            { label: "Pending",  value: statsData.pending,  cls: statsData.pending > 0 ? "text-amber-600" : "text-muted-foreground" },
-            { label: "Approved", value: statsData.approved, cls: "text-emerald-600" },
-            { label: "Rejected", value: statsData.rejected, cls: "text-red-600" },
-            { label: "Total",    value: statsData.total,    cls: "text-muted-foreground" },
-          ].map(({ label, value, cls }) => (
+            { label: "Pending",  value: statsData.pending,  cls: statsData.pending > 0 ? "" : "text-muted-foreground", style: statsData.pending > 0 ? { color: "var(--gilt)" } : undefined },
+            { label: "Approved", value: statsData.approved, cls: "", style: { color: "var(--green-2)" } as React.CSSProperties },
+            { label: "Rejected", value: statsData.rejected, cls: "", style: { color: "var(--rust)" } as React.CSSProperties },
+            { label: "Total",    value: statsData.total,    cls: "text-muted-foreground", style: undefined },
+          ].map(({ label, value, cls, style }) => (
             <div key={label} className="p-3 rounded-lg border border-border/50 bg-muted/10 text-center">
-              <p className={`text-2xl font-mono font-bold ${cls}`}>{value}</p>
+              <p className={`text-2xl font-mono font-bold ${cls}`} style={style}>{value}</p>
               <p className="text-[11px] font-mono text-muted-foreground uppercase tracking-wide mt-0.5">{label}</p>
             </div>
           ))}
@@ -864,7 +860,7 @@ export default function GovernancePage() {
               <Button size="sm" variant="outline"
                 onClick={() => handleBatchApprove(filtered)}
                 disabled={bulkPending}
-                className="gap-1.5 text-xs border-emerald-200 text-emerald-700 hover:bg-emerald-50">
+                className="gap-1.5 text-xs" style={{ borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)", color: "var(--green-2)" }}>
                 {bulkPending
                   ? <><Spin /> Approving…</>
                   : <><CheckCircle2 className="w-3.5 h-3.5" /> Approve all ({filtered.length})</>}
@@ -881,7 +877,7 @@ export default function GovernancePage() {
         </div>
       ) : filtered.length === 0 ? (
         <div className="text-center py-20 border border-dashed rounded-xl text-muted-foreground">
-          <CheckCircle2 className="w-10 h-10 mx-auto mb-4 opacity-40 text-emerald-500" />
+          <CheckCircle2 className="w-10 h-10 mx-auto mb-4 opacity-40" style={{ color: "var(--green-2)" }} />
           <p className="font-medium">
             {allItems.length > 0 ? "No items match the current filters" : "No items pending review"}
           </p>
@@ -920,7 +916,7 @@ export default function GovernancePage() {
                   <Button size="sm" variant="ghost"
                     onClick={() => handleBatchApprove(workItems)}
                     disabled={bulkPending}
-                    className="h-6 px-2 text-[10px] font-mono gap-1 text-emerald-700 hover:bg-emerald-50/50">
+                    className="h-6 px-2 text-[10px] font-mono gap-1" style={{ color: "var(--green-2)" }}>
                     <CheckCircle2 className="w-3 h-3" /> Approve {workItems.length}
                   </Button>
                 </div>
@@ -938,12 +934,11 @@ export default function GovernancePage() {
                     ref={(el) => { itemRefs.current[globalIdx] = el; }}
                     onClick={() => setFocusedIdx(isFocused ? null : globalIdx)}
                     className={`flex items-start gap-3 p-3.5 rounded-lg border transition-all cursor-pointer select-none ${
-                      isFocused
-                        ? "border-primary/40 bg-primary/5 ring-1 ring-primary/20 shadow-sm"
-                        : "border-violet-100 bg-violet-50/30 hover:bg-violet-50/60 hover:border-violet-200"
+                      isFocused ? "border-primary/40 bg-primary/5 ring-1 ring-primary/20 shadow-sm" : ""
                     }`}
+                    style={!isFocused ? { borderColor: "var(--gilt-line)", background: "color-mix(in srgb, var(--gilt-soft) 50%, transparent)" } : undefined}
                   >
-                    <Sparkles className="w-3.5 h-3.5 text-violet-500 mt-0.5 shrink-0" />
+                    <Sparkles className="w-3.5 h-3.5 mt-0.5 shrink-0" style={{ color: "var(--gilt)" }} />
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-1.5 flex-wrap">
                         <Badge variant="outline"
@@ -952,7 +947,7 @@ export default function GovernancePage() {
                         </Badge>
                         {item.confidence != null && (
                           <Badge variant="outline"
-                            className={`text-[10px] font-mono shrink-0 ${TIER_BADGE[tier]}`}>
+                            className="text-[10px] font-mono shrink-0" style={TIER_BADGE_STYLE[tier]}>
                             {TIER_LABEL[tier]} {Math.round(item.confidence * 100)}%
                           </Badge>
                         )}
@@ -984,7 +979,7 @@ export default function GovernancePage() {
                         disabled={isReviewing}
                         onClick={(e) => { e.stopPropagation(); handleReview(item.id, "approved"); }}
                         title="Approve (a)"
-                        className="p-1.5 rounded transition-colors text-muted-foreground hover:text-emerald-600 hover:bg-emerald-50 disabled:opacity-40"
+                        className="p-1.5 rounded transition-colors text-muted-foreground disabled:opacity-40"
                       >
                         {isReviewing ? <Spin /> : <ThumbsUp className="w-3.5 h-3.5" />}
                       </button>
@@ -992,7 +987,7 @@ export default function GovernancePage() {
                         disabled={isReviewing}
                         onClick={(e) => { e.stopPropagation(); handleReview(item.id, "rejected"); }}
                         title="Reject (r)"
-                        className="p-1.5 rounded transition-colors text-muted-foreground hover:text-red-600 hover:bg-red-50 disabled:opacity-40"
+                        className="p-1.5 rounded transition-colors text-muted-foreground disabled:opacity-40"
                       >
                         <ThumbsDown className="w-3.5 h-3.5" />
                       </button>

@@ -172,10 +172,10 @@ function DimensionBar({ label, value, color }: { label: string; value: number; c
 }
 
 const DIMENSION_COLORS: Record<string, string> = {
-  warmth:    "bg-amber-400",
+  warmth:    "",
   authority: "bg-blue-500",
-  gravitas:  "bg-violet-500",
-  pace:      "bg-emerald-500",
+  gravitas:  "",
+  pace:      "",
   brightness:"bg-yellow-400",
   age:       "bg-stone-400",
 };
@@ -213,7 +213,7 @@ function VoiceCard({
 
   const accentColor = voice.accent === "british"
     ? "border-blue-200 bg-blue-50/30 dark:bg-blue-950/20"
-    : "border-amber-200 bg-amber-50/30 dark:bg-amber-950/20";
+    : "";
 
   const genderIcon = voice.gender === "feminine" ? "♀" : voice.gender === "masculine" ? "♂" : "◆";
 
@@ -236,13 +236,13 @@ function VoiceCard({
             <span className="font-semibold text-sm leading-tight">{voice.name}</span>
             <span className="text-[11px] text-muted-foreground">{genderIcon}</span>
             {voice.builtin && (
-              <span className="text-[9px] font-mono px-1 py-0.5 rounded bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-400">
+              <span className="text-[9px] font-mono px-1 py-0.5 rounded" style={{ background: "var(--green-soft)", color: "var(--green-2)" }}>
                 ✓
               </span>
             )}
             {isEspeak && (
               <span
-                className="text-[9px] font-mono px-1 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400"
+                className="text-[9px] font-mono px-1 py-0.5 rounded" style={{ background: "var(--gilt-soft)", color: "var(--gilt)" }}
                 title="Sample uses basic espeak synthesis — Kokoro neural model not yet loaded. Install kokoro-onnx for premium audio."
               >
                 basic
@@ -473,9 +473,9 @@ function _AudiobookEngineBadge() {
 
   if (isPremium) {
     return (
-      <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-violet-50/60 dark:bg-violet-950/30 border border-violet-200/70 dark:border-violet-800/50">
-        <Sparkles className="w-3 h-3 text-violet-500 shrink-0" />
-        <span className="text-[10px] font-mono text-violet-600 dark:text-violet-400">
+      <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border" style={{ background: "var(--gilt-soft)", borderColor: "var(--gilt-line)" }}>
+        <Sparkles className="w-3 h-3 shrink-0" style={{ color: "var(--gilt)" }} />
+        <span className="text-[10px] font-mono" style={{ color: "var(--gilt)" }}>
           Premium TTS active — hero narration quality
         </span>
       </div>
@@ -495,7 +495,7 @@ function _AudiobookEngineBadge() {
         Engine: {label}
       </span>
       {engine === "espeak-ng" && (
-        <span className="text-[9px] font-mono px-1 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400 ml-auto">
+        <span className="text-[9px] font-mono px-1 py-0.5 rounded ml-auto" style={{ background: "var(--gilt-soft)", color: "var(--gilt)" }}>
           basic
         </span>
       )}
@@ -737,7 +737,7 @@ function RecommendTab({
             {/* Analysis summary */}
             <div className="rounded-xl border border-border/50 bg-muted/10 p-4 space-y-3">
               <div className="flex items-center gap-2">
-                <AudioLines className="w-4 h-4 text-violet-500 shrink-0" />
+                <AudioLines className="w-4 h-4 shrink-0" style={{ color: "var(--gilt)" }} />
                 <span className="text-xs font-mono uppercase text-muted-foreground">Genre Analysis</span>
               </div>
               <p className="text-sm text-muted-foreground leading-relaxed">{result.genre_analysis}</p>
@@ -764,7 +764,7 @@ function RecommendTab({
                     {/* Rank badge */}
                     <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${
                       idx === 0
-                        ? "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400"
+                        ? ""
                         : "bg-muted text-muted-foreground"
                     }`}>
                       {idx + 1}
@@ -777,7 +777,7 @@ function RecommendTab({
                             {rec.voice.accent}
                           </span>
                         )}
-                        <span className="ml-auto text-xs font-mono font-bold text-emerald-600">
+                        <span className="ml-auto text-xs font-mono font-bold" style={{ color: "var(--green-2)" }}>
                           {rec.score}%
                         </span>
                       </div>
@@ -970,7 +970,7 @@ function DesignTab({
                     {match.voice?.accent && (
                       <span className="text-[10px] text-muted-foreground capitalize">{match.voice.accent}</span>
                     )}
-                    <span className="ml-auto text-xs font-mono font-bold text-emerald-600">
+                    <span className="ml-auto text-xs font-mono font-bold" style={{ color: "var(--green-2)" }}>
                       {match.match_score}%
                     </span>
                   </div>
@@ -1268,14 +1268,14 @@ function AudiobookTab({
 
         {/* ── AI suggests card — appears silently when a Work is chosen ── */}
         {mode === "work" && suggestion && suggestion.voice && (
-          <div className="rounded-xl border border-violet-200/70 bg-violet-50/40 dark:bg-violet-950/20 dark:border-violet-800/50 p-3.5 space-y-2.5">
+          <div className="rounded-xl border p-3.5 space-y-2.5" style={{ borderColor: "var(--gilt-line)", background: "var(--gilt-soft)" }}>
             {/* Header */}
             <div className="flex items-center gap-1.5">
-              <Sparkles className="w-3.5 h-3.5 text-violet-500 shrink-0" />
-              <span className="text-[10px] font-mono uppercase text-violet-600 dark:text-violet-400 tracking-wide">
+              <Sparkles className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--gilt)" }} />
+              <span className="text-[10px] font-mono uppercase tracking-wide" style={{ color: "var(--gilt)" }}>
                 AI suggests
               </span>
-              <span className="ml-auto text-[10px] font-mono font-bold text-emerald-600 dark:text-emerald-500">
+              <span className="ml-auto text-[10px] font-mono font-bold" style={{ color: "var(--green-2)" }}>
                 {suggestion.score}% match
               </span>
             </div>
@@ -1302,8 +1302,8 @@ function AudiobookTab({
                 title={globalAudio.playingId === suggestion.voice_id ? "Stop" : "Preview sample"}
                 className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 transition-colors ${
                   globalAudio.playingId === suggestion.voice_id
-                    ? "bg-violet-500 text-white"
-                    : "bg-violet-100 text-violet-600 hover:bg-violet-200 dark:bg-violet-900/40 dark:text-violet-400 dark:hover:bg-violet-800/60"
+                    ? ""
+                    : "text-muted-foreground"
                 }`}
               >
                 {globalAudio.loadingId === suggestion.voice_id ? (
@@ -1325,7 +1325,7 @@ function AudiobookTab({
             <Button
               size="sm"
               variant="outline"
-              className="h-7 text-xs gap-1 border-violet-300 text-violet-700 hover:bg-violet-100 dark:border-violet-700 dark:text-violet-400 dark:hover:bg-violet-900/30"
+              className="h-7 text-xs gap-1" style={{ borderColor: "var(--gilt-line)", color: "var(--gilt)" }}
               onClick={() => setVoiceId(suggestion.voice_id)}
               disabled={voiceId === suggestion.voice_id}
             >
@@ -1351,7 +1351,7 @@ function AudiobookTab({
                       <span className="text-xs text-muted-foreground capitalize">{v.accent}</span>
                     )}
                     {v.builtin && (
-                      <span className="text-[10px] text-emerald-600">✓</span>
+                      <span className="text-[10px]" style={{ color: "var(--green-2)" }}>✓</span>
                     )}
                   </span>
                 </SelectItem>
@@ -1461,7 +1461,7 @@ function AudiobookTab({
         {audioUrl && (
           <div className="rounded-xl border border-border/50 bg-muted/10 p-4 space-y-3">
             <div className="flex items-center gap-2">
-              <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+              <CheckCircle2 className="w-4 h-4" style={{ color: "var(--green-2)" }} />
               <span className="text-sm font-medium">Audiobook ready</span>
             </div>
             <div className="flex items-center gap-3">

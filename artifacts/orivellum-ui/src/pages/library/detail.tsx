@@ -254,7 +254,7 @@ function ReviewBadge({ status }: { status: string | null | undefined }) {
   if (!status) return null;
   if (status === "ai_auto") {
     return (
-      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold border border-violet-200 bg-violet-50 text-violet-700">
+      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold border" style={{ color: "var(--gilt)", borderColor: "var(--gilt-line)", background: "var(--gilt-soft)" }}>
         <Sparkles className="w-2.5 h-2.5" />
         AI
       </span>
@@ -262,14 +262,14 @@ function ReviewBadge({ status }: { status: string | null | undefined }) {
   }
   if (status === "approved") {
     return (
-      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold border border-emerald-200 bg-emerald-50 text-emerald-700">
+      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold border" style={{ color: "var(--green-2)", borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)", background: "var(--green-soft)" }}>
         ✓ approved
       </span>
     );
   }
   if (status === "rejected") {
     return (
-      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold border border-red-200 bg-red-50 text-red-700">
+      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold border" style={{ color: "var(--rust)", borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)", background: "var(--rust-soft)" }}>
         ✕ rejected
       </span>
     );
@@ -284,9 +284,9 @@ function ReviewBadge({ status }: { status: string | null | undefined }) {
 // ── Confidence bar ────────────────────────────────────────────────────────────
 
 function confidenceTier(pct: number): { label: string; color: string } {
-  if (pct >= 80) return { label: "High confidence",   color: "bg-emerald-500" };
-  if (pct >= 50) return { label: "Medium confidence", color: "bg-amber-400" };
-  return               { label: "Low confidence",    color: "bg-orange-400" };
+  if (pct >= 80) return { label: "High confidence",   color: "var(--green-2)" };
+  if (pct >= 50) return { label: "Medium confidence", color: "var(--gilt)" };
+  return               { label: "Low confidence",    color: "var(--rust)" };
 }
 
 function ConfidenceBar({ value, source }: { value: number; source?: string }) {
@@ -301,7 +301,7 @@ function ConfidenceBar({ value, source }: { value: number; source?: string }) {
         <TooltipTrigger asChild>
           <div className="flex items-center gap-1.5 shrink-0 cursor-default">
             <div className="w-14 h-1.5 bg-muted rounded-full overflow-hidden">
-              <div className={`h-full rounded-full ${color}`} style={{ width: `${pct}%` }} />
+              <div className="h-full rounded-full" style={{ width: `${pct}%`, background: color }} />
             </div>
             <span className="text-[10px] font-mono text-muted-foreground w-7 text-right">{pct}%</span>
           </div>
@@ -329,15 +329,15 @@ function ConfidenceLegend() {
           <p className="font-semibold text-xs mb-1">Confidence score</p>
           <div className="space-y-1 text-[11px]">
             <div className="flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
+              <span className="w-2 h-2 rounded-full shrink-0" style={{ background: "var(--green-2)" }} />
               <span>≥ 80% — High · typically LLM-extracted</span>
             </div>
             <div className="flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-amber-400 shrink-0" />
+              <span className="w-2 h-2 rounded-full shrink-0" style={{ background: "var(--gilt)" }} />
               <span>50–79% — Medium · sentence or heading match</span>
             </div>
             <div className="flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-orange-400 shrink-0" />
+              <span className="w-2 h-2 rounded-full shrink-0" style={{ background: "var(--rust)" }} />
               <span>{"< 50% — Low · heuristic noun-phrase mention"}</span>
             </div>
           </div>
@@ -364,9 +364,9 @@ function itemConfTier(item: KnowledgeItem): "high" | "medium" | "low" {
 
 const CONF_FILTERS: { key: ConfTier; label: string; dot: string }[] = [
   { key: "all",    label: "All",    dot: "" },
-  { key: "high",   label: "High",   dot: "bg-emerald-500" },
-  { key: "medium", label: "Medium", dot: "bg-amber-400" },
-  { key: "low",    label: "Low",    dot: "bg-orange-400" },
+  { key: "high",   label: "High",   dot: "var(--green-2)" },
+  { key: "medium", label: "Medium", dot: "var(--gilt)" },
+  { key: "low",    label: "Low",    dot: "var(--rust)" },
 ];
 
 // ── AI-extracted knowledge section ────────────────────────────────────────────
@@ -401,7 +401,8 @@ function AiKindSection({
           return (
             <div
               key={item.id}
-              className={`group flex items-start gap-3 p-3 rounded-lg border bg-violet-50/40 border-violet-100 transition-opacity ${isRejected ? "opacity-50" : ""}`}
+              className={`group flex items-start gap-3 p-3 rounded-lg border transition-opacity ${isRejected ? "opacity-50" : ""}`}
+              style={{ background: "color-mix(in srgb, var(--gilt-soft) 60%, transparent)", borderColor: "var(--gilt-line)" }}
             >
               <div className="flex-1 min-w-0">
                 {kind === "relationship" && item.subject && item.predicate && item.object ? (
@@ -423,7 +424,8 @@ function AiKindSection({
                       disabled={isReviewing || isApproved}
                       onClick={() => onReview(item.id, "approved", isRejected)}
                       title="Approve"
-                      className={`p-1 rounded transition-colors ${isApproved ? "text-emerald-600 bg-emerald-50" : "text-muted-foreground hover:text-emerald-600 hover:bg-emerald-50"} disabled:opacity-40`}
+                      className="p-1 rounded transition-colors disabled:opacity-40"
+                      style={isApproved ? { color: "var(--green-2)", background: "var(--green-soft)" } : undefined}
                     >
                       <ThumbsUp className="w-3 h-3" />
                     </button>
@@ -431,7 +433,8 @@ function AiKindSection({
                       disabled={isReviewing || isRejected}
                       onClick={() => onReview(item.id, "rejected", isApproved)}
                       title="Dismiss"
-                      className={`p-1 rounded transition-colors ${isRejected ? "text-red-600 bg-red-50" : "text-muted-foreground hover:text-red-600 hover:bg-red-50"} disabled:opacity-40`}
+                      className="p-1 rounded transition-colors disabled:opacity-40"
+                      style={isRejected ? { color: "var(--rust)", background: "var(--rust-soft)" } : undefined}
                     >
                       <ThumbsDown className="w-3 h-3" />
                     </button>
@@ -628,10 +631,10 @@ function KnowledgeTabContent({
       {(aiItems.length > 0 || aiEnabled) && (
         <div>
           <div className="flex items-center gap-2 mb-4 flex-wrap">
-            <Sparkles className="w-4 h-4 text-violet-500" />
-            <h3 className="text-sm font-semibold text-violet-700">AI-Extracted Knowledge</h3>
+            <Sparkles className="w-4 h-4" style={{ color: "var(--gilt)" }} />
+            <h3 className="text-sm font-semibold" style={{ color: "var(--gilt)" }}>AI-Extracted Knowledge</h3>
             {aiItems.length > 0 && (
-              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-violet-100 text-violet-700">
+              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded" style={{ color: "var(--gilt)", background: "var(--gilt-soft)" }}>
                 {aiConfFilter === "all"
                   ? `${aiItems.length} item${aiItems.length !== 1 ? "s" : ""}`
                   : `${filteredAiItems.length} / ${aiItems.length}`}
@@ -640,19 +643,19 @@ function KnowledgeTabContent({
             <ConfidenceLegend />
             {/* Confidence filter chips — only shown when there are AI items */}
             {aiItems.length > 0 && (
-              <div className="ml-auto flex items-center gap-1 p-1 bg-violet-50 border border-violet-100 rounded-lg">
+              <div className="ml-auto flex items-center gap-1 p-1 rounded-lg border" style={{ background: "var(--gilt-soft)", borderColor: "var(--gilt-line)" }}>
                 {CONF_FILTERS.map(({ key, label, dot }) => (
                   <button
                     key={key}
                     onClick={() => setAiConfFilter(key)}
                     className={`flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-mono transition-colors ${
                       aiConfFilter === key
-                        ? "bg-white text-violet-700 shadow-sm font-semibold"
-                        : "text-muted-foreground hover:text-violet-700"
+                        ? "bg-white shadow-sm font-semibold"
+                        : "text-muted-foreground"
                     }`}
                   >
                     {dot && (
-                      <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${dot}`} />
+                      <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: dot }} />
                     )}
                     {label}
                   </button>
@@ -662,8 +665,8 @@ function KnowledgeTabContent({
           </div>
 
           {aiItems.length === 0 ? (
-            <div className="py-8 border border-dashed border-violet-200 rounded-lg bg-violet-50/30 text-center">
-              <Sparkles className="w-6 h-6 text-violet-300 mx-auto mb-2" />
+            <div className="py-8 border border-dashed rounded-lg text-center" style={{ borderColor: "var(--gilt-line)", background: "color-mix(in srgb, var(--gilt-soft) 40%, transparent)" }}>
+              <Sparkles className="w-6 h-6 mx-auto mb-2" style={{ color: "var(--gilt)" }} />
               <p className="text-sm text-muted-foreground">
                 {!aiEnabled
                   ? "Enable AI extraction in System settings to extract entities, claims, and relationships."
@@ -673,12 +676,12 @@ function KnowledgeTabContent({
               </p>
             </div>
           ) : filteredAiItems.length === 0 ? (
-            <div className="py-6 border border-dashed border-violet-200 rounded-lg bg-violet-50/20 text-center">
+            <div className="py-6 border border-dashed rounded-lg text-center" style={{ borderColor: "var(--gilt-line)", background: "color-mix(in srgb, var(--gilt-soft) 30%, transparent)" }}>
               <p className="text-sm text-muted-foreground">
                 No {aiConfFilter}-confidence items found.{" "}
                 <button
                   onClick={() => setAiConfFilter("all")}
-                  className="underline text-violet-600 hover:text-violet-700"
+                  className="underline" style={{ color: "var(--gilt)" }}
                 >
                   Show all
                 </button>
@@ -728,7 +731,8 @@ function KnowledgeTabContent({
                       knFilter === key
                         ? "bg-background text-foreground shadow-sm font-semibold"
                         : "text-muted-foreground hover:text-foreground"
-                    } ${key === "pending" && pendingCount > 0 ? "text-violet-700" : ""}`}
+                    }`}
+                    style={key === "pending" && pendingCount > 0 ? { color: "var(--gilt)" } : undefined}
                   >
                     {label}
                   </button>
@@ -770,11 +774,8 @@ function KnowledgeTabContent({
                                 disabled={isReviewing || isApproved}
                                 onClick={() => onReview(item.id, "approved")}
                                 title="Approve"
-                                className={`p-1.5 rounded transition-colors ${
-                                  isApproved
-                                    ? "text-emerald-600 bg-emerald-50"
-                                    : "text-muted-foreground hover:text-emerald-600 hover:bg-emerald-50"
-                                } disabled:opacity-40`}
+                                className="p-1.5 rounded transition-colors disabled:opacity-40"
+                                style={isApproved ? { color: "var(--green-2)", background: "var(--green-soft)" } : undefined}
                               >
                                 <ThumbsUp className="w-3.5 h-3.5" />
                               </button>
@@ -782,11 +783,8 @@ function KnowledgeTabContent({
                                 disabled={isReviewing || isRejected}
                                 onClick={() => onReview(item.id, "rejected")}
                                 title="Dismiss"
-                                className={`p-1.5 rounded transition-colors ${
-                                  isRejected
-                                    ? "text-red-600 bg-red-50"
-                                    : "text-muted-foreground hover:text-red-600 hover:bg-red-50"
-                                } disabled:opacity-40`}
+                                className="p-1.5 rounded transition-colors disabled:opacity-40"
+                                style={isRejected ? { color: "var(--rust)", background: "var(--rust-soft)" } : undefined}
                               >
                                 <ThumbsDown className="w-3.5 h-3.5" />
                               </button>
@@ -1500,7 +1498,7 @@ export default function DocumentDetail() {
 
   const lifecycleOptions = [
     { value: "draft",      label: "Draft",      className: "text-muted-foreground" },
-    { value: "canonical",  label: "Canonical",  className: "text-amber-700 font-semibold" },
+    { value: "canonical",  label: "Canonical",  className: "font-semibold", style: { color: "var(--gilt)" } as React.CSSProperties },
     { value: "reference",  label: "Reference",  className: "text-blue-700" },
     { value: "superseded", label: "Superseded", className: "text-muted-foreground" },
   ] as const;
@@ -1693,10 +1691,10 @@ export default function DocumentDetail() {
       <div>
         <div className="flex items-start gap-3 mb-3">
           <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 border ${
-            hasError ? "bg-red-50 border-red-200" : "bg-muted/50 border-border/50"
-          }`}>
+            hasError ? "" : "bg-muted/50 border-border/50"
+          }`} style={hasError ? { background: "var(--rust-soft)", borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)" } : undefined}>
             {hasError
-              ? <AlertCircle className="w-5 h-5 text-red-500" />
+              ? <AlertCircle className="w-5 h-5" style={{ color: "var(--rust)" }} />
               : <FileText className="w-5 h-5 text-muted-foreground" />
             }
           </div>
@@ -1896,19 +1894,19 @@ export default function DocumentDetail() {
 
         {/* Error banner */}
         {hasError && doc.error_message && (
-          <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-lg">
-            <p className="text-xs font-mono text-red-700 break-all">{doc.error_message}</p>
+          <div className="mt-3 p-3 rounded-lg border" style={{ background: "var(--rust-soft)", borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)" }}>
+            <p className="text-xs font-mono break-all" style={{ color: "var(--rust)" }}>{doc.error_message}</p>
           </div>
         )}
 
         {/* Extraction warnings (non-fatal issues from the pipeline) */}
         {Array.isArray(doc.warnings) && doc.warnings.length > 0 && (
-          <div className="mt-3 p-3 bg-amber-50 border border-amber-200 rounded-lg space-y-1">
-            <p className="text-[10px] font-mono font-semibold uppercase tracking-wide text-amber-700 mb-1.5">
+          <div className="mt-3 p-3 rounded-lg border space-y-1" style={{ background: "var(--gilt-soft)", borderColor: "var(--gilt-line)" }}>
+            <p className="text-[10px] font-mono font-semibold uppercase tracking-wide mb-1.5" style={{ color: "var(--gilt)" }}>
               Extraction warnings ({doc.warnings.length})
             </p>
             {(doc.warnings as any[]).map((w, i) => (
-              <p key={i} className="text-xs font-mono text-amber-800 break-all">
+              <p key={i} className="text-xs font-mono break-all" style={{ color: "var(--gilt)" }}>
                 <span className="font-semibold">{w.kind}:</span> {w.detail}
               </p>
             ))}
@@ -2004,10 +2002,10 @@ export default function DocumentDetail() {
                   .filter((m: any) => m.status !== "skipped")
                   .map((m: any, i: number) => (
                     <div key={i} className="flex items-center gap-3 px-4 py-2">
-                      <span className={`w-2 h-2 rounded-full shrink-0 ${
-                        m.status === "ok" ? "bg-emerald-500" :
-                        m.status === "empty" ? "bg-amber-400" : "bg-red-400"
-                      }`} />
+                      <span className="w-2 h-2 rounded-full shrink-0" style={{
+                        background: m.status === "ok" ? "var(--green-2)" :
+                        m.status === "empty" ? "var(--gilt)" : "var(--rust)"
+                      }} />
                       <span className="text-xs font-mono flex-1 truncate text-foreground/80">
                         {m.name.split("/").pop()}
                       </span>
@@ -2254,12 +2252,12 @@ export default function DocumentDetail() {
                         </Badge>
                       )}
                       {rel.similarity != null && (
-                        <span className="text-[10px] font-mono text-emerald-700 bg-emerald-50 border border-emerald-100 rounded px-1.5 py-0.5">
+                        <span className="text-[10px] font-mono rounded border px-1.5 py-0.5" style={{ color: "var(--green-2)", background: "var(--green-soft)", borderColor: "color-mix(in srgb, var(--green-2) 20%, transparent)" }}>
                           {(rel.similarity * 100).toFixed(0)}% similar
                         </span>
                       )}
                       {rel.shared_topics.slice(0, 2).map((t) => (
-                        <span key={t.id} className="text-[10px] font-mono text-violet-700 bg-violet-50 border border-violet-100 rounded px-1.5 py-0.5 truncate max-w-[140px]">
+                        <span key={t.id} className="text-[10px] font-mono rounded border px-1.5 py-0.5 truncate max-w-[140px]" style={{ color: "var(--gilt)", background: "var(--gilt-soft)", borderColor: "var(--gilt-line)" }}>
                           {t.name}
                         </span>
                       ))}
