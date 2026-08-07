@@ -1,0 +1,9 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "oXCYfrgsxJjB94ZYr_3Qy"
+uri = "file://orivellum_training_manual.pdf"
+type = "pdf"
+title = "Orivellum Ultimate Training Manual"
+description = "Installation · LLM Configuration · Database Maintenance · Complete Page Guide — August 2026"
