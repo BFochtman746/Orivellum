@@ -392,7 +392,31 @@ export default function RootLayout() {
                 */}
                 <View style={{ flex: 1 }}>
                   <RootLayoutNav />
-                  <TtsMiniPlayer />
+                  {Platform.OS === 'web' ? (
+                    /*
+                      On web the tab bar is absolutely positioned at bottom:0
+                      (height 84) and would cover a flex-sibling mini-player.
+                      Render the player as a root-level absolute overlay instead
+                      so it sits just above the tab bar on tab screens and
+                      remains mounted and visible on every route — including
+                      stack screens like /library/[id] — keeping playback
+                      controls accessible after any navigation.
+                    */
+                    <View
+                      style={{
+                        position: 'absolute',
+                        left: 0,
+                        right: 0,
+                        bottom: 84,
+                        zIndex: 50,
+                      }}
+                      pointerEvents="box-none"
+                    >
+                      <TtsMiniPlayer />
+                    </View>
+                  ) : (
+                    <TtsMiniPlayer />
+                  )}
                 </View>
               </TtsProvider>
             </KeyboardProvider>
