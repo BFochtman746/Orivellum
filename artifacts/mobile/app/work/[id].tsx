@@ -50,7 +50,7 @@ import { SkeletonItem } from '@/components/SkeletonItem';
 import { EmptyState } from '@/components/EmptyState';
 import { font, fontSerif } from '@/lib/typography';
 
-type Tab = 'overview' | 'docs' | 'knowledge' | 'tasks' | 'conversations' | 'learn' | 'gaps' | 'book' | 'brainstorm' | 'intelligence' | 'trailer' | 'genesis' | 'graph';
+type Tab = 'overview' | 'docs' | 'knowledge' | 'tasks' | 'conversations' | 'learn' | 'gaps' | 'completeness' | 'book' | 'brainstorm' | 'intelligence' | 'trailer' | 'genesis' | 'graph';
 
 // Primary tabs always visible in the bar; secondary tabs disclosed via "More"
 const PRIMARY_TABS: { key: Tab; label: string }[] = [
@@ -62,13 +62,14 @@ const PRIMARY_TABS: { key: Tab; label: string }[] = [
 ];
 const SECONDARY_TABS: { key: Tab; label: string }[] = [
   { key: 'intelligence', label: 'Intelligence' },
-  { key: 'gaps',         label: 'Gaps'    },
-  { key: 'learn',        label: 'Learn'   },
-  { key: 'book',         label: 'Book'    },
-  { key: 'brainstorm',   label: 'Ideas'   },
-  { key: 'trailer',      label: 'Trailer' },
-  { key: 'genesis',      label: 'Genesis' },
-  { key: 'graph',        label: 'Graph'   },
+  { key: 'gaps',         label: 'Gaps'     },
+  { key: 'completeness', label: 'Coverage' },
+  { key: 'learn',        label: 'Learn'    },
+  { key: 'book',         label: 'Book'     },
+  { key: 'brainstorm',   label: 'Ideas'    },
+  { key: 'trailer',      label: 'Trailer'  },
+  { key: 'genesis',      label: 'Genesis'  },
+  { key: 'graph',        label: 'Graph'    },
 ];
 
 // All tab keys in display order — used by TabDotIndicator
@@ -1249,6 +1250,237 @@ function GapsTab({
               </View>
             </View>
           ))}
+        </View>
+      )}
+    </ScrollView>
+  );
+}
+
+// ─── Completeness Tab ─────────────────────────────────────────────────────────
+//
+// Mobile equivalent of the web CompletenessTab. Fetches
+// GET /api/works/:id/completeness and polls every 10 s while the pipeline is
+// active — mirrors the same pipelineActive flag and interval used by GapsTab.
+
+interface ComplDimension {
+  name: string;
+  label?: string;
+  score: number;         // 0–100 overall quality score for the dimension
+  current?: number;      // raw current value (words / chapters)
+  target?: number;       // target value for progress bars
+}
+
+interface ComplReport {
+  overall: number;
+  readiness: string;
+  summary?: string;
+  dimensions: ComplDimension[];
+}
+
+/** Color ramp matching the web: green ≥ 70, amber ≥ 30, rust below. */
+function barColor(pct: number, T: ReturnType<typeof useVellumTokens>): string {
+  if (pct >= 70) return T.green;
+  if (pct >= 30) return T.gilt;
+  return T.rust;
+}
+
+function CompletenessTab({
+  workId,
+  pipelineActive,
+}: {
+  workId: string;
+  pipelineActive?: boolean;
+}) {
+  const colors = useColors();
+  const T = useVellumTokens();
+  const insets = useSafeAreaInsets();
+  const domain = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
+
+  const [data, setData] = useState<ComplReport | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+
+  const fetchCompleteness = useCallback(async () => {
+    setError(false);
+    try {
+      const res = await mobileFetch(`https://${domain}/api/works/${workId}/completeness`);
+      if (!res.ok) throw new Error('completeness error');
+      setData(await res.json());
+    } catch {
+      setError(true);
+    } finally {
+      setLoading(false);
+    }
+  }, [workId, domain]);
+
+  // Initial fetch on mount
+  useEffect(() => { fetchCompleteness(); }, [fetchCompleteness]);
+
+  // Live polling — 10 s while the pipeline is active (same pattern as GapsTab).
+  // Automatically stops once pipelineActive goes false (B17 terminal stage).
+  useEffect(() => {
+    if (!pipelineActive) return;
+    const iv = setInterval(fetchCompleteness, 10_000);
+    return () => clearInterval(iv);
+  }, [pipelineActive, fetchCompleteness]);
+
+  if (loading) {
+    return (
+      <View style={{ flex: 1, paddingTop: 8 }}>
+        {[...Array(4)].map((_, i) => <SkeletonItem key={i} lines={2} />)}
+      </View>
+    );
+  }
+
+  if (error || !data) {
+    return (
+      <ErrorScreen
+        message="Could not load coverage"
+        detail="Re-extract documents, then try again."
+        onRetry={fetchCompleteness}
+      />
+    );
+  }
+
+  // Derive a readiness accent colour
+  const overall = data.overall ?? 0;
+  const readinessColor = overall >= 80 ? T.green : overall >= 50 ? T.gilt : T.rust;
+  const readinessSoft  = overall >= 80 ? T.greenSoft : overall >= 50 ? T.giltSoft : T.rustSoft;
+  const readinessLine  = overall >= 80 ? T.green + '55' : overall >= 50 ? T.giltLine : T.rust + '55';
+
+  // Separate content (word-count) and structure (chapter) dims for explicit
+  // current/target progress bars — matching the web implementation.
+  const contentDim  = data.dimensions.find(d => d.name === 'content');
+  const structDim   = data.dimensions.find(d => d.name === 'structure');
+  const otherDims   = data.dimensions.filter(d => d.name !== 'content' && d.name !== 'structure');
+
+  return (
+    <ScrollView
+      contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: insets.bottom + 32, paddingTop: 12 }}
+      refreshControl={
+        <RefreshControl refreshing={false} onRefresh={fetchCompleteness} tintColor={colors.primary} />
+      }
+      showsVerticalScrollIndicator={false}
+    >
+      {/* ── Overall readiness banner ────────────────────────────────────────── */}
+      <View style={[{
+        borderRadius: 12, borderWidth: 1, padding: 16, marginBottom: 14,
+        flexDirection: 'row', alignItems: 'center', gap: 14,
+        backgroundColor: readinessSoft, borderColor: readinessLine,
+      }]}>
+        <View style={{ flex: 1 }}>
+          <Text style={{ fontSize: 10, fontFamily: 'Inter_700Bold', color: readinessColor,
+                         textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 2 }}>
+            Readiness
+          </Text>
+          <Text style={{ fontSize: 18, fontFamily: 'Fraunces_700Bold', color: readinessColor }}>
+            {data.readiness}
+          </Text>
+          {data.summary ? (
+            <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: colors.mutedForeground, marginTop: 4 }}
+                  numberOfLines={3}>
+              {data.summary}
+            </Text>
+          ) : null}
+        </View>
+        <Text style={{ fontSize: 36, fontFamily: 'Inter_700Bold', color: readinessColor }}>
+          {overall}%
+        </Text>
+      </View>
+
+      {/* ── Overall progress bar ────────────────────────────────────────────── */}
+      <View style={{ marginBottom: 20 }}>
+        <View style={{ height: 8, backgroundColor: colors.muted, borderRadius: 4, overflow: 'hidden' }}>
+          <View style={{
+            height: 8,
+            width: `${Math.min(100, overall)}%` as any,
+            backgroundColor: readinessColor,
+            borderRadius: 4,
+          }} />
+        </View>
+      </View>
+
+      {/* ── Content (words) and structure (chapters) progress bars ─────────── */}
+      {(contentDim || structDim) && (
+        <View style={{ backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border,
+                       borderRadius: 10, padding: 14, marginBottom: 14, gap: 12 }}>
+          <Text style={{ fontSize: 10, fontFamily: 'Inter_700Bold', color: colors.mutedForeground,
+                         textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 2 }}>
+            Progress vs targets
+          </Text>
+
+          {contentDim && (contentDim.target ?? 0) > 0 && (() => {
+            const pct = Math.min(100, Math.round(((contentDim.current ?? 0) / contentDim.target!) * 100));
+            return (
+              <View>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
+                  <Text style={{ fontSize: 12, fontFamily: 'Inter_500Medium', color: colors.foreground }}>Words</Text>
+                  <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: colors.mutedForeground }}>
+                    {Number(contentDim.current ?? 0).toLocaleString()} / {Number(contentDim.target).toLocaleString()}
+                    {'  '}<Text style={{ opacity: 0.65 }}>({pct}%)</Text>
+                  </Text>
+                </View>
+                <View style={{ height: 6, backgroundColor: colors.muted, borderRadius: 3, overflow: 'hidden' }}>
+                  <View style={{ height: 6, width: `${pct}%` as any, backgroundColor: barColor(pct, T), borderRadius: 3 }} />
+                </View>
+              </View>
+            );
+          })()}
+
+          {structDim && (structDim.target ?? 0) > 0 && (() => {
+            const pct = Math.min(100, Math.round(((structDim.current ?? 0) / structDim.target!) * 100));
+            return (
+              <View>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
+                  <Text style={{ fontSize: 12, fontFamily: 'Inter_500Medium', color: colors.foreground }}>Chapters</Text>
+                  <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: colors.mutedForeground }}>
+                    {structDim.current ?? 0} / {structDim.target}
+                    {'  '}<Text style={{ opacity: 0.65 }}>({pct}%)</Text>
+                  </Text>
+                </View>
+                <View style={{ height: 6, backgroundColor: colors.muted, borderRadius: 3, overflow: 'hidden' }}>
+                  <View style={{ height: 6, width: `${pct}%` as any, backgroundColor: barColor(pct, T), borderRadius: 3 }} />
+                </View>
+              </View>
+            );
+          })()}
+        </View>
+      )}
+
+      {/* ── Dimension breakdown ─────────────────────────────────────────────── */}
+      {otherDims.length > 0 && (
+        <View style={{ backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border,
+                       borderRadius: 10, padding: 14, marginBottom: 14, gap: 10 }}>
+          <Text style={{ fontSize: 10, fontFamily: 'Inter_700Bold', color: colors.mutedForeground,
+                         textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 2 }}>
+            Dimensions
+          </Text>
+          {otherDims.map(dim => (
+            <View key={dim.name}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
+                <Text style={{ fontSize: 12, fontFamily: 'Inter_500Medium', color: colors.foreground }}>
+                  {dim.label ?? dim.name}
+                </Text>
+                <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: barColor(dim.score, T) }}>
+                  {dim.score}%
+                </Text>
+              </View>
+              <View style={{ height: 4, backgroundColor: colors.muted, borderRadius: 2, overflow: 'hidden' }}>
+                <View style={{ height: 4, width: `${Math.min(100, dim.score)}%` as any,
+                               backgroundColor: barColor(dim.score, T) + 'cc', borderRadius: 2 }} />
+              </View>
+            </View>
+          ))}
+        </View>
+      )}
+
+      {/* ── Live polling badge — reassures the user the data is refreshing ─── */}
+      {pipelineActive && (
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, justifyContent: 'center', marginTop: 4 }}>
+          <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: T.gilt }} />
+          <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: colors.mutedForeground }}>
+            Updating every 10 s while pipeline is active
+          </Text>
         </View>
       )}
     </ScrollView>
@@ -6050,6 +6282,8 @@ export default function WorkDetailScreen() {
         );
       case 'gaps':
         return <GapsTab workId={id} colors={colors} onResearch={handleResearchGap} onCreateTask={handleCreateTaskFromGap} onBrainstorm={handleBrainstormGap} pipelineActive={pipelineActive} />;
+      case 'completeness':
+        return <CompletenessTab workId={id} pipelineActive={pipelineActive} />;
       case 'learn':
         return <MobileLearnTab workId={id} colors={colors} />;
       case 'book':
