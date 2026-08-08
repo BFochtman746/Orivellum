@@ -196,9 +196,17 @@ export default function ForgeDetailScreen() {
   const [starting, setStarting] = useState(false);
   const domain = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
 
-  const { data, isLoading, isError, refetch } = useQuery<ForgeProjectDetail>({
+  const { data, isLoading, isError, error, refetch } = useQuery<ForgeProjectDetail>({
     queryKey: ['mobile', 'forge', 'project', id],
-    queryFn: () => mobileFetch(`/api/forge/projects/${id}`).then(r => r.json()),
+    queryFn: async () => {
+      const res = await mobileFetch(`/api/forge/projects/${id}`);
+      if (!res.ok) {
+        // Attach the HTTP status to the error so the UI can distinguish
+        // "project deleted" (404) from generic network/server failures.
+        throw Object.assign(new Error(`HTTP ${res.status}`), { status: res.status });
+      }
+      return res.json() as Promise<ForgeProjectDetail>;
+    },
     staleTime: 5_000,
     refetchInterval: (query) => {
       const status = (query.state.data as ForgeProjectDetail | undefined)?.status;
@@ -318,6 +326,8 @@ export default function ForgeDetailScreen() {
   }
 
   if (isError || !data) {
+    // Distinguish a deleted/missing project (404) from a network/server failure.
+    const isNotFound = (error as any)?.status === 404;
     return (
       <View style={[styles.root, { backgroundColor: colors.background }]}>
         <View style={[styles.header, { paddingTop: insets.top + 8, borderBottomColor: colors.border }]}>
@@ -327,10 +337,26 @@ export default function ForgeDetailScreen() {
           <Text style={[styles.headerTitle, { color: colors.foreground }]}>Forge</Text>
         </View>
         <View style={styles.emptyBox}>
-          <Feather name="wifi-off" size={28} color={colors.mutedForeground} />
-          <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>Could not load project</Text>
-          <Pressable onPress={() => refetch()} style={[styles.retryBtn, { borderColor: colors.border }]}>
-            <Text style={[styles.retryText, { color: colors.primary }]}>Retry</Text>
+          <Feather
+            name={isNotFound ? 'slash' : 'wifi-off'}
+            size={28}
+            color={colors.mutedForeground}
+          />
+          <Text style={[styles.emptyText, { color: colors.foreground }]}>
+            {isNotFound ? 'Project not found' : 'Could not load project'}
+          </Text>
+          <Text style={[styles.emptyText, { color: colors.mutedForeground, fontSize: 13, marginTop: 2 }]}>
+            {isNotFound
+              ? 'This project may have been deleted.'
+              : 'Check your connection and try again.'}
+          </Text>
+          {!isNotFound && (
+            <Pressable onPress={() => refetch()} style={[styles.retryBtn, { borderColor: colors.border }]}>
+              <Text style={[styles.retryText, { color: colors.primary }]}>Retry</Text>
+            </Pressable>
+          )}
+          <Pressable onPress={() => router.back()} style={[styles.retryBtn, { borderColor: colors.border, marginTop: 8 }]}>
+            <Text style={[styles.retryText, { color: colors.mutedForeground }]}>Go back</Text>
           </Pressable>
         </View>
       </View>

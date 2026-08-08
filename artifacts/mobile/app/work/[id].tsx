@@ -5769,7 +5769,7 @@ export default function WorkDetailScreen() {
   const queryClient = useQueryClient();
   const { mutateAsync: createTask } = useCreateWorkTask();
 
-  const { data: workData, isError: workError, refetch: refetchWork } = useGetWork(id, { query: { staleTime: 30_000 } } as any);
+  const { data: workData, isError: workError, error: workFetchError, refetch: refetchWork } = useGetWork(id, { query: { staleTime: 30_000 } } as any);
   const { data: docsData, isLoading: docsLoading, isError: docsError, refetch: refetchDocs } = useGetWorkDocuments(id, { query: { staleTime: 20_000, refetchInterval: (q: any) => (q.state.data?.documents ?? []).some((d: any) => d.readiness === 'imported') ? 4_000 : false } } as any);
   const { data: knData, isLoading: knLoading, isError: knError, refetch: refetchKn } = useGetWorkKnowledge(id, { query: { staleTime: 30_000 } } as any);
 
@@ -6482,14 +6482,21 @@ export default function WorkDetailScreen() {
     }
   };
 
-  // Full-screen error when the work itself can't be loaded
+  // Full-screen error when the work itself can't be loaded.
+  // Distinguish a deleted/missing work (404) from a connection failure so the
+  // message is accurate rather than suggesting a server problem for a stale link.
   if (workError && !work) {
+    const isWorkNotFound = (workFetchError as any)?.message?.includes('HTTP 404');
     return (
       <View style={[styles.screen, { backgroundColor: colors.background, paddingTop: topPad }]}>
         <ErrorScreen
-          message="Can't reach your workspace"
-          detail="Check your connection and make sure the Orivellum server is running."
-          onRetry={refetchWork}
+          message={isWorkNotFound ? 'Work not found' : "Can't reach your workspace"}
+          detail={
+            isWorkNotFound
+              ? 'This work may have been deleted.'
+              : 'Check your connection and make sure the Orivellum server is running.'
+          }
+          onRetry={isWorkNotFound ? undefined : refetchWork}
         />
       </View>
     );
