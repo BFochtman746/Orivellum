@@ -418,6 +418,30 @@ body {
   }
 }
 
+/* ── Chapter deep-link highlight flash ───────────────────────────────────────
+   Applied to the target chapter row after scroll-into-view on the Intelligence
+   page. Follows the same warm-amber palette as msg-highlight-fade above.
+   Cleared by JS after the animation completes (~1.5 s).                       */
+@keyframes chapter-highlight-fade {
+  0%   { background-color: oklch(0.96 0.08 85); }
+  45%  { background-color: oklch(0.96 0.08 85); }
+  100% { background-color: transparent; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .chapter-highlight {
+    border-radius: 4px;
+    animation: chapter-highlight-fade 1500ms ease-out forwards;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  /* Static outline for users who prefer no motion */
+  .chapter-highlight {
+    outline: 2px solid oklch(0.82 0.12 85);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+}
+
 /* ── Mobile page-enter slide animation ────────────────────────────────────────
    Triggered by JS adding .mobile-page-slide-in to the content wrapper on each
    path change. Skipped automatically when prefers-reduced-motion: reduce.     */

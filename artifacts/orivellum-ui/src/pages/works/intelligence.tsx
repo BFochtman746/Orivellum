@@ -737,7 +737,11 @@ function ChapterList({
   // Ref map from chapter id → its wrapper div so we can scroll it into view.
   const chapterRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
-  // Scroll the target chapter into view once after first render.
+  // Tracks which row is currently playing the highlight animation.
+  // Set to targetChapterId immediately after scrolling, cleared after 1.5 s.
+  const [highlightedId, setHighlightedId] = useState<string | null>(null);
+
+  // Scroll the target chapter into view and flash-highlight it once on mount.
   useEffect(() => {
     if (!targetChapterId) return;
     const el = chapterRefs.current[targetChapterId];
@@ -745,6 +749,10 @@ function ChapterList({
     // A short delay lets the browser finish laying out the expanded panel.
     const timer = setTimeout(() => {
       el.scrollIntoView({ behavior: "smooth", block: "start" });
+      // Start the highlight animation right as the scroll fires.
+      setHighlightedId(targetChapterId);
+      // Clear after the animation duration (1 500 ms) + a small buffer.
+      setTimeout(() => setHighlightedId(null), 1700);
     }, 120);
     return () => clearTimeout(timer);
   }, [targetChapterId]);
@@ -794,11 +802,13 @@ function ChapterList({
                     key={ch.id}
                     ref={(el) => { chapterRefs.current[ch.id] = el; }}
                   >
-                    {/* Chapter row */}
+                    {/* Chapter row — gets .chapter-highlight for ~1.5 s when
+                        arrived from a badge deep-link (targetChapterId). */}
                     <div
                       className={`flex items-center gap-2 text-xs py-0.5 rounded px-1 -mx-1 group
                         ${isMissing ? "text-red-600/80" : "text-muted-foreground"}
-                        ${hasKnowledge ? "hover:bg-muted/30 cursor-pointer" : ""}`}
+                        ${hasKnowledge ? "hover:bg-muted/30 cursor-pointer" : ""}
+                        ${ch.id === highlightedId ? "chapter-highlight" : ""}`}
                       onClick={hasKnowledge ? () => toggleChapter(ch.id) : undefined}
                       title={hasKnowledge ? (isExpanded ? "Collapse knowledge" : `Show ${ch.knowledge_count} knowledge items`) : undefined}
                     >
