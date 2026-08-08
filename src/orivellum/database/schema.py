@@ -1817,4 +1817,94 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         CREATE INDEX IF NOT EXISTS fa_job_id        ON forge_artifacts(job_id);
         CREATE INDEX IF NOT EXISTS fa_artifact_type ON forge_artifacts(artifact_type);
     """),
+
+    (107, "A-01 Mail Steward tables", """
+        CREATE TABLE IF NOT EXISTS mail_records (
+            id                       TEXT PRIMARY KEY,
+            graph_message_id_enc     TEXT NOT NULL,
+            graph_message_id_hash    TEXT NOT NULL,
+            graph_change_key_enc     TEXT NOT NULL DEFAULT '',
+            graph_folder_id_enc      TEXT NOT NULL DEFAULT '',
+            conversation_id          TEXT NOT NULL DEFAULT '',
+            subject                  TEXT NOT NULL DEFAULT '',
+            sender_name              TEXT NOT NULL DEFAULT '',
+            sender_domain            TEXT NOT NULL DEFAULT '',
+            received_at              TEXT NOT NULL DEFAULT '',
+            has_attachments          INTEGER NOT NULL DEFAULT 0,
+            attachment_count         INTEGER NOT NULL DEFAULT 0,
+            importance               TEXT NOT NULL DEFAULT 'normal',
+            is_read                  INTEGER NOT NULL DEFAULT 0,
+            lifecycle_state          TEXT NOT NULL DEFAULT 'DISCOVERED',
+            assessment_id            TEXT,
+            action_request_id        TEXT,
+            created_at               TEXT NOT NULL,
+            updated_at               TEXT NOT NULL,
+            meta                     TEXT NOT NULL DEFAULT '{}'
+        );
+        CREATE INDEX IF NOT EXISTS mr_hash      ON mail_records(graph_message_id_hash);
+        CREATE INDEX IF NOT EXISTS mr_lifecycle ON mail_records(lifecycle_state);
+        CREATE INDEX IF NOT EXISTS mr_received  ON mail_records(received_at);
+        CREATE INDEX IF NOT EXISTS mr_domain    ON mail_records(sender_domain);
+
+        CREATE TABLE IF NOT EXISTS mail_assessments (
+            id                 TEXT PRIMARY KEY,
+            mail_record_id     TEXT NOT NULL REFERENCES mail_records(id) ON DELETE CASCADE,
+            attention_level    TEXT NOT NULL DEFAULT 'medium',
+            needs_reply        INTEGER NOT NULL DEFAULT 0,
+            rationale          TEXT NOT NULL DEFAULT '',
+            suggested_reply    TEXT,
+            recommended_action TEXT NOT NULL DEFAULT 'NONE',
+            confidence         REAL NOT NULL DEFAULT 0.0,
+            is_high_risk       INTEGER NOT NULL DEFAULT 0,
+            injection_flagged  INTEGER NOT NULL DEFAULT 0,
+            model_id           TEXT NOT NULL DEFAULT '',
+            signals_json       TEXT NOT NULL DEFAULT '[]',
+            created_at         TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS ma_record_id ON mail_assessments(mail_record_id);
+        CREATE INDEX IF NOT EXISTS ma_attention ON mail_assessments(attention_level);
+
+        CREATE TABLE IF NOT EXISTS mail_action_requests (
+            id                         TEXT PRIMARY KEY,
+            mail_record_id             TEXT NOT NULL REFERENCES mail_records(id) ON DELETE CASCADE,
+            assessment_id              TEXT REFERENCES mail_assessments(id),
+            action_type                TEXT NOT NULL,
+            destination_folder_id_enc  TEXT,
+            graph_draft_id_enc         TEXT,
+            nonce                      TEXT NOT NULL,
+            status                     TEXT NOT NULL DEFAULT 'PENDING',
+            result_message_id_enc      TEXT,
+            original_folder_id_enc     TEXT,
+            actor                      TEXT NOT NULL DEFAULT 'user',
+            created_at                 TEXT NOT NULL,
+            applied_at                 TEXT
+        );
+        CREATE INDEX IF NOT EXISTS mar_record   ON mail_action_requests(mail_record_id);
+        CREATE INDEX IF NOT EXISTS mar_status   ON mail_action_requests(status);
+        CREATE INDEX IF NOT EXISTS mar_nonce    ON mail_action_requests(nonce);
+
+        CREATE TABLE IF NOT EXISTS mail_audit_events (
+            id                TEXT PRIMARY KEY,
+            mail_record_id    TEXT,
+            action_request_id TEXT,
+            at                TEXT NOT NULL,
+            actor             TEXT NOT NULL DEFAULT 'system',
+            event_type        TEXT NOT NULL,
+            policy_version    TEXT NOT NULL DEFAULT '',
+            model_id          TEXT NOT NULL DEFAULT '',
+            signals_json      TEXT NOT NULL DEFAULT '[]',
+            before_json       TEXT NOT NULL DEFAULT '{}',
+            after_json        TEXT NOT NULL DEFAULT '{}',
+            result            TEXT NOT NULL DEFAULT 'SUCCESS'
+        );
+        CREATE INDEX IF NOT EXISTS mae_record ON mail_audit_events(mail_record_id);
+        CREATE INDEX IF NOT EXISTS mae_at     ON mail_audit_events(at);
+        CREATE INDEX IF NOT EXISTS mae_type   ON mail_audit_events(event_type);
+
+        CREATE TABLE IF NOT EXISTS mail_delta_links (
+            folder_id   TEXT PRIMARY KEY,
+            delta_link  TEXT,
+            updated_at  TEXT NOT NULL
+        );
+    """),
 ]

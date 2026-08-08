@@ -65,3 +65,4 @@
 - [DeepFilterNet3 audio enhancement](orivellum-audio-enhancement.md) — step 0 in _extract_audio(); db setting audio_enhance_enabled; GET/PUT /system/settings/audio-enhance; AudioEnhancementCard in system page.
 - [VELLUM design system](vellum-design-system.md) — fonts, glass utilities, tokens, tier badges, editorial typography all applied; follow the page header pattern for new pages.
 - [Forge Website Factory integration](forge-integration.md) — native Python capability (schema v103–v106); config_update kwarg merges into project config JSON; build dirs under data/forge-builds/.
+- [A-01 Mail Steward](orivellum-mail-steward.md) — schema v107; Fernet token vault; lazy imports in __init__; nonce-gated actions; send requires send_enabled+Mail.Send scope; Phases 2–4 queued.

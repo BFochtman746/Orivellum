@@ -1060,6 +1060,7 @@ name = "orivellum"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "cryptography" },
     { name = "docxtpl" },
     { name = "fastapi" },
     { name = "formulas" },
@@ -1106,6 +1107,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "cryptography", specifier = ">=42.0.0" },
     { name = "docxtpl", specifier = ">=0.20.2" },
     { name = "fastapi", specifier = ">=0.141.1" },
     { name = "faster-whisper", marker = "extra == 'asr'", specifier = ">=1.0" },

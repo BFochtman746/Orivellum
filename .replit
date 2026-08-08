@@ -21,3 +21,8 @@ timeoutMs = 20000
 
 [nix]
 channel = "stable-25_05"
+
+[userenv]
+
+[userenv.shared]
+MAIL_CLIENT_ID = "1eaaef36-5239-4332-8a99-4309dfe36182"

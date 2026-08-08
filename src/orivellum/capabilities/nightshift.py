@@ -1657,6 +1657,20 @@ def _run_nightshift_passes(db: "OrivellumDB", cfg: "OrivellumConfig") -> None:
     logger.info("Nightshift pass 14/15: version-relationship suggestions")
     _pass_version_suggestions(db, report)
 
+    # 14b — Mail Steward delta sync (fires only when connected)
+    logger.info("Nightshift pass 14b: mail steward delta sync")
+    try:
+        if db.get_setting("mail_steward.connected", "false") == "true":
+            from orivellum.capabilities.mail.steward import sync_mail
+            mail_result = sync_mail(db, cfg)
+            if not mail_result.get("skipped"):
+                new_msgs = mail_result.get("new", 0)
+                errors   = mail_result.get("errors", 0)
+                report.append(f"Mail sync: +{new_msgs} new" + (f", {errors} errors" if errors else ""))
+    except Exception as _mail_exc:
+        logger.warning("Mail sync pass failed (non-fatal): %s", _mail_exc)
+        report.append(f"Mail sync: failed — {_mail_exc}")
+
     # 15 — ZIP child provenance back-fill
     logger.info("Nightshift pass 15/17: ZIP provenance backfill")
     _pass_zip_provenance_backfill(db, report)
