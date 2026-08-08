@@ -20,8 +20,10 @@ import {
   Text,
   TouchableOpacity,
   useColorScheme,
+  useWindowDimensions,
   View,
 } from 'react-native';
+import Svg, { Path, Polyline, Rect } from 'react-native-svg';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
@@ -161,6 +163,101 @@ function HourlyItem({
   );
 }
 
+// ── TemperatureSparkline ──────────────────────────────────────────────────────
+// Ambient temperature arc that sits above the hourly scroll. SVG polyline for
+// the curve + translucent area fill + small precip bars at the bottom edge.
+
+const _SPARK_H     = 60;
+const _SPARK_PAD_T = 10;  // top padding (curve doesn't kiss the top edge)
+const _SPARK_PAD_B = 22;  // bottom padding — lower 10 px reserved for precip bars
+
+function TemperatureSparkline({
+  hourly,
+  color,
+}: {
+  hourly: HourlyPoint[];
+  color: string;
+}) {
+  const { width } = useWindowDimensions();
+  if (hourly.length < 2) return null;
+
+  const n     = hourly.length;
+  const temps = hourly.map(p => p.tempF);
+  const tMin  = Math.min(...temps);
+  const tMax  = Math.max(...temps);
+  const tRange = tMax - tMin || 1;
+
+  // Pixel coords
+  const yUsable = _SPARK_H - _SPARK_PAD_T - _SPARK_PAD_B;
+  const px = (i: number) => (i / (n - 1)) * width;
+  const py = (t: number) => _SPARK_PAD_T + (1 - (t - tMin) / tRange) * yUsable;
+
+  // SVG points string for the polyline
+  const ptStr = hourly
+    .map((p, i) => `${px(i).toFixed(1)},${py(p.tempF).toFixed(1)}`)
+    .join(' ');
+
+  // Filled area under the curve → closes at bottom
+  const curveBot = _SPARK_H - _SPARK_PAD_B;   // top of the precip-bar zone
+  const areaD =
+    `M ${px(0).toFixed(1)},${py(hourly[0].tempF).toFixed(1)} ` +
+    hourly
+      .slice(1)
+      .map((p, i) => `L ${px(i + 1).toFixed(1)},${py(p.tempF).toFixed(1)}`)
+      .join(' ') +
+    ` L ${px(n - 1).toFixed(1)},${curveBot} L ${px(0).toFixed(1)},${curveBot} Z`;
+
+  // Precip bars: occupy the bottom 10 px, height scaled to precipProb
+  const BAR_ZONE_H = 10;
+  const precipTopY  = _SPARK_H - _SPARK_PAD_B;  // baseline of bar zone
+  const barW        = Math.max(width / n - 1.5, 2);
+
+  return (
+    <Svg width={width} height={_SPARK_H} style={sparkStyles.svg}>
+      {/* Filled area under the temperature curve */}
+      <Path d={areaD} fill={color} fillOpacity={0.07} />
+
+      {/* Temperature polyline */}
+      <Polyline
+        points={ptStr}
+        fill="none"
+        stroke={color}
+        strokeWidth={1.5}
+        strokeOpacity={0.6}
+        strokeLinejoin="round"
+        strokeLinecap="round"
+      />
+
+      {/* Precipitation bars */}
+      {hourly.map((p, i) => {
+        if (p.precipProb <= 10) return null;
+        const h = Math.round((p.precipProb / 100) * BAR_ZONE_H);
+        return (
+          <Rect
+            key={i}
+            x={(px(i) - barW / 2).toFixed(1)}
+            y={(precipTopY + BAR_ZONE_H - h).toFixed(1)}
+            width={barW.toFixed(1)}
+            height={h}
+            fill="#6aaeff"
+            fillOpacity={0.50}
+            rx={1}
+          />
+        );
+      })}
+    </Svg>
+  );
+}
+
+const sparkStyles = StyleSheet.create({
+  svg: {
+    // Negative left/right margin so the SVG bleeds to the sheet edges
+    // (sheet has paddingHorizontal: 0, so no adjustment needed here)
+    alignSelf: 'stretch',
+    marginBottom: 8,
+  },
+});
+
 // ── Skeleton ──────────────────────────────────────────────────────────────────
 
 function WeatherSkeleton({ isDark }: { isDark: boolean }) {
@@ -261,6 +358,9 @@ function HourlySheet({
         <Text style={[hourlyStyles.sheetSub, { color: sheetText }]}>
           {data.city}{data.region ? `, ${data.region}` : ''}
         </Text>
+
+        {/* Temperature sparkline — ambient arc across all 24 hours */}
+        <TemperatureSparkline hourly={data.hourly} color={sheetText} />
 
         {/* Horizontal hourly scroll */}
         <ScrollView
