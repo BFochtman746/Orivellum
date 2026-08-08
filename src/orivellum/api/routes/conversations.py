@@ -348,6 +348,35 @@ def update_conversation(conv_id: str, body: ConversationUpdate):
     return {"conversation": conv}
 
 
+@router.put("/conversations/{conv_id}/mail-context")
+def toggle_mail_context(conv_id: str, body: dict):
+    """Enable or disable A-01 Mail Steward context injection for a conversation.
+
+    Body: ``{"enabled": true | false}``
+    Returns the updated conversation dict.
+
+    When enabled, high/medium-attention mail records are injected as a
+    MAIL CONTEXT block into the system prompt — subject, sender domain,
+    received date, attention level, and rationale only.  The message body
+    and full email addresses are never injected.
+
+    Returns 409 when the mail steward is not connected, so clients can gate
+    the toggle on connection status.
+    """
+    db = get_db()
+    if db.get_setting("mail_steward.connected", "false") != "true":
+        raise HTTPException(
+            409,
+            "Mail context requires an active Mail Steward connection. "
+            "Connect your Outlook account in Mail settings to continue.",
+        )
+    enabled = bool(body.get("enabled", False))
+    conv = db.set_conversation_mail_context(conv_id, enabled)
+    if not conv:
+        raise HTTPException(404, f"Conversation {conv_id!r} not found")
+    return {"conversation": conv, "mail_context_enabled": enabled}
+
+
 @router.put("/conversations/{conv_id}/web-search")
 def toggle_web_search(conv_id: str, body: dict):
     """Enable or disable web search grounding for a conversation.
@@ -1345,6 +1374,53 @@ def _detect_query_filters(
     }
 
 
+def _build_mail_context_block(db: Any, conv: dict) -> str:
+    """Return a MAIL CONTEXT block for the system prompt, or '' if not applicable.
+
+    Only fires when:
+      • conv.mail_context_enabled == 1
+      • mail_steward.connected == "true"
+      • At least one high/medium-attention record exists
+
+    The block contains only: subject, sender domain, received date,
+    attention level, and the AI rationale.  The message body and full
+    email addresses are never included.  Labelled so the model treats
+    it as governed input and must not fabricate mail content.
+    """
+    try:
+        if not bool(conv.get("mail_context_enabled")):
+            return ""
+        if db.get_setting("mail_steward.connected", "false") != "true":
+            return ""
+        from orivellum.database.mail_store import MailStore
+        store = MailStore(db)
+        records = store.list_mail_context_records(limit=5)
+        if not records:
+            return ""
+        lines = [
+            "MAIL CONTEXT (redacted summary only — do not fabricate mail content "
+            "not shown here; mail actions must be taken in the Mail workspace):"
+        ]
+        for r in records:
+            subject       = (r.get("subject") or "(no subject)")[:120]
+            sender_domain = r.get("sender_domain") or "unknown"
+            received      = (r.get("received_at") or "")[:10]  # date only
+            level         = r.get("attention_level") or "medium"
+            rationale     = (r.get("rationale") or "")[:300]
+            needs_reply   = r.get("needs_reply")
+            reply_hint    = " | needs reply" if needs_reply else ""
+            lines.append(
+                f"  • [{level.upper()}{reply_hint}] \"{subject}\" "
+                f"from @{sender_domain} ({received})"
+            )
+            if rationale:
+                lines.append(f"      Rationale: {rationale}")
+        return "\n".join(lines)
+    except Exception as _mc_exc:
+        logger.debug("_build_mail_context_block failed (non-fatal): %s", _mc_exc)
+        return ""
+
+
 def _build_system_prompt(db: Any, conv: dict, scope: str = "work",
                          user_query: str | None = None,
                          out_sources: list | None = None,
@@ -1509,6 +1585,19 @@ def _build_system_prompt(db: Any, conv: dict, scope: str = "work",
             base = "\n".join(work_lines) + "\n\n" + base
     except Exception:
         pass  # degraded gracefully when works table unavailable
+
+    # ── A-01 Mail context injection (opt-in, redacted) ──────────────────────────
+    # When the conversation has mail_context_enabled=1 AND the mail steward is
+    # connected, inject a redacted summary of high/medium-attention messages.
+    # Fields injected: subject, sender domain, received date, attention level,
+    # and AI rationale — NEVER the message body, full email addresses, or any
+    # Graph IDs.  The block is labelled so the model treats it as governed input
+    # and never fabricates mail content that is not in the block.
+    # The mail compose action is not available from this path; users must use
+    # the Mail workspace to act on messages.
+    _mail_context_block = _build_mail_context_block(db, conv)
+    if _mail_context_block:
+        base = base + "\n\n" + _mail_context_block
 
     _TRUSTED = {"auto", "approved"}
     work_id = conv.get("work_id")

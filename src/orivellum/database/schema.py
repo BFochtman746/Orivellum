@@ -1907,4 +1907,8 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             updated_at  TEXT NOT NULL
         );
     """),
+
+    (108, "Add mail_context_enabled column to conversations", """
+        ALTER TABLE conversations ADD COLUMN mail_context_enabled INTEGER NOT NULL DEFAULT 0;
+    """),
 ]

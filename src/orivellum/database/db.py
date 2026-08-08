@@ -1986,6 +1986,31 @@ class OrivellumDB:
             self._conn.commit()
         return self.get_conversation(conv_id)
 
+    def set_conversation_mail_context(self, conv_id: str, enabled: bool) -> dict | None:
+        """Toggle A-01 Mail Steward context injection on/off for a conversation.
+
+        When enabled, high/medium-attention mail records are injected as
+        MAIL CONTEXT (redacted summary only) into the system prompt.  The body
+        and full sender addresses are never injected — only subject, sender
+        domain, received time, attention level, and rationale.
+
+        Lightweight lock-only write — not part of the governed audit chain.
+        Returns the refreshed conversation dict, or None when not found.
+        """
+        now = _now()
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT id FROM conversations WHERE id=?", (conv_id,)
+            ).fetchone()
+            if not row:
+                return None
+            self._conn.execute(
+                "UPDATE conversations SET mail_context_enabled=?, updated_at=? WHERE id=?",
+                (1 if enabled else 0, now, conv_id),
+            )
+            self._conn.commit()
+        return self.get_conversation(conv_id)
+
     def delete_conversation(self, conv_id: str) -> bool:
         _deleted = False
         with self.governed_write(
