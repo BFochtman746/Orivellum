@@ -467,6 +467,108 @@ def update_mail_settings(body: MailSettingsBody):
     return {"updated": True}
 
 
+# ── Add to knowledge ──────────────────────────────────────────────────────────
+
+class AddToKnowledgeBody(BaseModel):
+    work_id: str | None = None      # optional — save under a specific Work
+    research: bool = False          # fetch live web context about the sender/topic
+
+
+@router.post("/decisions/{record_id}/add-to-knowledge")
+def add_to_knowledge(record_id: str, body: AddToKnowledgeBody, background_tasks: BackgroundTasks):
+    """Save a mail record's key information as a knowledge item.
+
+    Builds a knowledge item from the assessment rationale and optionally
+    enriches it with a live web search about the sender / email topic.
+    The item is created with review_status="approved" so it is immediately
+    available in chat context.
+
+    Body:
+        work_id  — optional Work to associate with; None = global knowledge
+        research — when True, runs a quick web search and appends findings
+
+    Returns:
+        {"knowledge_id": str, "researched": bool}
+    """
+    db = get_db()
+    from orivellum.database.mail_store import MailStore
+
+    store = MailStore(db)
+    record = store.get_mail_record(record_id)
+    if not record:
+        raise HTTPException(404, "Decision not found")
+
+    assessment = store.get_latest_assessment(record_id)
+
+    subject       = (record.get("subject") or "(no subject)")[:200]
+    sender_name   = record.get("sender_name") or ""
+    sender_domain = record.get("sender_domain") or "unknown"
+    received_at   = (record.get("received_at") or "")[:10]
+    attention     = (assessment or {}).get("attention_level", "medium")
+    rationale     = (assessment or {}).get("rationale") or ""
+    needs_reply   = bool((assessment or {}).get("needs_reply"))
+
+    # Build the core knowledge text
+    lines = [
+        f"Email from @{sender_domain}" + (f" ({sender_name})" if sender_name else ""),
+        f"Subject: {subject}",
+        f"Received: {received_at}  |  Attention: {attention.upper()}" +
+        ("  |  Needs reply" if needs_reply else ""),
+    ]
+    if rationale:
+        lines.append(f"\nAI Assessment: {rationale}")
+
+    researched = False
+    web_snippet = ""
+
+    if body.research:
+        try:
+            from orivellum.capabilities.websearch import fetch_web_context
+            query = f"{subject} {sender_domain}"
+            results = fetch_web_context(query, max_results=3, timeout=8)
+            if results:
+                parts = []
+                for r in results[:3]:
+                    title   = r.get("title") or r.get("url", "")
+                    snippet = r.get("content") or r.get("snippet") or ""
+                    if snippet:
+                        parts.append(f"• {title}: {snippet[:300]}")
+                if parts:
+                    web_snippet = "\n\nOnline research:\n" + "\n".join(parts)
+                    researched = True
+        except Exception as _exc:
+            logger.debug("mail.add-to-knowledge web research failed (non-fatal): %s", _exc)
+
+    knowledge_text = "\n".join(lines) + web_snippet
+
+    knowledge_id = db.create_knowledge_item(
+        work_id=body.work_id or None,
+        kind="claim",
+        text=knowledge_text,
+        subject=sender_domain,
+        confidence=0.85,
+        review_status="approved",
+        meta={
+            "source": "mail_steward",
+            "mail_record_id": record_id,
+            "mail_subject": subject,
+            "sender_domain": sender_domain,
+            "attention_level": attention,
+            "researched_online": researched,
+        },
+    )
+
+    store.create_audit_event(
+        record_id,
+        "KNOWLEDGE_SAVED",
+        model_id="",
+        result="SUCCESS",
+        after={"knowledge_id": knowledge_id, "work_id": body.work_id, "researched": researched},
+    )
+
+    return {"knowledge_id": knowledge_id, "researched": researched}
+
+
 # ── Assess on demand ──────────────────────────────────────────────────────────
 
 @router.post("/decisions/{record_id}/assess")

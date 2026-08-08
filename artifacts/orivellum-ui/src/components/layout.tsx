@@ -482,6 +482,21 @@ function PhaseNav({ location, onNavigate }: { location: string; onNavigate: () =
   });
   const reviewCount = reviewQueue?.count ?? 0;
 
+  // Mail attention badge: high-attention messages waiting in the Act phase.
+  const { data: mailSummary } = useQuery<{ connected: boolean; high_attention: number }>({
+    queryKey: ["mail-summary"],
+    queryFn: async () => {
+      const r = await apiFetch(`${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "") + "/mail/summary");
+      if (!r.ok) throw new Error("mail summary failed");
+      return r.json();
+    },
+    refetchInterval: 30_000,
+    staleTime: 25_000,
+  });
+  const mailAttentionCount = (mailSummary?.connected && mailSummary?.high_attention)
+    ? mailSummary.high_attention
+    : 0;
+
   return (
     <div className="space-y-0.5">
       {PHASES.map(phase => (
@@ -513,6 +528,14 @@ function PhaseNav({ location, onNavigate }: { location: string; onNavigate: () =
                         data-testid="review-queue-badge"
                       >
                         {reviewCount > 99 ? "99+" : reviewCount}
+                      </span>
+                    )}
+                    {item.href === "/mail" && mailAttentionCount > 0 && (
+                      <span
+                        className="ml-auto min-w-[18px] px-1 py-px rounded-full bg-destructive/15 text-destructive text-[10px] font-mono text-center"
+                        data-testid="mail-attention-badge"
+                      >
+                        {mailAttentionCount > 99 ? "99+" : mailAttentionCount}
                       </span>
                     )}
                     {disabled && <span className="ml-auto text-[9px] font-mono text-muted-foreground/40">soon</span>}

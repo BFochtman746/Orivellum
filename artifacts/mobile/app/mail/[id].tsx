@@ -183,6 +183,62 @@ export default function MailDetailScreen() {
     }
   }, [id, router, invalidate]);
 
+  const handleAddToKnowledge = useCallback(() => {
+    Alert.alert(
+      'Save to Knowledge',
+      'Save this email\'s details and AI assessment to your knowledge base. You can also research the sender online first.',
+      [
+        {
+          text: 'Save',
+          onPress: async () => {
+            setActing(true);
+            try {
+              await mobileFetchJson(`${API}/mail/decisions/${id}/add-to-knowledge`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ work_id: null, research: false }),
+              });
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+              Alert.alert('Saved', 'Email details saved to knowledge base.');
+            } catch (e: any) {
+              Alert.alert('Error', e.message ?? 'Could not save to knowledge');
+            } finally {
+              setActing(false);
+            }
+          },
+        },
+        {
+          text: 'Research & Save',
+          onPress: async () => {
+            setActing(true);
+            try {
+              const result = await mobileFetchJson<{ researched: boolean }>(
+                `${API}/mail/decisions/${id}/add-to-knowledge`,
+                {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ work_id: null, research: true }),
+                },
+              );
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+              Alert.alert(
+                'Saved',
+                result.researched
+                  ? 'Email saved with online research added.'
+                  : 'Email saved (online research unavailable).',
+              );
+            } catch (e: any) {
+              Alert.alert('Error', e.message ?? 'Could not save to knowledge');
+            } finally {
+              setActing(false);
+            }
+          },
+        },
+        { text: 'Cancel', style: 'cancel' },
+      ],
+    );
+  }, [id]);
+
   if (isLoading) {
     return (
       <View style={[ss.root, { backgroundColor: colors.background }]}>
@@ -335,6 +391,15 @@ export default function MailDetailScreen() {
               <Text style={{ fontSize: 14, color: colors.foreground, marginLeft: 6, ...font('medium') }}>Move to Review</Text>
             </Pressable>
           )}
+
+          <Pressable
+            style={[ss.outlineBtn, { borderColor: colors.border }, acting && { opacity: 0.6 }]}
+            onPress={handleAddToKnowledge}
+            disabled={acting}
+          >
+            <Feather name="book-open" size={15} color={colors.foreground} />
+            <Text style={{ fontSize: 14, color: colors.foreground, marginLeft: 6, ...font('medium') }}>Save to Knowledge</Text>
+          </Pressable>
 
           <Pressable style={ss.ghostBtn} onPress={() => router.back()}>
             <Text style={{ fontSize: 14, color: colors.mutedForeground, ...font('regular') }}>Defer — back to queue</Text>

@@ -108,6 +108,33 @@ function useReviewCount(): number {
   return count;
 }
 
+// ── Mail attention badge ────────────────────────────────────────────────────────
+
+/**
+ * Polls GET /api/mail/summary every 30 s and returns high_attention count
+ * when the account is connected, 0 otherwise.
+ */
+function useMailAttentionCount(): number {
+  const [count, setCount] = useState(0);
+  const poll = useCallback(async () => {
+    try {
+      const r = await mobileFetch(`${_REVIEW_API}/mail/summary`);
+      if (r.ok) {
+        const data = await r.json();
+        setCount(data.connected ? ((data.high_attention as number) ?? 0) : 0);
+      }
+    } catch {
+      // silently fail — badge just won't update until next poll
+    }
+  }, []);
+  useEffect(() => {
+    poll();
+    const t = setInterval(poll, 30_000);
+    return () => clearInterval(t);
+  }, [poll]);
+  return count;
+}
+
 // ── Server status ──────────────────────────────────────────────────────────────
 
 function useServerDotColor(): string {
@@ -357,6 +384,8 @@ interface NavBottomSheetProps {
   onClose: () => void;
   /** True while a background audiobook job exists — shows a pulsing dot on Studio. */
   audiobookActive?: boolean;
+  /** High-attention mail count — shows a red badge on the Mail item when > 0. */
+  mailAttentionCount?: number;
 }
 
 // ── Animated nav item ──────────────────────────────────────────────────────────
@@ -372,6 +401,7 @@ function AnimatedNavItem({
   item,
   isActive,
   showAudiobookDot,
+  badgeCount = 0,
   onPress,
   reduceMotion,
   colors,
@@ -379,6 +409,7 @@ function AnimatedNavItem({
   item: NavItem;
   isActive: boolean;
   showAudiobookDot: boolean;
+  badgeCount?: number;
   onPress: () => void;
   reduceMotion: boolean;
   colors: ReturnType<typeof useColors>;
@@ -472,6 +503,17 @@ function AnimatedNavItem({
           />
         </Reanimated.View>
         {showAudiobookDot && <PulsingDot />}
+        {badgeCount > 0 && (
+          <View
+            style={styles.navBadge}
+            accessibilityElementsHidden
+            importantForAccessibility="no"
+          >
+            <Text style={styles.navBadgeText}>
+              {badgeCount > 99 ? '99+' : String(badgeCount)}
+            </Text>
+          </View>
+        )}
       </View>
 
       {/* Label — Reanimated.Text drives the opacity fade */}
@@ -502,7 +544,7 @@ function AnimatedNavItem({
   );
 }
 
-function NavBottomSheet({ visible, onClose, audiobookActive = false }: NavBottomSheetProps) {
+function NavBottomSheet({ visible, onClose, audiobookActive = false, mailAttentionCount = 0 }: NavBottomSheetProps) {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const router = useRouter();
@@ -602,12 +644,14 @@ function NavBottomSheet({ visible, onClose, audiobookActive = false }: NavBottom
         {NAV_ITEMS.map((item) => {
           const isActive = item.route === active;
           const showAudiobookDot = audiobookActive && item.key === 'studio';
+          const badgeCount = item.key === 'mail' ? mailAttentionCount : 0;
           return (
             <AnimatedNavItem
               key={item.key}
               item={item}
               isActive={isActive}
               showAudiobookDot={showAudiobookDot}
+              badgeCount={badgeCount}
               onPress={() => handleNav(item.route)}
               reduceMotion={reduceMotion}
               colors={colors}
@@ -729,8 +773,9 @@ const READY_BANNER_MS = 8_000;
 
 function NativeAppLayout() {
   const [menuOpen, setMenuOpen] = useState(false);
-  const reviewCount       = useReviewCount();
-  const audiobookProgress = useAudiobookJobActive();
+  const reviewCount        = useReviewCount();
+  const mailAttentionCount = useMailAttentionCount();
+  const audiobookProgress  = useAudiobookJobActive();
   const router            = useRouter();
 
   // 8 s auto-dismiss timer — only runs while the app is in the foreground so
@@ -819,6 +864,7 @@ function NativeAppLayout() {
         visible={menuOpen}
         onClose={() => setMenuOpen(false)}
         audiobookActive={audiobookProgress.active}
+        mailAttentionCount={mailAttentionCount}
       />
     </View>
   );
@@ -899,10 +945,11 @@ function AnimatedTabIcon({
 // ── Web layout — classic tab bar ───────────────────────────────────────────────
 
 function WebTabLayout() {
-  const colors      = useColors();
-  const insets      = useSafeAreaInsets();
-  const reviewCount = useReviewCount();
-  const reduceMotion = useReduceMotion();
+  const colors             = useColors();
+  const insets             = useSafeAreaInsets();
+  const reviewCount        = useReviewCount();
+  const mailAttentionCount = useMailAttentionCount();
+  const reduceMotion       = useReduceMotion();
 
   return (
     <Tabs
@@ -1000,6 +1047,16 @@ function WebTabLayout() {
           tabBarIcon: ({ color, size, focused }) => (
             <AnimatedTabIcon name="zap" color={color} size={size} focused={focused} reduceMotion={reduceMotion} />
           ),
+        }}
+      />
+      <Tabs.Screen
+        name="mail"
+        options={{
+          title: 'Mail',
+          tabBarIcon: ({ color, size, focused }) => (
+            <AnimatedTabIcon name="mail" color={color} size={size} focused={focused} reduceMotion={reduceMotion} />
+          ),
+          tabBarBadge: mailAttentionCount > 0 ? mailAttentionCount : undefined,
         }}
       />
     </Tabs>
@@ -1151,6 +1208,26 @@ const styles = StyleSheet.create({
     paddingHorizontal: 2,
   },
   reviewBadgeText: {
+    color: '#fff',
+    fontSize: 9,
+    fontFamily: 'Inter_700Bold',
+    lineHeight: 10,
+  },
+
+  // Mail attention badge — red dot on the Mail nav icon in the bottom sheet
+  navBadge: {
+    position: 'absolute',
+    top: -3,
+    right: -3,
+    minWidth: 15,
+    height: 15,
+    borderRadius: 8,
+    backgroundColor: '#ef4444',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 2,
+  },
+  navBadgeText: {
     color: '#fff',
     fontSize: 9,
     fontFamily: 'Inter_700Bold',

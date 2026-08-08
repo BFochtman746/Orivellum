@@ -18,7 +18,7 @@ import {
   Mail, MailOpen, RefreshCw, Settings, Plug, Loader2,
   Shield, ShieldAlert, ShieldCheck, AlertTriangle,
   MoveRight, Reply, MoveLeft, Clock, CheckCircle2,
-  Inbox, ArrowRightCircle, RotateCcw,
+  Inbox, ArrowRightCircle, RotateCcw, BookOpen, Globe,
 } from "lucide-react";
 
 const BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
@@ -239,18 +239,27 @@ function MessageReader({ detail }: { detail: DecisionDetail | null; loading: boo
 
 // ── Assessment panel ──────────────────────────────────────────────────────────
 
+interface WorkOption { id: string; title: string | null; }
+
 function AssessmentPanel({
-  detail, sendEnabled, onCompose, onMove, onUndo, onDefer, onSync, loading,
+  detail, sendEnabled, works, onCompose, onMove, onUndo, onDefer, onSync,
+  onAddToKnowledge, loading,
 }: {
   detail: DecisionDetail | null;
   sendEnabled: boolean;
+  works: WorkOption[];
   onCompose: (action: ActionOption) => void;
   onMove: (action: ActionOption) => void;
   onUndo: (action: ActionOption) => void;
   onDefer: () => void;
   onSync: () => void;
+  onAddToKnowledge: (workId: string | null, research: boolean) => Promise<void>;
   loading: boolean;
 }) {
+  const [knowledgeOpen,    setKnowledgeOpen]    = useState(false);
+  const [knowledgeWorkId,  setKnowledgeWorkId]  = useState("");
+  const [knowledgeResearch, setKnowledgeResearch] = useState(false);
+  const [knowledgeSaving,  setKnowledgeSaving]  = useState(false);
   if (!detail) {
     return (
       <div className="flex flex-col gap-3 p-4">
@@ -348,6 +357,75 @@ function AssessmentPanel({
         </div>
       )}
 
+      {/* Add to Knowledge */}
+      <div className="border-t border-border/30 pt-2 mt-1 space-y-2">
+        {!knowledgeOpen ? (
+          <Button
+            variant="outline"
+            size="sm"
+            className="w-full gap-2 justify-start"
+            onClick={() => setKnowledgeOpen(true)}
+            disabled={loading}
+          >
+            <BookOpen size={13} />
+            Save to Knowledge
+          </Button>
+        ) : (
+          <div className="space-y-2 rounded-lg border border-border/50 p-2.5 bg-muted/20">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Save to Knowledge</p>
+            <select
+              value={knowledgeWorkId}
+              onChange={e => setKnowledgeWorkId(e.target.value)}
+              className="w-full text-xs rounded border border-border bg-background px-2 py-1 outline-none focus:ring-1 focus:ring-primary/40"
+            >
+              <option value="">Global (no Work)</option>
+              {works.map(w => (
+                <option key={w.id} value={w.id}>{w.title ?? "Untitled"}</option>
+              ))}
+            </select>
+            <label className="flex items-center gap-2 cursor-pointer text-xs text-muted-foreground">
+              <input
+                type="checkbox"
+                checked={knowledgeResearch}
+                onChange={e => setKnowledgeResearch(e.target.checked)}
+                className="rounded"
+              />
+              <Globe size={11} />
+              Research sender online first
+            </label>
+            <div className="flex gap-1.5">
+              <Button
+                size="sm"
+                className="flex-1 text-xs h-7"
+                disabled={knowledgeSaving}
+                onClick={async () => {
+                  setKnowledgeSaving(true);
+                  try {
+                    await onAddToKnowledge(knowledgeWorkId || null, knowledgeResearch);
+                    setKnowledgeOpen(false);
+                    setKnowledgeWorkId("");
+                    setKnowledgeResearch(false);
+                  } finally {
+                    setKnowledgeSaving(false);
+                  }
+                }}
+              >
+                {knowledgeSaving ? <Loader2 size={11} className="animate-spin" /> : "Save"}
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-xs h-7 px-2"
+                onClick={() => setKnowledgeOpen(false)}
+                disabled={knowledgeSaving}
+              >
+                Cancel
+              </Button>
+            </div>
+          </div>
+        )}
+      </div>
+
       <Button variant="outline" size="sm" className="w-full gap-2 mt-2" onClick={onSync}>
         <RefreshCw size={13} />
         Sync inbox
@@ -363,6 +441,17 @@ export default function MailPage() {
   const qc = useQueryClient();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [acting, setActing] = useState(false);
+
+  // Works list — for the "Save to Knowledge" work selector
+  const { data: worksResp } = useQuery<{ works: WorkOption[] }>({
+    queryKey: ["works-list"],
+    queryFn: async () => {
+      const r = await apiFetch(`${BASE}/works`);
+      return r.ok ? r.json() : { works: [] };
+    },
+    staleTime: 60_000,
+  });
+  const works = worksResp?.works ?? [];
 
   // Summary (connected state, counts)
   const { data: summary, isLoading: sumLoading } = useQuery<MailSummary>({
@@ -480,6 +569,23 @@ export default function MailPage() {
       setActing(false);
     }
   }, [invalidate]);
+
+  const handleAddToKnowledge = useCallback(async (workId: string | null, research: boolean) => {
+    if (!selectedId) return;
+    const r = await apiFetch(`${BASE}/mail/decisions/${selectedId}/add-to-knowledge`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ work_id: workId, research }),
+    });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}));
+      throw new Error((err as any).detail ?? "Could not save to knowledge");
+    }
+    const data = await r.json();
+    toast.success(data.researched
+      ? "Saved to knowledge with online research"
+      : "Saved to knowledge base");
+  }, [selectedId]);
 
   const handleDefer = useCallback(() => {
     setSelectedId(null);
@@ -601,11 +707,13 @@ export default function MailPage() {
           <AssessmentPanel
             detail={detail ?? null}
             sendEnabled={summary?.send_enabled ?? false}
+            works={works}
             onCompose={handleCompose}
             onMove={handleMove}
             onUndo={handleUndo}
             onDefer={handleDefer}
             onSync={handleSync}
+            onAddToKnowledge={handleAddToKnowledge}
             loading={acting}
           />
         </div>
