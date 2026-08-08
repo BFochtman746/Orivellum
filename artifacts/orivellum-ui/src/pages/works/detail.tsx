@@ -2414,6 +2414,19 @@ function GapsTab({ workId, onBrainstorm }: { workId: string; onBrainstorm?: (see
   const queryClient = useQueryClient();
   const createTask = useCreateWorkTask();
 
+  // Subscribe to the pipeline cache that WorkDetail already keeps alive so we
+  // can derive whether polling is needed — no extra network request.
+  const { data: pipelineData } = useQuery<{ pipeline: any | null }>({
+    queryKey: ["pipeline", workId],
+    queryFn: () =>
+      apiFetch(`${WORK_API_BASE}/works/${workId}/pipeline`).then((r) => r.json()),
+    enabled: !!workId,
+    staleTime: 30_000,
+  });
+  // A pipeline is "active" when it exists and hasn't reached the terminal B17 gate.
+  const pipelineActive =
+    !!pipelineData?.pipeline && pipelineData.pipeline.status !== "B17";
+
   const [forceRefresh, setForceRefresh] = useState(false);
   const { data, isLoading, error, refetch, isFetching } = useQuery<GapReport>({
     queryKey: ["work-gaps", workId, forceRefresh],
@@ -2425,6 +2438,10 @@ function GapsTab({ workId, onBrainstorm }: { workId: string; onBrainstorm?: (see
         return r.json();
       }),
     staleTime: forceRefresh ? 0 : 120_000,
+    // Poll every 15 s while the pipeline is advancing so new gaps surface
+    // automatically. 15 s (vs 10 s for Completeness) because gap recomputation
+    // is heavier. Stops when the pipeline reaches B17 or when none exists.
+    refetchInterval: pipelineActive && !forceRefresh ? 15_000 : false,
   });
 
   /** Turn a gap into a Work task so it shows up in the Tasks tab. */
