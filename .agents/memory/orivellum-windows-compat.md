@@ -21,3 +21,5 @@ Any `["bash", "-lc", ...]` subprocess call or `/nix/store` path scan must be gua
 **Why:** The original codebase assumed Nix/Linux throughout. Windows users got silent failures (no useful error) for OCR, TTS, and disk stats. The probe functions used `bash` which doesn't exist on Windows.
 
 **How to apply:** Any new subprocess call to an external binary must guard Unix-specific fallback logic behind `sys.platform != "win32"` and document the Windows PATH requirement in `scripts/setup-windows.ps1`.
+
+**PowerShell 5.1 encoding trap:** .ps1 files MUST be ASCII-only or carry a UTF-8 BOM. Without a BOM, PS 5.1 decodes UTF-8 as ANSI; em-dashes become bytes containing curly quotes (0x94 = ") and the parser dies with "missing terminator". All repo .ps1 files now have BOM + ASCII-only content; keep it that way when editing.
