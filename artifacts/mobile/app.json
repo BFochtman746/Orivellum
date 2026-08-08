@@ -18,11 +18,16 @@
       "infoPlist": {
         "NSPhotoLibraryAddUsageDescription": "Orivellum saves generated images to your photo library when you tap Save to Photos.",
         "NSCameraUsageDescription": "Orivellum uses your camera so you can photograph a document, whiteboard, or diagram and ask the AI about it.",
+        "NSLocationWhenInUseUsageDescription": "Orivellum uses your location to show local weather and make your daily briefing more relevant. Location is never shared with any server.",
         "UIFileSharingEnabled": true,
         "LSSupportsOpeningDocumentsInPlace": true
       }
     },
-    "android": {},
+    "android": {
+      "permissions": [
+        "android.permission.ACCESS_COARSE_LOCATION"
+      ]
+    },
     "web": {
       "favicon": "./assets/images/icon.png"
     },
@@ -35,6 +40,12 @@
       ],
       "expo-font",
       "expo-web-browser",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Orivellum uses your location to show local weather and make your daily briefing more relevant. Location is never shared with any server."
+        }
+      ],
       [
         "expo-image-picker",
         {

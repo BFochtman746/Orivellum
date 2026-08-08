@@ -26,6 +26,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { font } from '@/lib/typography';
 import type { Work, ActivityItem } from '@workspace/api-client-react';
 import { OfflineBanner, ErrorScreen } from '@/components/OfflineBanner';
+import { WeatherCard } from '@/components/WeatherCard';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import { mobileFetch } from '@/lib/api';
@@ -1842,6 +1843,9 @@ export default function DashboardScreen() {
               <Feather name="settings" size={17} color={colors.mutedForeground} />
             </Pressable>
           </View>
+
+          {/* Weather briefing card — location-aware ambient context */}
+          <WeatherCard />
 
           {/* Server hardware summary */}
           <ServerHealthCard />
