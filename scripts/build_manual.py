@@ -316,87 +316,125 @@ doc.add_page_break()
 # 5. LEMONADE AI SERVER SETUP
 # ─────────────────────────────────────────────────────────────────────────────
 h(1, "5.  Lemonade AI Server Setup")
-body("Lemonade is a local LLM inference server compatible with the OpenAI API. "
-     "It runs AI models on your own GPU (AMD ROCm or NVIDIA CUDA) or CPU, "
-     "keeping every conversation and document 100% private and offline.")
+body("Lemonade Server is AMD's official local LLM inference tool for Ryzen AI hardware. "
+     "Unlike generic inference tools, Lemonade automatically schedules workloads across "
+     "the NPU (XDNA2), iGPU (RDNA 3.5), and CPU — no manual GPU flags needed. "
+     "Every conversation and document stays 100% private and offline.")
 
 add_image("docs/manual/lemonade-setup.jpg", 5.5,
-          "Lemonade loads GGUF model files and serves them via OpenAI-compatible API")
+          "Lemonade auto-schedules across NPU, iGPU, and CPU — no manual GPU config required")
 
 h(2, "Install Lemonade")
-body("Download and install from the official releases:")
-code("# AMD GPU (ROCm) or CPU\npip install lemonade-server\n\n"
-     "# NVIDIA GPU (CUDA)\npip install lemonade-server[cuda]\n\n"
-     "# Windows installer available at:\n"
-     "# https://github.com/lemonade-llm/lemonade/releases")
+body("Download the Windows installer from the official site:")
+code("# 1. Visit https://lemonade-server.ai and download the Windows installer\n"
+     "# 2. Run the installer\n"
+     "# 3. Lemonade registers itself to START AUTOMATICALLY AT LOGIN — no manual launch needed\n\n"
+     "# Verify it is running:\n"
+     "Invoke-WebRequest http://127.0.0.1:8000/api/v0/health -UseBasicParsing\n"
+     "# Expected: {\"status\":\"ok\"}")
+tip("Lemonade installs as a background service. After the first install it starts automatically — "
+    "you will never need to launch it manually again.")
 
-h(2, "Start the Lemonade server")
-code("# Default port 13305\nlemonade serve\n\n"
-     "# Load a specific model on start\n"
-     "lemonade serve --model /path/to/model.gguf\n\n"
-     "# Custom port\nlemonade serve --port 13305")
-tip("Lemonade defaults to port 13305, which matches the Orivellum default setting.")
+h(2, "Pull your models")
+body("Use lemonade pull to download models. These are the models Orivellum is configured to use:")
+code("# Primary chat model — 70 B on iGPU, 128 K context (~40 GB)\n"
+     "lemonade pull llama3.3-70b\n\n"
+     "# Reasoner — 120 B (fits entirely in 128 GB unified RAM)\n"
+     "lemonade pull gpt-oss-120b\n\n"
+     "# Fast model — runs on the NPU for sub-second first token\n"
+     "lemonade pull phi4\n\n"
+     "# Coder — 32 B on iGPU, 256 K context\n"
+     "lemonade pull qwen2.5-coder-32b\n\n"
+     "# Embeddings for semantic search\n"
+     "lemonade pull nomic-embed-text\n\n"
+     "# Check what you have:\n"
+     "lemonade list")
 
 h(2, "Connect Orivellum to Lemonade")
 numbered("Open Orivellum in your browser")
 numbered("Go to System page → Settings section")
-numbered('Under "Local AI Model (Lemonade)" set the URL to:')
-code("http://127.0.0.1:13305/api/v1")
-numbered("Optionally enter a Model ID from the table in Section 6")
+numbered('Under "Local AI (Lemonade)" verify the URL is set to:')
+code("http://127.0.0.1:8000/v1")
+numbered("The model slots are already configured in config.yaml — no manual model ID entry needed")
 numbered("Click Save Settings — the green indicator confirms the connection")
 
-h(2, "GPU vs CPU mode")
-body("Lemonade automatically detects available hardware:")
-bullet("AMD GPU (ROCm): fastest — requires ROCm 5.7+")
-bullet("NVIDIA GPU (CUDA): fast — requires CUDA 12+")
-bullet("CPU: works on any machine; 5–15x slower than GPU")
-warn("On CPU, use models with 4 billion parameters or fewer "
-     "(Phi-4 Mini, Gemma 2 2B, Llama 3.2 3B). Larger models will be too slow for interactive use.")
+h(2, "Hardware scheduling (automatic)")
+body("Lemonade picks the best hardware for each model size automatically:")
+bullet("NPU (XDNA2, 50 TOPS): 7–14 B models — low power, sub-second first token (phi4)")
+bullet("iGPU (40 RDNA 3.5 CUs, ≈ RTX 4070): 32–120 B models — full GPU offload (llama3.3-70b, gpt-oss-120b)")
+bullet("Unified 128 GB LPDDR5X: no separate VRAM — all models fit entirely on-chip")
+tip("The Ryzen AI Max+ 395 has ~112 GB allocatable to models. "
+    "llama3.3-70b uses ~40 GB, gpt-oss-120b uses ~65 GB — both fit comfortably.")
 doc.add_page_break()
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 6. RECOMMENDED LLM MODELS
 # ─────────────────────────────────────────────────────────────────────────────
-h(1, "6.  Recommended LLM Models for Lemonade")
-body("All models below are freely available in GGUF format from Hugging Face. "
-     "They are OpenAI-API-compatible and work directly with Lemonade. "
-     "Download them and load via the Lemonade CLI or web interface.")
-body("Quantization guide:  Q4_K_M = smaller/faster, some quality loss  •  Q8_0 = larger/slower, near full quality")
+h(1, "6.  Orivellum Model Slots & Recommended Models")
+body("Orivellum uses six named model slots, each optimised for a specific type of work. "
+     "All slots are configured in config.yaml in the project root — you do not set them "
+     "one by one in the UI. The defaults below are tuned for the AMD Ryzen AI Max+ 395.")
 
-models_headers = ["Model", "Parameters", "Quant", "Best For", "VRAM / RAM"]
-models_rows = [
-    ("Meta Llama 3.2 3B Instruct",    "3B",   "Q8_0",   "Fast chat, summaries, CPU",     "3–4 GB"),
-    ("Meta Llama 3.1 8B Instruct",    "8B",   "Q4_K_M", "General purpose, documents",    "5–6 GB"),
-    ("Meta Llama 3.1 8B Instruct",    "8B",   "Q8_0",   "General purpose — high quality","9–10 GB"),
-    ("Mistral 7B Instruct v0.3",      "7B",   "Q4_K_M", "General chat, good baseline",   "5–6 GB"),
-    ("Microsoft Phi-4 Mini Instruct", "3.8B", "Q4_K_M", "CPU-friendly, reasoning tasks", "3–4 GB"),
-    ("Microsoft Phi-4 Mini Instruct", "3.8B", "Q8_0",   "CPU-friendly — high quality",   "5–6 GB"),
-    ("Qwen 2.5 7B Instruct",          "7B",   "Q4_K_M", "Multilingual, code, analysis",  "5–6 GB"),
-    ("Qwen 2.5 7B Instruct",          "7B",   "Q8_0",   "Multilingual — high quality",   "8–9 GB"),
-    ("Google Gemma 2 9B IT",          "9B",   "Q4_K_M", "Long context, deep analysis",   "6–7 GB"),
-    ("Google Gemma 2 2B IT",          "2B",   "Q8_0",   "Ultra-fast, any hardware",      "2–3 GB"),
-    ("Mistral NeMo 12B Instruct",     "12B",  "Q4_K_M", "Extended context (128k)",       "8–9 GB"),
-    ("Phi-3.5 Mini Instruct",         "3.8B", "Q4_K_M", "Lightweight, low latency",      "3–4 GB"),
+slots_headers = ["Slot", "config.yaml key", "Purpose", "Recommended model", "Hardware used"]
+slots_rows = [
+    ("Workhorse", "workhorse_model",
+     "Chat, summarisation, general\nreasoning, web research",
+     "llama3.3-70b\n(alt: Qwen3-30B-A3B, Qwen3-32B)",
+     "iGPU (RDNA 3.5)\n~40 GB of 112 GB"),
+    ("Reasoner", "reasoner_model",
+     "Complex multi-step reasoning,\nverification, deep analysis",
+     "gpt-oss-120b\n(alt: phi4 for NPU speed)",
+     "iGPU (RDNA 3.5)\n~65 GB of 112 GB"),
+    ("Coder", "coder_model",
+     "Code generation, document\nworkshop, structured output",
+     "qwen2.5-coder-32b\n(alt: Qwen3-Coder-30B-A3B)",
+     "iGPU\n~18 GB"),
+    ("Embedder", "embedder_model",
+     "Semantic search vectors for\nall documents and knowledge",
+     "nomic-embed-text\n(alt: Qwen3-Embedding-8B)",
+     "NPU / CPU\n~274 MB"),
+    ("Vision", "vision_model",
+     "OCR of scanned PDFs and\nimages (Tesseract fallback)",
+     "Qwen3-VL-8B\n(leave empty → use Tesseract)",
+     "iGPU"),
+    ("Reranker", "reranker_model",
+     "Re-ranks search results for\nbetter retrieval quality",
+     "BAAI/bge-reranker-v2-m3\n(optional — leave empty)",
+     "CPU / NPU"),
 ]
 add_table(
-    models_headers, models_rows,
-    [Inches(1.85), Inches(0.7), Inches(0.75), Inches(1.65), Inches(0.9)],
+    slots_headers, slots_rows,
+    [Inches(0.75), Inches(1.05), Inches(1.4), Inches(1.65), Inches(1.0)],
 )
-tip("Start with Phi-4 Mini Q4_K_M if you are on CPU. "
-    "For 8 GB VRAM, Llama 3.1 8B Q4_K_M offers the best quality-to-speed ratio. "
-    "For 16 GB+ VRAM, Mistral NeMo 12B gives excellent context handling.")
-note("Download GGUF models from: https://huggingface.co/models?sort=downloads&search=GGUF  "
-     "Search the model name above and look for files ending in -Q4_K_M.gguf or -Q8_0.gguf.")
+tip("The Ryzen AI Max+ 395 has 128 GB unified memory with ~112 GB allocatable. "
+    "llama3.3-70b (~40 GB) and gpt-oss-120b (~65 GB) both fit entirely on the iGPU — "
+    "no CPU offload, no paging, full GPU speed.")
+note("gpt-oss-120b is Microsoft's open-source 120B model, optimised for instruction following "
+     "and long-context reasoning. It is the best local reasoner available and fits "
+     "comfortably in the 112 GB GPU pool of this machine.")
 
-h(2, "Loading a model in Lemonade")
-code("# Load a GGUF model file\nlemonade load /path/to/Llama-3.1-8B-Instruct-Q4_K_M.gguf\n\n"
-     "# List all loaded models\nlemonade list\n\n"
-     "# Example output:\n"
-     "# Llama-3.1-8B-Instruct-Q4_K_M   (loaded)  <-- use this name in Orivellum Settings")
+h(2, "Pulling all models at once")
+body("Run these commands once after Lemonade is installed — they download everything Orivellum needs:")
+code("lemonade pull llama3.3-70b          # Workhorse — 70 B, 128 K context\n"
+     "lemonade pull gpt-oss-120b          # Reasoner  — 120 B, best local reasoning\n"
+     "lemonade pull phi4                  # Fast NPU model, good reasoning fallback\n"
+     "lemonade pull qwen2.5-coder-32b    # Coder     — 32 B, 256 K context\n"
+     "lemonade pull nomic-embed-text     # Embedder  — 274 MB, always resident\n\n"
+     "# Verify everything downloaded:\n"
+     "lemonade list")
 
-h(2, "Setting the model in Orivellum")
-body('Copy the model name shown by "lemonade list" and paste it into the Model ID field in Orivellum Settings. '
-     'Leave the field blank to let Lemonade use whichever model is currently loaded.')
+h(2, "config.yaml — default model configuration")
+body("The project ships with these defaults already set in config.yaml. "
+     "Edit the file to swap models at any time — no restart required for most settings:")
+code("models:\n"
+     "  workhorse_model: \"llama3.3-70b\"          # General chat & reasoning\n"
+     "  reasoner_model:  \"gpt-oss-120b\"           # Deep analysis (toggle brain icon in chat)\n"
+     "  coder_model:     \"qwen2.5-coder-32b\"      # Code & structured output\n"
+     "  embedder_model:  \"nomic-embed-text\"        # Semantic search\n"
+     "  vision_model:    \"\"                        # Leave empty → Tesseract OCR\n"
+     "  reranker_model:  \"\"                        # Leave empty → no reranking")
+tip("In the chat interface, tap the brain icon (🧠) to switch from the Workhorse model "
+    "to the Reasoner (gpt-oss-120b) for questions that need deeper analysis.")
 doc.add_page_break()
 
 # ─────────────────────────────────────────────────────────────────────────────
