@@ -249,7 +249,7 @@ function AIResultOverlay({
   visible, text, streaming, onAccept, onInsert, onDiscard,
 }: AIResultOverlayProps) {
   const colors = useColors();
-  const { rendered, slideAnim, fadeAnim } = useSheetAnimation(visible, 480);
+  const { rendered, slideAnim, fadeAnim, panHandlers } = useSheetAnimation(visible, 480, onDiscard);
   if (!rendered) return null;
 
   return (
@@ -257,7 +257,7 @@ function AIResultOverlay({
       <Animated.View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.45)', opacity: fadeAnim }]}>
         <Pressable style={StyleSheet.absoluteFill} onPress={streaming ? undefined : onDiscard} />
       </Animated.View>
-      <Animated.View style={[styles.overlayCard, { backgroundColor: colors.card, borderColor: colors.border, position: 'absolute', bottom: 0, left: 0, right: 0, transform: [{ translateY: slideAnim }] }]}>
+      <Animated.View {...panHandlers} style={[styles.overlayCard, { backgroundColor: colors.card, borderColor: colors.border, position: 'absolute', bottom: 0, left: 0, right: 0, transform: [{ translateY: slideAnim }] }]}>
           {/* Header */}
           <View style={styles.overlayHeader}>
             <View style={styles.overlayTitleRow}>
@@ -350,7 +350,7 @@ interface WorkPickerProps {
 function WorkPickerSheet({ visible, works, currentWorkId, onSelect, onClose }: WorkPickerProps) {
   const colors = useColors();
   const insets = useSafeAreaInsets();
-  const { rendered, slideAnim, fadeAnim } = useSheetAnimation(visible, 400);
+  const { rendered, slideAnim, fadeAnim, panHandlers } = useSheetAnimation(visible, 400, onClose);
   if (!rendered) return null;
 
   return (
@@ -359,6 +359,7 @@ function WorkPickerSheet({ visible, works, currentWorkId, onSelect, onClose }: W
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
       </Animated.View>
       <Animated.View
+        {...panHandlers}
         style={[
           styles.sheet,
           { backgroundColor: colors.card, borderColor: colors.border, paddingBottom: insets.bottom + 16, position: 'absolute', bottom: 0, left: 0, right: 0, transform: [{ translateY: slideAnim }] },

@@ -58,7 +58,7 @@ export function TtsSettingsSheet({
 }) {
   const colors = useColors();
   const insets = useSafeAreaInsets();
-  const { rendered, slideAnim, fadeAnim } = useSheetAnimation(visible, 460);
+  const { rendered, slideAnim, fadeAnim, panHandlers } = useSheetAnimation(visible, 460, onClose);
 
   if (!rendered) return null;
 
@@ -71,6 +71,7 @@ export function TtsSettingsSheet({
 
       {/* Animated sheet */}
       <Animated.View
+        {...panHandlers}
         style={[
           styles.sheet,
           {

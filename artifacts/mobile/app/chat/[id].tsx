@@ -717,8 +717,8 @@ export default function ChatScreen() {
   // Work context controls
   const [contextSheetOpen, setContextSheetOpen] = useState(false);
   const [scopeAll, setScopeAll] = useState(false);
-  const { rendered: ctxRendered, slideAnim: ctxSlideAnim, fadeAnim: ctxFadeAnim } = useSheetAnimation(contextSheetOpen, 480);
-  const { rendered: modelPickerRendered, slideAnim: modelPickerSlideAnim, fadeAnim: modelPickerFadeAnim } = useSheetAnimation(modelPickerVisible, 340);
+  const { rendered: ctxRendered, slideAnim: ctxSlideAnim, fadeAnim: ctxFadeAnim, panHandlers: ctxPanHandlers } = useSheetAnimation(contextSheetOpen, 480, () => setContextSheetOpen(false));
+  const { rendered: modelPickerRendered, slideAnim: modelPickerSlideAnim, fadeAnim: modelPickerFadeAnim, panHandlers: modelPickerPanHandlers } = useSheetAnimation(modelPickerVisible, 340, () => setModelPickerVisible(false));
   const [pinnedDocIds, setPinnedDocIds] = useState<Set<string>>(new Set());
 
   const { data, isLoading, isError, refetch } = useGetConversation(id, { query: { staleTime: 10_000 } } as any);
@@ -1545,19 +1545,21 @@ export default function ChatScreen() {
         <Animated.View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.4)', opacity: ctxFadeAnim }]}>
           <Pressable style={StyleSheet.absoluteFill} onPress={() => setContextSheetOpen(false)} />
         </Animated.View>
-        <Animated.View style={{
-          position: 'absolute', bottom: 0, left: 0, right: 0,
-          backgroundColor: colors.card,
-          borderTopLeftRadius: 20,
-          borderTopRightRadius: 20,
-          borderTopWidth: 1,
-          borderColor: colors.border,
-          paddingTop: 20,
-          paddingHorizontal: 16,
-          paddingBottom: insets.bottom + 20,
-          maxHeight: '75%',
-          transform: [{ translateY: ctxSlideAnim }],
-        }}>
+        <Animated.View
+          {...ctxPanHandlers}
+          style={{
+            position: 'absolute', bottom: 0, left: 0, right: 0,
+            backgroundColor: colors.card,
+            borderTopLeftRadius: 20,
+            borderTopRightRadius: 20,
+            borderTopWidth: 1,
+            borderColor: colors.border,
+            paddingTop: 20,
+            paddingHorizontal: 16,
+            paddingBottom: insets.bottom + 20,
+            maxHeight: '75%',
+            transform: [{ translateY: ctxSlideAnim }],
+          }}>
             {/* Header */}
             <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16 }}>
               <Text style={{ fontSize: 16, ...font('bold'), color: colors.foreground, flex: 1 }}>
@@ -1685,8 +1687,8 @@ export default function ChatScreen() {
           <Pressable style={StyleSheet.absoluteFill} onPress={() => setModelPickerVisible(false)} />
         </Animated.View>
         <Animated.View
+          {...modelPickerPanHandlers}
           style={[styles.modelSheet, { backgroundColor: colors.card, borderColor: colors.border, position: 'absolute', bottom: 0, left: 0, right: 0, transform: [{ translateY: modelPickerSlideAnim }] }]}
-          onStartShouldSetResponder={() => true}
         >
             <Text style={[styles.modelSheetTitle, { color: colors.foreground }]}>Select AI Model</Text>
             <ScrollView>

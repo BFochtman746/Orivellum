@@ -183,8 +183,8 @@ export default function ConversationsScreen() {
   const [memoryOpen, setMemoryOpen] = useState(false);
   const [memoryFacts, setMemoryFacts] = useState<any[]>([]);
   const [memoryLoading, setMemoryLoading] = useState(false);
-  const { rendered: personaRendered, slideAnim: personaSlideAnim, fadeAnim: personaFadeAnim } = useSheetAnimation(personaSheetOpen, 440);
-  const { rendered: memoryRendered, slideAnim: memorySlideAnim, fadeAnim: memoryFadeAnim } = useSheetAnimation(memoryOpen, 400);
+  const { rendered: personaRendered, slideAnim: personaSlideAnim, fadeAnim: personaFadeAnim, panHandlers: personaPanHandlers } = useSheetAnimation(personaSheetOpen, 440, () => setPersonaSheetOpen(false));
+  const { rendered: memoryRendered, slideAnim: memorySlideAnim, fadeAnim: memoryFadeAnim, panHandlers: memoryPanHandlers } = useSheetAnimation(memoryOpen, 400, () => setMemoryOpen(false));
 
   const openMemorySheet = async () => {
     setMemoryOpen(true);
@@ -613,18 +613,20 @@ export default function ConversationsScreen() {
         <Animated.View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.4)', opacity: personaFadeAnim }]}>
           <Pressable style={StyleSheet.absoluteFill} onPress={() => setPersonaSheetOpen(false)} />
         </Animated.View>
-        <Animated.View style={{
-          position: 'absolute', bottom: 0, left: 0, right: 0,
-          backgroundColor: colors.card,
-          borderTopLeftRadius: 20,
-          borderTopRightRadius: 20,
-          borderTopWidth: 1,
-          borderColor: colors.border,
-          paddingTop: 20,
-          paddingHorizontal: 16,
-          paddingBottom: insets.bottom + 24,
-          transform: [{ translateY: personaSlideAnim }],
-        }}>
+        <Animated.View
+          {...personaPanHandlers}
+          style={{
+            position: 'absolute', bottom: 0, left: 0, right: 0,
+            backgroundColor: colors.card,
+            borderTopLeftRadius: 20,
+            borderTopRightRadius: 20,
+            borderTopWidth: 1,
+            borderColor: colors.border,
+            paddingTop: 20,
+            paddingHorizontal: 16,
+            paddingBottom: insets.bottom + 24,
+            transform: [{ translateY: personaSlideAnim }],
+          }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
               <Text style={{ fontSize: 16, ...font('bold'), color: colors.foreground, flex: 1 }}>
                 Choose a persona
@@ -706,7 +708,7 @@ export default function ConversationsScreen() {
         <Animated.View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.35)', opacity: memoryFadeAnim }]}>
           <Pressable style={StyleSheet.absoluteFill} onPress={() => setMemoryOpen(false)} />
         </Animated.View>
-        <Animated.View style={[styles.memorySheet, { position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: colors.card, borderColor: colors.border, paddingBottom: insets.bottom + 16, transform: [{ translateY: memorySlideAnim }] }]}>
+        <Animated.View {...memoryPanHandlers} style={[styles.memorySheet, { position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: colors.card, borderColor: colors.border, paddingBottom: insets.bottom + 16, transform: [{ translateY: memorySlideAnim }] }]}>
             <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
               <Text style={{ fontSize: 18, marginRight: 8 }}>✨</Text>
               <Text style={{ fontSize: 16, ...font('bold'), color: colors.foreground, flex: 1 }}>Memory</Text>

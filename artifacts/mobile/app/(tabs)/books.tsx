@@ -297,7 +297,7 @@ function CreateWorkModal({ visible, onClose, onCreated }: {
   const [description, setDescription] = useState('');
   const [saving, setSaving] = useState(false);
 
-  const { rendered, slideAnim, fadeAnim } = useSheetAnimation(visible, 420);
+  const { rendered, slideAnim, fadeAnim, panHandlers } = useSheetAnimation(visible, 420, onClose);
 
   const handleCreate = async () => {
     if (!title.trim()) {
@@ -335,19 +335,21 @@ function CreateWorkModal({ visible, onClose, onCreated }: {
       <Animated.View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.4)', opacity: fadeAnim }]}>
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
       </Animated.View>
-      <Animated.View style={{
-        position: 'absolute', bottom: 0, left: 0, right: 0,
-        backgroundColor: colors.card,
-        borderTopLeftRadius: 20,
-        borderTopRightRadius: 20,
-        borderTopWidth: StyleSheet.hairlineWidth,
-        borderColor: colors.border,
-        paddingHorizontal: 20,
-        paddingTop: 20,
-        paddingBottom: insets.bottom + 28,
-        gap: 14,
-        transform: [{ translateY: slideAnim }],
-      }}>
+      <Animated.View
+        {...panHandlers}
+        style={{
+          position: 'absolute', bottom: 0, left: 0, right: 0,
+          backgroundColor: colors.card,
+          borderTopLeftRadius: 20,
+          borderTopRightRadius: 20,
+          borderTopWidth: StyleSheet.hairlineWidth,
+          borderColor: colors.border,
+          paddingHorizontal: 20,
+          paddingTop: 20,
+          paddingBottom: insets.bottom + 28,
+          gap: 14,
+          transform: [{ translateY: slideAnim }],
+        }}>
           {/* Handle + header */}
           <View style={{ alignItems: 'center', marginBottom: 2 }}>
             <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: colors.border }} />

@@ -1749,7 +1749,7 @@ export default function DashboardScreen() {
 
   const [showWorkspaceHealth, setShowWorkspaceHealth] = useState(false);
   const [aiSettingsOpen, setAiSettingsOpen] = useState(false);
-  const { rendered: aiSettingsRendered, slideAnim: aiSettingsSlideAnim, fadeAnim: aiSettingsFadeAnim } = useSheetAnimation(aiSettingsOpen, 300);
+  const { rendered: aiSettingsRendered, slideAnim: aiSettingsSlideAnim, fadeAnim: aiSettingsFadeAnim, panHandlers: aiSettingsPanHandlers } = useSheetAnimation(aiSettingsOpen, 300, () => setAiSettingsOpen(false));
   const [aiExtractionEnabled, setAiExtractionEnabled] = useState<boolean | null>(null);
   const [aiRerankEnabled, setAiRerankEnabled] = useState<boolean | null>(null);
   const [aiSettingsLoading, setAiSettingsLoading] = useState(false);
@@ -1945,7 +1945,7 @@ export default function DashboardScreen() {
       <Animated.View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.35)', opacity: aiSettingsFadeAnim }]}>
         <Pressable style={StyleSheet.absoluteFill} onPress={() => setAiSettingsOpen(false)} />
       </Animated.View>
-      <Animated.View style={{ position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: colors.card, borderTopLeftRadius: 16, borderTopRightRadius: 16, borderTopWidth: 1, borderColor: colors.border, paddingHorizontal: 20, paddingTop: 16, paddingBottom: botPad + 24, transform: [{ translateY: aiSettingsSlideAnim }] }}>
+      <Animated.View {...aiSettingsPanHandlers} style={{ position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: colors.card, borderTopLeftRadius: 16, borderTopRightRadius: 16, borderTopWidth: 1, borderColor: colors.border, paddingHorizontal: 20, paddingTop: 16, paddingBottom: botPad + 24, transform: [{ translateY: aiSettingsSlideAnim }] }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 18 }}>
             <Feather name="settings" size={16} color={colors.primary} style={{ marginRight: 8 }} />
             <Text style={{ fontSize: 16, fontFamily: 'Inter_700Bold', color: colors.foreground, flex: 1 }}>AI Settings</Text>

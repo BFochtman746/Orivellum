@@ -54,6 +54,12 @@ jest.mock('react-native', () => {
         }),
       })),
     },
+    // PanResponder is created once in useRef; return an empty panHandlers
+    // object so the hook can initialise without error.  Gesture behaviour
+    // is tested separately via the gesture integration tests.
+    PanResponder: {
+      create: jest.fn(() => ({ panHandlers: {} })),
+    },
   };
 });
 

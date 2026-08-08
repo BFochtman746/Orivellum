@@ -2361,7 +2361,7 @@ function ImagePanel({ onGenerated }: { onGenerated: () => void }) {
 
   // ── Backend settings modal ───────────────────────────────────────────────────
   const [settingsVisible, setSettingsVisible] = useState(false);
-  const { rendered: studioSettingsRendered, slideAnim: studioSettingsSlideAnim, fadeAnim: studioSettingsFadeAnim } = useSheetAnimation(settingsVisible, 500);
+  const { rendered: studioSettingsRendered, slideAnim: studioSettingsSlideAnim, fadeAnim: studioSettingsFadeAnim, panHandlers: studioSettingsPanHandlers } = useSheetAnimation(settingsVisible, 500, () => setSettingsVisible(false));
   const [urlInput, setUrlInput] = useState('');
   const [loadingUrl, setLoadingUrl] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -2459,6 +2459,7 @@ function ImagePanel({ onGenerated }: { onGenerated: () => void }) {
           <Pressable style={StyleSheet.absoluteFill} onPress={() => setSettingsVisible(false)} />
         </Animated.View>
         <Animated.View
+          {...studioSettingsPanHandlers}
           style={[imgSettingsStyles.sheet, { backgroundColor: colors.card, borderColor: colors.border, position: 'absolute', bottom: 0, left: 0, right: 0, transform: [{ translateY: studioSettingsSlideAnim }] }]}
         >
             <View style={imgSettingsStyles.handle} />

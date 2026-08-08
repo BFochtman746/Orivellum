@@ -265,7 +265,7 @@ export default function LibraryDocDetail() {
   const [bulkReviewing, setBulkReviewing] = useState<'approve' | 'dismiss' | null>(null);
   const [showWorkPicker, setShowWorkPicker] = useState(false);
   const [linkingWork, setLinkingWork] = useState(false);
-  const { rendered: workPickerRendered, slideAnim: workPickerSlideAnim, fadeAnim: workPickerFadeAnim } = useSheetAnimation(showWorkPicker, 400);
+  const { rendered: workPickerRendered, slideAnim: workPickerSlideAnim, fadeAnim: workPickerFadeAnim, panHandlers: workPickerPanHandlers } = useSheetAnimation(showWorkPicker, 400, () => setShowWorkPicker(false));
   const [lifecycleUpdating, setLifecycleUpdating] = useState(false);
   const [reprocessing, setReprocessing] = useState(false);
   const [processingProgress, setProcessingProgress] = useState<{
@@ -1689,7 +1689,7 @@ export default function LibraryDocDetail() {
         <Animated.View style={[StyleSheet.absoluteFill, { backgroundColor: '#00000060', opacity: workPickerFadeAnim }]}>
           <Pressable style={StyleSheet.absoluteFill} onPress={() => setShowWorkPicker(false)} />
         </Animated.View>
-        <Animated.View style={[styles.modalSheet, { backgroundColor: colors.background, borderTopColor: colors.border, position: 'absolute', bottom: 0, left: 0, right: 0, transform: [{ translateY: workPickerSlideAnim }] }]}>
+        <Animated.View {...workPickerPanHandlers} style={[styles.modalSheet, { backgroundColor: colors.background, borderTopColor: colors.border, position: 'absolute', bottom: 0, left: 0, right: 0, transform: [{ translateY: workPickerSlideAnim }] }]}>
             <View style={styles.modalHeader}>
               <Text style={[styles.modalTitle, { color: colors.foreground }]}>Link to Work</Text>
               <Pressable onPress={() => setShowWorkPicker(false)} hitSlop={8}>

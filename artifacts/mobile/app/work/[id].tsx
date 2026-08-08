@@ -5908,7 +5908,7 @@ export default function WorkDetailScreen() {
   // Work-scoped review items — badge on Overview tab + bottom sheet
   const [reviewItems, setReviewItems] = useState<any[]>([]);
   const [reviewSheetOpen, setReviewSheetOpen] = useState(false);
-  const { rendered: reviewRendered, slideAnim: reviewSlideAnim, fadeAnim: reviewFadeAnim } = useSheetAnimation(reviewSheetOpen, 500);
+  const { rendered: reviewRendered, slideAnim: reviewSlideAnim, fadeAnim: reviewFadeAnim, panHandlers: reviewPanHandlers } = useSheetAnimation(reviewSheetOpen, 500, () => setReviewSheetOpen(false));
   const [resolvingId, setResolvingId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -6039,7 +6039,7 @@ export default function WorkDetailScreen() {
   // Opens a bottom-sheet Modal with title, description, word target, and
   // chapter target all in one place. Saves with a single PATCH call.
   const [settingsOpen, setSettingsOpen]               = useState(false);
-  const { rendered: settingsRendered, slideAnim: settingsSlideAnim, fadeAnim: settingsFadeAnim } = useSheetAnimation(settingsOpen, 480);
+  const { rendered: settingsRendered, slideAnim: settingsSlideAnim, fadeAnim: settingsFadeAnim, panHandlers: settingsPanHandlers } = useSheetAnimation(settingsOpen, 480, () => setSettingsOpen(false));
   const [settingsTitleDraft, setSettingsTitleDraft]   = useState('');
   const [settingsDescDraft, setSettingsDescDraft]     = useState('');
   const [settingsWordDraft, setSettingsWordDraft]     = useState('');
@@ -6915,16 +6915,18 @@ export default function WorkDetailScreen() {
         <Animated.View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.38)', opacity: reviewFadeAnim }]}>
           <Pressable style={StyleSheet.absoluteFill} onPress={() => setReviewSheetOpen(false)} />
         </Animated.View>
-        <Animated.View style={{
-          position: 'absolute', bottom: 0, left: 0, right: 0,
-          backgroundColor: colors.card,
-          borderTopLeftRadius: 16, borderTopRightRadius: 16,
-          borderTopWidth: 1, borderColor: colors.border,
-          paddingHorizontal: 18, paddingTop: 18,
-          paddingBottom: insets.bottom + 24,
-          maxHeight: '80%',
-          transform: [{ translateY: reviewSlideAnim }],
-        }}>
+        <Animated.View
+          {...reviewPanHandlers}
+          style={{
+            position: 'absolute', bottom: 0, left: 0, right: 0,
+            backgroundColor: colors.card,
+            borderTopLeftRadius: 16, borderTopRightRadius: 16,
+            borderTopWidth: 1, borderColor: colors.border,
+            paddingHorizontal: 18, paddingTop: 18,
+            paddingBottom: insets.bottom + 24,
+            maxHeight: '80%',
+            transform: [{ translateY: reviewSlideAnim }],
+          }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 14 }}>
               <Feather name="shield" size={15} color={colors.primary} style={{ marginRight: 8 }} />
               <Text style={{ fontSize: 16, fontFamily: 'Inter_700Bold', color: colors.foreground, flex: 1 }}>
@@ -7007,7 +7009,7 @@ export default function WorkDetailScreen() {
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
           style={{ position: 'absolute', bottom: 0, left: 0, right: 0 }}
         >
-          <Animated.View style={{ transform: [{ translateY: settingsSlideAnim }] }}>
+          <Animated.View {...settingsPanHandlers} style={{ transform: [{ translateY: settingsSlideAnim }] }}>
           <View style={{
             backgroundColor: colors.card,
             borderTopLeftRadius: 20, borderTopRightRadius: 20,
