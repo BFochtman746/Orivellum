@@ -14,6 +14,7 @@ import {
   Pressable,
   RefreshControl,
   ScrollView,
+  Share,
   StyleSheet,
   Text,
   View,
@@ -218,6 +219,20 @@ export default function ForgeDetailScreen() {
     ? `https://${domain}/api/forge/projects/${id}/jobs/${buildJob.id}/preview/index.html`
     : null;
 
+  /** Share the preview URL via the native share sheet. */
+  const sharePreview = async () => {
+    if (!previewUrl) return;
+    try {
+      await Share.share(
+        Platform.OS === 'ios'
+          ? { url: previewUrl }                      // iOS: share as a URL
+          : { message: previewUrl },                  // Android: share as text
+      );
+    } catch {
+      // User dismissed the share sheet — no action needed.
+    }
+  };
+
   /** Open the built site in the system in-app browser (no auth required — the
    *  preview endpoint serves static files directly from the build directory). */
   const openPreview = async () => {
@@ -342,18 +357,29 @@ export default function ForgeDetailScreen() {
         </Text>
         {data.status === 'complete' && (
           previewUrl ? (
-            <Pressable
-              onPress={openPreview}
-              hitSlop={8}
-              style={{ flexDirection: 'row', alignItems: 'center', gap: 4,
-                       paddingHorizontal: 10, paddingVertical: 5, borderRadius: 16,
-                       backgroundColor: T.greenSoft, marginLeft: 4 }}
-              accessibilityRole="button"
-              accessibilityLabel="Preview built site"
-            >
-              <Feather name="external-link" size={12} color={T.green} />
-              <Text style={{ fontSize: 12, color: T.green, ...font('semibold') }}>Preview</Text>
-            </Pressable>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginLeft: 4 }}>
+              <Pressable
+                onPress={openPreview}
+                hitSlop={8}
+                style={{ flexDirection: 'row', alignItems: 'center', gap: 4,
+                         paddingHorizontal: 10, paddingVertical: 5, borderRadius: 16,
+                         backgroundColor: T.greenSoft }}
+                accessibilityRole="button"
+                accessibilityLabel="Preview built site"
+              >
+                <Feather name="external-link" size={12} color={T.green} />
+                <Text style={{ fontSize: 12, color: T.green, ...font('semibold') }}>Preview</Text>
+              </Pressable>
+              <Pressable
+                onPress={sharePreview}
+                hitSlop={8}
+                style={{ padding: 6, borderRadius: 16, backgroundColor: T.greenSoft }}
+                accessibilityRole="button"
+                accessibilityLabel="Share site link"
+              >
+                <Feather name="share-2" size={14} color={T.green} />
+              </Pressable>
+            </View>
           ) : (
             <Feather name="check-circle" size={16} color={T.green} style={{ marginLeft: 4 }} />
           )
@@ -475,7 +501,18 @@ export default function ForgeDetailScreen() {
                   Opens in browser · {previewUrl.replace(/^https?:\/\//, '').split('/').slice(0, 3).join('/')}…
                 </Text>
               </View>
-              <Feather name="external-link" size={16} color={T.green} />
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                <Pressable
+                  onPress={sharePreview}
+                  hitSlop={8}
+                  style={{ padding: 4 }}
+                  accessibilityRole="button"
+                  accessibilityLabel="Share site link"
+                >
+                  <Feather name="share-2" size={16} color={T.green} />
+                </Pressable>
+                <Feather name="external-link" size={16} color={T.green} />
+              </View>
             </View>
           </Pressable>
         )}
