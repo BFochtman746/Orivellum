@@ -971,13 +971,17 @@ function GapsTab({
   onResearch,
   onCreateTask,
   onBrainstorm,
+  pipelineActive,
 }: {
   workId: string;
   colors: any;
   onResearch: (gapTitle: string) => void;
-
   onCreateTask: (taskText: string) => void;
   onBrainstorm: (seed: string) => void;
+  /** When true (pipeline has stages remaining), poll every 15 s so new gaps
+   *  surface automatically. Polling stops once the pipeline reaches B17 or
+   *  when no pipeline exists (same terminal criterion as the web Gaps tab). */
+  pipelineActive?: boolean;
 }) {
   const domain = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
   const T = useVellumTokens();
@@ -1000,7 +1004,16 @@ function GapsTab({
     }
   }, [workId, domain]);
 
+  // Initial fetch
   useEffect(() => { fetchGaps(); }, [fetchGaps]);
+
+  // Live polling — mirrors the web Gaps tab: 15 s while the pipeline is active,
+  // stops automatically when the pipeline finishes (pipelineActive goes false).
+  useEffect(() => {
+    if (!pipelineActive) return;
+    const iv = setInterval(fetchGaps, 15_000);
+    return () => clearInterval(iv);
+  }, [pipelineActive, fetchGaps]);
 
   if (loading) {
     return (
@@ -6036,7 +6049,7 @@ export default function WorkDetailScreen() {
           </>
         );
       case 'gaps':
-        return <GapsTab workId={id} colors={colors} onResearch={handleResearchGap} onCreateTask={handleCreateTaskFromGap} onBrainstorm={handleBrainstormGap} />;
+        return <GapsTab workId={id} colors={colors} onResearch={handleResearchGap} onCreateTask={handleCreateTaskFromGap} onBrainstorm={handleBrainstormGap} pipelineActive={pipelineActive} />;
       case 'learn':
         return <MobileLearnTab workId={id} colors={colors} />;
       case 'book':
