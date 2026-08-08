@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
     PKLOS Windows System Inventory Collector v0.1.0
@@ -10,7 +10,7 @@
       - CPU identity, core/thread counts
       - RAM: Win32_ComputerSystem.TotalPhysicalMemory (primary)
              Win32_PhysicalMemory.Capacity sum (corroboration)
-      - GPU: model name only — AdapterRAM is EXCLUDED per INV-REQ-001
+      - GPU: model name only  -  AdapterRAM is EXCLUDED per INV-REQ-001
       - VRAM: sourced from Lemonade API (runtime measurement) only
       - OS: caption, version, build number
       - BIOS: manufacturer, version
@@ -65,7 +65,7 @@ $inventory = [ordered]@{
     subject           = $Subject
 }
 
-# ── CPU ────────────────────────────────────────────────────────────────────────
+# -- CPU ------------------------------------------------------------------------
 Write-Section "CPU"
 try {
     $cpu = Get-CimInstance -ClassName Win32_Processor | Select-Object -First 1
@@ -76,20 +76,20 @@ try {
         NumberOfLogicalProcessors = $cpu.NumberOfLogicalProcessors
         MaxClockSpeed             = $cpu.MaxClockSpeed   # MHz
     }
-    Write-OK "$($cpu.Name) — $($cpu.NumberOfCores) cores / $($cpu.NumberOfLogicalProcessors) threads"
+    Write-OK "$($cpu.Name)  -  $($cpu.NumberOfCores) cores / $($cpu.NumberOfLogicalProcessors) threads"
 } catch {
     Write-Warn "CPU collection failed: $_"
     $inventory.cpu = @{}
 }
 
-# ── RAM — CRITICAL: two A0 sources (primary + corroboration) ──────────────────
+# -- RAM  -  CRITICAL: two A0 sources (primary + corroboration) ------------------
 Write-Section "Memory"
 try {
     $cs  = Get-CimInstance -ClassName Win32_ComputerSystem
     $mem = Get-CimInstance -ClassName Win32_PhysicalMemory
     $sum = ($mem | Measure-Object -Property Capacity -Sum).Sum
 
-    # NEVER include AdapterRAM — it is NOT collected here.
+    # NEVER include AdapterRAM  -  it is NOT collected here.
     $inventory.memory = [ordered]@{
         TotalPhysicalMemory      = $cs.TotalPhysicalMemory     # primary A0 source
         PhysicalMemoryCapacitySum = $sum                        # A0 corroboration
@@ -101,7 +101,7 @@ try {
     $inventory.memory = @{}
 }
 
-# ── GPU — AdapterRAM EXCLUDED (INV-REQ-001) ───────────────────────────────────
+# -- GPU  -  AdapterRAM EXCLUDED (INV-REQ-001) -----------------------------------
 Write-Section "GPU (AdapterRAM excluded per INV-REQ-001)"
 try {
     $gpu = Get-CimInstance -ClassName Win32_VideoController | Select-Object -First 1
@@ -111,7 +111,7 @@ try {
     $inventory.gpu = [ordered]@{
         Name           = $gpu.Name.Trim()
         VideoProcessor = $gpu.VideoProcessor
-        # AdapterRAM — deliberately omitted (INV-REQ-001)
+        # AdapterRAM  -  deliberately omitted (INV-REQ-001)
     }
     Write-OK "$($gpu.Name)"
 } catch {
@@ -119,7 +119,7 @@ try {
     $inventory.gpu = @{}
 }
 
-# ── VRAM — runtime measurement from Lemonade API (A0 only) ───────────────────
+# -- VRAM  -  runtime measurement from Lemonade API (A0 only) -------------------
 Write-Section "VRAM (runtime probe)"
 $vramFound = $false
 
@@ -137,7 +137,7 @@ foreach ($port in $lemonadePorts) {
                 free_bytes  = [long]($resp.free ?? 0)
             }
             $gib = [math]::Round($resp.total / 1GB, 0)
-            Write-OK "Lemonade port $port — $gib GiB usable (A0)"
+            Write-OK "Lemonade port $port  -  $gib GiB usable (A0)"
             $vramFound = $true
         }
     } catch { <# try next port #> }
@@ -150,15 +150,15 @@ if (-not $vramFound) {
                                   -Method Post -Body '{"name":""}' `
                                   -ContentType "application/json" -TimeoutSec 2 -ErrorAction Stop
         if ($resp.model_info.'general.parameter_count') {
-            Write-Warn "Ollama reachable but no memory API — VRAM reported as unavailable"
+            Write-Warn "Ollama reachable but no memory API  -  VRAM reported as unavailable"
         }
     } catch { <# ignore #> }
 
     $inventory.vram = @{ source = "unavailable" }
-    Write-Warn "VRAM probe failed on all ports — will be marked UNAVAILABLE in ledger"
+    Write-Warn "VRAM probe failed on all ports  -  will be marked UNAVAILABLE in ledger"
 }
 
-# ── OS ────────────────────────────────────────────────────────────────────────
+# -- OS ------------------------------------------------------------------------
 Write-Section "Operating System"
 try {
     $os = Get-CimInstance -ClassName Win32_OperatingSystem
@@ -173,7 +173,7 @@ try {
     $inventory.os = @{}
 }
 
-# ── BIOS ──────────────────────────────────────────────────────────────────────
+# -- BIOS ----------------------------------------------------------------------
 Write-Section "BIOS"
 try {
     $bios = Get-CimInstance -ClassName Win32_BIOS
@@ -181,13 +181,13 @@ try {
         Manufacturer      = $bios.Manufacturer.Trim()
         SMBIOSBIOSVersion = $bios.SMBIOSBIOSVersion
     }
-    Write-OK "$($bios.Manufacturer) — $($bios.SMBIOSBIOSVersion)"
+    Write-OK "$($bios.Manufacturer)  -  $($bios.SMBIOSBIOSVersion)"
 } catch {
     Write-Warn "BIOS collection failed: $_"
     $inventory.bios = @{}
 }
 
-# ── Storage ───────────────────────────────────────────────────────────────────
+# -- Storage -------------------------------------------------------------------
 Write-Section "Storage"
 try {
     $disks = Get-CimInstance -ClassName Win32_DiskDrive
@@ -203,7 +203,7 @@ try {
     $inventory.storage = @{}
 }
 
-# ── Installed AI Models (Lemonade) ────────────────────────────────────────────
+# -- Installed AI Models (Lemonade) --------------------------------------------
 Write-Section "Installed Models"
 $modelNames = @()
 foreach ($port in $lemonadePorts) {
@@ -217,21 +217,21 @@ foreach ($port in $lemonadePorts) {
         }
     } catch { <# try next port #> }
 }
-if ($modelNames.Count -eq 0) { Write-Warn "No model server reachable — model list empty" }
+if ($modelNames.Count -eq 0) { Write-Warn "No model server reachable  -  model list empty" }
 $inventory.installed_models = $modelNames
 
-# ── Serialize ─────────────────────────────────────────────────────────────────
+# -- Serialize -----------------------------------------------------------------
 Write-Host ""
 $json = $inventory | ConvertTo-Json -Depth 6 -Compress:$false
 
 if ($DryRun) {
-    Write-Host "── DRY RUN — payload (not posted) ──────────────────────────────" -ForegroundColor Yellow
+    Write-Host "-- DRY RUN  -  payload (not posted) ------------------------------" -ForegroundColor Yellow
     Write-Host $json
     Write-Host ""
     exit 0
 }
 
-# ── POST to Orivellum ─────────────────────────────────────────────────────────
+# -- POST to Orivellum ---------------------------------------------------------
 Write-Host "Posting inventory to $ApiUrl/api/pklos/inventory ..."
 try {
     $headers = @{ "Content-Type" = "application/json" }

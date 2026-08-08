@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
   One-shot Windows setup for Orivellum.
@@ -211,7 +211,7 @@ if ((Test-Cmd espeak-ng) -or (Test-Path $espeakExe)) {
   Write-Ok "espeak-ng found"
   Add-UserPath "C:\Program Files\eSpeak NG"
 } else {
-  # Not on winget — download the MSI directly from GitHub releases
+  # Not on winget  -  download the MSI directly from GitHub releases
   try {
     $espeakMsi = "$env:TEMP\espeak-ng-setup.msi"
     Download-File "https://github.com/espeak-ng/espeak-ng/releases/download/1.51.1/espeak-ng-20240117-win64.msi" $espeakMsi
@@ -219,7 +219,7 @@ if ((Test-Cmd espeak-ng) -or (Test-Path $espeakExe)) {
     Start-Process -FilePath "msiexec.exe" -ArgumentList "/i `"$espeakMsi`" /quiet /norestart" -Wait
     Add-UserPath "C:\Program Files\eSpeak NG"
     Refresh-Path
-    Write-Ok "espeak-ng installed — Text-to-speech enabled"
+    Write-Ok "espeak-ng installed  -  Text-to-speech enabled"
   } catch {
     Write-Warn "espeak-ng install failed. TTS will be disabled. Manual install: https://github.com/espeak-ng/espeak-ng/releases"
   }

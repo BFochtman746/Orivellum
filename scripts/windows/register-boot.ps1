@@ -1,9 +1,9 @@
-# register-boot.ps1
+﻿# register-boot.ps1
 # Run this ONCE (as Administrator) to register the Orivellum boot task.
 # After registration, orivellum-boot.ps1 runs automatically at every login.
 #
 # Usage:
-#   Right-click PowerShell → Run as Administrator
+#   Right-click PowerShell -> Run as Administrator
 #   cd C:\OrivellumAppliance
 #   .\register-boot.ps1
 
@@ -45,18 +45,18 @@ Register-ScheduledTask `
     -Force | Out-Null
 
 Write-Host ""
-Write-Host "✓ Task '$TaskName' registered successfully." -ForegroundColor Green
+Write-Host "OK Task '$TaskName' registered successfully." -ForegroundColor Green
 Write-Host ""
 Write-Host "What happens now:"
 Write-Host "  - On every login, orivellum-boot.ps1 runs silently in the background"
-Write-Host "  - ComfyUI starts, Orivellum starts — all automatic"
+Write-Host "  - ComfyUI starts, Orivellum starts  -  all automatic"
 Write-Host "  - Boot log: C:\OrivellumAppliance\logs\"
 Write-Host ""
 Write-Host "To enable auto-login (so this works after a power cut with no keyboard):"
-Write-Host "  1. Win+R → netplwiz"
+Write-Host "  1. Win+R -> netplwiz"
 Write-Host "  2. Uncheck 'Users must enter a user name and password'"
 Write-Host "  3. Enter your password when prompted"
-Write-Host "  4. OK — Windows will log in automatically from now on"
+Write-Host "  4. OK  -  Windows will log in automatically from now on"
 Write-Host ""
 Write-Host "To test right now without rebooting:"
 Write-Host "  Start-ScheduledTask -TaskName '$TaskName'"

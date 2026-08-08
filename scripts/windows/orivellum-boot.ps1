@@ -1,11 +1,11 @@
-# orivellum-boot.ps1
+﻿# orivellum-boot.ps1
 # Orivellum Appliance Boot Script
 # Place in C:\OrivellumAppliance\
 # Run automatically at login via Task Scheduler (see register-boot.ps1)
 #
 # What this does, in order:
 #   1. Starts the Ubuntu WSL distro if it isn't already running
-#   2. Checks if ComfyUI (port 8188) is already answering — if yes, skips container start
+#   2. Checks if ComfyUI (port 8188) is already answering  -  if yes, skips container start
 #   3. If not up, starts the podman container using a login shell (fixes rootless-podman visibility)
 #   4. Waits for ComfyUI to be healthy (up to 120 s)
 #   5. Starts Orivellum via start.ps1 (or uv run ...) in a new window
@@ -40,7 +40,7 @@ function Test-PortOpen([string]$host, [int]$port) {
     } catch { return $false }
 }
 
-# ── Remove old logs (keep last 14) ───────────────────────────────────────────
+# -- Remove old logs (keep last 14) -------------------------------------------
 Get-ChildItem $LogDir -Filter "boot-*.log" |
     Sort-Object LastWriteTime -Descending |
     Select-Object -Skip 14 |
@@ -51,22 +51,22 @@ Log "Orivellum path : $OrivellumPath"
 Log "WSL distro     : $WslDistro ($WslUser)"
 Log "Container      : $ContainerName"
 
-# ── Step 1: Wake WSL ─────────────────────────────────────────────────────────
+# -- Step 1: Wake WSL ---------------------------------------------------------
 Log "Waking WSL distro..."
 wsl -d $WslDistro -u $WslUser -- echo "WSL ready" 2>&1 | Out-Null
 Start-Sleep -Seconds 2
 
-# ── Step 2: Check if ComfyUI is already answering ────────────────────────────
+# -- Step 2: Check if ComfyUI is already answering ----------------------------
 Log "Checking ComfyUI on port $ComfyPort..."
 if (Test-PortOpen "127.0.0.1" $ComfyPort) {
-    Log "ComfyUI already up on localhost:$ComfyPort — skipping container start."
+    Log "ComfyUI already up on localhost:$ComfyPort  -  skipping container start."
 } else {
     # Detect WSL IP dynamically (handles reboots that change the address)
     $WslIp = (wsl -d $WslDistro -u $WslUser -- hostname -I 2>$null).Trim().Split()[0]
     Log "WSL IP: $WslIp"
 
     if ($WslIp -and (Test-PortOpen $WslIp $ComfyPort)) {
-        Log "ComfyUI already up on $WslIp`:$ComfyPort — skipping container start."
+        Log "ComfyUI already up on $WslIp`:$ComfyPort  -  skipping container start."
     } else {
         # Step 3: Start container via login shell so rootless podman env is loaded
         Log "Starting $ContainerName via login shell..."
@@ -96,7 +96,7 @@ if (Test-PortOpen "127.0.0.1" $ComfyPort) {
     }
 }
 
-# ── Step 4b: Wire localhost:8188 → WSL IP (optional portproxy) ───────────────
+# -- Step 4b: Wire localhost:8188 -> WSL IP (optional portproxy) ---------------
 # This makes localhost:8188 always reach ComfyUI so you never need to update
 # the Orivellum System Settings URL when the WSL IP changes after a reboot.
 # Requires the script to run with elevated rights OR to skip silently if not.
@@ -108,13 +108,13 @@ try {
         $fwdResult = netsh interface portproxy add v4tov4 `
             listenport=$ComfyPort listenaddress=127.0.0.1 `
             connectport=$ComfyPort connectaddress=$currentIp protocol=tcp 2>&1
-        Log "Port-forward localhost:$ComfyPort → $currentIp`:$ComfyPort ($fwdResult)"
+        Log "Port-forward localhost:$ComfyPort -> $currentIp`:$ComfyPort ($fwdResult)"
     }
 } catch {
     Log "Port-forward skipped (needs elevation or not available): $_"
 }
 
-# ── Step 5: Auto-update Orivellum from GitHub (if it's a git repo) ───────────
+# -- Step 5: Auto-update Orivellum from GitHub (if it's a git repo) -----------
 if (Test-Path (Join-Path $OrivellumPath ".git")) {
     Log "Updating Orivellum from GitHub..."
     try {
@@ -126,10 +126,10 @@ if (Test-Path (Join-Path $OrivellumPath ".git")) {
         Log "git update failed (non-fatal): $_"
     }
 } else {
-    Log "Skipping git update — not a git repo (tip: clone instead of unzipping)"
+    Log "Skipping git update  -  not a git repo (tip: clone instead of unzipping)"
 }
 
-# ── Step 6: Start Orivellum ───────────────────────────────────────────────────
+# -- Step 6: Start Orivellum ---------------------------------------------------
 Log "Starting Orivellum..."
 if (Test-Path (Join-Path $OrivellumPath "start.ps1")) {
     $startCmd = "Set-Location '$OrivellumPath'; .\start.ps1"

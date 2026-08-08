@@ -1,15 +1,15 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
-  Start Orivellum on Windows — builds the UI then starts the API (production mode).
+  Start Orivellum on Windows  -  builds the UI then starts the API (production mode).
 
 .DESCRIPTION
-  Equivalent of ./start.sh for Windows — production/headless mode.
-  1. Builds the Vite UI bundle (pnpm build) — skipped with -SkipBuild.
+  Equivalent of ./start.sh for Windows  -  production/headless mode.
+  1. Builds the Vite UI bundle (pnpm build)  -  skipped with -SkipBuild.
   2. Starts the FastAPI backend, which serves BOTH the API (/api/*) and the
      built UI (/orivellum-ui/*) from a single process.
   No Vite dev server is launched. After boot, open:
-    http://<host>:<ApiPort>/orivellum-ui/   in Safari → Add to Home Screen.
+    http://<host>:<ApiPort>/orivellum-ui/   in Safari -> Add to Home Screen.
 
 .PARAMETER SkipBuild
   Skip the UI build step (use existing dist/public). Useful for fast restarts
@@ -48,7 +48,7 @@ $env:PATH    = "$userPath;$machinePath"
 
 Write-Host ""
 Write-Host "---------------------------------------" -ForegroundColor $Cyan
-Write-Host "  Orivellum — starting (production)" -ForegroundColor $Cyan
+Write-Host "  Orivellum  -  starting (production)" -ForegroundColor $Cyan
 Write-Host "---------------------------------------" -ForegroundColor $Cyan
 Write-Host ""
 
@@ -151,7 +151,7 @@ if ($SkipBuild -and (Test-Path $uiDist)) {
 }
 
 # ---- Lemonade Server (AMD Ryzen AI Max+ 395) --------------------------------
-# Lemonade Server manages NPU / iGPU acceleration automatically — no manual
+# Lemonade Server manages NPU / iGPU acceleration automatically  -  no manual
 # ROCm / HSA environment variables are needed.  Just ensure Lemonade is running
 # before starting Orivellum; it starts automatically on login after install.
 #
@@ -210,7 +210,7 @@ if ($Mobile) {
 
 Write-Host ""
 Write-Host "  App  -> http://localhost:$ApiPort/orivellum-ui/" -ForegroundColor White
-Write-Host "         Open in Safari on your iPhone and tap Share → Add to Home Screen" -ForegroundColor $Gray
+Write-Host "         Open in Safari on your iPhone and tap Share -> Add to Home Screen" -ForegroundColor $Gray
 Write-Host "  API  -> http://localhost:$ApiPort/api/" -ForegroundColor White
 if ($Mobile) { Write-Host "  Expo -> http://localhost:19000" -ForegroundColor White }
 Write-Host ""
@@ -218,7 +218,7 @@ Write-Host "  Use -SkipBuild to restart without rebuilding the UI." -ForegroundC
 Write-Host "  Press Ctrl+C to stop all services." -ForegroundColor $Gray
 Write-Host "---------------------------------------" -ForegroundColor $Cyan
 
-# ---- Keep alive — monitor API process only ---------------------------------
+# ---- Keep alive  -  monitor API process only ---------------------------------
 try {
   while ($true) {
     if ($apiProc.HasExited) {
