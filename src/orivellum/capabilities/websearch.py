@@ -307,6 +307,31 @@ def _rank_passages(
             )
 
     all_passages.sort(key=lambda p: p.score, reverse=True)
+
+    # Optional cross-encoder pass: jointly score (query, passage) pairs for
+    # the top BM25 passages via the local reranker model.  No-op when the
+    # reranker is unconfigured, disabled, or unavailable (circuit breaker).
+    try:
+        from orivellum.capabilities.rerank import (
+            cross_encoder_scores as _ce,
+            cross_reranker_enabled as _ce_enabled,
+        )
+        _ce_on = True
+        try:
+            from orivellum.api._deps import get_db as _gdb
+            _ce_on = _ce_enabled(_gdb())
+        except Exception:
+            pass
+        _win = min(len(all_passages), 24)
+        if _ce_on and _win > 1:
+            _scores = _ce(query, [p.text for p in all_passages[:_win]])
+            if _scores is not None:
+                _head = sorted(zip(all_passages[:_win], _scores),
+                               key=lambda t: t[1], reverse=True)
+                all_passages = [p for p, _ in _head] + all_passages[_win:]
+    except Exception:  # never let re-ranking break web search
+        pass
+
     per_source: dict[str, int] = defaultdict(int)
     ranked: list[_Passage] = []
     for passage in all_passages:

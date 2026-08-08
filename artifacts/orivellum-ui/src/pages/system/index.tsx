@@ -3,7 +3,7 @@ import { apiFetch } from "@/lib/auth";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
-import { Activity, Database, Cpu, CheckCircle2, XCircle, AlertCircle, AlertTriangle, Terminal, Sparkles, Moon, Brain, Trash2, ScrollText, User, Settings, Image as ImageIcon, Eye, Loader2, FileSearch, ClipboardCopy, ChevronDown, ChevronRight, Zap, Download, RotateCcw, FolderOpen, FolderPlus, Plus, X, GitMerge, Archive, Save, Mic2, Network, Server, Plug, ExternalLink } from "lucide-react";
+import { Activity, Database, Cpu, CheckCircle2, XCircle, AlertCircle, AlertTriangle, Terminal, Sparkles, Moon, Brain, Trash2, ScrollText, User, Settings, Image as ImageIcon, Eye, Loader2, FileSearch, ClipboardCopy, ChevronDown, ChevronRight, Zap, Download, RotateCcw, FolderOpen, FolderPlus, Plus, X, GitMerge, Archive, Save, Mic2, Network, Server, Plug, ExternalLink, ListOrdered } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -1450,6 +1450,146 @@ function AudioEnhancementCard() {
   );
 }
 
+// ─── Cross-encoder Reranker card ──────────────────────────────────────────────
+
+type RerankerStatus = {
+  enabled: boolean;
+  model: string;
+  configured: boolean;
+  circuit_open: boolean;
+  retry_in_sec: number;
+  pull_hint: string | null;
+};
+
+function useRerankerSetting() {
+  return useQuery({
+    queryKey: ["system", "reranker"],
+    queryFn: async () => {
+      const r = await apiFetch(`${API_BASE}/api/system/settings/reranker`);
+      if (!r.ok) throw new Error("Failed to fetch reranker setting");
+      return r.json() as Promise<RerankerStatus>;
+    },
+    staleTime: 30_000,
+  });
+}
+
+function useSetRerankerSetting() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (enabled: boolean) => {
+      const r = await apiFetch(`${API_BASE}/api/system/settings/reranker`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled }),
+      });
+      if (!r.ok) throw new Error("Failed to update reranker setting");
+      return r.json();
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["system", "reranker"] });
+      toast.success("Reranker setting saved");
+    },
+    onError: () => toast.error("Could not update reranker setting"),
+  });
+}
+
+function RerankerCard() {
+  const { data, isLoading, refetch } = useRerankerSetting();
+  const setReranker = useSetRerankerSetting();
+  const [probing, setProbing] = useState(false);
+  const [probeResult, setProbeResult] = useState<{ ok: boolean; detail?: string; sane_ordering?: boolean } | null>(null);
+
+  async function probe() {
+    setProbing(true);
+    setProbeResult(null);
+    try {
+      const r = await apiFetch(`${API_BASE}/api/system/reranker/probe`, { method: "POST" });
+      const json = await r.json() as { ok: boolean; detail?: string; sane_ordering?: boolean };
+      setProbeResult(json);
+      if (json.ok) refetch();
+    } catch {
+      setProbeResult({ ok: false, detail: "Probe request failed — check server logs." });
+    } finally {
+      setProbing(false);
+    }
+  }
+
+  return (
+    <Card className="vellum-card">
+      <CardContent className="p-6">
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex items-start gap-3">
+            <ListOrdered className="w-5 h-5 mt-0.5 shrink-0" style={{ color: 'var(--green-raw)' }} />
+            <div className="space-y-1">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="font-medium text-sm">Search Reranker (Cross-Encoder)</h3>
+                {data && data.configured && (
+                  <Badge
+                    variant={data.circuit_open ? "secondary" : "default"}
+                    className="text-[10px] h-4 px-1.5"
+                  >
+                    {data.circuit_open ? `unreachable — retry in ${data.retry_in_sec}s` : "ready"}
+                  </Badge>
+                )}
+              </div>
+              <p className="text-sm text-muted-foreground max-w-xl">
+                Second-pass scoring that reads your query and each retrieved passage{" "}
+                <span className="font-medium text-foreground">together</span>, improving which
+                passages reach chat context, knowledge search, and web-search results
+                (+5–10% retrieval precision). Falls back silently to standard ranking
+                when the model isn't available.
+              </p>
+              {data?.configured && (
+                <p className="text-xs text-muted-foreground font-mono mt-1">
+                  Model: <span className="text-foreground">{data.model}</span>
+                </p>
+              )}
+              {data?.configured && data.pull_hint && (
+                <p className="text-xs mt-1 text-muted-foreground">
+                  Not pulled yet? Run:{" "}
+                  <code className="font-mono bg-muted px-1 rounded text-[11px]">{data.pull_hint}</code>
+                </p>
+              )}
+              {data && !data.configured && (
+                <p className="text-xs mt-1" style={{ color: 'var(--gilt)' }}>
+                  No reranker model configured — set <code className="font-mono">serving.reranker_model</code> in config.yaml.
+                </p>
+              )}
+              {probeResult && (
+                <p className="text-xs mt-1" style={{ color: probeResult.ok ? 'var(--green-2)' : 'var(--gilt)' }}>
+                  {probeResult.ok
+                    ? `Reranker working${probeResult.sane_ordering === false ? " (unexpected score ordering — check the model)" : " — scores look correct."}`
+                    : probeResult.detail}
+                </p>
+              )}
+            </div>
+          </div>
+          <div className="shrink-0 pt-0.5 flex flex-col items-end gap-2">
+            {isLoading ? (
+              <Skeleton className="h-6 w-11 rounded-full" />
+            ) : (
+              <Switch
+                checked={data?.enabled ?? false}
+                onCheckedChange={(checked) => setReranker.mutate(checked)}
+                disabled={setReranker.isPending || !data?.configured}
+                aria-label="Enable cross-encoder reranking"
+              />
+            )}
+            <Button
+              size="sm" variant="outline" className="text-xs gap-1.5 shrink-0"
+              onClick={probe} disabled={probing || !data?.configured}
+            >
+              {probing
+                ? <><Loader2 className="w-3 h-3 animate-spin" />Testing…</>
+                : <><ListOrdered className="w-3 h-3" />Test Reranker</>}
+            </Button>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 // ─── AI Extraction toggle ─────────────────────────────────────────────────────
 
 function useAiExtractionSetting() {
@@ -2266,6 +2406,9 @@ export default function System() {
 
       {/* Semantic / Embedding Search */}
       <SemanticSearchCard />
+
+      {/* Cross-encoder Search Reranker */}
+      <RerankerCard />
 
       {/* Vision Model Setting */}
       <VisionModelCard />

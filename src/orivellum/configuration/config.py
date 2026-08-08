@@ -81,9 +81,11 @@ class ServingConfig:
 
     # ── Reranker ──────────────────────────────────────────────────────────────
     # Leave empty to use RRF (reciprocal-rank fusion) only.
-    # Set to "BAAI/bge-reranker-v2-m3" or "Qwen3-Reranker-8B" when a reranker
-    # endpoint is available — a reranker typically gives +5–10% precision on RAG.
-    reranker_model: str = ""
+    # Cross-encoder reranker served by Lemonade's /rerank endpoint.
+    # Pull first: lemonade pull bge-reranker-v2-m3-GGUF  (~0.6 GB).
+    # A circuit breaker keeps search fast when the model isn't pulled, so a
+    # non-empty default is safe.  Set to "" to disable entirely.
+    reranker_model: str = "bge-reranker-v2-m3-GGUF"
 
     # ── Timeouts ──────────────────────────────────────────────────────────────
     timeout_sec: int = 120

@@ -102,10 +102,13 @@ serving:
   tts_premium_ack_license: false
 
   # ── Reranker ──────────────────────────────────────────────────────────────────
-  # Leave empty → RRF (reciprocal-rank fusion) only.
-  # A reranker typically gives +5–10% RAG precision at low extra latency.
-  # Optional: lemonade pull bge-reranker-v2-m3-GGUF  then set it here.
-  reranker_model: ""
+  # Cross-encoder second-pass scoring for knowledge search, chat context
+  # selection, and web-search passages (+5-10% retrieval precision).
+  # Pull first:  lemonade pull bge-reranker-v2-m3-GGUF   (~0.6 GB)
+  # Safe to leave set even before pulling — a circuit breaker skips it
+  # silently when unavailable.  Set to "" to disable entirely, or toggle
+  # at runtime from System Settings.
+  reranker_model: "bge-reranker-v2-m3-GGUF"
 
   # ── Context window ───────────────────────────────────────────────────────────
   # All current models support ≥128 K tokens.  The Ryzen AI Max+ 395 iGPU

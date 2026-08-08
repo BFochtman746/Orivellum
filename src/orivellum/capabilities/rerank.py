@@ -1,6 +1,6 @@
 """Cross-encoder re-ranking for RAG retrieval.
 
-Two-stage pipeline applied after the initial hybrid (BM25 + semantic) retrieval:
+Staged pipeline applied after the initial hybrid (BM25 + semantic) retrieval:
 
   1. **BM25 re-ranker** (always active, pure Python, zero new deps):
      Scores each candidate against the user query using BM25 over the local
@@ -8,22 +8,33 @@ Two-stage pipeline applied after the initial hybrid (BM25 + semantic) retrieval:
      Adds ``rerank_score`` to each hit dict and returns candidates
      sorted descending.  Typical latency: < 1 ms for 20 candidates.
 
-  2. **LLM listwise re-ranker** (optional, gated by ``ai_reranking_enabled``):
-     Sends the top-10 BM25 candidates to ``llm_call()`` with a listwise
-     ranking prompt and re-orders them by the model's output ranking.
-     The final list is produced by RRF over BM25 and LLM ranks so a
-     consensus ordering wins.  Bounded by an 8-second timeout; any failure
-     falls back silently to BM25 ranking.
+  2a. **Cross-encoder re-ranker** (preferred, when ``serving.reranker_model``
+     is configured, e.g. ``bge-reranker-v2-m3-GGUF``):
+     Sends the top-30 BM25 candidates to the Lemonade ``/rerank`` endpoint,
+     which scores each (query, passage) pair jointly.  Fused with BM25 via
+     RRF.  Protected by a circuit breaker (mirroring the embeddings client):
+     a failed call opens a cooldown during which no network attempt is made,
+     so search stays fast when the model isn't pulled or the server is down.
+     Gated by the ``cross_reranker_enabled`` DB setting (default on).
 
-Both stages are pure re-orderers — they never drop candidates — so the
+  2b. **LLM listwise re-ranker** (fallback, gated by ``ai_reranking_enabled``):
+     Only used when the cross-encoder produced nothing.  Sends the top-10
+     BM25 candidates to ``llm_call()`` with a listwise ranking prompt.
+     Bounded by an 8-second timeout; any failure falls back to BM25.
+
+All stages are pure re-orderers — they never drop candidates — so the
 caller's token-budget logic still controls the final count injected into
 the prompt.  Original dicts are never mutated; fresh copies are returned.
 """
 from __future__ import annotations
 
+import json
 import logging
 import math
 import re
+import threading
+import time
+import urllib.request
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -41,6 +52,156 @@ _LLM_TOP_K: int = 10
 
 # Standard RRF constant used when fusing BM25 and LLM rankings.
 _RRF_K: int = 60
+
+# ── Cross-encoder (Lemonade /rerank) settings ────────────────────────────────
+# Number of top BM25 candidates sent to the cross-encoder.  Cross-encoders are
+# cheap per pair (~10 ms each on Strix Halo for bge-reranker-v2-m3), so the
+# window can be larger than the LLM listwise one.
+_CE_TOP_K: int = 30
+# Per-document character cap — keeps request size bounded; bge-reranker-v2-m3
+# has an 8K-token window, so 1 500 chars per passage is comfortably inside it.
+_CE_MAX_DOC_LEN: int = 1500
+_CE_TIMEOUT: float = 6.0
+# Failed calls open a cooldown during which no network attempt is made
+# (same pattern as capabilities/embeddings.py).
+_CE_FAIL_COOLDOWN: float = 300.0
+_ce_unavailable_until: float = 0.0
+# Concurrency guard: until the endpoint has proven healthy at least once,
+# only a single "prober" request may attempt the network call at a time —
+# concurrent requests fall back to BM25 immediately.  This prevents a
+# thundering herd of 6-second blocking calls saturating the FastAPI
+# threadpool when the model isn't pulled.  After a success, concurrent
+# calls are allowed; any failure flips back to probe mode.
+_ce_lock = threading.Lock()
+_ce_healthy: bool = False
+_ce_inflight: bool = False
+
+
+def cross_reranker_enabled(db: Any) -> bool:
+    """Normalized read of the ``cross_reranker_enabled`` DB setting.
+
+    ``db`` may be ``None`` (test contexts) — treated as enabled since the
+    config-level ``reranker_model`` gate still applies.
+    """
+    if db is None:
+        return True
+    try:
+        return db.get_setting("cross_reranker_enabled", "true").strip().lower() == "true"
+    except Exception:
+        return True
+
+
+def _serving_reranker() -> tuple[str, str]:
+    """Return (base_url, reranker_model) from live config."""
+    from orivellum.api._deps import get_config
+    cfg = get_config()
+    return (cfg.serving.base_url.rstrip("/"),
+            (getattr(cfg.serving, "reranker_model", "") or "").strip())
+
+
+def cross_encoder_status() -> dict:
+    """Breaker + config state for the reranker (no network call).
+
+    Mirrors the embeddings status endpoint shape so the System page can show
+    both cards consistently.
+    """
+    _, model = _serving_reranker()
+    now = time.monotonic()
+    open_ = now < _ce_unavailable_until
+    return {
+        "model": model,
+        "configured": bool(model),
+        "circuit_open": open_,
+        "retry_in_sec": max(0, round(_ce_unavailable_until - now)) if open_ else 0,
+    }
+
+
+def reset_cross_encoder_breaker() -> None:
+    """Close the circuit breaker (used by the probe endpoint)."""
+    global _ce_unavailable_until
+    _ce_unavailable_until = 0.0
+
+
+def cross_encoder_scores(
+    query: str,
+    texts: list[str],
+    *,
+    timeout: float = _CE_TIMEOUT,
+) -> list[float] | None:
+    """Score each text against *query* via the Lemonade ``/rerank`` endpoint.
+
+    Returns a list of relevance scores aligned with *texts* (higher = more
+    relevant), or ``None`` when the reranker is unconfigured, cooling down,
+    or the call fails.  A failed call opens the cooldown; success closes it.
+    """
+    global _ce_unavailable_until, _ce_healthy, _ce_inflight
+    if not texts or not query.strip():
+        return None
+    base_url, model = _serving_reranker()
+    if not model:
+        return None
+
+    # Admission control (atomic): honour the cooldown, and while the endpoint
+    # is unproven allow only one in-flight prober — concurrent callers fall
+    # back to BM25 immediately instead of stacking blocking network calls.
+    with _ce_lock:
+        if time.monotonic() < _ce_unavailable_until:
+            return None
+        if not _ce_healthy and _ce_inflight:
+            return None
+        _ce_inflight = True
+
+    payload = json.dumps({
+        "model": model,
+        "query": query[:2000],
+        "documents": [t[:_CE_MAX_DOC_LEN] for t in texts],
+    }).encode()
+    req = urllib.request.Request(
+        f"{base_url}/rerank", data=payload,
+        headers={"Content-Type": "application/json"}, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read())
+        results = data.get("results") or []
+        # Strict validation: exactly one finite numeric score per document,
+        # no duplicate or out-of-range indices.  Anything else is treated as
+        # a failure and opens the cooldown — a malformed endpoint is as
+        # unusable as a down one.
+        scores: list[float] = [0.0] * len(texts)
+        seen_idx: set[int] = set()
+        valid = True
+        for r in results:
+            idx = r.get("index")
+            score = r.get("relevance_score")
+            if (not isinstance(idx, int) or idx in seen_idx
+                    or not (0 <= idx < len(texts))
+                    or not isinstance(score, (int, float))
+                    or not math.isfinite(float(score))):
+                valid = False
+                break
+            scores[idx] = float(score)
+            seen_idx.add(idx)
+        if not valid or len(seen_idx) != len(texts):
+            logger.warning("Reranker response malformed (%d/%d valid scores)",
+                           len(seen_idx), len(texts))
+            with _ce_lock:
+                _ce_unavailable_until = time.monotonic() + _CE_FAIL_COOLDOWN
+                _ce_healthy = False
+            return None
+        with _ce_lock:
+            _ce_unavailable_until = 0.0
+            _ce_healthy = True
+        return scores
+    except Exception as exc:
+        with _ce_lock:
+            _ce_unavailable_until = time.monotonic() + _CE_FAIL_COOLDOWN
+            _ce_healthy = False
+        logger.debug("Reranker unavailable (cooldown %.0fs): %s",
+                     _CE_FAIL_COOLDOWN, exc)
+        return None
+    finally:
+        with _ce_lock:
+            _ce_inflight = False
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -264,50 +425,77 @@ def rerank_candidates(
         # ── Stage 1: BM25 (always) ────────────────────────────────────────
         bm25_ranked = bm25_rerank(query, tagged, text_field=text_field)
 
-        # ── Stage 2: LLM listwise (feature-flagged) ───────────────────────
-        llm_indices: list[int] | None = None
-        if db is not None:
+        # ── Stage 2: model-based re-rank ──────────────────────────────────
+        # ``model_indices`` is an ordering (most-relevant first) of positions
+        # into the top-``window`` BM25 candidates, produced by either the
+        # cross-encoder (2a, preferred) or the LLM listwise ranker (2b).
+        model_indices: list[int] | None = None
+        window = 0
+
+        # 2a. Cross-encoder via Lemonade /rerank.  Gated by the
+        #     cross_reranker_enabled setting (default on) and a configured
+        #     serving.reranker_model; the circuit breaker inside
+        #     cross_encoder_scores keeps failures cheap.
+        try:
+            if cross_reranker_enabled(db):
+                _win = min(len(bm25_ranked), _CE_TOP_K)
+                _texts = [str(c.get(text_field) or "")[:_CE_MAX_DOC_LEN]
+                          for c in bm25_ranked[:_win]]
+                _scores = cross_encoder_scores(query, _texts)
+                if _scores is not None:
+                    model_indices = sorted(range(_win),
+                                           key=lambda i: _scores[i], reverse=True)
+                    window = _win
+        except Exception as _ce_exc:
+            logger.debug("Cross-encoder re-rank skipped (non-fatal): %s", _ce_exc)
+
+        # 2b. LLM listwise fallback (feature-flagged) — only when the
+        #     cross-encoder produced nothing.
+        if model_indices is None and db is not None:
             try:
                 if db.get_setting("ai_reranking_enabled", "false") == "true":
                     from orivellum.configuration.config import load_config as _lc
                     cfg = _lc()
                     # Only pass the top-_LLM_TOP_K BM25 candidates to the LLM
                     # to keep the prompt compact and latency bounded.
-                    llm_indices = _llm_rerank(
+                    llm = _llm_rerank(
                         query,
                         bm25_ranked[:_LLM_TOP_K],
                         db,
                         cfg,
                         text_field=text_field,
                     )
+                    if llm is not None:
+                        model_indices = llm
+                        window = min(len(bm25_ranked), _LLM_TOP_K)
             except Exception as _llm_exc:
                 logger.debug("LLM re-rank skipped (non-fatal): %s", _llm_exc)
 
-        if llm_indices is not None:
+        if model_indices is not None:
             # Build lookup: original_idx → BM25 rank position
             bm25_rank_by_orig: dict[int, int] = {
                 c["_rerank_idx"]: rank for rank, c in enumerate(bm25_ranked)
             }
 
-            # Build lookup: original_idx → LLM rank position.
-            # Candidates outside the top-_LLM_TOP_K window get a large LLM
-            # rank equal to len(bm25_ranked) so they are naturally penalised.
+            # Build lookup: original_idx → model rank position.
+            # Candidates outside the top-``window`` get a large rank equal to
+            # len(bm25_ranked) so they are naturally penalised.
             _outside_rank = len(bm25_ranked)
-            top_orig_indices = [c["_rerank_idx"] for c in bm25_ranked[:_LLM_TOP_K]]
-            llm_rank_by_orig: dict[int, int] = {}
-            for llm_pos, list_pos in enumerate(llm_indices):
+            top_orig_indices = [c["_rerank_idx"] for c in bm25_ranked[:window]]
+            model_rank_by_orig: dict[int, int] = {}
+            for model_pos, list_pos in enumerate(model_indices):
                 if list_pos < len(top_orig_indices):
-                    llm_rank_by_orig[top_orig_indices[list_pos]] = llm_pos
-            # Fill in candidates not covered by the LLM window
+                    model_rank_by_orig[top_orig_indices[list_pos]] = model_pos
+            # Fill in candidates not covered by the model window
             for c in bm25_ranked:
                 orig = c["_rerank_idx"]
-                if orig not in llm_rank_by_orig:
-                    llm_rank_by_orig[orig] = _outside_rank
+                if orig not in model_rank_by_orig:
+                    model_rank_by_orig[orig] = _outside_rank
 
             def _rrf_score(orig_idx: int) -> float:
                 b = bm25_rank_by_orig.get(orig_idx, _outside_rank)
-                lv = llm_rank_by_orig.get(orig_idx, _outside_rank)
-                return 1.0 / (_RRF_K + b + 1) + 1.0 / (_RRF_K + lv + 1)
+                mv = model_rank_by_orig.get(orig_idx, _outside_rank)
+                return 1.0 / (_RRF_K + b + 1) + 1.0 / (_RRF_K + mv + 1)
 
             result = sorted(bm25_ranked, key=lambda c: _rrf_score(c["_rerank_idx"]),
                             reverse=True)

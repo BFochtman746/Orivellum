@@ -51,7 +51,9 @@ lemonade pull Qwen3-Embedding-8B-GGUF
 # OPTIONAL: fast low-power NPU model for quick Q&A while the iGPU is busy
 lemonade pull gpt-oss-20b-NPU
 
-# OPTIONAL: reranker for higher search precision (~0.6 GB)
+# RECOMMENDED: reranker for higher search precision (~0.6 GB).
+# Wired into Orivellum search, chat context, and web search — activates
+# automatically once pulled (toggle on the System page).
 lemonade pull bge-reranker-v2-m3-GGUF
 ```
 
@@ -88,7 +90,7 @@ Open **http://localhost:8080/orivellum-ui/** in your browser.
 | `Qwen3-Coder-30B-A3B-Instruct-GGUF` | ~19 GB | ~50–70 tok/s | iGPU | Code generation, 256 K context |
 | `Qwen3-Embedding-8B-GGUF` | ~8 GB | instant | iGPU/CPU | Semantic search embeddings (SOTA) |
 | `gpt-oss-20b-NPU` | ~13 GB | fast, low power | **NPU (XDNA2)** | Optional: quick Q&A while iGPU is busy |
-| `bge-reranker-v2-m3-GGUF` | ~0.6 GB | instant | CPU | Optional: +5–10 % search precision |
+| `bge-reranker-v2-m3-GGUF` | ~0.6 GB | instant | CPU | Recommended: +5–10 % search precision, auto-used once pulled |
 
 For comparison, the previously recommended `llama3.3-70b` (dense) ran at only ~4–5 tok/s
 on this hardware — and it has since been removed from the Lemonade catalog entirely.

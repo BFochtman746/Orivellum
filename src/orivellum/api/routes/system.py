@@ -753,6 +753,60 @@ class AiRerankingUpdate(BaseModel):
     enabled: bool
 
 
+@router.get("/system/settings/reranker")
+def get_reranker_setting():
+    """Cross-encoder reranker state: toggle, configured model, breaker status."""
+    from orivellum.capabilities.rerank import cross_encoder_status
+    db = get_db()
+    enabled = db.get_setting("cross_reranker_enabled", "true").lower() == "true"
+    st = cross_encoder_status()
+    return {
+        "enabled": enabled,
+        "model": st["model"],
+        "configured": st["configured"],
+        "circuit_open": st["circuit_open"],
+        "retry_in_sec": st["retry_in_sec"],
+        "pull_hint": (f"lemonade pull {st['model']}" if st["configured"] else None),
+    }
+
+
+class RerankerUpdate(BaseModel):
+    enabled: bool
+
+
+@router.put("/system/settings/reranker")
+def set_reranker_setting(body: RerankerUpdate):
+    """Enable or disable cross-encoder re-ranking of search results and chat context."""
+    db = get_db()
+    db.set_setting("cross_reranker_enabled", "true" if body.enabled else "false", actor="user")
+    return {"enabled": body.enabled, "ok": True}
+
+
+@router.post("/system/reranker/probe")
+def probe_reranker():
+    """Live-test the reranker endpoint; closes the circuit breaker on success."""
+    from orivellum.capabilities.rerank import (
+        cross_encoder_scores, cross_encoder_status, reset_cross_encoder_breaker,
+    )
+    st = cross_encoder_status()
+    if not st["configured"]:
+        return {"ok": False, "detail": "No reranker model configured (serving.reranker_model)"}
+    reset_cross_encoder_breaker()
+    scores = cross_encoder_scores(
+        "What is the capital of France?",
+        ["Paris is the capital of France.", "Bananas are yellow."],
+        timeout=8.0,
+    )
+    if scores is None:
+        return {
+            "ok": False,
+            "detail": (f"Reranker call failed — is the model pulled? "
+                       f"Try: lemonade pull {st['model']}"),
+        }
+    ordered_ok = scores[0] > scores[1]
+    return {"ok": True, "model": st["model"], "sane_ordering": ordered_ok}
+
+
 @router.put("/system/settings/ai-reranking")
 def set_ai_reranking_setting(body: AiRerankingUpdate):
     """Enable or disable LLM-powered re-ranking of retrieved passages before chat injection."""
