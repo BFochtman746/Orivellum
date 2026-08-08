@@ -1295,7 +1295,9 @@ function CompletenessTab({
   const T = useVellumTokens();
   const insets = useSafeAreaInsets();
   const domain = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
+  const queryClient = useQueryClient();
 
+  // ── Completeness data (manual fetch + poll) ───────────────────────────────
   const [data, setData] = useState<ComplReport | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
@@ -1323,6 +1325,55 @@ function CompletenessTab({
     const iv = setInterval(fetchCompleteness, 10_000);
     return () => clearInterval(iv);
   }, [pipelineActive, fetchCompleteness]);
+
+  // ── Work data — for reading / writing completeness_targets ────────────────
+  const { data: workResp } = useGetWork(workId as string);
+  const { mutate: updateWork } = useUpdateWork();
+
+  const currentMeta = (workResp?.work as any)?.meta ?? {};
+  const savedTargets = (currentMeta?.completeness_targets ?? {}) as {
+    word_target?: number;
+    chapter_target?: number;
+  };
+
+  // ── Target editor state ───────────────────────────────────────────────────
+  const [editingTargets, setEditingTargets] = useState(false);
+  const [wordInput, setWordInput]           = useState('');
+  const [chapterInput, setChapterInput]     = useState('');
+  const [savingTargets, setSavingTargets]   = useState(false);
+
+  const openTargetEditor = () => {
+    setWordInput(String(savedTargets.word_target ?? 50000));
+    setChapterInput(String(savedTargets.chapter_target ?? 10));
+    setEditingTargets(true);
+  };
+
+  const saveTargets = () => {
+    const wt = parseInt(wordInput, 10);
+    const ct = parseInt(chapterInput, 10);
+    if (!wt || !ct || wt < 1 || ct < 1) {
+      Alert.alert('Invalid targets', 'Word and chapter targets must be positive numbers.');
+      return;
+    }
+    setSavingTargets(true);
+    const mergedMeta = { ...currentMeta, completeness_targets: { word_target: wt, chapter_target: ct } };
+    updateWork(
+      { workId: workId as string, data: { meta: mergedMeta } as any },
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: getGetWorkQueryKey(workId as string) });
+          // Re-fetch completeness so bars recompute with the new targets
+          fetchCompleteness();
+          setEditingTargets(false);
+          setSavingTargets(false);
+        },
+        onError: () => {
+          Alert.alert('Error', 'Could not save targets. Please try again.');
+          setSavingTargets(false);
+        },
+      },
+    );
+  };
 
   if (loading) {
     return (
@@ -1361,6 +1412,7 @@ function CompletenessTab({
         <RefreshControl refreshing={false} onRefresh={fetchCompleteness} tintColor={colors.primary} />
       }
       showsVerticalScrollIndicator={false}
+      keyboardShouldPersistTaps="handled"
     >
       {/* ── Overall readiness banner ────────────────────────────────────────── */}
       <View style={[{
@@ -1398,6 +1450,139 @@ function CompletenessTab({
             borderRadius: 4,
           }} />
         </View>
+      </View>
+
+      {/* ── Completeness targets card ───────────────────────────────────────── */}
+      <View style={{ backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border,
+                     borderRadius: 10, padding: 14, marginBottom: 14 }}>
+        {/* Header row */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: editingTargets ? 12 : 0 }}>
+          <View style={{ flex: 1 }}>
+            <Text style={{ fontSize: 10, fontFamily: 'Inter_700Bold', color: colors.mutedForeground,
+                           textTransform: 'uppercase', letterSpacing: 0.8 }}>
+              Completeness targets
+            </Text>
+            {!editingTargets && (
+              <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: colors.mutedForeground, marginTop: 2 }}>
+                {savedTargets.word_target
+                  ? `${Number(savedTargets.word_target).toLocaleString()} words · ${savedTargets.chapter_target ?? 10} chapters`
+                  : 'Defaults: 50,000 words · 10 chapters'}
+              </Text>
+            )}
+          </View>
+          {!editingTargets && (
+            <Pressable
+              onPress={openTargetEditor}
+              hitSlop={8}
+              style={{ flexDirection: 'row', alignItems: 'center', gap: 4,
+                       paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8,
+                       backgroundColor: colors.muted }}
+              accessibilityRole="button"
+              accessibilityLabel="Edit completeness targets"
+            >
+              <Feather name="edit-2" size={12} color={colors.mutedForeground} />
+              <Text style={{ fontSize: 12, fontFamily: 'Inter_500Medium', color: colors.mutedForeground }}>
+                Edit targets
+              </Text>
+            </Pressable>
+          )}
+        </View>
+
+        {/* Inline editor — revealed when editingTargets */}
+        {editingTargets && (
+          <View style={{ gap: 12 }}>
+            {/* Word target */}
+            <View>
+              <Text style={{ fontSize: 11, fontFamily: 'Inter_500Medium', color: colors.mutedForeground, marginBottom: 4 }}>
+                Word target
+              </Text>
+              <TextInput
+                value={wordInput}
+                onChangeText={setWordInput}
+                keyboardType="number-pad"
+                returnKeyType="next"
+                placeholder="50000"
+                placeholderTextColor={colors.mutedForeground + '88'}
+                style={{
+                  height: 44,
+                  paddingHorizontal: 12,
+                  borderRadius: 8,
+                  borderWidth: 1,
+                  borderColor: colors.primary + '60',
+                  backgroundColor: colors.background,
+                  color: colors.foreground,
+                  fontFamily: 'Inter_400Regular',
+                  fontSize: 15,
+                }}
+              />
+            </View>
+
+            {/* Chapter target */}
+            <View>
+              <Text style={{ fontSize: 11, fontFamily: 'Inter_500Medium', color: colors.mutedForeground, marginBottom: 4 }}>
+                Chapter target
+              </Text>
+              <TextInput
+                value={chapterInput}
+                onChangeText={setChapterInput}
+                keyboardType="number-pad"
+                returnKeyType="done"
+                onSubmitEditing={saveTargets}
+                placeholder="10"
+                placeholderTextColor={colors.mutedForeground + '88'}
+                style={{
+                  height: 44,
+                  paddingHorizontal: 12,
+                  borderRadius: 8,
+                  borderWidth: 1,
+                  borderColor: colors.primary + '60',
+                  backgroundColor: colors.background,
+                  color: colors.foreground,
+                  fontFamily: 'Inter_400Regular',
+                  fontSize: 15,
+                }}
+              />
+            </View>
+
+            {/* Save / Cancel */}
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              <Pressable
+                onPress={saveTargets}
+                disabled={savingTargets}
+                style={({ pressed }) => ({
+                  flex: 1, height: 44, borderRadius: 8, alignItems: 'center',
+                  justifyContent: 'center', flexDirection: 'row', gap: 6,
+                  backgroundColor: colors.primary,
+                  opacity: savingTargets || pressed ? 0.65 : 1,
+                })}
+                accessibilityRole="button"
+                accessibilityLabel="Save targets"
+              >
+                {savingTargets
+                  ? <ActivityIndicator size="small" color="#fff" />
+                  : <>
+                      <Feather name="check" size={14} color="#fff" />
+                      <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 13, color: '#fff' }}>Save</Text>
+                    </>}
+              </Pressable>
+              <Pressable
+                onPress={() => setEditingTargets(false)}
+                disabled={savingTargets}
+                style={({ pressed }) => ({
+                  flex: 1, height: 44, borderRadius: 8, alignItems: 'center',
+                  justifyContent: 'center', flexDirection: 'row', gap: 6,
+                  borderWidth: 1, borderColor: colors.border,
+                  opacity: savingTargets || pressed ? 0.65 : 1,
+                })}
+                accessibilityRole="button"
+                accessibilityLabel="Cancel editing"
+              >
+                <Feather name="x" size={14} color={colors.mutedForeground} />
+                <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 13, color: colors.mutedForeground }}>Cancel</Text>
+              </Pressable>
+            </View>
+          </View>
+        )}
       </View>
 
       {/* ── Content (words) and structure (chapters) progress bars ─────────── */}
