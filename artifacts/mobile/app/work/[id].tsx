@@ -1342,6 +1342,16 @@ function CompletenessTab({
   const [chapterInput, setChapterInput]     = useState('');
   const [savingTargets, setSavingTargets]   = useState(false);
 
+  /** Returns true when a string is a positive integer (no decimals, no letters). */
+  const isValidTarget = (v: string) => /^\d+$/.test(v.trim()) && parseInt(v.trim(), 10) >= 1;
+
+  // Real-time validation — derived from current input values so the UI reacts
+  // on every keystroke. Fields open pre-populated with valid values, so there
+  // is no error flash on open.
+  const wordError    = !isValidTarget(wordInput);
+  const chapterError = !isValidTarget(chapterInput);
+  const canSave      = !wordError && !chapterError;
+
   const openTargetEditor = () => {
     setWordInput(String(savedTargets.word_target ?? 50000));
     setChapterInput(String(savedTargets.chapter_target ?? 10));
@@ -1349,12 +1359,13 @@ function CompletenessTab({
   };
 
   const saveTargets = () => {
-    const wt = parseInt(wordInput, 10);
-    const ct = parseInt(chapterInput, 10);
-    if (!wt || !ct || wt < 1 || ct < 1) {
-      Alert.alert('Invalid targets', 'Word and chapter targets must be positive numbers.');
-      return;
-    }
+    // Validate the actual current input on every save path (button tap and
+    // keyboard submit). No fallback — invalid or empty values must block saving
+    // consistently so the inline error messages are never contradicted by a
+    // silent save.
+    if (!isValidTarget(wordInput) || !isValidTarget(chapterInput)) return;
+    const wt = parseInt(wordInput.trim(), 10);
+    const ct = parseInt(chapterInput.trim(), 10);
     setSavingTargets(true);
     const mergedMeta = { ...currentMeta, completeness_targets: { word_target: wt, chapter_target: ct } };
     updateWork(
@@ -1508,13 +1519,21 @@ function CompletenessTab({
                   paddingHorizontal: 12,
                   borderRadius: 8,
                   borderWidth: 1,
-                  borderColor: colors.primary + '60',
-                  backgroundColor: colors.background,
+                  // Red border when the value is invalid so the error is visible
+                  // at a glance without the user needing to tap Save first.
+                  borderColor: wordError ? T.rust : colors.primary + '60',
+                  backgroundColor: wordError ? T.rustSoft : colors.background,
                   color: colors.foreground,
                   fontFamily: 'Inter_400Regular',
                   fontSize: 15,
                 }}
+                accessibilityLabel="Word target"
               />
+              {wordError && (
+                <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: T.rust, marginTop: 4 }}>
+                  {wordInput.trim() === '' ? 'Required — enter a word count.' : 'Must be a whole number greater than 0.'}
+                </Text>
+              )}
             </View>
 
             {/* Chapter target */}
@@ -1535,25 +1554,32 @@ function CompletenessTab({
                   paddingHorizontal: 12,
                   borderRadius: 8,
                   borderWidth: 1,
-                  borderColor: colors.primary + '60',
-                  backgroundColor: colors.background,
+                  borderColor: chapterError ? T.rust : colors.primary + '60',
+                  backgroundColor: chapterError ? T.rustSoft : colors.background,
                   color: colors.foreground,
                   fontFamily: 'Inter_400Regular',
                   fontSize: 15,
                 }}
+                accessibilityLabel="Chapter target"
               />
+              {chapterError && (
+                <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: T.rust, marginTop: 4 }}>
+                  {chapterInput.trim() === '' ? 'Required — enter a chapter count.' : 'Must be a whole number greater than 0.'}
+                </Text>
+              )}
             </View>
 
             {/* Save / Cancel */}
             <View style={{ flexDirection: 'row', gap: 8 }}>
               <Pressable
                 onPress={saveTargets}
-                disabled={savingTargets}
+                // Disabled while saving OR while either field has an error.
+                disabled={savingTargets || !canSave}
                 style={({ pressed }) => ({
                   flex: 1, height: 44, borderRadius: 8, alignItems: 'center',
                   justifyContent: 'center', flexDirection: 'row', gap: 6,
                   backgroundColor: colors.primary,
-                  opacity: savingTargets || pressed ? 0.65 : 1,
+                  opacity: savingTargets || !canSave || pressed ? 0.4 : 1,
                 })}
                 accessibilityRole="button"
                 accessibilityLabel="Save targets"
