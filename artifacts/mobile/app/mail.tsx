@@ -2,7 +2,7 @@
  * A-01 Mail Steward — /mail
  *
  * Attention queue: high → medium → low, newest first within each tier.
- * Swipe right → defer, swipe left → open detail.
+ * Swipe right → defer. Swipe left → reveal action tray (Reply / Move / Defer).
  * If Outlook is not connected, shows a connect prompt.
  */
 import React, { useCallback, useEffect, useState } from 'react';
@@ -40,6 +40,7 @@ const API = `https://${DOMAIN}/api`;
 
 const SWIPE_THRESHOLD = 60;
 const SWIPE_EXIT = 420;
+const TRAY_WIDTH = 168; // 3 buttons × 56 px each
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -95,36 +96,84 @@ function sorted(items: MailRecord[]): MailRecord[] {
   });
 }
 
+// ── Tray action button ────────────────────────────────────────────────────────
+
+function TrayButton({
+  icon, label, color, onPress,
+}: {
+  icon: React.ComponentProps<typeof Feather>['name'];
+  label: string;
+  color: string;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      style={({ pressed }) => [ss.trayBtn, { opacity: pressed ? 0.6 : 1 }]}
+      onPress={onPress}
+    >
+      <Feather name={icon} size={20} color={color} />
+      <Text style={{ fontSize: 10, color, marginTop: 4, ...font('medium') }}>{label}</Text>
+    </Pressable>
+  );
+}
+
 // ── Swipeable card ────────────────────────────────────────────────────────────
 
-function MailCard({ record, onOpen, onDefer }: {
+function MailCard({ record, onOpen, onDefer, onReply, onMove }: {
   record: MailRecord;
   onOpen: () => void;
   onDefer: () => void;
+  onReply: () => void;
+  onMove: () => void;
 }) {
   const colors = useColors();
   const T = useVellumTokens();
   const translateX = useSharedValue(0);
   const opacity = useSharedValue(1);
+  /** true when the action tray is snapped open */
+  const isOpen = useSharedValue(false);
 
   const levelColor =
     record.attention_level === 'high' ? T.rust :
     record.attention_level === 'medium' ? T.gilt :
     colors.mutedForeground;
 
+  /** Snap card back and close the tray — callable from JS thread */
+  const closeTray = useCallback(() => {
+    translateX.value = withSpring(0, { stiffness: 300, damping: 30 });
+    isOpen.value = false;
+  }, [translateX, isOpen]);
+
   const pan = Gesture.Pan()
-    .onUpdate((e) => { translateX.value = e.translationX; })
+    .onUpdate((e) => {
+      if (isOpen.value) {
+        // Tray open: clamp motion between fully-open and closed
+        translateX.value = Math.max(-TRAY_WIDTH, Math.min(0, -TRAY_WIDTH + e.translationX));
+      } else {
+        // Tray closed: allow full right-exit OR left reveal (clamped at tray width)
+        translateX.value = Math.max(-TRAY_WIDTH, Math.min(SWIPE_EXIT, e.translationX));
+      }
+    })
     .onEnd((e) => {
-      if (e.translationX > SWIPE_THRESHOLD) {
+      if (isOpen.value) {
+        // Swipe right past threshold → close tray
+        if (e.translationX > 30 || e.velocityX > 300) {
+          translateX.value = withSpring(0, { stiffness: 300, damping: 30 });
+          isOpen.value = false;
+        } else {
+          translateX.value = withSpring(-TRAY_WIDTH, { stiffness: 300, damping: 30 });
+        }
+      } else if (e.translationX > SWIPE_THRESHOLD) {
+        // Right swipe → defer (card exits)
         translateX.value = withSpring(SWIPE_EXIT, { stiffness: 200, damping: 20 });
         opacity.value = withTiming(0, { duration: 160 });
         runOnJS(Haptics.notificationAsync)(Haptics.NotificationFeedbackType.Warning);
         runOnJS(onDefer)();
-      } else if (e.translationX < -SWIPE_THRESHOLD) {
-        translateX.value = withSpring(-SWIPE_EXIT, { stiffness: 200, damping: 20 });
-        opacity.value = withTiming(0, { duration: 160 });
-        runOnJS(Haptics.impactAsync)(Haptics.ImpactFeedbackStyle.Medium);
-        runOnJS(onOpen)();
+      } else if (e.translationX < -(TRAY_WIDTH / 2)) {
+        // Left swipe past half-tray width → reveal tray
+        translateX.value = withSpring(-TRAY_WIDTH, { stiffness: 250, damping: 28 });
+        isOpen.value = true;
+        runOnJS(Haptics.impactAsync)(Haptics.ImpactFeedbackStyle.Light);
       } else {
         translateX.value = withSpring(0, { stiffness: 300, damping: 30 });
       }
@@ -135,69 +184,121 @@ function MailCard({ record, onOpen, onDefer }: {
     opacity: opacity.value,
   }));
 
+  /** Tray fades in as the card slides left; stays invisible during right-swipe defer */
+  const trayStyle = useAnimatedStyle(() => ({
+    opacity: translateX.value < 0
+      ? Math.min(1, Math.max(0, (-translateX.value / TRAY_WIDTH) * 1.5))
+      : 0,
+  }));
+
+  const handleCardPress = useCallback(() => {
+    if (isOpen.value) {
+      closeTray();
+    } else {
+      onOpen();
+    }
+  }, [isOpen, closeTray, onOpen]);
+
+  /**
+   * Reply tray action — respects the same high-risk compose gate enforced by
+   * the detail screen: high-risk cards navigate to detail without autoCompose
+   * so compose remains blocked there too.
+   */
+  const handleReplyPress = useCallback(() => {
+    closeTray();
+    if (record.is_high_risk) {
+      onOpen(); // open detail without compose intent
+    } else {
+      onReply(); // open detail with autoCompose=1
+    }
+  }, [closeTray, record.is_high_risk, onOpen, onReply]);
+
+  const handleMovePress = useCallback(() => {
+    closeTray();
+    onMove();
+  }, [closeTray, onMove]);
+
   return (
-    <GestureDetector gesture={pan}>
-      <Animated.View style={cardStyle}>
-        <Pressable
-          style={[ss.card, { backgroundColor: colors.card, borderColor: colors.border }]}
-          onPress={onOpen}
-          accessibilityRole="button"
-          accessibilityLabel={record.subject ?? '(no subject)'}
-        >
-          {!record.is_read && (
-            <View style={[ss.unreadDot, { backgroundColor: colors.primary }]} />
-          )}
-
-          <View style={ss.cardHeader}>
-            <Text style={[ss.cardSubject, { color: colors.foreground }]} numberOfLines={1}>
-              {record.subject ?? '(no subject)'}
-            </Text>
-            <Text style={{ fontSize: 11, color: colors.mutedForeground, ...font('regular') }}>
-              {fmtDate(record.received_at)}
-            </Text>
-          </View>
-
-          <Text
-            style={{ fontSize: 12, marginBottom: 6, color: colors.mutedForeground, ...font('regular') }}
-            numberOfLines={1}
-          >
-            {record.sender_name ?? `@${record.sender_domain ?? 'unknown'}`}
-            {record.sender_domain ? ` · @${record.sender_domain}` : ''}
-          </Text>
-
-          <View style={ss.chips}>
-            {record.attention_level && record.attention_level !== 'low' && (
-              <View style={[ss.chip, { backgroundColor: alpha(levelColor, 0.12), borderColor: alpha(levelColor, 0.3) }]}>
-                <Text style={{ fontSize: 10, color: levelColor, textTransform: 'uppercase', letterSpacing: 0.4, ...font('semibold') }}>
-                  {record.attention_level}
-                </Text>
-              </View>
-            )}
-            {record.needs_reply && (
-              <View style={[ss.chip, { backgroundColor: alpha(T.gilt, 0.10), borderColor: alpha(T.gilt, 0.3) }]}>
-                <Text style={{ fontSize: 10, color: T.gilt, textTransform: 'uppercase', letterSpacing: 0.4, ...font('semibold') }}>
-                  Reply
-                </Text>
-              </View>
-            )}
-            {record.is_high_risk && (
-              <View style={[ss.chip, { backgroundColor: alpha(T.rust, 0.12), borderColor: alpha(T.rust, 0.3) }]}>
-                <Feather name="shield" size={10} color={T.rust} />
-                <Text style={{ fontSize: 10, color: T.rust, marginLeft: 2, ...font('semibold') }}>Risk</Text>
-              </View>
-            )}
-          </View>
-
-          <View style={ss.swipeHint}>
-            <Feather name="chevron-left" size={12} color={colors.mutedForeground} style={{ opacity: 0.35 }} />
-            <Text style={{ fontSize: 10, color: colors.mutedForeground, opacity: 0.35, flex: 1, textAlign: 'center', ...font('regular') }}>
-              swipe to defer
-            </Text>
-            <Feather name="chevron-right" size={12} color={colors.mutedForeground} style={{ opacity: 0.35 }} />
-          </View>
-        </Pressable>
+    <View style={ss.cardContainer}>
+      {/* Action tray — sits behind the card, revealed as it slides left */}
+      <Animated.View style={[ss.tray, { backgroundColor: colors.card, borderColor: colors.border }, trayStyle]}>
+        {/* High-risk messages: show "View" (no compose intent) instead of "Reply" */}
+        <TrayButton
+          icon={record.is_high_risk ? 'eye' : 'corner-up-left'}
+          label={record.is_high_risk ? 'View' : 'Reply'}
+          color={record.is_high_risk ? colors.mutedForeground : colors.primary}
+          onPress={handleReplyPress}
+        />
+        <View style={[ss.traySep, { backgroundColor: colors.border }]} />
+        <TrayButton icon="folder" label="Move"  color={T.green} onPress={handleMovePress} />
+        <View style={[ss.traySep, { backgroundColor: colors.border }]} />
+        <TrayButton icon="clock"  label="Defer" color={T.gilt}  onPress={onDefer} />
       </Animated.View>
-    </GestureDetector>
+
+      {/* Swipeable card — sits on top of the tray */}
+      <GestureDetector gesture={pan}>
+        <Animated.View style={cardStyle}>
+          <Pressable
+            style={[ss.card, { backgroundColor: colors.card, borderColor: colors.border }]}
+            onPress={handleCardPress}
+            accessibilityRole="button"
+            accessibilityLabel={record.subject ?? '(no subject)'}
+          >
+            {!record.is_read && (
+              <View style={[ss.unreadDot, { backgroundColor: colors.primary }]} />
+            )}
+
+            <View style={ss.cardHeader}>
+              <Text style={[ss.cardSubject, { color: colors.foreground }]} numberOfLines={1}>
+                {record.subject ?? '(no subject)'}
+              </Text>
+              <Text style={{ fontSize: 11, color: colors.mutedForeground, ...font('regular') }}>
+                {fmtDate(record.received_at)}
+              </Text>
+            </View>
+
+            <Text
+              style={{ fontSize: 12, marginBottom: 6, color: colors.mutedForeground, ...font('regular') }}
+              numberOfLines={1}
+            >
+              {record.sender_name ?? `@${record.sender_domain ?? 'unknown'}`}
+              {record.sender_domain ? ` · @${record.sender_domain}` : ''}
+            </Text>
+
+            <View style={ss.chips}>
+              {record.attention_level && record.attention_level !== 'low' && (
+                <View style={[ss.chip, { backgroundColor: alpha(levelColor, 0.12), borderColor: alpha(levelColor, 0.3) }]}>
+                  <Text style={{ fontSize: 10, color: levelColor, textTransform: 'uppercase', letterSpacing: 0.4, ...font('semibold') }}>
+                    {record.attention_level}
+                  </Text>
+                </View>
+              )}
+              {record.needs_reply && (
+                <View style={[ss.chip, { backgroundColor: alpha(T.gilt, 0.10), borderColor: alpha(T.gilt, 0.3) }]}>
+                  <Text style={{ fontSize: 10, color: T.gilt, textTransform: 'uppercase', letterSpacing: 0.4, ...font('semibold') }}>
+                    Reply
+                  </Text>
+                </View>
+              )}
+              {record.is_high_risk && (
+                <View style={[ss.chip, { backgroundColor: alpha(T.rust, 0.12), borderColor: alpha(T.rust, 0.3) }]}>
+                  <Feather name="shield" size={10} color={T.rust} />
+                  <Text style={{ fontSize: 10, color: T.rust, marginLeft: 2, ...font('semibold') }}>Risk</Text>
+                </View>
+              )}
+            </View>
+
+            <View style={ss.swipeHint}>
+              <Feather name="chevron-right" size={12} color={colors.mutedForeground} style={{ opacity: 0.35 }} />
+              <Text style={{ fontSize: 10, color: colors.mutedForeground, opacity: 0.35, flex: 1, textAlign: 'center', ...font('regular') }}>
+                right to defer · left for actions
+              </Text>
+              <Feather name="chevron-left" size={12} color={colors.mutedForeground} style={{ opacity: 0.35 }} />
+            </View>
+          </Pressable>
+        </Animated.View>
+      </GestureDetector>
+    </View>
   );
 }
 
@@ -286,6 +387,47 @@ export default function MailScreen() {
     setDeferred(prev => new Set([...prev, id]));
   }, []);
 
+  /** Fetch the decision nonce, call move API, then remove from queue */
+  const handleMove = useCallback(async (id: string) => {
+    Alert.alert(
+      'Move to Review',
+      'Move this message out of your attention queue into the Review folder?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Move',
+          onPress: async () => {
+            try {
+              const detail = await mobileFetchJson<{
+                available_actions: Array<{ type: string; nonce: string; label: string }>;
+              }>(`${API}/mail/decisions/${id}`);
+              const moveAction = detail.available_actions.find(a => a.type === 'MOVE');
+              if (!moveAction) {
+                // No move action available — treat as defer
+                setDeferred(prev => new Set([...prev, id]));
+                return;
+              }
+              await mobileFetchJson(`${API}/mail/decisions/${id}/move`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ destination: 'review', nonce: moveAction.nonce }),
+              });
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+              setDeferred(prev => new Set([...prev, id]));
+            } catch (e: any) {
+              Alert.alert('Move failed', e.message ?? 'Could not move message');
+            }
+          },
+        },
+      ],
+    );
+  }, []);
+
+  /** Navigate to detail with compose pre-selected */
+  const handleReply = useCallback((id: string) => {
+    router.push(`/mail/${id}?autoCompose=1` as any);
+  }, [router]);
+
   const visible = records.filter(r => !deferred.has(r.id));
 
   const renderItem = useCallback(({ item }: { item: MailRecord }) => (
@@ -293,8 +435,10 @@ export default function MailScreen() {
       record={item}
       onOpen={() => router.push(`/mail/${item.id}` as any)}
       onDefer={() => handleDefer(item.id)}
+      onReply={() => handleReply(item.id)}
+      onMove={() => handleMove(item.id)}
     />
-  ), [router, handleDefer]);
+  ), [router, handleDefer, handleReply, handleMove]);
 
   return (
     <View style={[ss.root, { backgroundColor: colors.background }]}>
@@ -379,6 +523,28 @@ const ss = StyleSheet.create({
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginBottom: 6 },
   chip: { flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderRadius: 4, paddingHorizontal: 5, paddingVertical: 2 },
   swipeHint: { flexDirection: 'row', alignItems: 'center', marginTop: 4 },
+  cardContainer: { position: 'relative' },
+  tray: {
+    position: 'absolute',
+    right: 0,
+    top: 0,
+    bottom: 0,
+    width: TRAY_WIDTH,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  trayBtn: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    height: '100%',
+  },
+  traySep: {
+    width: StyleSheet.hairlineWidth,
+    height: '55%',
+  },
   connectWrap: { margin: 24, padding: 28, borderRadius: 14, borderWidth: StyleSheet.hairlineWidth, alignItems: 'center' },
   connectTitle: { fontSize: 18, fontFamily: 'Inter_600SemiBold', marginBottom: 10, textAlign: 'center' },
   connectBody: { fontSize: 13, lineHeight: 20, textAlign: 'center', marginBottom: 20 },

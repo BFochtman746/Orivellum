@@ -2,7 +2,7 @@
  * A-01 Mail Steward — /mail/:id
  * Decision detail: sender, subject, time, assessment rationale, threat evidence, actions.
  */
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -119,7 +119,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 // ── Main screen ───────────────────────────────────────────────────────────────
 
 export default function MailDetailScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, autoCompose } = useLocalSearchParams<{ id: string; autoCompose?: string }>();
   const colors = useColors();
   const T = useVellumTokens();
   const insets = useSafeAreaInsets();
@@ -163,6 +163,18 @@ export default function MailDetailScreen() {
       setActing(false);
     }
   }, [id, router]);
+
+  // Auto-trigger compose when navigated with ?autoCompose=1 (e.g. from swipe-tray Reply).
+  // Mirrors the same high-risk guard used by the in-screen compose button (line ~368).
+  const didAutoCompose = useRef(false);
+  useEffect(() => {
+    if (autoCompose !== '1' || didAutoCompose.current || !detail) return;
+    if (detail.record.is_high_risk) return; // compose is blocked for high-risk messages
+    const draftAct = detail.available_actions.find(a => a.type === 'CREATE_DRAFT');
+    if (!draftAct) return;
+    didAutoCompose.current = true;
+    handleCompose(draftAct);
+  }, [autoCompose, detail, handleCompose]);
 
   const handleMove = useCallback(async (moveAction: ActionOption) => {
     if (!id) return;
