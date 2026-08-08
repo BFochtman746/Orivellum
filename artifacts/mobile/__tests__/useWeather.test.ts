@@ -21,7 +21,7 @@
  */
 
 import { act, renderHook } from '@testing-library/react';
-import { useWeather } from '../hooks/useWeather';
+import { useWeather, buildHourlyPoints } from '../hooks/useWeather';
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -412,5 +412,124 @@ describe('position source', () => {
 
     expect(Location.getCurrentPositionAsync).toHaveBeenCalledTimes(1);
     expect(result.current.status).toBe('ok');
+  });
+});
+
+// ── 8. buildHourlyPoints — start-index edge cases ────────────────────────────
+// Tests the pure helper directly so no Date/fetch mocking is needed.
+// Covers the three risk scenarios flagged in the task spec:
+//   (a) midnight boundary (local hour = 0)
+//   (b) late-night boundary (local hour = 23)
+//   (c) timezone where the local calendar date differs from the UTC date
+//       — both "behind UTC" (UTC-N, e.g. Americas) and "ahead of UTC" (UTC+N)
+
+function makeHourly48(day1: string, day2: string) {
+  const times: string[] = [];
+  const temps: number[] = [];
+  const codes: number[] = [];
+  const precs: number[] = [];
+  for (let h = 0; h < 24; h++) {
+    times.push(`${day1}T${String(h).padStart(2, '0')}:00`);
+    temps.push(60 + h);   // 60°F at h=0 → 83°F at h=23 (day 1)
+    codes.push(1);
+    precs.push(h < 6 ? 0 : 20);
+  }
+  for (let h = 0; h < 24; h++) {
+    times.push(`${day2}T${String(h).padStart(2, '0')}:00`);
+    temps.push(50 + h);   // 50°F at h=0 → 73°F at h=23 (day 2)
+    codes.push(2);
+    precs.push(0);
+  }
+  return { times, temps, codes, precs };
+}
+
+describe('buildHourlyPoints — start-index edge cases', () => {
+  const DAY1 = '2026-08-08';
+  const DAY2 = '2026-08-09';
+
+  it('midnight (hour=0): first slot is hour 0, 24 slots cover the full day', () => {
+    const { times, temps, codes, precs } = makeHourly48(DAY1, DAY2);
+    const pts = buildHourlyPoints(times, temps, codes, precs, 0, DAY1);
+
+    expect(pts[0].label).toBe('Now');
+    expect(pts[0].hour).toBe(0);
+    expect(pts[0].tempF).toBe(60);
+    expect(pts).toHaveLength(24);
+    expect(pts[23].hour).toBe(23);   // stays within day 1
+  });
+
+  it('late night (hour=23): first slot is hour 23, next 23 wrap into the next day', () => {
+    const { times, temps, codes, precs } = makeHourly48(DAY1, DAY2);
+    const pts = buildHourlyPoints(times, temps, codes, precs, 23, DAY1);
+
+    expect(pts[0].label).toBe('Now');
+    expect(pts[0].hour).toBe(23);
+    expect(pts).toHaveLength(24);
+    // Slot 1 rolls over to day 2 hour 0
+    expect(pts[1].hour).toBe(0);
+    expect(pts[1].label).toBe('12 AM');
+    // Last slot is day 2 hour 22
+    expect(pts[23].hour).toBe(22);
+    expect(pts[23].tempF).toBe(50 + 22); // day-2 temp series
+  });
+
+  it('timezone behind UTC (e.g. UTC-5): local date is earlier than UTC date', () => {
+    // e.g. 2026-08-09T01:00 UTC → 2026-08-08T20:00 local (New York).
+    // toISOString() would wrongly return '2026-08-09'; local components give '2026-08-08'.
+    // Open-Meteo (timezone=auto) emits local-time strings → day1='2026-08-08'.
+    const localDay  = '2026-08-08';
+    const nextDay   = '2026-08-09';
+    const localHour = 20;
+    const { times, temps, codes, precs } = makeHourly48(localDay, nextDay);
+    const pts = buildHourlyPoints(times, temps, codes, precs, localHour, localDay);
+
+    expect(pts[0].label).toBe('Now');
+    expect(pts[0].hour).toBe(20);
+    expect(pts).toHaveLength(24);
+    // 4 hours remain in localDay (20,21,22,23) then 20 from nextDay
+    expect(pts[3].hour).toBe(23);
+    expect(pts[4].hour).toBe(0);
+    expect(pts[23].hour).toBe(19);
+  });
+
+  it('timezone ahead of UTC (e.g. UTC+10): local date is later than UTC date', () => {
+    // e.g. 2026-08-08T22:00 UTC → 2026-08-09T08:00 local (Sydney).
+    // toISOString() would wrongly return '2026-08-08'; local components give '2026-08-09'.
+    const localDay  = '2026-08-09';
+    const nextDay   = '2026-08-10';
+    const localHour = 8;
+    const { times, temps, codes, precs } = makeHourly48(localDay, nextDay);
+    const pts = buildHourlyPoints(times, temps, codes, precs, localHour, localDay);
+
+    expect(pts[0].label).toBe('Now');
+    expect(pts[0].hour).toBe(8);
+    expect(pts).toHaveLength(24);
+    // 16 hours from localDay (8–23) + 8 from nextDay (0–7) = 24
+    expect(pts[15].hour).toBe(23);
+    expect(pts[16].hour).toBe(0);
+    expect(pts[23].hour).toBe(7);
+  });
+
+  it('produces correct AM/PM labels starting from hour=0', () => {
+    const { times, temps, codes, precs } = makeHourly48(DAY1, DAY2);
+    const pts = buildHourlyPoints(times, temps, codes, precs, 0, DAY1);
+
+    expect(pts[0].label).toBe('Now');
+    expect(pts[1].label).toBe('1 AM');
+    expect(pts[11].label).toBe('11 AM');
+    expect(pts[12].label).toBe('12 PM');
+    expect(pts[13].label).toBe('1 PM');
+    expect(pts[23].label).toBe('11 PM');
+  });
+
+  it('falls back to index 0 when no matching date prefix is found', () => {
+    // localDateStr does not appear in times at all — simulate a stale/wrong date
+    const { times, temps, codes, precs } = makeHourly48(DAY2, '2026-08-10');
+    const pts = buildHourlyPoints(times, temps, codes, precs, 12, DAY1); // DAY1 not in times
+
+    // baseIdx = 0 fallback; still returns 24 valid slots from the start of the array
+    expect(pts).toHaveLength(24);
+    expect(pts[0].label).toBe('Now');
+    expect(pts[0].hour).toBe(0); // starts at index 0 of the times array (DAY2 T00:00)
   });
 });

@@ -143,6 +143,56 @@ async function fetchWeather(lat: number, lon: number): Promise<any> {
   return r.json();
 }
 
+// ── Hourly parser (pure, exported for tests) ──────────────────────────────────
+
+/**
+ * Build the 24-entry HourlyPoint array from raw Open-Meteo hourly arrays.
+ *
+ * Extracted as a pure function so edge cases (midnight, late-night, cross-
+ * timezone-boundary) can be tested without mocking the full hook pipeline.
+ *
+ * @param times         ISO strings like "2026-08-08T14:00" — in LOCAL time
+ *                      because the API is called with timezone="auto"
+ * @param temps         temperature_2m array (°F)
+ * @param codes         weathercode array
+ * @param precs         precipitation_probability array (0–100)
+ * @param nowLocalHour  current local hour 0–23 (from new Date().getHours())
+ * @param localDateStr  current local date as "YYYY-MM-DD" — built from local
+ *                      date components, NOT toISOString() which returns UTC
+ */
+export function buildHourlyPoints(
+  times: string[],
+  temps: number[],
+  codes: number[],
+  precs: number[],
+  nowLocalHour: number,
+  localDateStr: string,
+): HourlyPoint[] {
+  const startIdx = times.findIndex(
+    (t) =>
+      t.startsWith(localDateStr) &&
+      parseInt(t.slice(11, 13), 10) >= nowLocalHour,
+  );
+  const baseIdx = startIdx >= 0 ? startIdx : 0;
+
+  const result: HourlyPoint[] = [];
+  for (let i = 0; i < 24 && baseIdx + i < times.length; i++) {
+    const idx   = baseIdx + i;
+    const hour  = parseInt(times[idx].slice(11, 13), 10);
+    const isPM  = hour >= 12;
+    const h12   = hour === 0 ? 12 : hour > 12 ? hour - 12 : hour;
+    const label = i === 0 ? 'Now' : `${h12} ${isPM ? 'PM' : 'AM'}`;
+    result.push({
+      hour,
+      label,
+      tempF:      Math.round(temps[idx]),
+      code:       codes[idx],
+      precipProb: precs[idx] ?? 0,
+    });
+  }
+  return result;
+}
+
 // ── Cache ─────────────────────────────────────────────────────────────────────
 
 const CACHE_MS = 15 * 60 * 1_000; // 15 minutes
@@ -219,33 +269,24 @@ export function useWeather() {
         });
 
       // Build hourly array: next 24 hours starting from current hour
-      const hourly: HourlyPoint[] = [];
+      // NOTE: use local date components — toISOString() returns UTC, which
+      // would produce the wrong date prefix for users in non-UTC timezones.
+      let hourly: HourlyPoint[] = [];
       if (wx.hourly) {
-        const nowHour = new Date().getHours();
-        const times   = wx.hourly.time            as string[];
-        const temps   = wx.hourly.temperature_2m  as number[];
-        const codes   = wx.hourly.weathercode     as number[];
-        const precs   = wx.hourly.precipitation_probability as number[];
+        const times = wx.hourly.time            as string[];
+        const temps = wx.hourly.temperature_2m  as number[];
+        const codes = wx.hourly.weathercode     as number[];
+        const precs = wx.hourly.precipitation_probability as number[];
 
-        // Find first index whose hour >= current hour (within today or early hours of tomorrow)
-        const todayPrefix = new Date().toISOString().slice(0, 10); // "2026-08-08"
-        const startIdx = times.findIndex((t) => t.startsWith(todayPrefix) && parseInt(t.slice(11, 13), 10) >= nowHour);
-        const baseIdx  = startIdx >= 0 ? startIdx : 0;
+        const now          = new Date();
+        const nowLocalHour = now.getHours();
+        const localDateStr = [
+          now.getFullYear(),
+          String(now.getMonth() + 1).padStart(2, '0'),
+          String(now.getDate()).padStart(2, '0'),
+        ].join('-');
 
-        for (let i = 0; i < 24 && baseIdx + i < times.length; i++) {
-          const idx   = baseIdx + i;
-          const hour  = parseInt(times[idx].slice(11, 13), 10);
-          const isPM  = hour >= 12;
-          const h12   = hour === 0 ? 12 : hour > 12 ? hour - 12 : hour;
-          const label = i === 0 ? 'Now' : `${h12} ${isPM ? 'PM' : 'AM'}`;
-          hourly.push({
-            hour,
-            label,
-            tempF:      Math.round(temps[idx]),
-            code:       codes[idx],
-            precipProb: precs[idx] ?? 0,
-          });
-        }
+        hourly = buildHourlyPoints(times, temps, codes, precs, nowLocalHour, localDateStr);
       }
 
       const result: WeatherData = {
