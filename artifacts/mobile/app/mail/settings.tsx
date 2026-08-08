@@ -33,6 +33,7 @@ interface MailSettings {
   sync_folders: string[];
   account_display: string;
   threat_feeds_enabled: boolean;
+  context_days: number;
 }
 
 interface MailSummary { connected: boolean }
@@ -72,6 +73,7 @@ export default function MailSettingsScreen() {
   const [syncFolders, setSyncFolders] = useState('inbox');
   const [sendEnabled, setSendEnabled] = useState(false);
   const [feedsEnabled, setFeedsEnabled] = useState(true);
+  const [contextDays, setContextDays] = useState('30');
 
   const { data: settings, isLoading } = useQuery<MailSettings>({
     queryKey: ['mail-settings'],
@@ -92,6 +94,7 @@ export default function MailSettingsScreen() {
     setSyncFolders((settings.sync_folders ?? ['inbox']).join(', '));
     setSendEnabled(settings.send_enabled);
     setFeedsEnabled(settings.threat_feeds_enabled);
+    setContextDays(String(settings.context_days ?? 30));
   }, [settings]);
 
   const handleSave = useCallback(async () => {
@@ -107,6 +110,7 @@ export default function MailSettingsScreen() {
           sync_folders: folders.length ? folders : ['inbox'],
           send_enabled: sendEnabled,
           threat_feeds_enabled: feedsEnabled,
+          context_days: Math.max(0, parseInt(contextDays, 10) || 0),
         }),
       });
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
@@ -118,7 +122,7 @@ export default function MailSettingsScreen() {
     } finally {
       setSaving(false);
     }
-  }, [lemonadeUrl, lemonadeModel, syncFolders, sendEnabled, feedsEnabled, qc]);
+  }, [lemonadeUrl, lemonadeModel, syncFolders, sendEnabled, feedsEnabled, contextDays, qc]);
 
   const handleDisconnect = useCallback(() => {
     Alert.alert(
@@ -229,6 +233,23 @@ export default function MailSettingsScreen() {
         <View style={[ss.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
           <Text style={[ss.cardTitle, { color: colors.foreground }]}>Sync folders</Text>
           <Field label="Comma-separated folder names" value={syncFolders} onChangeText={setSyncFolders} placeholder="inbox" mono />
+        </View>
+
+        {/* Chat context window */}
+        <View style={[ss.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
+          <Text style={[ss.cardTitle, { color: colors.foreground }]}>Chat context window</Text>
+          <Text style={{ fontSize: 11, marginBottom: 6, color: colors.mutedForeground, ...font('medium') }}>Days</Text>
+          <TextInput
+            value={contextDays}
+            onChangeText={setContextDays}
+            keyboardType="numeric"
+            placeholder="30"
+            placeholderTextColor={colors.mutedForeground}
+            style={[ss.textInput, { backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground, fontFamily: 'Inter_400Regular', width: 80 }]}
+          />
+          <Text style={{ fontSize: 11, marginTop: 8, lineHeight: 16, color: colors.mutedForeground, ...font('regular') }}>
+            Only emails received within this many days are injected into chat. Set to 0 to include all time.
+          </Text>
         </View>
 
         {/* Threat feeds */}

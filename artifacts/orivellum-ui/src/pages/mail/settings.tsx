@@ -24,6 +24,7 @@ interface MailSettings {
   sync_folders: string[];
   account_display: string;
   threat_feeds_enabled: boolean;
+  context_days: number;
 }
 
 export default function MailSettingsPage() {
@@ -37,6 +38,7 @@ export default function MailSettingsPage() {
   const [syncFolders,   setSyncFolders]   = useState("inbox");
   const [sendEnabled,   setSendEnabled]   = useState(false);
   const [feedsEnabled,  setFeedsEnabled]  = useState(true);
+  const [contextDays,   setContextDays]   = useState("30");
 
   const { data: settings, isLoading } = useQuery<MailSettings>({
     queryKey: ["mail-settings"],
@@ -62,6 +64,7 @@ export default function MailSettingsPage() {
     setSyncFolders((settings.sync_folders || ["inbox"]).join(", "));
     setSendEnabled(settings.send_enabled);
     setFeedsEnabled(settings.threat_feeds_enabled);
+    setContextDays(String(settings.context_days ?? 30));
   }, [settings]);
 
   const handleSave = async () => {
@@ -80,6 +83,7 @@ export default function MailSettingsPage() {
           sync_folders:         folders.length ? folders : ["inbox"],
           send_enabled:         sendEnabled,
           threat_feeds_enabled: feedsEnabled,
+          context_days:         Math.max(0, parseInt(contextDays, 10) || 0),
         }),
       });
       if (!r.ok) {
@@ -226,6 +230,26 @@ export default function MailSettingsPage() {
               className="font-mono text-sm"
             />
             <p className="text-xs text-muted-foreground">e.g. inbox, sentitems, junkemail</p>
+          </div>
+        </section>
+
+        {/* Chat context window */}
+        <section className="glass-card rounded-lg p-5 space-y-3">
+          <h2 className="text-sm font-semibold">Chat context window</h2>
+          <div className="space-y-1">
+            <label className="text-xs text-muted-foreground">Days</label>
+            <Input
+              type="number"
+              min={0}
+              value={contextDays}
+              onChange={e => setContextDays(e.target.value)}
+              placeholder="30"
+              className="font-mono text-sm w-28"
+            />
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              Only emails received within this many days are injected into chat.
+              Set to <code className="text-[11px] bg-muted px-1 rounded">0</code> to include all time.
+            </p>
           </div>
         </section>
 
