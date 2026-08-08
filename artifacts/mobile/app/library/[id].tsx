@@ -287,9 +287,33 @@ export default function LibraryDocDetail() {
   // audiobookUri is set after a successful download and cleared on unmount.
   // It persists across dlState resets so the Play button stays available.
   const [audiobookUri, setAudiobookUri] = useState<string | null>(null);
-  // Persists the downloaded file URI while dlState === 'done' so the Share
-  // button remains usable after the confirmation alert is dismissed.
+  // Persists the downloaded file URI so the Share button stays usable after
+  // the confirmation alert is dismissed AND across navigation (restored from
+  // AsyncStorage on mount, keyed by doc id so each document has its own entry).
   const [savedUri, setSavedUri] = useState<string | null>(null);
+
+  // ── Restore last downloaded audiobook URI on mount ────────────────────────
+  // Reads the AsyncStorage key for this document. If the file still exists on
+  // disk, restores savedUri so the Share button reappears without re-downloading.
+  useEffect(() => {
+    if (!id) return;
+    const key = `audiobook_uri_${id}`;
+    AsyncStorage.getItem(key).then(async (stored) => {
+      if (!stored) return;
+      try {
+        const info = await FileSystem.getInfoAsync(stored);
+        if (info.exists) {
+          setSavedUri(stored);
+          setAudiobookUri(stored); // also restore in-app player URI
+        } else {
+          // File was deleted from device storage — remove the stale key.
+          AsyncStorage.removeItem(key).catch(() => {});
+        }
+      } catch {
+        // getInfoAsync can throw on bad URIs; silently discard.
+      }
+    }).catch(() => {});
+  }, [id]);
   type AbState = 'idle' | 'loading' | 'playing' | 'paused';
   const [abState, setAbState] = useState<AbState>('idle');
   const [abPosition, setAbPosition] = useState(0); // seconds
@@ -329,6 +353,7 @@ export default function LibraryDocDetail() {
     setDlState('generating');
     setDlProgress(null);
     setSavedUri(null); // clear any previous download's share URI
+    AsyncStorage.removeItem(`audiobook_uri_${id}`).catch(() => {}); // clear persisted URI
     dlJobRef.current = null;
     setDlJobId(null);
 
@@ -497,11 +522,14 @@ export default function LibraryDocDetail() {
       // Store the local URI so the in-app player can pick it up
       setAudiobookUri(dlResult.uri);
       setSavedUri(dlResult.uri);
+      // Persist across navigation — read back on next mount via the restore effect above.
+      AsyncStorage.setItem(`audiobook_uri_${id}`, dlResult.uri).catch(() => {});
       setDlState('done');
       setTimeout(() => {
         if (dlRunRef.current === runId) {
           setDlState('idle');
-          setSavedUri(null);
+          // savedUri intentionally left intact so the Share button stays visible
+          // even after the "done" banner fades and across future visits to this screen.
         }
       }, 5_000);
     } catch (e: any) {
@@ -1316,9 +1344,9 @@ export default function LibraryDocDetail() {
                 </Text>
               </Pressable>
 
-              {/* Share button — visible while dlState==='done' so users can share
-                  after dismissing the initial confirmation alert */}
-              {dlState === 'done' && savedUri !== null && (
+              {/* Share button — visible whenever savedUri is set (persists across
+                  navigation via AsyncStorage, cleared when a fresh download begins) */}
+              {savedUri !== null && (
                 <Pressable
                   onPress={() => {
                     Sharing.shareAsync(savedUri, {
