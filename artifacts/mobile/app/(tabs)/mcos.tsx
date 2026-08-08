@@ -33,20 +33,28 @@ interface Benchmark {
   id: string;
   name: string;
   description?: string | null;
-  prompt_count?: number;
-  last_run_at?: string | null;
-  last_pass_rate?: number | null;
-  last_status?: string | null;
+  category?: string | null;
+  kind?: string | null;
+  case_count?: number;
+  enabled?: boolean;
+  // The API returns a nested last_run object (not flat last_pass_rate / last_status).
+  last_run?: {
+    id: string;
+    avg_score: number | null;
+    status: string;        // 'running' | 'done' | 'failed' | 'pending'
+    finished_at: string | null;
+  } | null;
 }
 
 interface Regression {
-  id: string;
+  run_id: string;          // primary key on eval_runs (not id)
   benchmark_id: string;
   benchmark_name?: string;
-  pass_rate_before: number;
-  pass_rate_after: number;
-  run_at: string;
-  acked_at?: string | null;
+  avg_score?: number | null;
+  delta?: number | null;   // change vs previous run (negative = regressed)
+  acknowledged: boolean;   // API returns "acknowledged: bool" (not acked_at)
+  finished_at?: string | null;
+  kind?: string;
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -91,17 +99,19 @@ function RegressionBanner({
         </Text>
       </View>
       {regressions.map(r => (
-        <View key={r.id} style={[styles.regRow, { borderTopColor: T.rust + '33' }]}>
+        <View key={r.run_id} style={[styles.regRow, { borderTopColor: T.rust + '33' }]}>
           <View style={{ flex: 1 }}>
             <Text style={[styles.regName, { color: colors.foreground }]} numberOfLines={1}>
               {r.benchmark_name ?? r.benchmark_id}
             </Text>
             <Text style={[styles.regMeta, { color: colors.mutedForeground }]}>
-              {fmtPct(r.pass_rate_before)} → {fmtPct(r.pass_rate_after)} · {fmtDate(r.run_at)}
+              {r.avg_score != null ? `${Math.round(r.avg_score * 100)}% score` : ''}
+              {r.delta != null ? ` · Δ${r.delta > 0 ? '+' : ''}${Math.round(r.delta * 100)}%` : ''}
+              {r.finished_at ? ` · ${fmtDate(r.finished_at)}` : ''}
             </Text>
           </View>
           <Pressable
-            onPress={() => onAck(r.id)}
+            onPress={() => onAck(r.run_id)}
             style={({ pressed }) => [styles.ackBtn, { borderColor: T.rust, opacity: pressed ? 0.6 : 1 }]}
             accessibilityLabel="Acknowledge regression"
           >
@@ -126,7 +136,7 @@ function BenchmarkCard({
 }) {
   const colors = useColors();
   const T = useVellumTokens();
-  const rate = benchmark.last_pass_rate;
+  const rate = benchmark.last_run?.avg_score ?? null;
   const color = passRateColor(rate, T);
 
   return (
@@ -147,15 +157,15 @@ function BenchmarkCard({
             </Text>
           )}
           <Text style={[styles.cardMeta, { color: colors.mutedForeground }]}>
-            {benchmark.prompt_count != null ? `${benchmark.prompt_count} prompts` : ''}
-            {benchmark.last_run_at ? ` · last run ${fmtDate(benchmark.last_run_at)}` : ' · never run'}
+            {benchmark.case_count != null ? `${benchmark.case_count} cases` : ''}
+            {benchmark.last_run?.finished_at ? ` · last run ${fmtDate(benchmark.last_run.finished_at)}` : ' · never run'}
           </Text>
         </View>
 
         {/* Status indicator */}
         <View style={[
           styles.statusDot,
-          { backgroundColor: benchmark.last_status === 'running' ? T.gilt : color },
+          { backgroundColor: benchmark.last_run?.status === 'running' ? T.gilt : color },
         ]} />
       </View>
 
@@ -207,7 +217,7 @@ export default function McosScreen() {
   });
 
   const benchmarks = bData?.benchmarks ?? [];
-  const regressions = (rData?.regressions ?? []).filter(r => !r.acked_at);
+  const regressions = (rData?.regressions ?? []).filter(r => !r.acknowledged);
 
   const handleRefresh = () => {
     bRefetch();
@@ -255,8 +265,9 @@ export default function McosScreen() {
     }
   };
 
-  const overallPct = benchmarks.length > 0 && benchmarks.every(b => b.last_pass_rate != null)
-    ? Math.round(benchmarks.reduce((a, b) => a + (b.last_pass_rate ?? 0), 0) / benchmarks.length * 100)
+  const benchmarksWithScore = benchmarks.filter(b => b.last_run?.avg_score != null);
+  const overallPct = benchmarksWithScore.length > 0
+    ? Math.round(benchmarksWithScore.reduce((a, b) => a + (b.last_run!.avg_score! * 100), 0) / benchmarksWithScore.length)
     : null;
 
   return (

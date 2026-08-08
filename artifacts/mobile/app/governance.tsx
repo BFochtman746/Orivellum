@@ -153,6 +153,38 @@ export default function GovernanceScreen() {
     refetchInterval: 60_000,
   });
 
+  // ── MCOS prompt health ────────────────────────────────────────────────────────
+  const { data: mcosData, refetch: refetchMcos } = useQuery<{
+    benchmarks: Array<{ last_run: { avg_score: number | null; status: string } | null }>;
+  }>({
+    queryKey: ['gov-mcos-benchmarks'],
+    queryFn: () => gFetch('/mcos/benchmarks'),
+    staleTime: 60_000,
+    refetchInterval: 120_000,
+  });
+
+  const { data: mregData, refetch: refetchMreg } = useQuery<{
+    regressions: Array<{ acknowledged: boolean }>;
+  }>({
+    queryKey: ['gov-mcos-regressions'],
+    queryFn: () => gFetch('/mcos/regressions?limit=100'),
+    staleTime: 60_000,
+    refetchInterval: 120_000,
+  });
+
+  // Derive compact health metrics
+  const finishedBenchmarks = (mcosData?.benchmarks ?? []).filter(
+    b => b.last_run?.status === 'done' && b.last_run.avg_score != null,
+  );
+  const passRate = finishedBenchmarks.length > 0
+    ? Math.round(
+        finishedBenchmarks.reduce((s, b) => s + (b.last_run!.avg_score! * 100), 0) /
+        finishedBenchmarks.length,
+      )
+    : null;
+  const unackedCount = (mregData?.regressions ?? []).filter(r => !r.acknowledged).length;
+  const hasMcosData = mcosData != null;
+
   // ── Actions ───────────────────────────────────────────────────────────────────
 
   const handleCheckChain = async () => {
@@ -206,7 +238,10 @@ export default function GovernanceScreen() {
   const handleRefresh = async () => {
     setRefreshing(true);
     try {
-      await Promise.all([refetchStats(), refetchOutbox(), refetchConflicts(), refetchFindings()]);
+      await Promise.all([
+        refetchStats(), refetchOutbox(), refetchConflicts(), refetchFindings(),
+        refetchMcos(), refetchMreg(),
+      ]);
     } finally {
       setRefreshing(false);
     }
@@ -254,6 +289,76 @@ export default function GovernanceScreen() {
               </View>
             ))}
           </View>
+        )}
+
+        {/* Prompt Health card — compact MCOS summary, taps through to /mcos */}
+        {hasMcosData && (
+          <Pressable
+            onPress={() => router.push('/mcos' as any)}
+            style={({ pressed }) => [
+              s.healthCard,
+              {
+                backgroundColor: colors.card,
+                borderColor: unackedCount > 0 ? '#f59e0b55' : '#22c55e33',
+                opacity: pressed ? 0.8 : 1,
+              },
+            ]}
+            accessibilityRole="button"
+            accessibilityLabel="Prompt Health — tap to view MCOS"
+          >
+            <View style={s.healthInner}>
+              {/* Pass-rate ring (simple filled circle with number) */}
+              <View style={[
+                s.healthRing,
+                {
+                  backgroundColor: passRate == null
+                    ? colors.muted
+                    : passRate >= 80 ? '#22c55e22' : passRate >= 50 ? '#f59e0b22' : '#ef444422',
+                  borderColor: passRate == null
+                    ? colors.border
+                    : passRate >= 80 ? '#22c55e66' : passRate >= 50 ? '#f59e0b66' : '#ef444466',
+                },
+              ]}>
+                {passRate != null ? (
+                  <Text style={[
+                    s.healthRate,
+                    {
+                      color: passRate >= 80 ? '#22c55e' : passRate >= 50 ? '#f59e0b' : '#ef4444',
+                    },
+                  ]}>
+                    {passRate}%
+                  </Text>
+                ) : (
+                  <Feather name="minus" size={14} color={colors.mutedForeground} />
+                )}
+              </View>
+
+              {/* Labels */}
+              <View style={{ flex: 1 }}>
+                <Text style={[s.healthTitle, { color: colors.foreground }]}>
+                  Prompt Health
+                </Text>
+                <Text style={[s.healthSub, { color: colors.mutedForeground }]}>
+                  {passRate != null
+                    ? `${passRate}% avg pass rate · ${finishedBenchmarks.length} benchmark${finishedBenchmarks.length !== 1 ? 's' : ''}`
+                    : 'No benchmark runs yet'}
+                </Text>
+              </View>
+
+              {/* Regression badge + chevron */}
+              <View style={{ alignItems: 'flex-end', gap: 4 }}>
+                {unackedCount > 0 && (
+                  <View style={[s.regressionBadge, { backgroundColor: '#f59e0b22', borderColor: '#f59e0b55' }]}>
+                    <Feather name="alert-triangle" size={10} color="#f59e0b" />
+                    <Text style={[s.regressionText, { color: '#f59e0b' }]}>
+                      {unackedCount} regression{unackedCount !== 1 ? 's' : ''}
+                    </Text>
+                  </View>
+                )}
+                <Feather name="chevron-right" size={14} color={colors.mutedForeground} />
+              </View>
+            </View>
+          </Pressable>
         )}
 
         {/* Audit chain */}
@@ -467,4 +572,13 @@ const s = StyleSheet.create({
   metaText: { fontSize: 12, fontFamily: 'Inter_400Regular', marginBottom: 6 },
   // All clear
   allClear: { borderRadius: 12, borderWidth: 1, padding: 24, alignItems: 'center', marginTop: 8 },
+  // Prompt Health card
+  healthCard: { borderRadius: 10, borderWidth: 1, padding: 12, marginBottom: 14 },
+  healthInner: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  healthRing: { width: 48, height: 48, borderRadius: 24, borderWidth: 2, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
+  healthRate: { fontSize: 13, fontFamily: 'Inter_700Bold' },
+  healthTitle: { fontSize: 13, fontFamily: 'Inter_600SemiBold', marginBottom: 2 },
+  healthSub: { fontSize: 11, fontFamily: 'Inter_400Regular', lineHeight: 16 },
+  regressionBadge: { flexDirection: 'row', alignItems: 'center', gap: 3, borderWidth: 1, borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 },
+  regressionText: { fontSize: 10, fontFamily: 'Inter_600SemiBold' },
 });
