@@ -29,7 +29,7 @@
 - [API auth design](orivellum-api-auth.md) — session-cookie auth for web; SecureStore bearer token for mobile; SessionMiddleware must be added LAST; CORS origin regex must be exact domain, not wildcard *.replit.dev.
 - [Safari HTTP compatibility](safari-http-compat.md) — crypto.randomUUID/clipboard blocked over HTTP; polyfills in lib/uuid.ts; CORS regex covers Tailscale 100.64–127.x.x range.
 - [Chat global knowledge search](orivellum-chat-knowledge.md) — _build_system_prompt now accepts user_query; uses search_knowledge+search_chunks globally, grouped by Work/topic; recency fallback when no query.
-- [Websearch pipeline design](orivellum-websearch-pipeline.md) — Tavily provider; multi-query RRF; BM25 passage ranking; SearchProfile enum; all in capabilities/websearch.py.
+- [Websearch pipeline design](orivellum-websearch-pipeline.md) — Tavily provider; multi-query RRF; BM25 passage ranking; planner overlaps first search wave (never re-serialize); transcripts fetched concurrently.
 - [Mobile library detail](mobile-library-detail.md) — knowledge review (thumbs up/down via PATCH /api/knowledge/{id}/review) and work linking (bottom-sheet modal picker via PATCH /api/library/{id}) both live in artifacts/mobile/app/library/[id].tsx; uses mobileFetch + useListWorks.
 - [Chat send failure UX](orivellum-chat-failure.md) — on thrown stream errors, message stays as a red "failed" bubble (failed:true); finally block filters to keep m.incomplete||m.failed; web only; mobile still needs this (task #140).
 - [Library upload path](orivellum-upload-progress.md) — web uses streaming multipart POST /library/upload (XHR progress); body-limit middleware must exempt streaming routes; dedup race handled via sha UNIQUE catch.
