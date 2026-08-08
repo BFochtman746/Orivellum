@@ -30,6 +30,10 @@ import { useSheetAnimation } from '../lib/useSheetAnimation';
 
 const mockExitCallbacks: Array<(r: { finished: boolean }) => void> = [];
 
+// Stores the config object passed to PanResponder.create so tests can invoke
+// the capture handler and scroll-guard logic directly.
+let mockPanCreateArg: any = null;
+
 jest.mock('react-native', () => {
   // Minimal stand-in for Animated.Value — holds an initial value but the
   // animations themselves are mocked and don't actually move it.
@@ -54,11 +58,14 @@ jest.mock('react-native', () => {
         }),
       })),
     },
-    // PanResponder is created once in useRef; return an empty panHandlers
-    // object so the hook can initialise without error.  Gesture behaviour
-    // is tested separately via the gesture integration tests.
+    // PanResponder is created once in useRef.  Capture the config so tests
+    // can invoke onMoveShouldSetPanResponderCapture and the other handlers
+    // directly to verify the scroll-guard logic.
     PanResponder: {
-      create: jest.fn(() => ({ panHandlers: {} })),
+      create: jest.fn((config: any) => {
+        mockPanCreateArg = config;
+        return { panHandlers: {} };
+      }),
     },
   };
 });
@@ -384,5 +391,110 @@ describe('animation parameters', () => {
     expect(Animated.spring.mock.calls.length).toBeGreaterThan(callsAfterFirstOpen);
     const lastArgs = Animated.spring.mock.calls.at(-1)!;
     expect(lastArgs[1]).toMatchObject({ toValue: 0 });
+  });
+});
+
+// ── Scroll-guard and scrollHandler ────────────────────────────────────────────
+//
+// These tests exercise the onMoveShouldSetPanResponderCapture + scrollHandler
+// contract:
+//   • scrollHandler updates the internal scrollY ref
+//   • the capture handler returns true  only when scrollY ≤ 1 AND the gesture
+//     is downward-dominant (allows dismiss at the top)
+//   • the capture handler returns false when scrollY > 1 (list scrolled,
+//     ScrollView must keep the responder so it can scroll normally)
+//   • scrollY is reset to 0 on every sheet open
+//
+// The tests invoke PanResponder handlers via mockPanCreateArg — the config
+// object captured inside the PanResponder.create mock — to avoid spinning up
+// a full gesture simulation.
+
+describe('scroll-guard and scrollHandler', () => {
+  /** Simulate a gesture-state object with the given dy/dx (all other fields 0). */
+  function gesture(dy: number, dx = 0): [any, any] {
+    return [{}, { dy, dx, vy: 0, vx: 0, x0: 0, y0: 0, moveX: 0, moveY: 0 }];
+  }
+  /** Simulate an onScroll event at the given vertical offset. */
+  function scrollEvent(y: number) {
+    return { nativeEvent: { contentOffset: { y } } };
+  }
+
+  it('scrollHandler is returned as a stable function (same reference across renders)', () => {
+    const { result, rerender } = renderHook(
+      ({ v }: { v: boolean }) => useSheetAnimation(v, 400),
+      { initialProps: { v: false } },
+    );
+    const first = result.current.scrollHandler;
+    act(() => { rerender({ v: true }); });
+    expect(result.current.scrollHandler).toBe(first);
+    expect(typeof first).toBe('function');
+  });
+
+  it('capture handler allows dismiss (true) when scrollY is 0 and drag is downward', () => {
+    renderHook(() => useSheetAnimation(true, 400));
+    const capture = mockPanCreateArg?.onMoveShouldSetPanResponderCapture;
+    expect(capture?.(...gesture(20, 2))).toBe(true);
+  });
+
+  it('capture handler blocks dismiss (false) when list is scrolled down (scrollY > 1)', () => {
+    const { result } = renderHook(() => useSheetAnimation(true, 400));
+    act(() => { result.current.scrollHandler(scrollEvent(50)); });
+    const capture = mockPanCreateArg?.onMoveShouldSetPanResponderCapture;
+    expect(capture?.(...gesture(20, 2))).toBe(false);
+  });
+
+  it('capture handler allows dismiss again after user scrolls back to the top', () => {
+    const { result } = renderHook(() => useSheetAnimation(true, 400));
+    const capture = mockPanCreateArg?.onMoveShouldSetPanResponderCapture;
+
+    act(() => { result.current.scrollHandler(scrollEvent(80)); });
+    expect(capture?.(...gesture(20, 2))).toBe(false); // mid-list — blocked
+
+    act(() => { result.current.scrollHandler(scrollEvent(0)); });
+    expect(capture?.(...gesture(20, 2))).toBe(true);  // back at top — allowed
+  });
+
+  it('scrollY resets to 0 on sheet reopen so dismiss is always available fresh', () => {
+    const { result, rerender } = renderHook(
+      ({ v }: { v: boolean }) => useSheetAnimation(v, 400),
+      { initialProps: { v: true } },
+    );
+    // Scroll to mid-list then close
+    act(() => { result.current.scrollHandler(scrollEvent(120)); });
+    const capture = mockPanCreateArg?.onMoveShouldSetPanResponderCapture;
+    expect(capture?.(...gesture(20, 2))).toBe(false); // guard active
+
+    // Close → reopen: scrollY must reset
+    act(() => { rerender({ v: false }); });
+    act(() => { rerender({ v: true }); });
+    expect(capture?.(...gesture(20, 2))).toBe(true); // reset — dismiss works immediately
+  });
+
+  it('capture handler yields to horizontal gestures even when at the top of scroll', () => {
+    renderHook(() => useSheetAnimation(true, 400));
+    const capture = mockPanCreateArg?.onMoveShouldSetPanResponderCapture;
+    // dx dominates → horizontal swipe, should not be captured
+    expect(capture?.(...gesture(5, 20))).toBe(false);
+  });
+
+  it('capture handler does not fire for tiny drags (dy ≤ 8 px)', () => {
+    renderHook(() => useSheetAnimation(true, 400));
+    const capture = mockPanCreateArg?.onMoveShouldSetPanResponderCapture;
+    expect(capture?.(...gesture(7, 0))).toBe(false);
+  });
+
+  it('capture handler sub-pixel tolerance: scrollY === 1 still allows dismiss', () => {
+    const { result } = renderHook(() => useSheetAnimation(true, 400));
+    // Exactly 1 px — within the ≤1 tolerance for sub-pixel float imprecision
+    act(() => { result.current.scrollHandler(scrollEvent(1)); });
+    const capture = mockPanCreateArg?.onMoveShouldSetPanResponderCapture;
+    expect(capture?.(...gesture(20, 2))).toBe(true);
+  });
+
+  it('capture handler: scrollY === 2 blocks dismiss (above tolerance)', () => {
+    const { result } = renderHook(() => useSheetAnimation(true, 400));
+    act(() => { result.current.scrollHandler(scrollEvent(2)); });
+    const capture = mockPanCreateArg?.onMoveShouldSetPanResponderCapture;
+    expect(capture?.(...gesture(20, 2))).toBe(false);
   });
 });

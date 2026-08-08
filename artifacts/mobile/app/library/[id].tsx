@@ -265,7 +265,7 @@ export default function LibraryDocDetail() {
   const [bulkReviewing, setBulkReviewing] = useState<'approve' | 'dismiss' | null>(null);
   const [showWorkPicker, setShowWorkPicker] = useState(false);
   const [linkingWork, setLinkingWork] = useState(false);
-  const { rendered: workPickerRendered, slideAnim: workPickerSlideAnim, fadeAnim: workPickerFadeAnim, panHandlers: workPickerPanHandlers } = useSheetAnimation(showWorkPicker, 400, () => setShowWorkPicker(false));
+  const { rendered: workPickerRendered, slideAnim: workPickerSlideAnim, fadeAnim: workPickerFadeAnim, panHandlers: workPickerPanHandlers, scrollHandler: workPickerScrollHandler } = useSheetAnimation(showWorkPicker, 400, () => setShowWorkPicker(false));
   const [lifecycleUpdating, setLifecycleUpdating] = useState(false);
   const [reprocessing, setReprocessing] = useState(false);
   const [processingProgress, setProcessingProgress] = useState<{
@@ -1696,7 +1696,7 @@ export default function LibraryDocDetail() {
                 <Feather name="x" size={20} color={colors.mutedForeground} />
               </Pressable>
             </View>
-            <ScrollView>
+            <ScrollView onScroll={workPickerScrollHandler} scrollEventThrottle={16}>
               <Pressable
                 onPress={() => handleLinkWork(null)}
                 style={[styles.workOption, { borderColor: colors.border }]}

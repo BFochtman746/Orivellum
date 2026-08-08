@@ -717,8 +717,8 @@ export default function ChatScreen() {
   // Work context controls
   const [contextSheetOpen, setContextSheetOpen] = useState(false);
   const [scopeAll, setScopeAll] = useState(false);
-  const { rendered: ctxRendered, slideAnim: ctxSlideAnim, fadeAnim: ctxFadeAnim, panHandlers: ctxPanHandlers } = useSheetAnimation(contextSheetOpen, 480, () => setContextSheetOpen(false));
-  const { rendered: modelPickerRendered, slideAnim: modelPickerSlideAnim, fadeAnim: modelPickerFadeAnim, panHandlers: modelPickerPanHandlers } = useSheetAnimation(modelPickerVisible, 340, () => setModelPickerVisible(false));
+  const { rendered: ctxRendered, slideAnim: ctxSlideAnim, fadeAnim: ctxFadeAnim, panHandlers: ctxPanHandlers, scrollHandler: ctxScrollHandler } = useSheetAnimation(contextSheetOpen, 480, () => setContextSheetOpen(false));
+  const { rendered: modelPickerRendered, slideAnim: modelPickerSlideAnim, fadeAnim: modelPickerFadeAnim, panHandlers: modelPickerPanHandlers, scrollHandler: modelPickerScrollHandler } = useSheetAnimation(modelPickerVisible, 340, () => setModelPickerVisible(false));
   const [pinnedDocIds, setPinnedDocIds] = useState<Set<string>>(new Set());
 
   const { data, isLoading, isError, refetch } = useGetConversation(id, { query: { staleTime: 10_000 } } as any);
@@ -1624,7 +1624,7 @@ export default function ChatScreen() {
                 No documents in this work yet
               </Text>
             ) : (
-              <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 300 }}>
+              <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 300 }} onScroll={ctxScrollHandler} scrollEventThrottle={16}>
                 {(workDocsData.documents as any[]).map((doc: any) => {
                   const pinned = pinnedDocIds.has(doc.id);
                   return (
@@ -1691,7 +1691,7 @@ export default function ChatScreen() {
           style={[styles.modelSheet, { backgroundColor: colors.card, borderColor: colors.border, position: 'absolute', bottom: 0, left: 0, right: 0, transform: [{ translateY: modelPickerSlideAnim }] }]}
         >
             <Text style={[styles.modelSheetTitle, { color: colors.foreground }]}>Select AI Model</Text>
-            <ScrollView>
+            <ScrollView onScroll={modelPickerScrollHandler} scrollEventThrottle={16}>
               {models.map((m: any) => (
                 <Pressable
                   key={m.id}

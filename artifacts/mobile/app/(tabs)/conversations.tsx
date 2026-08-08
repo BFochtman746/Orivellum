@@ -184,7 +184,7 @@ export default function ConversationsScreen() {
   const [memoryFacts, setMemoryFacts] = useState<any[]>([]);
   const [memoryLoading, setMemoryLoading] = useState(false);
   const { rendered: personaRendered, slideAnim: personaSlideAnim, fadeAnim: personaFadeAnim, panHandlers: personaPanHandlers } = useSheetAnimation(personaSheetOpen, 440, () => setPersonaSheetOpen(false));
-  const { rendered: memoryRendered, slideAnim: memorySlideAnim, fadeAnim: memoryFadeAnim, panHandlers: memoryPanHandlers } = useSheetAnimation(memoryOpen, 400, () => setMemoryOpen(false));
+  const { rendered: memoryRendered, slideAnim: memorySlideAnim, fadeAnim: memoryFadeAnim, panHandlers: memoryPanHandlers, scrollHandler: memoryScrollHandler } = useSheetAnimation(memoryOpen, 400, () => setMemoryOpen(false));
 
   const openMemorySheet = async () => {
     setMemoryOpen(true);
@@ -734,6 +734,8 @@ export default function ConversationsScreen() {
                 data={memoryFacts}
                 keyExtractor={f => f.id ?? f.key}
                 style={{ maxHeight: 340 }}
+                onScroll={memoryScrollHandler}
+                scrollEventThrottle={16}
                 ItemSeparatorComponent={() => <View style={{ height: 1, backgroundColor: colors.border }} />}
                 renderItem={({ item }) => (
                   <View style={{ paddingVertical: 10 }}>

@@ -249,7 +249,7 @@ function AIResultOverlay({
   visible, text, streaming, onAccept, onInsert, onDiscard,
 }: AIResultOverlayProps) {
   const colors = useColors();
-  const { rendered, slideAnim, fadeAnim, panHandlers } = useSheetAnimation(visible, 480, onDiscard);
+  const { rendered, slideAnim, fadeAnim, panHandlers, scrollHandler } = useSheetAnimation(visible, 480, onDiscard);
   if (!rendered) return null;
 
   return (
@@ -275,7 +275,7 @@ function AIResultOverlay({
           </View>
 
           {/* Result text */}
-          <ScrollView style={styles.overlayScroll} contentContainerStyle={{ paddingBottom: 8 }}>
+          <ScrollView style={styles.overlayScroll} contentContainerStyle={{ paddingBottom: 8 }} onScroll={scrollHandler} scrollEventThrottle={16}>
             <Text style={[styles.overlayText, { color: colors.foreground }]}>
               {text}
               {streaming && (
@@ -350,7 +350,7 @@ interface WorkPickerProps {
 function WorkPickerSheet({ visible, works, currentWorkId, onSelect, onClose }: WorkPickerProps) {
   const colors = useColors();
   const insets = useSafeAreaInsets();
-  const { rendered, slideAnim, fadeAnim, panHandlers } = useSheetAnimation(visible, 400, onClose);
+  const { rendered, slideAnim, fadeAnim, panHandlers, scrollHandler } = useSheetAnimation(visible, 400, onClose);
   if (!rendered) return null;
 
   return (
@@ -368,7 +368,7 @@ function WorkPickerSheet({ visible, works, currentWorkId, onSelect, onClose }: W
           <View style={[styles.sheetHandle, { backgroundColor: colors.border }]} />
           <Text style={[styles.sheetTitle, { color: colors.foreground }]}>Link to Work</Text>
 
-          <ScrollView style={{ maxHeight: 320 }}>
+          <ScrollView style={{ maxHeight: 320 }} onScroll={scrollHandler} scrollEventThrottle={16}>
             {/* No work option */}
             <Pressable
               onPress={() => { onSelect(null); onClose(); }}

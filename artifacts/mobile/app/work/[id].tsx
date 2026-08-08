@@ -5908,7 +5908,7 @@ export default function WorkDetailScreen() {
   // Work-scoped review items — badge on Overview tab + bottom sheet
   const [reviewItems, setReviewItems] = useState<any[]>([]);
   const [reviewSheetOpen, setReviewSheetOpen] = useState(false);
-  const { rendered: reviewRendered, slideAnim: reviewSlideAnim, fadeAnim: reviewFadeAnim, panHandlers: reviewPanHandlers } = useSheetAnimation(reviewSheetOpen, 500, () => setReviewSheetOpen(false));
+  const { rendered: reviewRendered, slideAnim: reviewSlideAnim, fadeAnim: reviewFadeAnim, panHandlers: reviewPanHandlers, scrollHandler: reviewScrollHandler } = useSheetAnimation(reviewSheetOpen, 500, () => setReviewSheetOpen(false));
   const [resolvingId, setResolvingId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -6039,7 +6039,7 @@ export default function WorkDetailScreen() {
   // Opens a bottom-sheet Modal with title, description, word target, and
   // chapter target all in one place. Saves with a single PATCH call.
   const [settingsOpen, setSettingsOpen]               = useState(false);
-  const { rendered: settingsRendered, slideAnim: settingsSlideAnim, fadeAnim: settingsFadeAnim, panHandlers: settingsPanHandlers } = useSheetAnimation(settingsOpen, 480, () => setSettingsOpen(false));
+  const { rendered: settingsRendered, slideAnim: settingsSlideAnim, fadeAnim: settingsFadeAnim, panHandlers: settingsPanHandlers, scrollHandler: settingsScrollHandler } = useSheetAnimation(settingsOpen, 480, () => setSettingsOpen(false));
   const [settingsTitleDraft, setSettingsTitleDraft]   = useState('');
   const [settingsDescDraft, setSettingsDescDraft]     = useState('');
   const [settingsWordDraft, setSettingsWordDraft]     = useState('');
@@ -6947,6 +6947,8 @@ export default function WorkDetailScreen() {
               <FlatList
                 data={reviewItems}
                 keyExtractor={it => it.id}
+                onScroll={reviewScrollHandler}
+                scrollEventThrottle={16}
                 ItemSeparatorComponent={() => <View style={{ height: 1, backgroundColor: colors.border }} />}
                 renderItem={({ item }) => {
                   const isResolving = resolvingId === item.id;
@@ -7035,6 +7037,8 @@ export default function WorkDetailScreen() {
               contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 16, gap: 16 }}
               keyboardShouldPersistTaps="handled"
               showsVerticalScrollIndicator={false}
+              onScroll={settingsScrollHandler}
+              scrollEventThrottle={16}
             >
               {/* Title */}
               <View>

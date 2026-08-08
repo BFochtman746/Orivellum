@@ -5,9 +5,8 @@
  * bottom-sheet panel in the app so the motion language is consistent project-wide.
  *
  * Usage:
- *   const { rendered, slideAnim, fadeAnim, panHandlers } = useSheetAnimation(
- *     visible, 400, onClose,
- *   );
+ *   const { rendered, slideAnim, fadeAnim, panHandlers, scrollHandler } =
+ *     useSheetAnimation(visible, 400, onClose);
  *   if (!rendered) return null;
  *   return (
  *     <Modal transparent visible={rendered} animationType="none" ...>
@@ -18,7 +17,10 @@
  *         {...panHandlers}
  *         style={[sheetStyle, { transform: [{ translateY: slideAnim }] }]}
  *       >
- *         ...
+ *         // For sheets with a vertical ScrollView or FlatList, attach
+ *         // scrollHandler so the capture guard knows the scroll position
+ *         // and only intercepts when the list is at the very top:
+ *         // <ScrollView onScroll={scrollHandler} scrollEventThrottle={16}>
  *       </Animated.View>
  *     </Modal>
  *   );
@@ -37,9 +39,13 @@
  * an exitGen counter so `rendered` is never incorrectly set to false while
  * `visible` is already true again.
  *
- * Swipe-to-dismiss: a downward PanResponder gesture is applied to the sheet.
- * Releasing above DISMISS_THRESHOLD px (or above DISMISS_VELOCITY) triggers
- * the exit animation and calls onClose; releasing below snaps back.
+ * Swipe-to-dismiss with nested ScrollView:
+ *   The PanResponder uses onMoveShouldSetPanResponderCapture (capture phase,
+ *   fires before ScrollView's bubble-phase onMoveShouldSetResponder) to claim
+ *   the gesture when the list is at the top (scrollY ≤ 1 px). Pass
+ *   `scrollHandler` to the ScrollView/FlatList's `onScroll` prop so the hook
+ *   tracks the current position. Sheets without a scrollable list work
+ *   identically because scrollY stays at 0 permanently.
  */
 
 import { useEffect, useRef, useState } from 'react';
@@ -70,9 +76,39 @@ export function useSheetAnimation(
   useEffect(() => { onCloseRef.current = onClose; },       [onClose]);
   useEffect(() => { sheetHeightRef.current = sheetHeight; }, [sheetHeight]);
 
+  // Tracks the vertical scroll offset of any nested ScrollView / FlatList.
+  // The capture-phase handler reads this to decide whether to intercept
+  // (scrolled to top) or yield (scrolled down).  Reset on every open so
+  // a freshly-opened sheet always has the dismiss gesture available.
+  const scrollY = useRef(0);
+
+  // Stable scroll event handler — attach to the ScrollView / FlatList inside
+  // the sheet via: onScroll={scrollHandler} scrollEventThrottle={16}
+  // The ref ensures the function identity never changes between renders,
+  // so ScrollView's event listener is not re-attached on every render.
+  const scrollHandler = useRef(
+    (e: { nativeEvent: { contentOffset: { y: number } } }) => {
+      scrollY.current = e.nativeEvent.contentOffset.y;
+    },
+  ).current;
+
   const panResponder = useRef(
     PanResponder.create({
-      // Intercept downward-dominant drags; yield to horizontal scrollers.
+      // ── Capture phase ────────────────────────────────────────────────────
+      // Fires top-down BEFORE any child (ScrollView, FlatList, Pressable)
+      // can claim the gesture via their own bubble-phase handlers.
+      // Only intercept when:
+      //   (a) the nested list is scrolled to the very top (≤1 px handles
+      //       sub-pixel float imprecision from the native layer), AND
+      //   (b) the gesture is predominantly downward.
+      // Sheets with no ScrollView always have scrollY===0, so (a) is
+      // trivially satisfied and the gesture behaves identically.
+      onMoveShouldSetPanResponderCapture: (_, { dy, dx }) =>
+        scrollY.current <= 1 && dy > 8 && Math.abs(dy) > Math.abs(dx) * 1.5,
+
+      // ── Bubble phase fallback ─────────────────────────────────────────────
+      // Catches downward drags on non-scrollable areas of the sheet (the
+      // drag handle, header, empty space) in case the capture check missed.
       onMoveShouldSetPanResponder: (_, { dy, dx }) =>
         dy > 8 && Math.abs(dy) > Math.abs(dx) * 1.5,
 
@@ -129,6 +165,9 @@ export function useSheetAnimation(
 
   useEffect(() => {
     if (visible) {
+      // Reset scroll position so the dismiss gesture is always available
+      // when the sheet first opens, regardless of what the list showed last time.
+      scrollY.current = 0;
       // Invalidate any pending exit completion callback before re-mounting.
       exitGen.current += 1;
       setRendered(true);
@@ -168,5 +207,11 @@ export function useSheetAnimation(
     }
   }, [visible]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  return { rendered, slideAnim, fadeAnim, panHandlers: panResponder.panHandlers };
+  return {
+    rendered,
+    slideAnim,
+    fadeAnim,
+    panHandlers: panResponder.panHandlers,
+    scrollHandler,
+  };
 }
