@@ -23,6 +23,7 @@ import Reanimated, {
 } from 'react-native-reanimated';
 import { useAudiobookJobActive } from '@/hooks/useAudiobookJobActive';
 import { useColors } from '@/hooks/useColors';
+import { useMailAttentionCount } from '@/hooks/useMailAttentionCount';
 import { fontSerif } from '@/lib/typography';
 import { Feather } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
@@ -108,60 +109,6 @@ function useReviewCount(): number {
   return count;
 }
 
-// ── Mail attention badge ────────────────────────────────────────────────────────
-
-/**
- * Polls GET /api/mail/summary every 30 s and returns high_attention count
- * when the account is connected, 0 otherwise.
- *
- * Returns 0 immediately while the user is viewing any /mail route — the badge
- * is redundant when they're already looking at the queue.  Triggers a fresh
- * poll the moment they leave /mail so the count is up-to-date right away.
- */
-function useMailAttentionCount(): number {
-  const [count, setCount] = useState(0);
-  const path = usePathname();
-  // path.startsWith('/mail') covers every mail sub-route:
-  //   /mail              — attention list
-  //   /mail/<id>         — message detail (also works on cold-start deep link)
-  //   /mail/settings     — settings screen
-  //   /mail/connect      — Outlook OAuth flow
-  //   /mail/compose/<id> — compose/reply screen
-  // Expo Router populates usePathname() from the initial URL before the first
-  // render, so deep-link cold starts are handled correctly without extra logic.
-  const onMailRoute = path.startsWith('/mail');
-  const prevOnMailRef = useRef(onMailRoute);
-
-  const poll = useCallback(async () => {
-    try {
-      const r = await mobileFetch(`${_REVIEW_API}/mail/summary`);
-      if (r.ok) {
-        const data = await r.json();
-        setCount(data.connected ? ((data.high_attention as number) ?? 0) : 0);
-      }
-    } catch {
-      // silently fail — badge just won't update until next poll
-    }
-  }, []);
-
-  // Regular 30 s interval
-  useEffect(() => {
-    poll();
-    const t = setInterval(poll, 30_000);
-    return () => clearInterval(t);
-  }, [poll]);
-
-  // Immediate re-poll when leaving the mail route so the badge is fresh
-  useEffect(() => {
-    if (prevOnMailRef.current && !onMailRoute) {
-      poll();
-    }
-    prevOnMailRef.current = onMailRoute;
-  }, [onMailRoute, poll]);
-
-  // While on any /mail screen the badge is meaningless — suppress it
-  return onMailRoute ? 0 : count;
-}
 
 // ── Server status ──────────────────────────────────────────────────────────────
 
