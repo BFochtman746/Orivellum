@@ -243,6 +243,19 @@ def get_decision(record_id: str):
         nonce = store.issue_nonce(record_id, "MOVE")
         actions.append({"type": "MOVE", "nonce": nonce, "label": "Move to Review"})
 
+    # Offer UNDO_MOVE when the last action was a reversible move
+    action_request_id = record.get("action_request_id")
+    if action_request_id:
+        ar = store.get_action_request(action_request_id)
+        if ar and ar.get("action_type") == "MOVE" and ar.get("status") == "APPLIED":
+            undo_nonce = store.issue_nonce(record_id, "UNDO_MOVE")
+            actions.append({
+                "type": "UNDO_MOVE",
+                "nonce": undo_nonce,
+                "action_request_id": action_request_id,
+                "label": "Undo move",
+            })
+
     return {
         "record": _safe_record(record),
         "assessment": _safe_assessment(assessment) if assessment else None,

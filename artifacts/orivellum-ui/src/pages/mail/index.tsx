@@ -70,6 +70,7 @@ interface ActionOption {
   type: string;
   nonce: string;
   label: string;
+  action_request_id?: string;   // present on UNDO_MOVE actions
 }
 
 interface DecisionDetail {
@@ -239,12 +240,13 @@ function MessageReader({ detail }: { detail: DecisionDetail | null; loading: boo
 // ── Assessment panel ──────────────────────────────────────────────────────────
 
 function AssessmentPanel({
-  detail, sendEnabled, onCompose, onMove, onDefer, onSync, loading,
+  detail, sendEnabled, onCompose, onMove, onUndo, onDefer, onSync, loading,
 }: {
   detail: DecisionDetail | null;
   sendEnabled: boolean;
   onCompose: (action: ActionOption) => void;
   onMove: (action: ActionOption) => void;
+  onUndo: (action: ActionOption) => void;
   onDefer: () => void;
   onSync: () => void;
   loading: boolean;
@@ -263,6 +265,7 @@ function AssessmentPanel({
   const { record, assessment, available_actions } = detail;
   const draftAction = available_actions.find(a => a.type === "CREATE_DRAFT");
   const moveAction  = available_actions.find(a => a.type === "MOVE");
+  const undoAction  = available_actions.find(a => a.type === "UNDO_MOVE");
 
   return (
     <div className="flex flex-col gap-3 p-4 overflow-y-auto">
@@ -309,6 +312,19 @@ function AssessmentPanel({
           >
             <MoveRight size={13} />
             Move to Review
+          </Button>
+        )}
+        {undoAction && (
+          <Button
+            variant="outline"
+            className="w-full gap-2 justify-start"
+            size="sm"
+            onClick={() => onUndo(undoAction)}
+            disabled={loading}
+            title="Move this message back to its original folder"
+          >
+            <RotateCcw size={13} />
+            Undo move
           </Button>
         )}
         <Button
@@ -441,6 +457,30 @@ export default function MailPage() {
     }
   }, [selectedId, invalidate]);
 
+  const handleUndo = useCallback(async (action: ActionOption) => {
+    const arId = action.action_request_id;
+    if (!arId) return;
+    setActing(true);
+    try {
+      const r = await apiFetch(`${BASE}/mail/actions/${arId}/undo`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ nonce: action.nonce }),
+      });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        throw new Error((err as any).detail || "Undo failed");
+      }
+      toast.success("Move reversed — message returned to its original folder");
+      invalidate();
+      setSelectedId(null);
+    } catch (e: any) {
+      toast.error(e.message || "Could not undo move");
+    } finally {
+      setActing(false);
+    }
+  }, [invalidate]);
+
   const handleDefer = useCallback(() => {
     setSelectedId(null);
     toast("Deferred — message stays in queue");
@@ -563,6 +603,7 @@ export default function MailPage() {
             sendEnabled={summary?.send_enabled ?? false}
             onCompose={handleCompose}
             onMove={handleMove}
+            onUndo={handleUndo}
             onDefer={handleDefer}
             onSync={handleSync}
             loading={acting}
