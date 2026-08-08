@@ -207,7 +207,8 @@ function ConflictsSection() {
                       </span>
                       <Button size="sm" variant="outline" disabled={busy}
                         onClick={() => resolve(c.id, res)}
-                        className="h-6 text-[11px] gap-1" style={{ borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)", color: "var(--green-2)" }}>
+                        className="h-6 text-[11px] gap-1 text-[var(--green-2)] hover:text-[var(--green-2)] hover:bg-[var(--green-soft)]"
+                        style={{ borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)" }}>
                         {busy ? <Spin /> : <ThumbsUp className="w-3 h-3" />} Keep {label}
                       </Button>
                     </div>
@@ -633,7 +634,8 @@ function FindingsSection() {
                 variant="outline"
                 disabled={busy}
                 onClick={() => resolve(f.id)}
-                className="h-7 text-[11px] gap-1 shrink-0" style={{ borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)", color: "var(--green-2)" }}
+                className="h-7 text-[11px] gap-1 shrink-0 text-[var(--green-2)] hover:text-[var(--green-2)] hover:bg-[var(--green-soft)]"
+                style={{ borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)" }}
               >
                 {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle2 className="w-3 h-3" />}
                 Resolve
@@ -860,7 +862,8 @@ export default function GovernancePage() {
               <Button size="sm" variant="outline"
                 onClick={() => handleBatchApprove(filtered)}
                 disabled={bulkPending}
-                className="gap-1.5 text-xs" style={{ borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)", color: "var(--green-2)" }}>
+                className="gap-1.5 text-xs text-[var(--green-2)] hover:text-[var(--green-2)] hover:bg-[var(--green-soft)]"
+              style={{ borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)" }}>
                 {bulkPending
                   ? <><Spin /> Approving…</>
                   : <><CheckCircle2 className="w-3.5 h-3.5" /> Approve all ({filtered.length})</>}
@@ -916,7 +919,7 @@ export default function GovernancePage() {
                   <Button size="sm" variant="ghost"
                     onClick={() => handleBatchApprove(workItems)}
                     disabled={bulkPending}
-                    className="h-6 px-2 text-[10px] font-mono gap-1" style={{ color: "var(--green-2)" }}>
+                    className="h-6 px-2 text-[10px] font-mono gap-1 text-[var(--green-2)] hover:text-[var(--green-2)] hover:bg-[var(--green-soft)]">
                     <CheckCircle2 className="w-3 h-3" /> Approve {workItems.length}
                   </Button>
                 </div>
@@ -979,7 +982,7 @@ export default function GovernancePage() {
                         disabled={isReviewing}
                         onClick={(e) => { e.stopPropagation(); handleReview(item.id, "approved"); }}
                         title="Approve (a)"
-                        className="p-1.5 rounded transition-colors text-muted-foreground disabled:opacity-40"
+                        className="p-1.5 rounded transition-colors text-muted-foreground hover:text-[var(--green-2)] hover:bg-[var(--green-soft)] disabled:opacity-40"
                       >
                         {isReviewing ? <Spin /> : <ThumbsUp className="w-3.5 h-3.5" />}
                       </button>
@@ -987,7 +990,7 @@ export default function GovernancePage() {
                         disabled={isReviewing}
                         onClick={(e) => { e.stopPropagation(); handleReview(item.id, "rejected"); }}
                         title="Reject (r)"
-                        className="p-1.5 rounded transition-colors text-muted-foreground disabled:opacity-40"
+                        className="p-1.5 rounded transition-colors text-muted-foreground hover:text-[var(--rust)] hover:bg-[var(--rust-soft)] disabled:opacity-40"
                       >
                         <ThumbsDown className="w-3.5 h-3.5" />
                       </button>

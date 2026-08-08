@@ -424,8 +424,11 @@ function AiKindSection({
                       disabled={isReviewing || isApproved}
                       onClick={() => onReview(item.id, "approved", isRejected)}
                       title="Approve"
-                      className="p-1 rounded transition-colors disabled:opacity-40"
-                      style={isApproved ? { color: "var(--green-2)", background: "var(--green-soft)" } : undefined}
+                      className={`p-1 rounded transition-colors disabled:opacity-40 ${
+                        isApproved
+                          ? "text-[var(--green-2)] bg-[var(--green-soft)]"
+                          : "text-muted-foreground/50 hover:text-[var(--green-2)] hover:bg-[var(--green-soft)]"
+                      }`}
                     >
                       <ThumbsUp className="w-3 h-3" />
                     </button>
@@ -433,8 +436,11 @@ function AiKindSection({
                       disabled={isReviewing || isRejected}
                       onClick={() => onReview(item.id, "rejected", isApproved)}
                       title="Dismiss"
-                      className="p-1 rounded transition-colors disabled:opacity-40"
-                      style={isRejected ? { color: "var(--rust)", background: "var(--rust-soft)" } : undefined}
+                      className={`p-1 rounded transition-colors disabled:opacity-40 ${
+                        isRejected
+                          ? "text-[var(--rust)] bg-[var(--rust-soft)]"
+                          : "text-muted-foreground/50 hover:text-[var(--rust)] hover:bg-[var(--rust-soft)]"
+                      }`}
                     >
                       <ThumbsDown className="w-3 h-3" />
                     </button>
@@ -774,8 +780,11 @@ function KnowledgeTabContent({
                                 disabled={isReviewing || isApproved}
                                 onClick={() => onReview(item.id, "approved")}
                                 title="Approve"
-                                className="p-1.5 rounded transition-colors disabled:opacity-40"
-                                style={isApproved ? { color: "var(--green-2)", background: "var(--green-soft)" } : undefined}
+                                className={`p-1.5 rounded transition-colors disabled:opacity-40 ${
+                                  isApproved
+                                    ? "text-[var(--green-2)] bg-[var(--green-soft)]"
+                                    : "text-muted-foreground/50 hover:text-[var(--green-2)] hover:bg-[var(--green-soft)]"
+                                }`}
                               >
                                 <ThumbsUp className="w-3.5 h-3.5" />
                               </button>
@@ -783,8 +792,11 @@ function KnowledgeTabContent({
                                 disabled={isReviewing || isRejected}
                                 onClick={() => onReview(item.id, "rejected")}
                                 title="Dismiss"
-                                className="p-1.5 rounded transition-colors disabled:opacity-40"
-                                style={isRejected ? { color: "var(--rust)", background: "var(--rust-soft)" } : undefined}
+                                className={`p-1.5 rounded transition-colors disabled:opacity-40 ${
+                                  isRejected
+                                    ? "text-[var(--rust)] bg-[var(--rust-soft)]"
+                                    : "text-muted-foreground/50 hover:text-[var(--rust)] hover:bg-[var(--rust-soft)]"
+                                }`}
                               >
                                 <ThumbsDown className="w-3.5 h-3.5" />
                               </button>
