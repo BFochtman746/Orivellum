@@ -108,6 +108,31 @@ def _tracked_submit(fn, *args, kind: str = "background", label: str = "", **kwar
         raise
 
 
+def submit_bg(fn, *args, kind: str = "background", label: str = "", **kwargs) -> None:
+    """Fire-and-forget background submit — the preferred replacement for bare
+    ``threading.Thread(daemon=True).start()`` calls throughout the codebase.
+
+    Uses the tracked executor when available so the job appears in the dashboard
+    and can be retried.  Falls back to a daemon thread if the executor is shut
+    down or the submission queue is full.  **Never raises** — callers do not need
+    a try/except wrapper.
+
+    Usage::
+
+        from orivellum.api.executor import submit_bg
+        submit_bg(my_fn, arg1, arg2, kind="pipeline", label="my_fn")
+    """
+    try:
+        _tracked_submit(fn, *args, kind=kind, label=label, **kwargs)
+    except Exception as exc:
+        logger.warning(
+            "executor submit failed (%s), falling back to thread: %s",
+            getattr(fn, "__name__", "?"), exc,
+        )
+        t = threading.Thread(target=fn, args=args, kwargs=kwargs, daemon=True)
+        t.start()
+
+
 def _public_entry(entry: dict) -> dict:
     """Return a copy of a job entry with private (_-prefixed) fields removed."""
     return {k: v for k, v in entry.items() if not k.startswith("_")}

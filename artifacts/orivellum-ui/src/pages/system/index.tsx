@@ -2270,6 +2270,9 @@ export default function System() {
       {/* Vision Model Setting */}
       <VisionModelCard />
 
+      {/* AI Model Overrides (workhorse / reasoner / coder) */}
+      <ModelPickerCard />
+
       {/* Image Generation URL Setting */}
       <ImageGenUrlCard />
 
@@ -2528,6 +2531,186 @@ interface LemonadeData {
   health?: LemonadeHealth;
   system_info?: LemonadeSysInfo;
   stats?: LemonadeStats;
+}
+
+// ─── Model override settings ──────────────────────────────────────────────────
+
+interface ModelSettings {
+  workhorse: { stored: string; config: string; effective: string };
+  reasoner:  { stored: string; config: string; effective: string };
+  coder:     { stored: string; config: string; effective: string };
+}
+
+function useModelSettings() {
+  return useQuery<ModelSettings>({
+    queryKey: ["system", "models"],
+    queryFn: async () => {
+      const r = await apiFetch(`${API_BASE}/api/system/settings/models`);
+      if (!r.ok) throw new Error("Failed to fetch model settings");
+      return r.json();
+    },
+    staleTime: 30_000,
+  });
+}
+
+function useSetModelSettings() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (body: { workhorse: string; reasoner: string; coder: string }) => {
+      const r = await apiFetch(`${API_BASE}/api/system/settings/models`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!r.ok) throw new Error("Failed to update model settings");
+      return r.json();
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["system", "models"] });
+      toast.success("Model settings saved");
+    },
+    onError: () => toast.error("Failed to save model settings"),
+  });
+}
+
+function ModelPickerCard() {
+  const { data, isLoading } = useModelSettings();
+  const setModels = useSetModelSettings();
+
+  const [workhorse, setWorkhorse] = useState("");
+  const [reasoner,  setReasoner]  = useState("");
+  const [coder,     setCoder]     = useState("");
+  const initialised = useRef(false);
+
+  // Seed inputs from server data once
+  useEffect(() => {
+    if (data && !initialised.current) {
+      initialised.current = true;
+      setWorkhorse(data.workhorse.stored);
+      setReasoner(data.reasoner.stored);
+      setCoder(data.coder.stored);
+    }
+  }, [data]);
+
+  const dirty =
+    workhorse !== (data?.workhorse.stored ?? "") ||
+    reasoner  !== (data?.reasoner.stored  ?? "") ||
+    coder     !== (data?.coder.stored     ?? "");
+
+  const handleSave = () => {
+    setModels.mutate({ workhorse: workhorse.trim(), reasoner: reasoner.trim(), coder: coder.trim() });
+  };
+
+  const handleClear = () => {
+    setWorkhorse("");
+    setReasoner("");
+    setCoder("");
+    setModels.mutate({ workhorse: "", reasoner: "", coder: "" });
+  };
+
+  return (
+    <Card className="vellum-card">
+      <CardContent className="p-6">
+        <div className="flex items-start gap-3 mb-5">
+          <Brain className="w-5 h-5 mt-0.5 shrink-0" style={{ color: "var(--green-raw)" }} />
+          <div className="space-y-1">
+            <h3 className="font-medium text-sm">AI Model Overrides</h3>
+            <p className="text-sm text-muted-foreground max-w-xl">
+              Override the AI model used for each role. Leave blank to use the{" "}
+              <span className="font-medium text-foreground">config.yaml</span> default.
+              Changes take effect on the next conversation turn — no restart required.
+            </p>
+          </div>
+        </div>
+
+        {isLoading ? (
+          <div className="space-y-3">
+            <Skeleton className="h-9 w-full" />
+            <Skeleton className="h-9 w-full" />
+            <Skeleton className="h-9 w-full" />
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <div className="grid grid-cols-[120px_1fr] items-center gap-3">
+              <span className="text-sm font-medium">Workhorse</span>
+              <div className="space-y-1">
+                <Input
+                  value={workhorse}
+                  onChange={(e) => setWorkhorse(e.target.value)}
+                  placeholder={data?.workhorse.config || "e.g. qwen3-30b-a3b"}
+                  className="font-mono text-xs h-8"
+                />
+                {data?.workhorse.config && (
+                  <p className="text-[11px] text-muted-foreground">
+                    config default: <code className="font-mono">{data.workhorse.config}</code>
+                  </p>
+                )}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-[120px_1fr] items-center gap-3">
+              <span className="text-sm font-medium">Reasoner</span>
+              <div className="space-y-1">
+                <Input
+                  value={reasoner}
+                  onChange={(e) => setReasoner(e.target.value)}
+                  placeholder={data?.reasoner.config || "e.g. qwen3-30b-a3b:thinking"}
+                  className="font-mono text-xs h-8"
+                />
+                {data?.reasoner.config && (
+                  <p className="text-[11px] text-muted-foreground">
+                    config default: <code className="font-mono">{data.reasoner.config}</code>
+                  </p>
+                )}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-[120px_1fr] items-center gap-3">
+              <span className="text-sm font-medium">Coder</span>
+              <div className="space-y-1">
+                <Input
+                  value={coder}
+                  onChange={(e) => setCoder(e.target.value)}
+                  placeholder={data?.coder.config || "e.g. qwen2.5-coder-32b"}
+                  className="font-mono text-xs h-8"
+                />
+                {data?.coder.config && (
+                  <p className="text-[11px] text-muted-foreground">
+                    config default: <code className="font-mono">{data.coder.config}</code>
+                  </p>
+                )}
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 pt-1">
+              <Button
+                size="sm"
+                onClick={handleSave}
+                disabled={!dirty || setModels.isPending}
+                className="h-7 text-xs"
+              >
+                {setModels.isPending ? (
+                  <Loader2 className="w-3 h-3 animate-spin mr-1" />
+                ) : (
+                  <Save className="w-3 h-3 mr-1" />
+                )}
+                Save
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={handleClear}
+                disabled={setModels.isPending || (!workhorse && !reasoner && !coder)}
+                className="h-7 text-xs text-muted-foreground"
+              >
+                Clear overrides
+              </Button>
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
 }
 
 function LemonadeEngineCard() {

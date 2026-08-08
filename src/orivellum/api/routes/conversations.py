@@ -119,8 +119,8 @@ def _log_knowledge_retrievals(db: Any, conv_id: str,
         except Exception as _exc:
             logger.debug("knowledge_retrievals log failed (non-fatal): %s", _exc)
 
-    t = _threading.Thread(target=_worker, name="kr-log", daemon=True)
-    t.start()
+    from orivellum.api.executor import submit_bg as _submit_bg_kr
+    _submit_bg_kr(_worker, kind="chat", label="kr-log")
 
 
 def _get_effective_context_window(db: Any) -> int:
@@ -652,16 +652,9 @@ async def send_message(conv_id: str, body: MessageSend):
                 "base_url": cfg_for_capture.serving.base_url,
                 "model": conv.get("model") or cfg_for_capture.serving.workhorse_model,
             }
-            try:
-                from orivellum.api.executor import _tracked_submit as _ts_stamp
-                _ts_stamp(stamp.stamp_and_capture, kind="pklos", label="stamp_capture",
-                          **_kwargs)
-            except Exception as _exc_stamp:
-                logger.warning("Executor unavailable for stamp_capture, falling back to thread: %s",
-                               _exc_stamp)
-                import threading as _thr_stamp
-                _thr_stamp.Thread(target=stamp.stamp_and_capture,
-                                  kwargs=_kwargs, daemon=True).start()
+            from orivellum.api.executor import submit_bg as _submit_bg_stamp
+            _submit_bg_stamp(stamp.stamp_and_capture, kind="pklos",
+                             label="stamp_capture", **_kwargs)
         except Exception:
             pass  # capture is best-effort; never block the response
 
@@ -712,16 +705,9 @@ async def send_message(conv_id: str, body: MessageSend):
         if _idem_client_msg_id:
             db.complete_idempotency(conv_id, _idem_client_msg_id, msg["id"])
         _maybe_auto_title(db, conv, body.text)
-        try:
-            from orivellum.api.executor import _tracked_submit as _ts_prb1
-            _ts_prb1(_post_reply_background, db, conv_id, body.text, tool_text,
-                     kind="chat", label="post_reply_bg")
-        except Exception as _exc_prb1:
-            logger.warning("Executor unavailable for post_reply_bg (tool), falling back to thread: %s",
-                           _exc_prb1)
-            import threading as _thr_prb1
-            _thr_prb1.Thread(target=_post_reply_background,
-                             args=(db, conv_id, body.text, tool_text), daemon=True).start()
+        from orivellum.api.executor import submit_bg as _submit_bg_prb1
+        _submit_bg_prb1(_post_reply_background, db, conv_id, body.text, tool_text,
+                        kind="chat", label="post_reply_bg")
         return {"message": msg}
 
     if body.deep:
@@ -745,16 +731,9 @@ async def send_message(conv_id: str, body: MessageSend):
             if _idem_client_msg_id:
                 db.complete_idempotency(conv_id, _idem_client_msg_id, msg["id"])
             _maybe_auto_title(db, conv, body.text)
-            try:
-                from orivellum.api.executor import _tracked_submit as _ts_prb2
-                _ts_prb2(_post_reply_background, db, conv_id, body.text, question,
-                         kind="chat", label="post_reply_bg")
-            except Exception as _exc_prb2:
-                logger.warning("Executor unavailable for post_reply_bg (clarify), falling back to thread: %s",
-                               _exc_prb2)
-                import threading as _thr_prb2
-                _thr_prb2.Thread(target=_post_reply_background,
-                                 args=(db, conv_id, body.text, question), daemon=True).start()
+            from orivellum.api.executor import submit_bg as _submit_bg_prb2
+            _submit_bg_prb2(_post_reply_background, db, conv_id, body.text, question,
+                            kind="chat", label="post_reply_bg")
             return {"message": msg}
 
         if route == "complex":
@@ -777,17 +756,9 @@ async def send_message(conv_id: str, body: MessageSend):
                 if _idem_client_msg_id:
                     db.complete_idempotency(conv_id, _idem_client_msg_id, msg["id"])
                 _maybe_auto_title(db, conv, body.text)
-                try:
-                    from orivellum.api.executor import _tracked_submit as _ts_prb3
-                    _ts_prb3(_post_reply_background, db, conv_id, body.text, council_reply,
-                             kind="chat", label="post_reply_bg")
-                except Exception as _exc_prb3:
-                    logger.warning("Executor unavailable for post_reply_bg (council), falling back to thread: %s",
-                                   _exc_prb3)
-                    import threading as _thr_prb3
-                    _thr_prb3.Thread(target=_post_reply_background,
-                                     args=(db, conv_id, body.text, council_reply),
-                                     daemon=True).start()
+                from orivellum.api.executor import submit_bg as _submit_bg_prb3
+                _submit_bg_prb3(_post_reply_background, db, conv_id, body.text,
+                                council_reply, kind="chat", label="post_reply_bg")
                 return {"message": msg}
             # Council failed → fall through to direct single call
 
@@ -827,16 +798,9 @@ async def send_message(conv_id: str, body: MessageSend):
         db.complete_idempotency(conv_id, _idem_client_msg_id, msg["id"])
     _maybe_auto_title(db, conv, body.text)
     # Background: embed exchange + inference memory capture (non-streaming)
-    try:
-        from orivellum.api.executor import _tracked_submit as _ts_prb4
-        _ts_prb4(_post_reply_background, db, conv_id, body.text, reply,
-                 kind="chat", label="post_reply_bg")
-    except Exception as _exc_prb4:
-        logger.warning("Executor unavailable for post_reply_bg (direct), falling back to thread: %s",
-                       _exc_prb4)
-        import threading as _thr_prb4
-        _thr_prb4.Thread(target=_post_reply_background,
-                         args=(db, conv_id, body.text, reply), daemon=True).start()
+    from orivellum.api.executor import submit_bg as _submit_bg_prb4
+    _submit_bg_prb4(_post_reply_background, db, conv_id, body.text, reply,
+                    kind="chat", label="post_reply_bg")
     return {"message": msg}
 
 
@@ -1057,10 +1021,12 @@ async def continue_message(conv_id: str, body: ContinueBody):
 def _model_for(conv: dict) -> str:
     """Return the model to use for this conversation.
 
-    Priority: conversation.model → config workhorse default.
+    Priority: conversation.model → DB workhorse override → config workhorse default.
     """
     cfg = get_config()
-    return conv.get("model") or cfg.serving.workhorse_model
+    db  = get_db()
+    db_override = db.get_setting("workhorse_model_override", "")
+    return conv.get("model") or db_override or cfg.serving.workhorse_model
 
 
 def _model_for_vision(conv: dict) -> str:
@@ -2614,16 +2580,9 @@ async def _stream_response(
             _maybe_auto_title(db, conv, user_text)
             _stream_purpose = "chat.intent"
             # Background: embed + infer memory (intent path)
-            try:
-                from orivellum.api.executor import _tracked_submit as _ts_intent
-                _ts_intent(_post_reply_background, db, conv_id, user_text, tool_text,
-                           kind="chat", label="post_reply_bg")
-            except Exception as _exc_intent:
-                logger.warning("Executor unavailable for post_reply_bg (stream intent), falling back to thread: %s",
-                               _exc_intent)
-                import threading as _t
-                _t.Thread(target=_post_reply_background,
-                          args=(db, conv_id, user_text, tool_text), daemon=True).start()
+            from orivellum.api.executor import submit_bg as _submit_bg_intent
+            _submit_bg_intent(_post_reply_background, db, conv_id, user_text,
+                              tool_text, kind="chat", label="post_reply_bg")
             _CHUNK = 40
             for i in range(0, len(tool_text), _CHUNK):
                 yield f"data: {json.dumps({'token': tool_text[i:i+_CHUNK], 'intent': tool_meta.get('intent')})}\n\n"
@@ -2658,16 +2617,9 @@ async def _stream_response(
                 _maybe_auto_title(db, conv, user_text)
                 _stream_purpose = "chat.clarify"
                 # Background: embed + infer memory (clarify path)
-                try:
-                    from orivellum.api.executor import _tracked_submit as _ts_clarify
-                    _ts_clarify(_post_reply_background, db, conv_id, user_text, question,
-                                kind="chat", label="post_reply_bg")
-                except Exception as _exc_clarify:
-                    logger.warning("Executor unavailable for post_reply_bg (stream clarify), falling back to thread: %s",
-                                   _exc_clarify)
-                    import threading as _t2
-                    _t2.Thread(target=_post_reply_background,
-                               args=(db, conv_id, user_text, question), daemon=True).start()
+                from orivellum.api.executor import submit_bg as _submit_bg_clarify
+                _submit_bg_clarify(_post_reply_background, db, conv_id, user_text,
+                                   question, kind="chat", label="post_reply_bg")
                 # Also emit a typed SSE event so the frontend can display immediately
                 # without waiting for the query invalidation round-trip.
                 yield f"data: {json.dumps({'event': 'clarify', 'question': question})}\n\n"
@@ -2693,17 +2645,9 @@ async def _stream_response(
                     _maybe_auto_title(db, conv, user_text)
                     _stream_purpose = "chat.council"
                     # Background: embed + infer memory (council path)
-                    try:
-                        from orivellum.api.executor import _tracked_submit as _ts_council
-                        _ts_council(_post_reply_background, db, conv_id, user_text, council_reply,
-                                    kind="chat", label="post_reply_bg")
-                    except Exception as _exc_council_s:
-                        logger.warning("Executor unavailable for post_reply_bg (stream council), falling back to thread: %s",
-                                       _exc_council_s)
-                        import threading as _t3
-                        _t3.Thread(target=_post_reply_background,
-                                   args=(db, conv_id, user_text, council_reply),
-                                   daemon=True).start()
+                    from orivellum.api.executor import submit_bg as _submit_bg_council
+                    _submit_bg_council(_post_reply_background, db, conv_id, user_text,
+                                       council_reply, kind="chat", label="post_reply_bg")
                     # Update Project Compass (merge — preserves next_step if set)
                     work_id = conv.get("work_id")
                     if work_id:
@@ -2915,17 +2859,9 @@ async def _stream_response(
         _maybe_auto_title(db, conv, user_text)
         # Background: embed exchange + inference memory capture (streaming)
         if full_reply and _stream_ok:
-            try:
-                from orivellum.api.executor import _tracked_submit as _ts_prb5
-                _ts_prb5(_post_reply_background, db, conv_id, user_text, full_reply,
-                         kind="chat", label="post_reply_bg")
-            except Exception as _exc_prb5:
-                logger.warning("Executor unavailable for post_reply_bg (stream direct), falling back to thread: %s",
-                               _exc_prb5)
-                import threading as _thr_prb5
-                _thr_prb5.Thread(target=_post_reply_background,
-                                 args=(db, conv_id, user_text, full_reply),
-                                 daemon=True).start()
+            from orivellum.api.executor import submit_bg as _submit_bg_prb5
+            _submit_bg_prb5(_post_reply_background, db, conv_id, user_text,
+                            full_reply, kind="chat", label="post_reply_bg")
 
         # PKLOS output validation (streaming path).
         # After the full reply is accumulated and persisted, check it against the

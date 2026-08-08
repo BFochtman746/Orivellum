@@ -394,13 +394,8 @@ def nightshift_run_now():
         except Exception:
             logger.exception("Nightshift run-now worker crashed")
 
-    try:
-        from orivellum.api.executor import _tracked_submit as _ts_ns
-        _ts_ns(_worker, kind="nightshift", label="nightshift_run_now")
-    except Exception as _exc_ns:
-        logger.warning("Executor unavailable for nightshift run-now, falling back to thread: %s",
-                       _exc_ns)
-        threading.Thread(target=_worker, name="nightshift-run-now", daemon=True).start()
+    from orivellum.api.executor import submit_bg as _submit_bg_ns
+    _submit_bg_ns(_worker, kind="nightshift", label="nightshift_run_now")
     return {"started": True}
 
 
@@ -853,6 +848,55 @@ def set_vision_model_setting(body: VisionModelUpdate):
     return {"model": body.model.strip(), "ok": True}
 
 
+# ── AI model override settings ────────────────────────────────────────────────
+# Allows users to override the workhorse / reasoner / coder model at runtime
+# without touching config.yaml.  Empty string = use config default.
+
+@router.get("/system/settings/models")
+def get_model_settings():
+    """Return configured model overrides (empty = use config default)."""
+    db  = get_db()
+    cfg = get_config()
+    return {
+        "workhorse": {
+            "stored":  db.get_setting("workhorse_model_override", ""),
+            "config":  cfg.serving.workhorse_model,
+            "effective": db.get_setting("workhorse_model_override", "") or cfg.serving.workhorse_model,
+        },
+        "reasoner": {
+            "stored":  db.get_setting("reasoner_model_override", ""),
+            "config":  cfg.serving.reasoner_model if hasattr(cfg.serving, "reasoner_model") else "",
+            "effective": db.get_setting("reasoner_model_override", ""),
+        },
+        "coder": {
+            "stored":  db.get_setting("coder_model_override", ""),
+            "config":  cfg.serving.coder_model if hasattr(cfg.serving, "coder_model") else "",
+            "effective": db.get_setting("coder_model_override", ""),
+        },
+    }
+
+
+class ModelOverrideUpdate(BaseModel):
+    workhorse: str = ""
+    reasoner:  str = ""
+    coder:     str = ""
+
+
+@router.patch("/system/settings/models")
+def set_model_settings(body: ModelOverrideUpdate):
+    """Persist model name overrides.  Empty string removes the override."""
+    db = get_db()
+    db.set_setting("workhorse_model_override", body.workhorse.strip(), actor="user")
+    db.set_setting("reasoner_model_override",  body.reasoner.strip(),  actor="user")
+    db.set_setting("coder_model_override",     body.coder.strip(),     actor="user")
+    return {
+        "workhorse": body.workhorse.strip(),
+        "reasoner":  body.reasoner.strip(),
+        "coder":     body.coder.strip(),
+        "ok": True,
+    }
+
+
 # ── Context-window settings ────────────────────────────────────────────────────
 
 @router.get("/system/settings/context-window")
@@ -1055,7 +1099,8 @@ def trigger_reindex():
             logger.error("Reindex background worker failed: %s", exc)
             db.set_setting("reindex_running", "false")
 
-    threading.Thread(target=_worker, name="full-reindex", daemon=True).start()
+    from orivellum.api.executor import submit_bg as _submit_bg_reindex
+    _submit_bg_reindex(_worker, kind="background", label="full-reindex")
     return {"ok": True, "detail": "Re-indexing started. Poll /system/reindex/status for progress."}
 
 
@@ -2222,16 +2267,13 @@ def reharvest_with_template(template_id: str, background_tasks: BackgroundTasks)
             logger.warning("reharvest failed for doc %s: %s", doc.get("id", "?"), exc)
 
     queued = 0
+    from orivellum.api.executor import submit_bg as _submit_bg_rh
     for doc in docs:
-        try:
-            from orivellum.api.executor import _tracked_submit as _ts
-            _ts(
-                _run_reharvest, doc,
-                kind="pipeline",
-                label=f"reharvest:{doc['id'][:8]}",
-            )
-        except Exception:
-            threading.Thread(target=_run_reharvest, args=(doc,), daemon=True).start()
+        _submit_bg_rh(
+            _run_reharvest, doc,
+            kind="pipeline",
+            label=f"reharvest:{doc['id'][:8]}",
+        )
         queued += 1
 
     db.audit(

@@ -283,7 +283,7 @@ function RunsTable({ runs, isLoading, isError, onRetry }: {
   const [expanded, setExpanded] = useState<string | null>(null);
 
   return (
-    <Card>
+    <Card className="vellum-card">
       <CardContent className="p-6">
         <div className="flex items-center gap-2 mb-4">
           <Activity className="w-4 h-4 text-primary" />
@@ -383,7 +383,7 @@ function TelemetryCard() {
   );
 
   return (
-    <Card>
+    <Card className="vellum-card">
       <CardContent className="p-6">
         <div className="flex items-center gap-2 mb-4">
           <Gauge className="w-4 h-4 text-primary" />
@@ -448,7 +448,7 @@ function BenchmarkCard({ bench, running, onRun }: {
   onRun: () => void;
 }) {
   return (
-    <Card className="flex flex-col">
+    <Card className="vellum-card flex flex-col">
       <CardContent className="p-5 flex flex-col flex-1 gap-3">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
@@ -841,7 +841,7 @@ function PromptLabCard() {
   });
 
   return (
-    <Card>
+    <Card className="vellum-card">
       <CardContent className="p-6">
         <div className="flex items-center justify-between gap-2 mb-4 flex-wrap">
           <div className="flex items-center gap-2">
@@ -1077,7 +1077,7 @@ function RagCalibrationCard() {
   const bestDiffers = !!(best && cfg && (best.target_words !== cfg.target_words || best.overlap_words !== cfg.overlap_words));
 
   return (
-    <Card>
+    <Card className="vellum-card">
       <CardContent className="p-6">
         <div className="flex items-center justify-between gap-2 mb-4">
           <div className="flex items-center gap-2">
@@ -1313,7 +1313,7 @@ export default function Mcos() {
       <div className="border-b border-border/50 pb-4 flex items-start justify-between gap-4">
         <div>
           <h1 className="text-3xl font-serif font-semibold tracking-tight flex items-center gap-2">
-            <Gauge className="w-7 h-7 text-primary" />
+            <Gauge className="w-7 h-7" style={{ color: "var(--green-raw)" }} />
             Calibration
           </h1>
           <p className="text-muted-foreground mt-1 font-serif">
@@ -1349,7 +1349,7 @@ export default function Mcos() {
           </CardContent>
         </Card>
       ) : isEmpty ? (
-        <Card className="bg-primary/5 border-primary/20">
+        <Card className="vellum-card bg-primary/5 border-primary/20">
           <CardContent className="p-8 text-center space-y-3">
             <Sparkles className="w-8 h-8 text-primary mx-auto" />
             <h3 className="font-serif font-semibold text-lg">No benchmarks yet</h3>

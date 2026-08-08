@@ -10,16 +10,19 @@
  *   • Skeleton while loading; stale-cache indicator on refresh error
  */
 
-import React, { useCallback } from 'react';
+import React, { useCallback, useState } from 'react';
 import {
   ActivityIndicator,
+  Modal,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
   useColorScheme,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
 
@@ -31,6 +34,7 @@ import {
   wmoGroup,
   type ConditionGroup,
   type DayForecast,
+  type HourlyPoint,
 } from '@/hooks/useWeather';
 
 // ── Gradient palette ──────────────────────────────────────────────────────────
@@ -126,6 +130,36 @@ function ForecastDay({
   );
 }
 
+// ── HourlyItem ────────────────────────────────────────────────────────────────
+
+function HourlyItem({
+  point,
+  textColor,
+}: {
+  point: HourlyPoint;
+  textColor: string;
+}) {
+  const isDaytime = point.hour >= 6 && point.hour < 20;
+  const icon = wmoIcon(point.code, isDaytime);
+  return (
+    <View style={hourlyStyles.item}>
+      <Text style={[hourlyStyles.hourLabel, { color: textColor }]}>{point.label}</Text>
+      <Feather
+        name={icon as any}
+        size={22}
+        color={textColor}
+        style={{ opacity: 0.88, marginVertical: 8 }}
+      />
+      <Text style={[hourlyStyles.hourTemp, { color: textColor }]}>{point.tempF}°</Text>
+      {point.precipProb > 10 && (
+        <Text style={[hourlyStyles.hourPrecip, { color: textColor }]}>
+          {point.precipProb}%
+        </Text>
+      )}
+    </View>
+  );
+}
+
 // ── Skeleton ──────────────────────────────────────────────────────────────────
 
 function WeatherSkeleton({ isDark }: { isDark: boolean }) {
@@ -151,6 +185,8 @@ export function WeatherCard() {
   const scheme  = useColorScheme();
   const isDark  = scheme === 'dark';
   const { status, data, reload } = useWeather();
+  const [showHourly, setShowHourly] = useState(false);
+  const insets = useSafeAreaInsets();
 
   const handleReload = useCallback(() => reload(), [reload]);
 
@@ -175,79 +211,150 @@ export function WeatherCard() {
     ? 'rgba(255,255,255,0.10)'
     : 'rgba(0,0,0,0.07)';
 
+  // Sheet background mirrors the card's gradient top colour, slightly darkened
+  const sheetBg      = isDark ? '#0D111A' : '#F4F7FC';
+  const sheetText    = isDark ? '#D0DCEE' : '#0E1E34';
+
   return (
-    <View style={cardStyles.shadow}>
-      <LinearGradient
-        colors={gradColors}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 0.3, y: 1 }}
-        style={cardStyles.card}
+    <>
+      {/* ── Tap the card to open hourly forecast ──────────────────────────── */}
+      <TouchableOpacity
+        activeOpacity={0.96}
+        onPress={() => data.hourly.length > 0 && setShowHourly(true)}
+        style={{ marginBottom: 0 }}
       >
-        {/* ── Location row ────────────────────────────────────────────────── */}
-        <View style={cardStyles.locationRow}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, flex: 1 }}>
-            <Feather name="map-pin" size={11} color={textColor} style={{ opacity: subOpacity }} />
-            <Text
-              style={[cardStyles.locationText, { color: textColor, opacity: subOpacity }]}
-              numberOfLines={1}
-            >
+        <View style={cardStyles.shadow}>
+          <LinearGradient
+            colors={gradColors}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 0.3, y: 1 }}
+            style={cardStyles.card}
+          >
+            {/* ── Location row ──────────────────────────────────────────────── */}
+            <View style={cardStyles.locationRow}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, flex: 1 }}>
+                <Feather name="map-pin" size={11} color={textColor} style={{ opacity: subOpacity }} />
+                <Text
+                  style={[cardStyles.locationText, { color: textColor, opacity: subOpacity }]}
+                  numberOfLines={1}
+                >
+                  {data.city}{data.region ? `, ${data.region}` : ''}
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={handleReload}
+                hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                activeOpacity={0.6}
+                style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}
+              >
+                <Text style={[cardStyles.updatedText, { color: textColor, opacity: subOpacity }]}>
+                  {updatedLabel(data.fetchedAt)}
+                </Text>
+                <Feather name="refresh-cw" size={11} color={textColor} style={{ opacity: subOpacity }} />
+              </TouchableOpacity>
+            </View>
+
+            {/* ── Hero: icon + temperature + condition ──────────────────────── */}
+            <View style={cardStyles.heroSection}>
+              <Feather
+                name={condIcon as any}
+                size={42}
+                color={textColor}
+                style={{ opacity: 0.92, marginBottom: 6 }}
+              />
+              <Text style={[cardStyles.temperature, { color: textColor }]}>
+                {data.tempF}°
+              </Text>
+              <Text style={[cardStyles.condition, { color: textColor, opacity: subOpacity }]}>
+                {data.conditionLabel}
+              </Text>
+              <Text style={[cardStyles.feelsLike, { color: textColor, opacity: subOpacity - 0.08 }]}>
+                Feels like {data.feelsLikeF}°
+              </Text>
+            </View>
+
+            {/* ── Detail pills ──────────────────────────────────────────────── */}
+            <View style={cardStyles.pillRow}>
+              <DetailPill icon="droplet" label={`${data.humidity}%`} textColor={textColor} pillBg={pillBg} />
+              <DetailPill icon="wind"    label={`${data.windMph} mph`} textColor={textColor} pillBg={pillBg} />
+            </View>
+
+            {/* ── Divider ───────────────────────────────────────────────────── */}
+            <View style={[cardStyles.divider, { backgroundColor: textColor, opacity: 0.12 }]} />
+
+            {/* ── 4-day forecast strip ──────────────────────────────────────── */}
+            <View style={cardStyles.forecastRow}>
+              {data.forecast.map(day => (
+                <ForecastDay
+                  key={day.label}
+                  day={day}
+                  textColor={textColor}
+                  isDay={data.isDay}
+                />
+              ))}
+            </View>
+
+            {/* Tap hint */}
+            {data.hourly.length > 0 && (
+              <View style={{ alignItems: 'center', marginTop: 10 }}>
+                <Feather name="chevron-up" size={14} color={textColor} style={{ opacity: 0.3 }} />
+              </View>
+            )}
+          </LinearGradient>
+        </View>
+      </TouchableOpacity>
+
+      {/* ── Hourly forecast bottom sheet ──────────────────────────────────── */}
+      <Modal
+        visible={showHourly}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowHourly(false)}
+        statusBarTranslucent
+      >
+        <Pressable
+          style={hourlyStyles.backdrop}
+          onPress={() => setShowHourly(false)}
+        >
+          <Pressable
+            style={[
+              hourlyStyles.sheet,
+              { backgroundColor: sheetBg, paddingBottom: insets.bottom + 20 },
+            ]}
+            onPress={() => {/* swallow tap so backdrop doesn't close */}}
+          >
+            {/* Drag handle */}
+            <View style={[hourlyStyles.handle, { backgroundColor: sheetText }]} />
+
+            {/* Header */}
+            <View style={hourlyStyles.sheetHeader}>
+              <Text style={[hourlyStyles.sheetTitle, { color: sheetText }]}>
+                Hourly Forecast
+              </Text>
+              <TouchableOpacity onPress={() => setShowHourly(false)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                <Feather name="x" size={18} color={sheetText} style={{ opacity: 0.5 }} />
+              </TouchableOpacity>
+            </View>
+
+            {/* Location sub-label */}
+            <Text style={[hourlyStyles.sheetSub, { color: sheetText }]}>
               {data.city}{data.region ? `, ${data.region}` : ''}
             </Text>
-          </View>
-          <TouchableOpacity
-            onPress={handleReload}
-            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-            activeOpacity={0.6}
-            style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}
-          >
-            <Text style={[cardStyles.updatedText, { color: textColor, opacity: subOpacity }]}>
-              {updatedLabel(data.fetchedAt)}
-            </Text>
-            <Feather name="refresh-cw" size={11} color={textColor} style={{ opacity: subOpacity }} />
-          </TouchableOpacity>
-        </View>
 
-        {/* ── Hero: icon + temperature + condition ────────────────────────── */}
-        <View style={cardStyles.heroSection}>
-          <Feather
-            name={condIcon as any}
-            size={42}
-            color={textColor}
-            style={{ opacity: 0.92, marginBottom: 6 }}
-          />
-          <Text style={[cardStyles.temperature, { color: textColor }]}>
-            {data.tempF}°
-          </Text>
-          <Text style={[cardStyles.condition, { color: textColor, opacity: subOpacity }]}>
-            {data.conditionLabel}
-          </Text>
-          <Text style={[cardStyles.feelsLike, { color: textColor, opacity: subOpacity - 0.08 }]}>
-            Feels like {data.feelsLikeF}°
-          </Text>
-        </View>
-
-        {/* ── Detail pills ────────────────────────────────────────────────── */}
-        <View style={cardStyles.pillRow}>
-          <DetailPill icon="droplet" label={`${data.humidity}%`} textColor={textColor} pillBg={pillBg} />
-          <DetailPill icon="wind"    label={`${data.windMph} mph`} textColor={textColor} pillBg={pillBg} />
-        </View>
-
-        {/* ── Divider ─────────────────────────────────────────────────────── */}
-        <View style={[cardStyles.divider, { backgroundColor: textColor, opacity: 0.12 }]} />
-
-        {/* ── 4-day forecast strip ────────────────────────────────────────── */}
-        <View style={cardStyles.forecastRow}>
-          {data.forecast.map(day => (
-            <ForecastDay
-              key={day.label}
-              day={day}
-              textColor={textColor}
-              isDay={data.isDay}
-            />
-          ))}
-        </View>
-      </LinearGradient>
-    </View>
+            {/* Horizontal hourly scroll */}
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={hourlyStyles.hourlyScroll}
+            >
+              {data.hourly.map((pt, i) => (
+                <HourlyItem key={i} point={pt} textColor={sheetText} />
+              ))}
+            </ScrollView>
+          </Pressable>
+        </Pressable>
+      </Modal>
+    </>
   );
 }
 
@@ -362,6 +469,75 @@ const forecastStyles = StyleSheet.create({
   low: {
     fontSize: 12,
     ...font('regular'),
+  },
+});
+
+const hourlyStyles = StyleSheet.create({
+  backdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    justifyContent: 'flex-end',
+  },
+  sheet: {
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingTop: 12,
+    paddingHorizontal: 0,
+  },
+  handle: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    opacity: 0.2,
+    alignSelf: 'center',
+    marginBottom: 16,
+  },
+  sheetHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    marginBottom: 2,
+  },
+  sheetTitle: {
+    fontSize: 17,
+    fontWeight: '600',
+    letterSpacing: -0.3,
+  },
+  sheetSub: {
+    fontSize: 12,
+    opacity: 0.45,
+    paddingHorizontal: 20,
+    marginBottom: 16,
+  },
+  hourlyScroll: {
+    paddingHorizontal: 16,
+    gap: 4,
+  },
+  item: {
+    alignItems: 'center',
+    width: 62,
+    paddingVertical: 12,
+    paddingHorizontal: 6,
+    borderRadius: 14,
+    backgroundColor: 'rgba(128,128,128,0.07)',
+    marginHorizontal: 4,
+  },
+  hourLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    letterSpacing: 0.2,
+    opacity: 0.65,
+  },
+  hourTemp: {
+    fontSize: 16,
+    fontWeight: '700',
+    letterSpacing: -0.5,
+  },
+  hourPrecip: {
+    fontSize: 10,
+    opacity: 0.55,
+    marginTop: 3,
   },
 });
 

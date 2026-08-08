@@ -1352,21 +1352,19 @@ def synthesize_work_audiobook(body: WorkAudiobookRequest):
             f"Audiobook: {work_title}", prelinked_rel=_ab_rel,
         )
 
-        # Push notification — work audiobook ready (best-effort, daemon thread)
+        # Push notification — work audiobook ready (best-effort, executor)
         try:
             from orivellum.capabilities.push import notify_push_best_effort as _push_ab
-            import threading as _push_thr_ab
+            from orivellum.api.executor import submit_bg as _submit_bg_push_ab
             _push_label = work_title[:50] if work_title else "Your Work"
-            _push_thr_ab.Thread(
-                target=_push_ab,
-                args=(
-                    get_db(),
-                    "🎙️ Audiobook ready",
-                    f'"{_push_label}" audiobook is ready to play',
-                    {"screen": "studio"},
-                ),
-                daemon=True,
-            ).start()
+            _submit_bg_push_ab(
+                _push_ab,
+                get_db(),
+                "🎙️ Audiobook ready",
+                f'"{_push_label}" audiobook is ready to play',
+                {"screen": "studio"},
+                kind="background", label="push:audiobook_ready",
+            )
         except Exception:
             pass
 
@@ -1689,12 +1687,13 @@ def start_work_audiobook_async(body: WorkAudiobookStartRequest):
             "cancel_requested": False,
         }
 
-    threading.Thread(
-        target=_run_work_tts_job,
-        args=(job_id, body.voice, body.speed, body.include_credits,
-              body.acx_mastering, work_title, doc_texts, out_dir, cfg),
-        daemon=True,
-    ).start()
+    from orivellum.api.executor import submit_bg as _submit_bg_tts
+    _submit_bg_tts(
+        _run_work_tts_job,
+        job_id, body.voice, body.speed, body.include_credits,
+        body.acx_mastering, work_title, doc_texts, out_dir, cfg,
+        kind="studio", label=f"work_tts:{job_id[:8]}",
+    )
 
     return {"job_id": job_id, "total_chapters": len(doc_texts)}
 
@@ -2518,17 +2517,18 @@ def _run_doc_tts_job(
             origin_id=body.doc_id,
         )
 
-        # Push notification — best-effort daemon thread.
+        # Push notification — best-effort via executor.
         try:
             from orivellum.capabilities.push import notify_push_best_effort as _push
+            from orivellum.api.executor import submit_bg as _submit_bg_push_doc
             _doc_label = (doc.get("title") or body.doc_id)[:50]
-            threading.Thread(
-                target=_push,
-                args=(db, "🎙️ Audiobook ready",
-                      f'"{_doc_label}" audiobook is ready to play',
-                      {"screen": f"library/{body.doc_id}"}),
-                daemon=True,
-            ).start()
+            _submit_bg_push_doc(
+                _push,
+                db, "🎙️ Audiobook ready",
+                f'"{_doc_label}" audiobook is ready to play',
+                {"screen": f"library/{body.doc_id}"},
+                kind="background", label="push:doc_tts_ready",
+            )
         except Exception:
             pass
 

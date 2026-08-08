@@ -88,7 +88,7 @@ function PressVerifyCard({ slug }: { slug: string }) {
   if (!data) return null;
   const checks = data.checks ?? {};
   return (
-    <Card>
+    <Card className="vellum-card">
       <CardHeader className="pb-2">
         <div className="flex items-center justify-between">
           <CardTitle className="text-sm">Pre-flight</CardTitle>
@@ -185,7 +185,7 @@ function PressDetail({ slug }: { slug: string }) {
   return (
     <div className="space-y-4">
       {/* Style card */}
-      <Card>
+      <Card className="vellum-card">
         <CardHeader className="pb-2">
           <div className="flex items-center justify-between">
             <CardTitle className="text-sm flex items-center gap-2">
@@ -217,7 +217,7 @@ function PressDetail({ slug }: { slug: string }) {
       </Card>
 
       {/* Chapters */}
-      <Card>
+      <Card className="vellum-card">
         <CardHeader className="pb-2">
           <div className="flex items-center justify-between">
             <CardTitle className="text-sm">Chapters ({chapters.length})</CardTitle>
@@ -296,7 +296,7 @@ function PressDetail({ slug }: { slug: string }) {
       <PressVerifyCard slug={slug} />
 
       {/* Seal package */}
-      <Card>
+      <Card className="vellum-card">
         <CardHeader className="pb-2">
           <CardTitle className="text-sm flex items-center gap-2">
             <Stamp className="h-3.5 w-3.5" /> Seal Package
@@ -379,7 +379,7 @@ function PressTab() {
           <Plus className="h-3 w-3 mr-1" /> New book
         </Button>
         {creating && (
-          <Card>
+          <Card className="vellum-card">
             <CardContent className="pt-4 space-y-2">
               <div>
                 <Label className="text-xs">Title</Label>
@@ -429,7 +429,7 @@ function PressTab() {
 function SpineCard({ spec }: { spec: any }) {
   if (!spec) return null;
   return (
-    <Card>
+    <Card className="vellum-card">
       <CardHeader className="pb-2">
         <CardTitle className="text-sm flex items-center gap-2"><Layers className="h-3.5 w-3.5" /> Product spec</CardTitle>
       </CardHeader>
@@ -485,7 +485,7 @@ function AtelierBookDetail({ book }: { book: any }) {
       <SpineCard spec={book.spec} />
 
       {/* Cover generation */}
-      <Card>
+      <Card className="vellum-card">
         <CardHeader className="pb-2">
           <CardTitle className="text-sm flex items-center gap-2"><Image className="h-3.5 w-3.5" /> Cover versions</CardTitle>
         </CardHeader>
@@ -523,7 +523,7 @@ function AtelierBookDetail({ book }: { book: any }) {
 
       {/* Seal design */}
       {covers.length > 0 && (
-        <Card>
+        <Card className="vellum-card">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm flex items-center gap-2"><Shield className="h-3.5 w-3.5" /> Seal cover</CardTitle>
           </CardHeader>
@@ -624,7 +624,7 @@ function AtelierSeriesDetail({ seriesSlug }: { seriesSlug: string }) {
     <div className="grid grid-cols-[1fr,1fr] gap-4">
       {/* Brand tokens */}
       <div className="space-y-3">
-        <Card>
+        <Card className="vellum-card">
           <CardHeader className="pb-2">
             <div className="flex items-center justify-between">
               <CardTitle className="text-sm flex items-center gap-2"><Palette className="h-3.5 w-3.5" /> Brand tokens</CardTitle>
@@ -670,7 +670,7 @@ function AtelierSeriesDetail({ seriesSlug }: { seriesSlug: string }) {
           </Button>
         </div>
         {addingBook && (
-          <Card>
+          <Card className="vellum-card">
             <CardContent className="pt-4 space-y-2">
               <div className="grid grid-cols-2 gap-2">
                 <div>
@@ -777,7 +777,7 @@ function AtelierTab() {
           <Plus className="h-3 w-3 mr-1" /> New series
         </Button>
         {creating && (
-          <Card>
+          <Card className="vellum-card">
             <CardContent className="pt-4 space-y-2">
               <div>
                 <Label className="text-xs">Series name</Label>

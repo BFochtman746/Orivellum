@@ -27,6 +27,14 @@ export interface DayForecast {
   code: number;
 }
 
+export interface HourlyPoint {
+  hour: number;        // 0–23
+  label: string;       // "Now", "2 PM", "11 PM"
+  tempF: number;
+  code: number;
+  precipProb: number;  // 0–100 percent
+}
+
 export interface WeatherData {
   city: string;
   region: string;
@@ -38,7 +46,8 @@ export interface WeatherData {
   windMph: number;
   isDay: boolean;
   forecast: DayForecast[];
-  fetchedAt: number;   // Date.now() — used for cache expiry
+  hourly: HourlyPoint[];   // next 24 hours starting from current hour
+  fetchedAt: number;       // Date.now() — used for cache expiry
 }
 
 // ── WMO weather code → human label ───────────────────────────────────────────
@@ -114,6 +123,11 @@ async function fetchWeather(lat: number, lon: number): Promise<any> {
       'relative_humidity_2m',
       'is_day',
     ].join(','),
+    hourly:            [
+      'temperature_2m',
+      'weathercode',
+      'precipitation_probability',
+    ].join(','),
     daily:             [
       'temperature_2m_max',
       'temperature_2m_min',
@@ -122,7 +136,7 @@ async function fetchWeather(lat: number, lon: number): Promise<any> {
     temperature_unit:  'fahrenheit',
     wind_speed_unit:   'mph',
     timezone:          'auto',
-    forecast_days:     '4',
+    forecast_days:     '2',   // 2 days → 48 hourly entries; enough for next-24h view
   });
   const r = await fetch(`${OPEN_METEO}?${params}`);
   if (!r.ok) throw new Error(`Open-Meteo HTTP ${r.status}`);
@@ -204,6 +218,36 @@ export function useWeather() {
           };
         });
 
+      // Build hourly array: next 24 hours starting from current hour
+      const hourly: HourlyPoint[] = [];
+      if (wx.hourly) {
+        const nowHour = new Date().getHours();
+        const times   = wx.hourly.time            as string[];
+        const temps   = wx.hourly.temperature_2m  as number[];
+        const codes   = wx.hourly.weathercode     as number[];
+        const precs   = wx.hourly.precipitation_probability as number[];
+
+        // Find first index whose hour >= current hour (within today or early hours of tomorrow)
+        const todayPrefix = new Date().toISOString().slice(0, 10); // "2026-08-08"
+        const startIdx = times.findIndex((t) => t.startsWith(todayPrefix) && parseInt(t.slice(11, 13), 10) >= nowHour);
+        const baseIdx  = startIdx >= 0 ? startIdx : 0;
+
+        for (let i = 0; i < 24 && baseIdx + i < times.length; i++) {
+          const idx   = baseIdx + i;
+          const hour  = parseInt(times[idx].slice(11, 13), 10);
+          const isPM  = hour >= 12;
+          const h12   = hour === 0 ? 12 : hour > 12 ? hour - 12 : hour;
+          const label = i === 0 ? 'Now' : `${h12} ${isPM ? 'PM' : 'AM'}`;
+          hourly.push({
+            hour,
+            label,
+            tempF:      Math.round(temps[idx]),
+            code:       codes[idx],
+            precipProb: precs[idx] ?? 0,
+          });
+        }
+      }
+
       const result: WeatherData = {
         city:           place?.city ?? place?.district ?? place?.name ?? 'Your Location',
         region:         place?.region ?? place?.country ?? '',
@@ -215,6 +259,7 @@ export function useWeather() {
         windMph:        Math.round(cur.windspeed_10m),
         isDay:          cur.is_day === 1,
         forecast,
+        hourly,
         fetchedAt:      Date.now(),
       };
 

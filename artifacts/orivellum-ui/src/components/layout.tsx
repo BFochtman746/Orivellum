@@ -25,6 +25,7 @@ import {
   BookMarked, GraduationCap, Zap, Package, Globe2, Mail, Network, Workflow,
 } from "lucide-react";
 import { useConnectivity } from "@/lib/useConnectivity";
+import { CommandPalette } from "@/components/command-palette";
 import { useQuery } from "@tanstack/react-query";
 import {
   useListConversations,
@@ -1236,6 +1237,8 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
           </div>
         </main>
       </div>
+      {/* Command palette — portals to document.body; keyboard shortcut Cmd+K */}
+      <CommandPalette />
     </SidebarProvider>
   );
 }
