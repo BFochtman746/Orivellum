@@ -10,9 +10,9 @@
  *   • Skeleton while loading; stale-cache indicator on refresh error
  */
 
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
+  Animated,
   Modal,
   Pressable,
   ScrollView,
@@ -35,6 +35,7 @@ import {
   type ConditionGroup,
   type DayForecast,
   type HourlyPoint,
+  type WeatherData,
 } from '@/hooks/useWeather';
 
 // ── Gradient palette ──────────────────────────────────────────────────────────
@@ -179,6 +180,103 @@ function WeatherSkeleton({ isDark }: { isDark: boolean }) {
   );
 }
 
+// ── HourlySheet ───────────────────────────────────────────────────────────────
+// Matches the DiagnosticsSheet spring pattern: animationType="none", spring slide
+// in, timing slide out, backdrop fades in parallel.
+
+const _HOURLY_SHEET_H = 380;
+
+function HourlySheet({
+  visible,
+  onClose,
+  data,
+  sheetBg,
+  sheetText,
+}: {
+  visible: boolean;
+  onClose: () => void;
+  data: WeatherData;
+  sheetBg: string;
+  sheetText: string;
+}) {
+  const insets = useSafeAreaInsets();
+  const [rendered, setRendered] = useState(false);
+
+  const slideAnim = useRef(new Animated.Value(_HOURLY_SHEET_H + 60)).current;
+  const fadeAnim  = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    if (visible) {
+      setRendered(true);
+      Animated.parallel([
+        Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true, tension: 85, friction: 13 }),
+        Animated.timing(fadeAnim,  { toValue: 1, duration: 180, useNativeDriver: true }),
+      ]).start();
+    } else {
+      Animated.parallel([
+        Animated.timing(slideAnim, { toValue: _HOURLY_SHEET_H + 60, duration: 220, useNativeDriver: true }),
+        Animated.timing(fadeAnim,  { toValue: 0, duration: 180, useNativeDriver: true }),
+      ]).start(() => setRendered(false));
+    }
+  }, [visible]);
+
+  if (!rendered) return null;
+
+  return (
+    <Modal transparent visible={rendered} animationType="none" onRequestClose={onClose} statusBarTranslucent>
+      {/* Backdrop */}
+      <Animated.View
+        style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.45)', opacity: fadeAnim }]}
+        pointerEvents={visible ? 'auto' : 'none'}
+      >
+        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+      </Animated.View>
+
+      {/* Sheet */}
+      <Animated.View
+        style={[
+          hourlyStyles.sheet,
+          {
+            backgroundColor: sheetBg,
+            paddingBottom: insets.bottom + 20,
+            transform: [{ translateY: slideAnim }],
+          },
+        ]}
+        pointerEvents="box-none"
+      >
+        {/* Drag handle */}
+        <View style={[hourlyStyles.handle, { backgroundColor: sheetText }]} />
+
+        {/* Header */}
+        <View style={hourlyStyles.sheetHeader}>
+          <Text style={[hourlyStyles.sheetTitle, { color: sheetText }]}>
+            Hourly Forecast
+          </Text>
+          <TouchableOpacity onPress={onClose} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+            <Feather name="x" size={18} color={sheetText} style={{ opacity: 0.5 }} />
+          </TouchableOpacity>
+        </View>
+
+        {/* Location sub-label */}
+        <Text style={[hourlyStyles.sheetSub, { color: sheetText }]}>
+          {data.city}{data.region ? `, ${data.region}` : ''}
+        </Text>
+
+        {/* Horizontal hourly scroll */}
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={hourlyStyles.hourlyScroll}
+        >
+          {data.hourly.map((pt, i) => (
+            <HourlyItem key={i} point={pt} textColor={sheetText} />
+          ))}
+        </ScrollView>
+      </Animated.View>
+    </Modal>
+  );
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 export function WeatherCard() {
@@ -186,7 +284,6 @@ export function WeatherCard() {
   const isDark  = scheme === 'dark';
   const { status, data, reload } = useWeather();
   const [showHourly, setShowHourly] = useState(false);
-  const insets = useSafeAreaInsets();
 
   const handleReload = useCallback(() => reload(), [reload]);
 
@@ -305,55 +402,13 @@ export function WeatherCard() {
       </TouchableOpacity>
 
       {/* ── Hourly forecast bottom sheet ──────────────────────────────────── */}
-      <Modal
+      <HourlySheet
         visible={showHourly}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setShowHourly(false)}
-        statusBarTranslucent
-      >
-        <Pressable
-          style={hourlyStyles.backdrop}
-          onPress={() => setShowHourly(false)}
-        >
-          <Pressable
-            style={[
-              hourlyStyles.sheet,
-              { backgroundColor: sheetBg, paddingBottom: insets.bottom + 20 },
-            ]}
-            onPress={() => {/* swallow tap so backdrop doesn't close */}}
-          >
-            {/* Drag handle */}
-            <View style={[hourlyStyles.handle, { backgroundColor: sheetText }]} />
-
-            {/* Header */}
-            <View style={hourlyStyles.sheetHeader}>
-              <Text style={[hourlyStyles.sheetTitle, { color: sheetText }]}>
-                Hourly Forecast
-              </Text>
-              <TouchableOpacity onPress={() => setShowHourly(false)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                <Feather name="x" size={18} color={sheetText} style={{ opacity: 0.5 }} />
-              </TouchableOpacity>
-            </View>
-
-            {/* Location sub-label */}
-            <Text style={[hourlyStyles.sheetSub, { color: sheetText }]}>
-              {data.city}{data.region ? `, ${data.region}` : ''}
-            </Text>
-
-            {/* Horizontal hourly scroll */}
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={hourlyStyles.hourlyScroll}
-            >
-              {data.hourly.map((pt, i) => (
-                <HourlyItem key={i} point={pt} textColor={sheetText} />
-              ))}
-            </ScrollView>
-          </Pressable>
-        </Pressable>
-      </Modal>
+        onClose={() => setShowHourly(false)}
+        data={data}
+        sheetBg={sheetBg}
+        sheetText={sheetText}
+      />
     </>
   );
 }
@@ -473,12 +528,11 @@ const forecastStyles = StyleSheet.create({
 });
 
 const hourlyStyles = StyleSheet.create({
-  backdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.45)',
-    justifyContent: 'flex-end',
-  },
   sheet: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     paddingTop: 12,
