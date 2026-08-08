@@ -5,7 +5,7 @@
  * harvested from this specific document.
  */
 import { useState, useRef, useEffect, useMemo } from "react";
-import { useParams, useLocation } from "wouter";
+import { useParams, useLocation, useSearch } from "wouter";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { useGetDocument, useDeleteDocument, useGetWork, useListWorks, getGetDocumentQueryKey, getGetWorkQueryKey } from "@workspace/api-client-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -401,6 +401,7 @@ function AiKindSection({
           return (
             <div
               key={item.id}
+              data-item-id={item.id}
               className={`group flex items-start gap-3 p-3 rounded-lg border transition-opacity ${isRejected ? "opacity-50" : ""}`}
               style={{ background: "color-mix(in srgb, var(--gilt-soft) 60%, transparent)", borderColor: "var(--gilt-line)" }}
             >
@@ -480,6 +481,7 @@ function KnowledgeTabContent({
   reviewing,
   onReview,
   onDelete,
+  highlightItemId,
 }: {
   knLoading: boolean;
   items: KnowledgeItem[];
@@ -492,12 +494,27 @@ function KnowledgeTabContent({
   reviewing: string | null;
   onReview: (id: string, status: "approved" | "rejected", force?: boolean) => void;
   onDelete: (id: string) => void;
+  highlightItemId?: string | null;
 }) {
   const [aiConfFilter, setAiConfFilter] = useState<ConfTier>("all");
   const [knSearch, setKnSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [apiSearching, setApiSearching] = useState(false);
   const [apiResults, setApiResults] = useState<KnowledgeItem[] | null>(null);
+
+  // Scroll-to-item when arriving from the review queue with ?tab=knowledge&item=ID.
+  // Waits for the knowledge data to have loaded before querying the DOM.
+  useEffect(() => {
+    if (!highlightItemId || knLoading) return;
+    const timer = setTimeout(() => {
+      const el = document.querySelector<HTMLElement>(`[data-item-id="${highlightItemId}"]`);
+      if (!el) return;
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      el.classList.add("chapter-highlight");
+      setTimeout(() => el.classList.remove("chapter-highlight"), 2000);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [highlightItemId, knLoading]);
 
   // Debounce search input by 300 ms
   useEffect(() => {
@@ -752,7 +769,7 @@ function KnowledgeTabContent({
                 const isRejected = item.review_status === "rejected";
                 const isReviewing = reviewing === item.id;
                 return (
-                  <Card key={item.id} className={`hover-elevate transition-opacity ${isRejected ? "opacity-50" : ""}`}>
+                  <Card key={item.id} data-item-id={item.id} className={`hover-elevate transition-opacity ${isRejected ? "opacity-50" : ""}`}>
                     <CardContent className="p-4">
                       <div className="flex items-start gap-4">
                         <div className="flex-1 min-w-0">
@@ -862,7 +879,13 @@ async function setKnowledgeReview(itemId: string, status: string, force = false)
 export default function DocumentDetail() {
   const { docId } = useParams<{ docId: string }>();
   const [, navigate] = useLocation();
-  const [activeTab, setActiveTab] = useState<Tab>("overview");
+  // Deep-link: ?tab=<tab> switches to that tab on arrival; ?item=<id> highlights a knowledge item.
+  const _libSearch = useSearch();
+  const [activeTab, setActiveTab] = useState<Tab>(() => {
+    const p = new URLSearchParams(_libSearch);
+    return (p.get("tab") as Tab | null) ?? "overview";
+  });
+  const highlightKnItemId = useMemo(() => new URLSearchParams(_libSearch).get("item"), [_libSearch]);
   const [reprocessing, setReprocessing] = useState(false);
   const [reviewing, setReviewing] = useState<string | null>(null);
   const [knFilter, setKnFilter] = useState<"all" | "pending" | "approved" | "rejected">("all");
@@ -2214,6 +2237,7 @@ export default function DocumentDetail() {
             reviewing={reviewing}
             onReview={handleReview}
             onDelete={handleDeleteKnowledge}
+            highlightItemId={highlightKnItemId}
           />
         </ErrorBoundary>
       )}

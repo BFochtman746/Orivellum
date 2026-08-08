@@ -139,8 +139,13 @@ function EvidenceLine({ item }: { item: ReviewItem }) {
   }
 
   if (item.work_title && item.work_id) {
+    // For knowledge items, deep-link to the Knowledge tab with the item highlighted.
+    // The review item id is namespaced "knowledge:{uuid}" — strip the prefix.
+    const workHref = item.item_type === "knowledge"
+      ? `/works/${item.work_id}?tab=knowledge&item=${item.id.replace(/^knowledge:/, "")}`
+      : `/works/${item.work_id}`;
     parts.push(
-      <Link key="work" href={`/works/${item.work_id}`}
+      <Link key="work" href={workHref}
             className="text-muted-foreground hover:text-foreground hover:underline">
         in {item.work_title}
       </Link>,

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useParams, Link, useLocation, useSearch } from "wouter";
 import { ErrorBoundary } from "@/components/error-boundary";
 import {
@@ -1073,6 +1073,9 @@ type KnowledgeConfFilter = "all" | "high" | "med" | "low";
 function KnowledgeTab({ workId }: { workId: string }) {
   const queryClient = useQueryClient();
   const [, navigate] = useLocation();
+  // Deep-link: ?tab=knowledge&item=<id> scrolls to and flashes the target card.
+  const _knSearch = useSearch();
+  const highlightItemId = useMemo(() => new URLSearchParams(_knSearch).get("item"), [_knSearch]);
   const [reviewing, setReviewing] = useState<string | null>(null);
   const [filter, setFilter] = useState<KnowledgeFilter>("all");
   const [kindFilter, setKindFilter] = useState<KnowledgeKindFilter>("all");
@@ -1102,6 +1105,20 @@ function KnowledgeTab({ workId }: { workId: string }) {
     const t = setTimeout(() => setDebouncedSearch(searchText.trim()), 300);
     return () => clearTimeout(t);
   }, [searchText]);
+
+  // Scroll-to-item when arriving from the review queue with ?tab=knowledge&item=ID.
+  // Runs after data has loaded so the card exists in the DOM.
+  useEffect(() => {
+    if (!highlightItemId || isLoading) return;
+    const timer = setTimeout(() => {
+      const el = document.querySelector<HTMLElement>(`[data-item-id="${highlightItemId}"]`);
+      if (!el) return;
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      el.classList.add("chapter-highlight");
+      setTimeout(() => el.classList.remove("chapter-highlight"), 2000);
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [highlightItemId, isLoading]);
 
   // Smart threshold search: when the Work has > KN_SEARCH_THRESHOLD items, send a
   // debounced API request to GET /api/knowledge/ask?work_id=... instead of filtering
@@ -1411,7 +1428,7 @@ function KnowledgeTab({ workId }: { workId: string }) {
             const isRejected = item.review_status === "rejected";
             const isReviewing = reviewing === item.id;
             return (
-            <Card key={item.id} className={`transition-opacity ${isRejected ? "opacity-50" : ""}`}>
+            <Card key={item.id} data-item-id={item.id!} className={`transition-opacity ${isRejected ? "opacity-50" : ""}`}>
               <CardContent className="p-4">
                 <div className="flex items-start gap-4">
                   <div className="flex-1 min-w-0">
