@@ -8,10 +8,11 @@
  *  • Low-research coverage CTA
  *  • Gap list with "Track as task" and "Find sources" per-card actions
  */
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  findNodeHandle,
   Platform,
   Pressable,
   RefreshControl,
@@ -260,10 +261,14 @@ export default function WorkIntelligenceScreen() {
   const insets   = useSafeAreaInsets();
   const router   = useRouter();
   const isWeb    = Platform.OS === 'web';
-  const { id }   = useLocalSearchParams<{ id: string }>();
+  const { id, chapterId: targetChapterId } = useLocalSearchParams<{ id: string; chapterId?: string }>();
   const navigation = useNavigation();
   const domain   = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
   const base     = `https://${domain}/api`;
+
+  // Refs for scroll-to-chapter deep-link
+  const scrollViewRef   = useRef<ScrollView>(null);
+  const chapterRowRefs  = useRef<Record<string, View | null>>({});
 
   const [completeness, setCompleteness] = useState<any>(null);
   const [gaps,         setGaps]         = useState<any>(null);
@@ -493,6 +498,50 @@ export default function WorkIntelligenceScreen() {
     }
   };
 
+  // ── Chapter deep-link: auto-expand + scroll when chapterId is in route ────
+  // Runs once after chapters load (or immediately if they're already loaded).
+  // Expands the target chapter, kicks off its knowledge fetch if needed, then
+  // scrolls the ScrollView to that row after a short layout delay.
+  useEffect(() => {
+    if (!targetChapterId || !chapters) return;
+
+    // Expand the target chapter
+    setExpandedChapters(prev => {
+      if (prev.has(targetChapterId)) return prev;
+      const next = new Set(prev);
+      next.add(targetChapterId);
+      return next;
+    });
+
+    // Fetch knowledge for this chapter if it hasn't been loaded yet
+    if (!fetchedChaptersRef.current.has(targetChapterId)) {
+      fetchedChaptersRef.current.add(targetChapterId);
+      setLoadingChapterKnowledge(prev => ({ ...prev, [targetChapterId]: true }));
+      mobileFetch(`${base}/works/${id}/chapters/${targetChapterId}/knowledge`)
+        .then(r => r.ok ? r.json() : null)
+        .then(data => setChapterKnowledge(prev => ({ ...prev, [targetChapterId]: data?.knowledge ?? [] })))
+        .catch(() => setChapterKnowledge(prev => ({ ...prev, [targetChapterId]: [] })))
+        .finally(() => setLoadingChapterKnowledge(prev => ({ ...prev, [targetChapterId]: false })));
+    }
+
+    // Wait one frame for the expanded row to render, then measure + scroll
+    const t = setTimeout(() => {
+      const row = chapterRowRefs.current[targetChapterId];
+      const sv  = scrollViewRef.current;
+      if (!row || !sv) return;
+      const nodeHandle = findNodeHandle(sv);
+      if (nodeHandle == null) return;
+      row.measureLayout(
+        nodeHandle,
+        (_x, y) => sv.scrollTo({ y: Math.max(0, y - 80), animated: true }),
+        () => { /* unmeasurable — ignore */ },
+      );
+    }, 350);
+
+    return () => clearTimeout(t);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [targetChapterId, chapters]);
+
   // ── Pipeline advance ───────────────────────────────────────────────────────
   const handleAdvance = async () => {
     if (advancing) return;
@@ -561,6 +610,7 @@ export default function WorkIntelligenceScreen() {
 
   return (
     <ScrollView
+      ref={scrollViewRef}
       style={{ flex: 1, backgroundColor: colors.background }}
       contentContainerStyle={{ paddingTop: topPad + 16, paddingBottom: 40, paddingHorizontal: 16 }}
       showsVerticalScrollIndicator={false}
@@ -824,7 +874,7 @@ export default function WorkIntelligenceScreen() {
                   const visibleKn    = knData ? filterKnowledge(knData) : knData;
 
                   return (
-                    <View key={ch.id}>
+                    <View key={ch.id} ref={v => { chapterRowRefs.current[ch.id] = v; }}>
                       <Pressable
                         onPress={hasKnowledge ? () => toggleChapter(ch.id) : undefined}
                         style={({ pressed }) => [

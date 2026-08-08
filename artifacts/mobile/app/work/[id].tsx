@@ -3981,6 +3981,7 @@ function BookIntelTab({
   onDiscuss,
   chapters,
   chaptersLoading,
+  workId,
 }: {
   bookIntel: any;
   loading: boolean;
@@ -3988,9 +3989,11 @@ function BookIntelTab({
   onDiscuss: (seed: string) => void;
   chapters?: any[];
   chaptersLoading?: boolean;
+  workId: string;
 }) {
   const T = useVellumTokens();
   const insets = useSafeAreaInsets();
+  const router = useRouter();
   // Derive bookIntel sections so they can be conditionally included inside a
   // single ScrollView — avoids early returns that would suppress the chapter
   // outline when bookIntel hasn't loaded yet.
@@ -4289,19 +4292,25 @@ function BookIntelTab({
                     {chTitle}
                   </Text>
 
-                  {/* Research chip */}
-                  <View style={{
-                    paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4,
-                    backgroundColor: kc === 0 ? colors.muted : colors.primary + '14',
-                    borderWidth: 1, borderColor: kc === 0 ? colors.border : colors.primary + '38',
-                  }}>
+                  {/* Research chip — tapping navigates to the chapter on the
+                      Intelligence screen when there is knowledge to show */}
+                  <Pressable
+                    onPress={kc > 0 ? () => router.push(`/work/${workId}/intelligence?chapterId=${ch.id}` as any) : undefined}
+                    hitSlop={6}
+                    style={({ pressed }) => ({
+                      paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4,
+                      backgroundColor: kc === 0 ? colors.muted : colors.primary + '14',
+                      borderWidth: 1, borderColor: kc === 0 ? colors.border : colors.primary + '38',
+                      opacity: pressed ? 0.6 : 1,
+                    })}
+                  >
                     <Text style={{
                       fontSize: 10, fontFamily: 'Inter_600SemiBold',
                       color: kc === 0 ? colors.mutedForeground : colors.primary,
                     }}>
                       {kc}
                     </Text>
-                  </View>
+                  </Pressable>
                 </Pressable>
               );
             })}
@@ -6041,6 +6050,7 @@ export default function WorkDetailScreen() {
               onDiscuss={handleResearchGap}
               chapters={chapters}
               chaptersLoading={chaptersLoading}
+              workId={id}
             />
 
             {/* ── Pipeline section (collapsible footer) ─────────── */}
