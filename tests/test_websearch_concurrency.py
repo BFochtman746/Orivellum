@@ -234,21 +234,38 @@ class TestYoutubeTranscriptConcurrency:
 # ---------------------------------------------------------------------------
 
 class TestModeLanesInFirstWave:
-    def test_all_requested_lanes_execute(self):
+    def test_all_requested_lanes_start_before_planner_returns(self):
+        """Every requested mode lane (not just the primary search) must hit
+        the network BEFORE the planner finishes.  The planner mock blocks
+        until web + news + academic have all started; a regression that
+        gates any lane on the planner deadlocks the wait and fails loudly."""
         seen_topics: list[str] = []
         lock = threading.Lock()
+        started = {"web": threading.Event(),
+                   "news": threading.Event(),
+                   "academic": threading.Event()}
 
         def fake_tavily(query, *, topic="general", include_domains=None, **kw):
+            if include_domains and "arxiv.org" in include_domains:
+                lane = "academic"
+            elif topic == "news":
+                lane = "news"
+            else:
+                lane = "web"
+            started[lane].set()
             with lock:
-                if include_domains and "arxiv.org" in include_domains:
-                    seen_topics.append("academic")
-                elif topic == "news":
-                    seen_topics.append("news")
-                else:
-                    seen_topics.append("web")
+                seen_topics.append(lane)
             return [_result(f"https://example.com/{len(seen_topics)}", query)]
 
         def fake_llm(messages, **kw):
+            for lane, event in started.items():
+                assert event.wait(timeout=5), (
+                    f"REGRESSION: the {lane} lane did not start while the "
+                    "query planner was still running — mode lanes have been "
+                    "re-serialized behind the planner."
+                )
+            with lock:
+                seen_topics.append("planner:done")
             return _PlannerResult("variant alpha")
 
         with patch.object(websearch, "_call_tavily", fake_tavily):
@@ -259,7 +276,13 @@ class TestModeLanesInFirstWave:
                 llm_call_fn=fake_llm,
             )
 
-        assert "news" in seen_topics
-        assert "academic" in seen_topics
-        assert seen_topics.count("web") >= 2   # primary + variant
-        assert diag.queries_executed == len(seen_topics)
+        # Ordering proof: all three lanes started before the planner finished
+        planner_idx = seen_topics.index("planner:done")
+        first_wave = seen_topics[:planner_idx]
+        assert {"web", "news", "academic"} <= set(first_wave), (
+            f"Not every lane started before the planner finished: {seen_topics}"
+        )
+        # Variant search still ran after the planner
+        lanes_only = [t for t in seen_topics if t != "planner:done"]
+        assert lanes_only.count("web") >= 2   # primary + variant
+        assert diag.queries_executed == len(lanes_only)
