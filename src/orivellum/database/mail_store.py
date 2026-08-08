@@ -412,20 +412,33 @@ class MailStore:
         import hashlib
         return hashlib.sha256(graph_id.encode()).hexdigest()[:32]
 
-    def list_mail_context_records(self, limit: int = 5) -> list[dict[str, Any]]:
+    def list_mail_context_records(
+        self, limit: int = 5, days: int = 30
+    ) -> list[dict[str, Any]]:
         """Return redacted mail records for chat context injection.
 
         Only subject, sender_domain, received_at, attention_level, and
         rationale are returned — never the message body or full addresses.
         High-attention records come first; medium after.
+
+        Args:
+            limit: Maximum number of records to return.
+            days:  Only include messages received within the last *days* days
+                   (default 30).  Pass 0 to disable the recency cap.
         """
+        if days > 0:
+            recency_clause = f"AND r.received_at >= datetime('now', '-{int(days)} days')"
+        else:
+            recency_clause = ""
+
         rows = self._read().execute(
-            """SELECT r.id, r.subject, r.sender_name, r.sender_domain, r.received_at,
+            f"""SELECT r.id, r.subject, r.sender_name, r.sender_domain, r.received_at,
                       a.attention_level, a.rationale, a.needs_reply
                FROM mail_records r
                LEFT JOIN mail_assessments a ON a.id = r.assessment_id
                WHERE r.lifecycle_state NOT IN ('DELETED','ACTION_APPLIED','VERIFIED')
                  AND a.attention_level IN ('high','medium')
+                 {recency_clause}
                ORDER BY
                  CASE a.attention_level WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END,
                  r.received_at DESC

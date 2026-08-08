@@ -1394,7 +1394,11 @@ def _build_mail_context_block(db: Any, conv: dict) -> str:
             return ""
         from orivellum.database.mail_store import MailStore
         store = MailStore(db)
-        records = store.list_mail_context_records(limit=5)
+        try:
+            context_days = int(db.get_setting("mail_steward.context_days", "30"))
+        except (ValueError, TypeError):
+            context_days = 30
+        records = store.list_mail_context_records(limit=5, days=context_days)
         if not records:
             return ""
         lines = [

@@ -402,6 +402,10 @@ def list_audit(
 @router.get("/settings")
 def get_mail_settings():
     db = get_db()
+    try:
+        context_days = int(db.get_setting("mail_steward.context_days", "30"))
+    except (ValueError, TypeError):
+        context_days = 30
     return {
         "send_enabled":        db.get_setting("mail_steward.send_enabled", "false") == "true",
         "lemonade_url":        db.get_setting("mail_steward.lemonade_url", "http://127.0.0.1:13305/api/v1"),
@@ -409,6 +413,7 @@ def get_mail_settings():
         "sync_folders":        json.loads(db.get_setting("mail_steward.sync_folders", '["inbox"]')),
         "account_display":     db.get_setting("mail_steward.account_display", ""),
         "threat_feeds_enabled": db.get_setting("mail_steward.threat_feeds", "true") == "true",
+        "context_days":        context_days,
     }
 
 
@@ -418,6 +423,7 @@ class MailSettingsBody(BaseModel):
     lemonade_model: str | None = None
     sync_folders: list[str] | None = None
     threat_feeds_enabled: bool | None = None
+    context_days: int | None = None   # recency cap for chat context injection (0 = disabled)
 
 
 @router.patch("/settings")
@@ -442,6 +448,9 @@ def update_mail_settings(body: MailSettingsBody):
         db._set_setting("mail_steward.sync_folders", json.dumps(folders))
     if body.threat_feeds_enabled is not None:
         db._set_setting("mail_steward.threat_feeds", "true" if body.threat_feeds_enabled else "false")
+    if body.context_days is not None:
+        days = max(0, int(body.context_days))   # clamp: 0 = no cap
+        db._set_setting("mail_steward.context_days", str(days))
     return {"updated": True}
 
 
