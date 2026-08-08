@@ -25,27 +25,32 @@ _SENSITIVE_KEYS = {"api_key", "token", "secret", "password", "key"}
 class ServingConfig:
     base_url: str = "http://127.0.0.1:13305/api/v1"
 
-    # ── LLM models (A-01 Aug 2026 recommendations for Ryzen AI Max+ 395) ────────
-    # workhorse: Qwen3-30B-A3B-Instruct-2507 — fast MoE, ~3B active params,
-    #   handles ~95% of tasks.  Or llama3.3-70b for higher single-pass quality.
-    workhorse_model: str = "Qwen3-30B-A3B-Instruct-2507"
-    # reasoner: gpt-oss-120b (fits 128 GB at MXFP4, ~65 GB) — best local reasoning.
-    reasoner_model: str = "gpt-oss-120b"
-    # coder: Qwen3-Coder-30B-A3B — purpose-built for agentic loops, 256K context.
-    #   Dense alternative: Qwen3.6-27B (~77% SWE-bench Verified).
-    coder_model: str = "Qwen3-Coder-30B-A3B"
+    # ── LLM models (verified against Lemonade Server catalog, Aug 2026) ────────
+    # Names must match the Lemonade catalog EXACTLY (lemonade list / GET /v1/models).
+    # On Strix Halo (~256 GB/s unified memory) MoE models decode 8-15× faster than
+    # dense models of similar quality — a dense 70B runs ~4-5 tok/s, these run 30-70.
+    #
+    # workhorse: Qwen3.6-35B-A3B — MoE ~3B active, vision + tool-calling,
+    #   ~23 GB. Fast enough for every interactive task.
+    workhorse_model: str = "Qwen3.6-35B-A3B-GGUF"
+    # reasoner: gpt-oss-120b in native MXFP4 (~63 GB, only 5.1B active params) —
+    #   best local reasoning AND fast, because so few params are active per token.
+    reasoner_model: str = "gpt-oss-120b-mxfp-GGUF"
+    # coder: Qwen3-Coder-30B-A3B — purpose-built for agentic loops, 256K context,
+    #   ~19 GB. Bigger alternative: Qwen3-Coder-Next-GGUF (~48 GB) when the
+    #   reasoner is not resident at the same time.
+    coder_model: str = "Qwen3-Coder-30B-A3B-Instruct-GGUF"
 
     # ── Embeddings ────────────────────────────────────────────────────────────
-    # Qwen3-Embedding-8B: current open-source SOTA (70.6 MTEB, Apache 2.0, ~5 GB Q4).
-    # Lightweight alternative: nomic-embed-text (~0.3 GB, 8K ctx) — fast CPU indexing.
-    # BGE-M3 is the best hybrid choice (dense+sparse+multi-vector, 100+ languages).
-    embedder_model: str = "Qwen3-Embedding-8B"
+    # Qwen3-Embedding-8B: open-source SOTA (70.6 MTEB, Apache 2.0, ~8 GB Q8).
+    # Lightweight alternative: nomic-embed-text-v2-moe-GGUF (~0.5 GB) — fast CPU.
+    embedder_model: str = "Qwen3-Embedding-8B-GGUF"
 
     # ── Vision / multimodal ────────────────────────────────────────────────────
-    # Qwen3-VL-8B: DocVQA ~96, 32-language OCR, GUI grounding (Apache 2.0, ~5 GB Q4).
-    # Dramatically better than Tesseract on scanned / complex documents.
+    # The workhorse (Qwen3.6-35B-A3B) is natively multimodal, so vision reuses it —
+    # no extra download, dramatically better than Tesseract on scanned documents.
     # Leave empty to fall back to Tesseract OCR + workhorse_model for image chat.
-    vision_model: str = ""
+    vision_model: str = "Qwen3.6-35B-A3B-GGUF"
 
     # ── TTS / ASR ─────────────────────────────────────────────────────────────
     # TTS model name served by the AI server (OpenAI /v1/audio/speech endpoint).

@@ -7008,10 +7008,11 @@ export default function WorkDetailScreen() {
           <Pressable style={StyleSheet.absoluteFill} onPress={() => setSettingsOpen(false)} />
         </Animated.View>
         <KeyboardAvoidingView
+          {...settingsPanHandlers}
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
           style={{ position: 'absolute', bottom: 0, left: 0, right: 0 }}
         >
-          <Animated.View {...settingsPanHandlers} style={{ transform: [{ translateY: settingsSlideAnim }] }}>
+          <Animated.View style={{ transform: [{ translateY: settingsSlideAnim }] }}>
           <View style={{
             backgroundColor: colors.card,
             borderTopLeftRadius: 20, borderTopRightRadius: 20,

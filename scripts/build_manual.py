@@ -336,19 +336,25 @@ tip("Lemonade installs as a background service. After the first install it start
     "you will never need to launch it manually again.")
 
 h(2, "Pull your models")
-body("Use lemonade pull to download models. These are the models Orivellum is configured to use:")
-code("# Primary chat model — 70 B on iGPU, 128 K context (~40 GB)\n"
-     "lemonade pull llama3.3-70b\n\n"
-     "# Reasoner — 120 B (fits entirely in 128 GB unified RAM)\n"
-     "lemonade pull gpt-oss-120b\n\n"
-     "# Fast model — runs on the NPU for sub-second first token\n"
-     "lemonade pull phi4\n\n"
-     "# Coder — 32 B on iGPU, 256 K context\n"
-     "lemonade pull qwen2.5-coder-32b\n\n"
-     "# Embeddings for semantic search\n"
-     "lemonade pull nomic-embed-text\n\n"
+body("Use lemonade pull to download models. Model names must match the Lemonade catalog "
+     "EXACTLY — they double as the API model IDs. These are the models Orivellum is "
+     "configured to use:")
+code("# Workhorse — daily driver, MoE (~3 B active), vision built in (~23 GB)\n"
+     "lemonade pull Qwen3.6-35B-A3B-GGUF\n\n"
+     "# Reasoner — 120 B MoE in native MXFP4 (~63 GB), best local reasoning\n"
+     "lemonade pull gpt-oss-120b-mxfp-GGUF\n\n"
+     "# Coder — agentic coding, 256 K context (~19 GB)\n"
+     "lemonade pull Qwen3-Coder-30B-A3B-Instruct-GGUF\n\n"
+     "# Embeddings for semantic search (~8 GB)\n"
+     "lemonade pull Qwen3-Embedding-8B-GGUF\n\n"
+     "# OPTIONAL: fast low-power NPU model for quick Q&A\n"
+     "lemonade pull gpt-oss-20b-NPU\n\n"
      "# Check what you have:\n"
      "lemonade list")
+tip("Why no dense 70B? This machine's unified memory moves ~256 GB/s. A dense 70 B model "
+    "reads all ~40 GB of weights for EVERY token (~4-5 tokens/sec). MoE models like "
+    "gpt-oss-120b activate only ~5 B parameters per token — 30-40 tokens/sec at higher "
+    "quality. On this hardware, MoE wins every time.")
 
 h(2, "Connect Orivellum to Lemonade")
 numbered("Open Orivellum in your browser")
@@ -360,11 +366,12 @@ numbered("Click Save Settings — the green indicator confirms the connection")
 
 h(2, "Hardware scheduling (automatic)")
 body("Lemonade picks the best hardware for each model size automatically:")
-bullet("NPU (XDNA2, 50 TOPS): 7–14 B models — low power, sub-second first token (phi4)")
-bullet("iGPU (40 RDNA 3.5 CUs, ≈ RTX 4070): 32–120 B models — full GPU offload (llama3.3-70b, gpt-oss-120b)")
-bullet("Unified 128 GB LPDDR5X: no separate VRAM — all models fit entirely on-chip")
-tip("The Ryzen AI Max+ 395 has ~112 GB allocatable to models. "
-    "llama3.3-70b uses ~40 GB, gpt-oss-120b uses ~65 GB — both fit comfortably.")
+bullet("NPU (XDNA2, 50 TOPS): 7–20 B models — low power, sub-second first token (gpt-oss-20b-NPU)")
+bullet("iGPU (40 RDNA 3.5 CUs, ≈ RTX 4070): the big models — Qwen3.6-35B-A3B, gpt-oss-120b")
+bullet("Unified 128 GB LPDDR5X: no separate VRAM — even the 120 B reasoner fits entirely on-chip")
+tip("The Ryzen AI Max+ 395 has ~112 GB allocatable to models. The workhorse (~23 GB) and "
+    "embedder (~8 GB) stay resident; the reasoner (~63 GB) and coder (~19 GB) load on "
+    "demand — everything fits.")
 doc.add_page_break()
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -379,27 +386,27 @@ slots_headers = ["Slot", "config.yaml key", "Purpose", "Recommended model", "Har
 slots_rows = [
     ("Workhorse", "workhorse_model",
      "Chat, summarisation, general\nreasoning, web research",
-     "llama3.3-70b\n(alt: Qwen3-30B-A3B, Qwen3-32B)",
-     "iGPU (RDNA 3.5)\n~40 GB of 112 GB"),
+     "Qwen3.6-35B-A3B-GGUF\n(MoE, 3 B active — 50-70 tok/s)",
+     "iGPU (RDNA 3.5)\n~23 GB of 112 GB"),
     ("Reasoner", "reasoner_model",
      "Complex multi-step reasoning,\nverification, deep analysis",
-     "gpt-oss-120b\n(alt: phi4 for NPU speed)",
-     "iGPU (RDNA 3.5)\n~65 GB of 112 GB"),
+     "gpt-oss-120b-mxfp-GGUF\n(MoE, 5.1 B active — 30-40 tok/s)",
+     "iGPU (RDNA 3.5)\n~63 GB of 112 GB"),
     ("Coder", "coder_model",
      "Code generation, document\nworkshop, structured output",
-     "qwen2.5-coder-32b\n(alt: Qwen3-Coder-30B-A3B)",
-     "iGPU\n~18 GB"),
+     "Qwen3-Coder-30B-A3B-Instruct-GGUF\n(alt: Qwen3-Coder-Next-GGUF ~48 GB)",
+     "iGPU\n~19 GB"),
     ("Embedder", "embedder_model",
      "Semantic search vectors for\nall documents and knowledge",
-     "nomic-embed-text\n(alt: Qwen3-Embedding-8B)",
-     "NPU / CPU\n~274 MB"),
+     "Qwen3-Embedding-8B-GGUF\n(alt: nomic-embed-text-v2-moe-GGUF)",
+     "iGPU / CPU\n~8 GB"),
     ("Vision", "vision_model",
      "OCR of scanned PDFs and\nimages (Tesseract fallback)",
-     "Qwen3-VL-8B\n(leave empty → use Tesseract)",
+     "Qwen3.6-35B-A3B-GGUF\n(same as Workhorse — no extra download)",
      "iGPU"),
     ("Reranker", "reranker_model",
      "Re-ranks search results for\nbetter retrieval quality",
-     "BAAI/bge-reranker-v2-m3\n(optional — leave empty)",
+     "bge-reranker-v2-m3-GGUF\n(optional — leave empty)",
      "CPU / NPU"),
 ]
 add_table(
@@ -407,19 +414,21 @@ add_table(
     [Inches(0.75), Inches(1.05), Inches(1.4), Inches(1.65), Inches(1.0)],
 )
 tip("The Ryzen AI Max+ 395 has 128 GB unified memory with ~112 GB allocatable. "
-    "llama3.3-70b (~40 GB) and gpt-oss-120b (~65 GB) both fit entirely on the iGPU — "
-    "no CPU offload, no paging, full GPU speed.")
-note("gpt-oss-120b is Microsoft's open-source 120B model, optimised for instruction following "
-     "and long-context reasoning. It is the best local reasoner available and fits "
-     "comfortably in the 112 GB GPU pool of this machine.")
+    "The workhorse (~23 GB) and embedder (~8 GB) stay resident; the reasoner (~63 GB) "
+    "and coder (~19 GB) load on demand — no CPU offload, no paging, full GPU speed.")
+note("gpt-oss-120b is OpenAI's open-weight 120 B Mixture-of-Experts model, shipped in "
+     "native MXFP4. Only ~5.1 B parameters are active per token, so it is BOTH the best "
+     "local reasoner available AND fast on this machine (~30-40 tokens/sec).")
 
 h(2, "Pulling all models at once")
-body("Run these commands once after Lemonade is installed — they download everything Orivellum needs:")
-code("lemonade pull llama3.3-70b          # Workhorse — 70 B, 128 K context\n"
-     "lemonade pull gpt-oss-120b          # Reasoner  — 120 B, best local reasoning\n"
-     "lemonade pull phi4                  # Fast NPU model, good reasoning fallback\n"
-     "lemonade pull qwen2.5-coder-32b    # Coder     — 32 B, 256 K context\n"
-     "lemonade pull nomic-embed-text     # Embedder  — 274 MB, always resident\n\n"
+body("Run these commands once after Lemonade is installed — they download everything Orivellum needs. "
+     "Names must match the Lemonade catalog exactly (they double as API model IDs):")
+code("lemonade pull Qwen3.6-35B-A3B-GGUF                # Workhorse — MoE, vision built in\n"
+     "lemonade pull gpt-oss-120b-mxfp-GGUF              # Reasoner  — best local reasoning\n"
+     "lemonade pull Qwen3-Coder-30B-A3B-Instruct-GGUF   # Coder     — 256 K context\n"
+     "lemonade pull Qwen3-Embedding-8B-GGUF             # Embedder  — semantic search\n"
+     "lemonade pull gpt-oss-20b-NPU                     # Optional  — fast NPU model\n"
+     "lemonade pull bge-reranker-v2-m3-GGUF             # Optional  — search reranker\n\n"
      "# Verify everything downloaded:\n"
      "lemonade list")
 
@@ -427,12 +436,12 @@ h(2, "config.yaml — default model configuration")
 body("The project ships with these defaults already set in config.yaml. "
      "Edit the file to swap models at any time — no restart required for most settings:")
 code("models:\n"
-     "  workhorse_model: \"llama3.3-70b\"          # General chat & reasoning\n"
-     "  reasoner_model:  \"gpt-oss-120b\"           # Deep analysis (toggle brain icon in chat)\n"
-     "  coder_model:     \"qwen2.5-coder-32b\"      # Code & structured output\n"
-     "  embedder_model:  \"nomic-embed-text\"        # Semantic search\n"
-     "  vision_model:    \"\"                        # Leave empty → Tesseract OCR\n"
-     "  reranker_model:  \"\"                        # Leave empty → no reranking")
+     "  workhorse_model: \"Qwen3.6-35B-A3B-GGUF\"              # General chat & reasoning\n"
+     "  reasoner_model:  \"gpt-oss-120b-mxfp-GGUF\"            # Deep analysis (brain icon in chat)\n"
+     "  coder_model:     \"Qwen3-Coder-30B-A3B-Instruct-GGUF\" # Code & structured output\n"
+     "  embedder_model:  \"Qwen3-Embedding-8B-GGUF\"           # Semantic search\n"
+     "  vision_model:    \"Qwen3.6-35B-A3B-GGUF\"              # OCR (same model as workhorse)\n"
+     "  reranker_model:  \"\"                                   # Leave empty → no reranking")
 tip("In the chat interface, tap the brain icon (🧠) to switch from the Workhorse model "
     "to the Reasoner (gpt-oss-120b) for questions that need deeper analysis.")
 doc.add_page_break()

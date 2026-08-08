@@ -588,12 +588,12 @@ def build_story():
 
     model_data = [
         ["Slot", "config.yaml key", "Primary Role", "Recommended Models"],
-        ["Workhorse", "workhorse_model", "Chat, summarisation, general reasoning, web research synthesis", "Qwen3-30B-A3B-Instruct (fast MoE)\nllama3.3-70b\nQwen3-32B"],
-        ["Reasoner", "reasoner_model", "Complex multi-step reasoning tasks, verification, deep analysis", "gpt-oss-120b (best local, needs 128 GB RAM)\nphi4"],
-        ["Coder", "coder_model", "Code generation, document workshop, structured output", "Qwen3-Coder-30B-A3B (256K context)\nQwen3.6-27B\nqwen2.5-coder-32b"],
-        ["Embedder", "embedder_model", "Semantic search vectors for all documents and knowledge", "Qwen3-Embedding-8B (recommended)\nbge-m3"],
-        ["Vision", "vision_model", "OCR of scanned documents and images (fallback to Tesseract)", "Qwen3-VL-8B (optional — leave empty to use Tesseract)"],
-        ["Reranker", "reranker_model", "Re-ranks search results for better retrieval quality (optional)", "BAAI/bge-reranker-v2-m3\nQwen3-Reranker-8B (optional)"],
+        ["Workhorse", "workhorse_model", "Chat, summarisation, general reasoning, web research synthesis", "Qwen3.6-35B-A3B-GGUF (fast MoE, vision built in)\nQwen3-30B-A3B-Instruct-2507-GGUF"],
+        ["Reasoner", "reasoner_model", "Complex multi-step reasoning tasks, verification, deep analysis", "gpt-oss-120b-mxfp-GGUF (best local, needs 128 GB RAM)\ngpt-oss-20b-mxfp4-GGUF (smaller machines)"],
+        ["Coder", "coder_model", "Code generation, document workshop, structured output", "Qwen3-Coder-30B-A3B-Instruct-GGUF (256K context)\nQwen3-Coder-Next-GGUF (~48 GB)"],
+        ["Embedder", "embedder_model", "Semantic search vectors for all documents and knowledge", "Qwen3-Embedding-8B-GGUF (recommended)\nnomic-embed-text-v2-moe-GGUF (lightweight)"],
+        ["Vision", "vision_model", "OCR of scanned documents and images (fallback to Tesseract)", "Qwen3.6-35B-A3B-GGUF (same as Workhorse)\n(leave empty to use Tesseract)"],
+        ["Reranker", "reranker_model", "Re-ranks search results for better retrieval quality (optional)", "bge-reranker-v2-m3-GGUF (optional)"],
     ]
     t4 = Table([[Paragraph(c, S["table_header"] if i == 0 else S["table_cell"])
                  for c in row] for i, row in enumerate(model_data)],
@@ -618,11 +618,11 @@ def build_story():
     story.append(code(
 """serving:
   base_url: "http://127.0.0.1:13305/api/v1"  # Your LLM server URL
-  workhorse_model: "llama3.3-70b"             # General-purpose model
-  reasoner_model:  "phi4"                     # Complex reasoning
-  coder_model:     "qwen2.5-coder-32b"        # Code & structured output
-  embedder_model:  "Qwen3-Embedding-8B"       # Semantic embeddings
-  vision_model:    ""                         # Leave empty → Tesseract OCR
+  workhorse_model: "Qwen3.6-35B-A3B-GGUF"              # General-purpose model
+  reasoner_model:  "gpt-oss-120b-mxfp-GGUF"            # Complex reasoning
+  coder_model:     "Qwen3-Coder-30B-A3B-Instruct-GGUF" # Code & structured output
+  embedder_model:  "Qwen3-Embedding-8B-GGUF"           # Semantic embeddings
+  vision_model:    "Qwen3.6-35B-A3B-GGUF"              # OCR (same as workhorse)
   reranker_model:  ""                         # Leave empty → no reranking
   context_window:  131072                     # Token context limit
   timeout_sec:     300                        # LLM call timeout (seconds)
@@ -640,15 +640,17 @@ data:
     story.append(h2("Pulling Models (Ollama Example)"))
     story.append(p("Run these commands after <code>ollama serve</code> is running:"))
     story.append(code(
-"""# Workhorse (pick one — smaller = faster, larger = smarter)
-ollama pull llama3.3:70b
-ollama pull qwen3:30b
+"""# Workhorse (MoE models are dramatically faster on unified-memory machines)
+ollama pull qwen3:30b-a3b
+
+# Reasoner (best local reasoning — needs 128 GB RAM)
+ollama pull gpt-oss:120b
 
 # Embeddings (required for semantic search)
 ollama pull qwen3-embedding:8b
 
 # Coder (optional — for document workshop)
-ollama pull qwen2.5-coder:32b"""))
+ollama pull qwen3-coder:30b"""))
     story.append(sp(6))
 
     story.append(h2("Verifying LLM Connectivity"))

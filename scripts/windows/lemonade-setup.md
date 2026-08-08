@@ -7,9 +7,14 @@
 
 Lemonade Server is AMD's official local LLM inference tool for Ryzen AI hardware. Unlike Ollama (which uses ROCm and manual GPU-layer flags), **Lemonade automatically schedules workloads across the NPU, iGPU, and CPU** — you just install and pull models.
 
-- NPU (XDNA2, 50 TOPS) handles 7–14 B parameter models at low latency and low power
-- iGPU (40 RDNA 3.5 CUs, ≈ RTX 4070 Laptop) handles 32–70 B parameter models
-- Unified 128 GB LPDDR5X means no separate VRAM — models up to 70 B fit entirely on-chip
+- NPU (XDNA2, 50 TOPS) handles 7–20 B parameter models at low latency and low power
+- iGPU (40 RDNA 3.5 CUs, ≈ RTX 4070 Laptop) handles the big models — up to 120 B MoE
+- Unified 128 GB LPDDR5X means no separate VRAM — even gpt-oss-120b fits entirely on-chip
+
+> **Why MoE models, not a dense 70B?** This machine's unified memory moves ~256 GB/s.
+> A dense 70B model must read all 40 GB of weights for **every token** → ~4–5 tokens/sec.
+> A Mixture-of-Experts (MoE) model like gpt-oss-120b only activates ~5 B parameters per
+> token → **30–40 tokens/sec at higher quality**. On Strix Halo, MoE wins every time.
 
 ---
 
@@ -28,18 +33,26 @@ Invoke-WebRequest http://127.0.0.1:8000/api/v0/health -UseBasicParsing
 
 ## Step 2 — Pull models
 
+Model names must match the Lemonade catalog **exactly** (they are also the API model IDs):
+
 ```powershell
-# Best daily driver — 70 B on iGPU, 128 K context (~40 GB of 112 GB available)
-lemonade pull llama3.3-70b
+# Workhorse — daily driver. MoE (~3B active), vision built in, ~23 GB, FAST
+lemonade pull Qwen3.6-35B-A3B-GGUF
 
-# Fast NPU model — 14 B, runs on XDNA2, sub-second first token
-lemonade pull phi4
+# Reasoner — best local reasoning. 120B MoE in native MXFP4, ~63 GB, still fast
+lemonade pull gpt-oss-120b-mxfp-GGUF
 
-# Coder — 32 B on iGPU
-lemonade pull qwen2.5-coder-32b
+# Coder — agentic coding, 256 K context, ~19 GB
+lemonade pull Qwen3-Coder-30B-A3B-Instruct-GGUF
 
-# Embeddings for semantic search
-lemonade pull nomic-embed-text
+# Embeddings for semantic search — ~8 GB, always resident
+lemonade pull Qwen3-Embedding-8B-GGUF
+
+# OPTIONAL: fast low-power NPU model for quick Q&A while the iGPU is busy
+lemonade pull gpt-oss-20b-NPU
+
+# OPTIONAL: reranker for higher search precision (~0.6 GB)
+lemonade pull bge-reranker-v2-m3-GGUF
 ```
 
 Check what you have installed:
@@ -68,13 +81,20 @@ Open **http://localhost:8080/orivellum-ui/** in your browser.
 
 ## Model recommendations for Ryzen AI Max+ 395
 
-| Model | Size | Hardware used | Use case |
-|-------|------|---------------|----------|
-| `llama3.3-70b` | ~40 GB | iGPU (RDNA 3.5) | Primary chat, 128 K context |
-| `phi4` | ~8 GB | NPU (XDNA2) | Fast Q&A, extraction, reasoning |
-| `qwen2.5-7b` | ~4 GB | NPU | Near-instant responses |
-| `qwen2.5-coder-32b` | ~18 GB | iGPU | Code generation |
-| `nomic-embed-text` | 274 MB | NPU/CPU | Semantic search embeddings |
+| Model | Size | Speed on this PC | Hardware | Use case |
+|-------|------|------------------|----------|----------|
+| `Qwen3.6-35B-A3B-GGUF` | ~23 GB | ~50–70 tok/s | iGPU | Primary chat + vision/OCR (MoE, 3 B active) |
+| `gpt-oss-120b-mxfp-GGUF` | ~63 GB | ~30–40 tok/s | iGPU | Deep reasoning (MoE, 5.1 B active) |
+| `Qwen3-Coder-30B-A3B-Instruct-GGUF` | ~19 GB | ~50–70 tok/s | iGPU | Code generation, 256 K context |
+| `Qwen3-Embedding-8B-GGUF` | ~8 GB | instant | iGPU/CPU | Semantic search embeddings (SOTA) |
+| `gpt-oss-20b-NPU` | ~13 GB | fast, low power | **NPU (XDNA2)** | Optional: quick Q&A while iGPU is busy |
+| `bge-reranker-v2-m3-GGUF` | ~0.6 GB | instant | CPU | Optional: +5–10 % search precision |
+
+For comparison, the previously recommended `llama3.3-70b` (dense) ran at only ~4–5 tok/s
+on this hardware — and it has since been removed from the Lemonade catalog entirely.
+
+**Memory budget:** workhorse + embedder stay resident (~31 GB); the reasoner (~63 GB) and
+coder (~19 GB) load on demand. Everything fits within the ~112 GB allocatable to the iGPU.
 
 **Orivellum config (`config.yaml`) is already tuned for these models.**
 
@@ -99,7 +119,7 @@ Open **http://localhost:8080/orivellum-ui/** in your browser.
 | Connection refused on port 8000 | Lemonade not running — check system tray or run `lemonade serve` |
 | Model not found error | Run `lemonade list` to see pulled model names; update `config.yaml` to match exactly |
 | Slow first response | Normal — model loading into unified RAM; subsequent responses are faster |
-| Embeddings not working | Lemonade's embedding endpoint may need `nomic-embed-text` pulled first; Orivellum falls back to keyword search if unavailable |
+| Embeddings not working | Lemonade's embedding endpoint needs `Qwen3-Embedding-8B-GGUF` pulled first; Orivellum falls back to keyword search if unavailable |
 | Want to switch to Ollama instead | Change `base_url` in `config.yaml` to `http://127.0.0.1:11434/v1` and use Ollama model names |
 
 ---
