@@ -370,8 +370,12 @@ export default function WorkIntelligenceScreen() {
   }, [normalizedQuery, chapters]);
 
   // Returns true when a chapter row should be visible for the current query.
+  // While background fetches are in flight (searchFetchingCount > 0) every
+  // chapter stays visible so we don't prematurely hide chapters whose content
+  // hasn't loaded yet. Hiding only happens once all fetches have resolved.
   const chapterMatchesQuery = (ch: any): boolean => {
     if (!normalizedQuery) return true;
+    if (searchFetchingCount > 0) return true; // defer until all knowledge is loaded
     if ((ch.title ?? '').toLowerCase().includes(normalizedQuery)) return true;
     const items = chapterKnowledge[ch.id];
     if (items) {
@@ -894,8 +898,25 @@ export default function WorkIntelligenceScreen() {
             );
           })}
 
-          {/* No-results state when query filters everything out */}
-          {normalizedQuery !== '' &&
+          {/* "N chapters hidden" note — only shown once all background fetches
+              resolve so users understand why the list is shorter */}
+          {normalizedQuery !== '' && searchFetchingCount === 0 && (() => {
+            const allChapters = (chapters.documents as any[]).flatMap(
+              (doc: any) => doc.chapters as any[],
+            );
+            const hiddenCount = allChapters.filter((ch: any) => !chapterMatchesQuery(ch)).length;
+            if (hiddenCount === 0) return null;
+            return (
+              <View style={{ alignItems: 'center', paddingVertical: 6 }}>
+                <Text style={{ fontSize: 12, color: colors.mutedForeground, fontFamily: 'Inter_400Regular' }}>
+                  {hiddenCount} chapter{hiddenCount !== 1 ? 's' : ''} hidden
+                </Text>
+              </View>
+            );
+          })()}
+
+          {/* No-results state — only shown once all fetches have resolved */}
+          {normalizedQuery !== '' && searchFetchingCount === 0 &&
             (chapters.documents as any[]).every(
               (doc: any) => (doc.chapters as any[]).filter(chapterMatchesQuery).length === 0,
             ) && (
