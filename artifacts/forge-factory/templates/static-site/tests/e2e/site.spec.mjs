@@ -1,0 +1,4 @@
+import { test, expect } from '@playwright/test';
+test('home page reaches a visible call to action', async ({ page }) => { await page.goto('/'); await expect(page.locator('h1')).toBeVisible(); await expect(page.getByRole('link', { name: /start a conversation/i })).toBeVisible(); });
+test('mobile navigation is usable', async ({ page }) => { await page.goto('/'); const menu = page.getByRole('button', { name: 'Menu' }); if (await menu.isVisible()) { await menu.click(); await expect(page.getByRole('link', { name: 'Contact' })).toBeVisible(); } });
+test('private visual evidence can be captured at the active viewport', async ({ page }, testInfo) => { await page.goto('/'); await expect(page.locator('main')).toBeVisible(); await page.screenshot({ path: testInfo.outputPath('home-visual-evidence.png'), fullPage: true }); });

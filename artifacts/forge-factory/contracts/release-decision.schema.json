@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Orivellum Forge Release Decision",
+  "type": "object",
+  "required": ["status", "jobId", "createdAt", "gates"],
+  "properties": {
+    "status": {"enum": ["VERIFIED", "CONDITIONAL", "BLOCKED"]},
+    "jobId": {"type": "string"},
+    "createdAt": {"type": "string", "format": "date-time"},
+    "gates": {"type": "array"},
+    "manualApprovalRequired": {"type": "boolean"}
+  }
+}

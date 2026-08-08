@@ -1,0 +1,17 @@
+{
+  "name": "orivellum-forge-website-factory",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Private, zero-subscription website factory for A-01 and Orivellum.",
+  "type": "module",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "start": "node src/server.mjs",
+    "dev": "node --watch src/server.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "check": "node --check src/server.mjs && node --check public/app.js && node --test tests/*.test.mjs"
+  },
+  "license": "MIT"
+}

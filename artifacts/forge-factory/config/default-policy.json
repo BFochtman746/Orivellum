@@ -1,0 +1,45 @@
+{
+  "version": "1.0.0",
+  "network": {
+    "default": "deny",
+    "approvalRequiredForEnable": true
+  },
+  "files": {
+    "forbiddenPaths": [
+      ".git",
+      ".env",
+      ".env.local",
+      ".env.production",
+      "node_modules",
+      ".orivellum",
+      "secrets"
+    ],
+    "maxWriteBytes": 524288
+  },
+  "commands": {
+    "allow": [
+      "node",
+      "npm",
+      "git"
+    ],
+    "denyArguments": [
+      "push",
+      "reset",
+      "clean",
+      "--force",
+      "install",
+      "ci",
+      "publish",
+      "-e",
+      "--eval",
+      "exec"
+    ],
+    "defaultTimeoutMs": 120000
+  },
+  "release": {
+    "requireBrowserEvidence": true,
+    "requireSecurityEvidence": true,
+    "requireManualApproval": true,
+    "requiredPasses": ["lint", "unit", "build", "visual", "links", "scope"]
+  }
+}

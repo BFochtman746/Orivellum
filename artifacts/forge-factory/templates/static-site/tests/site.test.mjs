@@ -1,0 +1,6 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+test('home page retains core semantic and mobile requirements', async () => { const html = await readFile('index.html', 'utf8'); assert.match(html, /<main\b/i); assert.match(html, /<h1\b/i); assert.match(html, /<meta\s+name=["']viewport/i); assert.match(html, /Skip to content/i); });
+test('all starter pages are linked from primary navigation', async () => { const html = await readFile('index.html', 'utf8'); for (const page of ['index.html', 'about.html', 'contact.html']) assert.match(html, new RegExp(`href=["']${page}`)); });
+test('shared visual tokens and selected visual direction are present', async () => { const html = await readFile('index.html', 'utf8'); const tokens = await readFile('design-tokens.css', 'utf8'); const design = JSON.parse(await readFile('design-system.json', 'utf8')); assert.match(html, /href=["']design-tokens\.css["']/); for (const group of ['--color-', '--font-', '--space-', '--radius-', '--motion-']) assert.match(tokens, new RegExp(group.replace(/[-]/g, '\\-'))); assert.match(tokens, /prefers-reduced-motion/); assert.ok(design.selectedConceptId); assert.ok(design.palette?.accent); });

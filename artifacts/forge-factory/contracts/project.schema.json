@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Orivellum Forge Website Project",
+  "type": "object",
+  "required": ["id", "name", "brief", "createdAt", "status"],
+  "properties": {
+    "id": {"type": "string", "pattern": "^WEB-[A-Z0-9-]+$"},
+    "name": {"type": "string", "minLength": 1, "maxLength": 120},
+    "brief": {"type": "string", "minLength": 1, "maxLength": 20000},
+    "createdAt": {"type": "string", "format": "date-time"},
+    "status": {"enum": ["active", "archived"]},
+    "profile": {"enum": ["marketing", "business", "web-app", "orivellum-module"]},
+    "visualBrief": {"type": "string", "maxLength": 6000},
+    "latestPlanJobId": {"type": ["string", "null"]},
+    "latestDesignJobId": {"type": ["string", "null"]},
+    "latestBuildJobId": {"type": ["string", "null"]}
+  }
+}

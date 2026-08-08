@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark light">
+    <title>Orivellum Forge · Website Factory</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <header class="app-header">
+      <div>
+        <p class="eyebrow">A‑01 · local only</p>
+        <h1>Website Factory</h1>
+      </div>
+      <div class="health"><span id="health-dot" class="dot"></span><span id="health">Checking Lemonade…</span></div>
+    </header>
+    <main class="layout">
+      <section class="panel create-panel">
+        <h2>Start a governed website project</h2>
+        <p>Build privately, test in a real browser, and release only with evidence.</p>
+        <form id="create-project">
+          <label>Project name<input required name="name" maxlength="120" placeholder="Example: Northstar Advisory"></label>
+          <label>Website type
+            <select name="profile">
+              <option value="marketing">Marketing site</option>
+              <option value="business">Business site</option>
+              <option value="web-app">Web application</option>
+              <option value="orivellum-module">Orivellum module</option>
+            </select>
+          </label>
+          <label>Brief<textarea required name="brief" rows="7" placeholder="Who is this for, what should it accomplish, what pages/functions are required, and what must not change?"></textarea></label>
+          <label>Visual direction <span class="optional">optional</span><textarea name="visualBrief" rows="4" placeholder="Brand colors, tone, references to avoid, image rights, accessibility, and the feeling the site should create."></textarea></label>
+          <button type="submit">Create project</button>
+        </form>
+      </section>
+      <section class="panel projects-panel">
+        <div class="panel-heading"><div><h2>Projects</h2><p id="project-count">Loading…</p></div><button id="refresh" class="secondary">Refresh</button></div>
+        <div id="projects" class="project-list" aria-live="polite"></div>
+      </section>
+      <section class="panel detail-panel" id="detail-panel">
+        <div class="empty-state"><h2>Select a project</h2><p>Plans remain read-only until you approve them. Every build receives an isolated Git worktree.</p></div>
+      </section>
+    </main>
+    <template id="project-template">
+      <article class="project-card"><button class="project-select"><span class="project-name"></span><span class="project-meta"></span></button></article>
+    </template>
+    <script src="/app.js"></script>
+  </body>
+</html>

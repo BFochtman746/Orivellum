@@ -1,0 +1,37 @@
+{
+  "schemaVersion": "1.0.0",
+  "source": "Orivellum Forge baseline starter",
+  "selectedConceptId": "executive-editorial",
+  "selectedConceptName": "Executive Editorial",
+  "selectedAt": null,
+  "palette": {
+    "canvas": "#F8F7F1",
+    "surface": "#FFFEFA",
+    "text": "#102526",
+    "muted": "#506062",
+    "line": "#D7DFD8",
+    "accent": "#166A63",
+    "accentStrong": "#0E4E49",
+    "focus": "#B3DED1",
+    "onAccent": "#FFFFFF"
+  },
+  "typography": {
+    "displayFamily": "Iowan Old Style, Palatino, Georgia, serif",
+    "bodyFamily": "ui-sans-serif, system-ui, sans-serif",
+    "displayStyle": "Measured editorial headings with a compact sans-serif utility layer.",
+    "bodyStyle": "Plain, highly readable system sans.",
+    "scale": "1.125 modular scale with fluid display sizing."
+  },
+  "layout": {
+    "density": "Spacious",
+    "hero": "Text-led asymmetric hero with one decisive action.",
+    "grid": "12-column desktop rhythm that collapses to one reading column.",
+    "imageTreatment": "No image required; use approved, rights-cleared imagery only when it adds truth."
+  },
+  "components": ["Quiet sticky header", "Text-led hero", "Proof band", "Bordered content cards", "Dark callout", "Plain labelled form controls"],
+  "motion": { "character": "Short opacity and color transitions only; no ambient motion.", "reducedMotion": "Respect prefers-reduced-motion; no essential information depends on animation." },
+  "responsiveRules": ["Design from 320px upward.", "Use 44px touch targets.", "Preserve hierarchy at 390px iPhone width."],
+  "accessibility": { "target": "WCAG 2.2 AA-informed baseline", "requirements": ["Visible focus", "Sufficient contrast", "Reduced-motion alternative"] },
+  "visualAcceptanceTests": ["All pages load shared tokens.", "Private desktop and iPhone screenshots are captured when Playwright is configured."],
+  "assetPolicy": { "default": "CSS composition before imagery.", "provenanceRequired": true }
+}

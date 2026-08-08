@@ -1,0 +1,2 @@
+import { defineConfig } from '@playwright/test';
+export default defineConfig({ testDir: './tests/e2e', timeout: 30000, outputDir: process.env.FORGE_BROWSER_OUTPUT || 'test-results', use: { baseURL: process.env.FORGE_PREVIEW_URL || 'http://127.0.0.1:4173', trace: 'retain-on-failure', screenshot: 'only-on-failure', video: 'retain-on-failure' }, projects: [{ name: 'desktop-chromium', use: { browserName: 'chromium' } }, { name: 'iphone-webkit', use: { browserName: 'webkit', viewport: { width: 390, height: 844 }, isMobile: true } }] });

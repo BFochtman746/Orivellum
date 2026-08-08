@@ -1,0 +1,12 @@
+{
+  "siteName": "{{SITE_NAME}}",
+  "tagline": "{{TAGLINE}}",
+  "description": "{{DESCRIPTION}}",
+  "profile": "marketing",
+  "theme": {
+    "accent": "#166a63",
+    "accentStrong": "#0e4e49",
+    "ink": "#102526",
+    "paper": "#f8f7f1"
+  }
+}

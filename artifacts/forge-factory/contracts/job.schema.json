@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Orivellum Forge Job",
+  "type": "object",
+  "required": ["id", "projectId", "type", "status", "createdAt"],
+  "properties": {
+    "id": {"type": "string", "pattern": "^JOB-[A-Z0-9-]+$"},
+    "projectId": {"type": "string"},
+    "type": {"enum": ["PLAN", "DESIGN", "BUILD", "REPAIR", "VERIFY", "REVIEW", "RELEASE"]},
+    "status": {"enum": ["queued", "running", "awaiting_approval", "passed", "conditional", "blocked", "failed", "cancelled"]},
+    "createdAt": {"type": "string", "format": "date-time"},
+    "targetJobId": {"type": "string"},
+    "planJobId": {"type": "string"},
+    "designJobId": {"type": "string"},
+    "selectedConceptId": {"type": "string"},
+    "worktree": {"type": "string"}
+  }
+}

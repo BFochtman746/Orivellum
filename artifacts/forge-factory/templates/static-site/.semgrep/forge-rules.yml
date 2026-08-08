@@ -1,0 +1,12 @@
+rules:
+  - id: forge-no-eval
+    languages: [javascript, typescript]
+    message: Do not use eval in a generated website.
+    severity: ERROR
+    patterns:
+      - pattern: eval(...)
+  - id: forge-no-innerhtml-user-input
+    languages: [javascript, typescript]
+    message: Do not assign user-controlled values to innerHTML without a documented sanitization boundary.
+    severity: WARNING
+    pattern: $EL.innerHTML = $INPUT
