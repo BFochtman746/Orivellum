@@ -476,20 +476,25 @@ def _search_youtube(query: str) -> list[dict]:
         include_raw_content=False,
         include_domains=_YOUTUBE_DOMAINS,
     )
-    enriched: list[dict] = []
+    # Fetch all transcripts concurrently — each is an independent network call
+    # and downloading them serially multiplies the wait by the video count.
     for r in results:
         r["_source_type"] = "youtube"
-        url        = r.get("url", "")
-        video_id   = _youtube_video_id(url)
-        transcript = _fetch_youtube_transcript(video_id) if video_id else None
-        if transcript:
-            # Prefer transcript over Tavily snippet — far richer evidence
-            r["raw_content"] = transcript
-            r["_has_transcript"] = True
-        else:
-            r["_has_transcript"] = False
-        enriched.append(r)
-    return enriched
+        r["_has_transcript"] = False
+
+    with_ids = [(r, vid) for r in results
+                if (vid := _youtube_video_id(r.get("url", "")))]
+    if with_ids:
+        with ThreadPoolExecutor(max_workers=min(len(with_ids), 6)) as pool:
+            futs = {pool.submit(_fetch_youtube_transcript, vid): r
+                    for r, vid in with_ids}
+            for fut in as_completed(futs):
+                transcript = fut.result()   # _fetch_youtube_transcript never raises
+                if transcript:
+                    # Prefer transcript over Tavily snippet — far richer evidence
+                    futs[fut]["raw_content"] = transcript
+                    futs[fut]["_has_transcript"] = True
+    return results
 
 def _search_facebook(query: str) -> list[dict]:
     """Search publicly indexed Facebook pages.
@@ -720,49 +725,60 @@ def research_web(
     else:
         n_variants, search_depth, include_raw = 4, "advanced", True
 
-    # ── Query expansion ────────────────────────────────────────────────────────
-    queries: list[str] = [query]
-    if n_variants > 0 and llm_call_fn is not None:
-        variants = _plan_queries(query, n_variants, llm_call_fn, biblical=is_biblical)
-        queries += [v for v in variants if v.casefold() != query.casefold()]
-
-    seen_q: set[str]   = set()
-    unique_q: list[str] = []
-    for q in queries:
-        if q.casefold() not in seen_q:
-            unique_q.append(q)
-            seen_q.add(q.casefold())
-    queries = unique_q[: n_variants + 1]
-    diag.queries_planned = len(queries)
-
-    # ── Build parallel task list ───────────────────────────────────────────────
-    # Each task is a (callable, label) pair.  All tasks run concurrently.
-    tasks: list[tuple[Any, str]] = []
-
-    for q in queries:
-        tasks.append((_make_web_task(q, search_depth, include_raw, days), f"web:{q[:40]}"))
-
-    if SearchMode.NEWS in resolved_modes:
-        tasks.append((_make_news_task(query, days), f"news:{query[:40]}"))
-
-    if SearchMode.ACADEMIC in resolved_modes:
-        tasks.append((_make_academic_task(query, search_depth, include_raw), f"academic:{query[:40]}"))
-
-    if SearchMode.BIBLICAL in resolved_modes:
-        # One biblical-domain search per main query (primary only — avoids over-fetching)
-        tasks.append((_make_biblical_task(query, search_depth, include_raw), f"biblical:{query[:40]}"))
-
-    if SearchMode.YOUTUBE in resolved_modes:
-        tasks.append((_make_youtube_task(query), f"youtube:{query[:40]}"))
-
-    if SearchMode.FACEBOOK in resolved_modes:
-        tasks.append((_make_facebook_task(query), f"facebook:{query[:40]}"))
-
-    # ── Execute all tasks in parallel ─────────────────────────────────────────
+    # ── Execute: fire searches immediately, plan variants concurrently ────────
+    # The primary-query search and every mode lane hit the network right away.
+    # The LLM query planner (which used to block ALL searches for several
+    # seconds) runs in the same pool at the same time; variant searches are
+    # submitted the moment it finishes.  Net effect: planner latency is hidden
+    # behind the first wave of network calls instead of added in front of them.
     result_lists: list[list[dict]] = []
 
-    with ThreadPoolExecutor(max_workers=min(len(tasks), 8)) as pool:
-        futures = {pool.submit(fn): label for fn, label in tasks}
+    with ThreadPoolExecutor(max_workers=12) as pool:
+        futures: dict[Any, str] = {}
+
+        def _submit(fn, label: str) -> None:
+            futures[pool.submit(fn)] = label
+
+        _submit(_make_web_task(query, search_depth, include_raw, days),
+                f"web:{query[:40]}")
+
+        if SearchMode.NEWS in resolved_modes:
+            _submit(_make_news_task(query, days), f"news:{query[:40]}")
+
+        if SearchMode.ACADEMIC in resolved_modes:
+            _submit(_make_academic_task(query, search_depth, include_raw),
+                    f"academic:{query[:40]}")
+
+        if SearchMode.BIBLICAL in resolved_modes:
+            # One biblical-domain search per main query (primary only — avoids over-fetching)
+            _submit(_make_biblical_task(query, search_depth, include_raw),
+                    f"biblical:{query[:40]}")
+
+        if SearchMode.YOUTUBE in resolved_modes:
+            _submit(_make_youtube_task(query), f"youtube:{query[:40]}")
+
+        if SearchMode.FACEBOOK in resolved_modes:
+            _submit(_make_facebook_task(query), f"facebook:{query[:40]}")
+
+        # Plan query variants in parallel with the first search wave
+        queries: list[str] = [query]
+        if n_variants > 0 and llm_call_fn is not None:
+            planner_future = pool.submit(
+                _plan_queries, query, n_variants, llm_call_fn, is_biblical
+            )
+            variants = planner_future.result()   # _plan_queries never raises
+            seen_q: set[str] = {query.casefold()}
+            for v in variants:
+                if v.casefold() in seen_q:
+                    continue
+                seen_q.add(v.casefold())
+                queries.append(v)
+                _submit(_make_web_task(v, search_depth, include_raw, days),
+                        f"web:{v[:40]}")
+                if len(queries) >= n_variants + 1:
+                    break
+        diag.queries_planned = len(queries)
+
         for future in as_completed(futures):
             label = futures[future]
             try:
