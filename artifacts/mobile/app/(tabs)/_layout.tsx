@@ -121,6 +121,14 @@ function useReviewCount(): number {
 function useMailAttentionCount(): number {
   const [count, setCount] = useState(0);
   const path = usePathname();
+  // path.startsWith('/mail') covers every mail sub-route:
+  //   /mail              — attention list
+  //   /mail/<id>         — message detail (also works on cold-start deep link)
+  //   /mail/settings     — settings screen
+  //   /mail/connect      — Outlook OAuth flow
+  //   /mail/compose/<id> — compose/reply screen
+  // Expo Router populates usePathname() from the initial URL before the first
+  // render, so deep-link cold starts are handled correctly without extra logic.
   const onMailRoute = path.startsWith('/mail');
   const prevOnMailRef = useRef(onMailRoute);
 
