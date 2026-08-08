@@ -21,3 +21,4 @@ Current lineup (Aug 2026, verified against the live Lemonade catalog):
 - config.yaml example format is `serving:` — a top-level `models:` block is NOT a supported loader path.
 - DB overrides (`workhorse_model_override` etc.) shadow config; empty DB setting cannot suppress a non-empty config default (`stored or config` pattern).
 - Gmail connector slug is `google-mail` (not `gmail`) for `listConnections`.
+- Lemonade endpoint on the user's machine is port **13305**, path must end `/api/v1` (not `/v1`). config.yaml `serving.base_url` wins over the code default — verify with `curl http://127.0.0.1:13305/api/v1/models` (manual §4.2 step A1).
