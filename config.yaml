@@ -17,10 +17,12 @@
 
 serving:
   # ── Lemonade Server endpoint ─────────────────────────────────────────────────
-  # Lemonade exposes an OpenAI-compatible API on port 8000 (primary) and an
-  # Ollama-compatible bridge on port 11434.  Use 8000 for best compatibility.
-  # If you see connection errors, try: http://127.0.0.1:11434/v1  (Ollama-compat)
-  base_url: "http://127.0.0.1:8000/api/v1"
+  # Lemonade exposes an OpenAI-compatible API on port 13305 (its default) plus
+  # an Ollama-compatible bridge on 11434.  The path MUST end /api/v1 (not /v1).
+  # Verify the port answers:  curl http://127.0.0.1:13305/api/v1/models
+  # (Manual §4.2 step A1 — whichever port answers /api/v1/models goes here.)
+  # If you use Ollama instead: http://127.0.0.1:11434/v1
+  base_url: "http://127.0.0.1:13305/api/v1"
 
   # ── Model selection (verified against Lemonade catalog — Aug 2026) ──────────
   # Pull models with: lemonade pull <name>

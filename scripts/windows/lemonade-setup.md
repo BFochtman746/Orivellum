@@ -25,7 +25,7 @@ Lemonade Server is AMD's official local LLM inference tool for Ryzen AI hardware
 3. After install, verify it's running:
 
 ```powershell
-Invoke-WebRequest http://127.0.0.1:8000/api/v0/health -UseBasicParsing
+Invoke-WebRequest http://127.0.0.1:13305/api/v1/models -UseBasicParsing
 # Should return: {"status":"ok"} or similar
 ```
 
@@ -105,7 +105,7 @@ coder (~19 GB) load on demand. Everything fits within the ~112 GB allocatable to
 | | Ollama | Lemonade |
 |--|--------|----------|
 | GPU acceleration setup | Manual env vars (`HSA_OVERRIDE_GFX_VERSION`, etc.) | Automatic — Lemonade schedules NPU/iGPU |
-| Default API port | 11434 | **8000** |
+| Default API port | 11434 | **13305** (path `/api/v1`) |
 | API format | Ollama + OpenAI-compat | OpenAI-compat (primary) + Ollama-compat bridge on 11434 |
 | NPU support | No | **Yes — XDNA2 first-class** |
 | Model pull | `ollama pull` | `lemonade pull` |
@@ -116,7 +116,7 @@ coder (~19 GB) load on demand. Everything fits within the ~112 GB allocatable to
 
 | Symptom | Fix |
 |---------|-----|
-| Connection refused on port 8000 | Lemonade not running — check system tray or run `lemonade serve` |
+| Connection refused on port 13305 | Lemonade not running — check system tray or run `lemonade serve` |
 | Model not found error | Run `lemonade list` to see pulled model names; update `config.yaml` to match exactly |
 | Slow first response | Normal — model loading into unified RAM; subsequent responses are faster |
 | Embeddings not working | Lemonade's embedding endpoint needs `Qwen3-Embedding-8B-GGUF` pulled first; Orivellum falls back to keyword search if unavailable |

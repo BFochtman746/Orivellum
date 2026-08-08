@@ -159,8 +159,8 @@ if ($SkipBuild -and (Test-Path $uiDist)) {
 # Lemonade docs : https://lemonade-server.ai
 #
 # Verify Lemonade is up:
-#   Invoke-WebRequest http://127.0.0.1:8000/api/v0/health -UseBasicParsing
-Write-Host "[lmnd] Lemonade Server should be running on http://127.0.0.1:8000" -ForegroundColor DarkCyan
+#   Invoke-WebRequest http://127.0.0.1:13305/api/v1/models -UseBasicParsing
+Write-Host "[lmnd] Lemonade Server should be running on http://127.0.0.1:13305" -ForegroundColor DarkCyan
 
 # ---- Step 2: Start API (serves both /api/* and /orivellum-ui/*) -----------
 Write-Host "[api]  Starting API server on port $ApiPort ..." -ForegroundColor $Cyan

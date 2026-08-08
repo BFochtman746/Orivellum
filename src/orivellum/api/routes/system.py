@@ -1806,7 +1806,7 @@ def system_lemonade():
     Returns an empty ``{"available": false}`` dict when Lemonade is unreachable.
     """
     cfg = get_config()
-    base = cfg.serving.base_url  # e.g. http://127.0.0.1:8000/api/v1
+    base = cfg.serving.base_url  # e.g. http://127.0.0.1:13305/api/v1
 
     # Derive the Lemonade root (strip the /v1 suffix to get /api/v1's parent)
     # base_url is expected to be http://host:port/api/v1

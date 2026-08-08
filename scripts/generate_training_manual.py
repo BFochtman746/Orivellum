@@ -835,7 +835,7 @@ uv run python scripts/run_diagnostics.py --vacuum"""))
         ("All AI features fail (chat won't respond, extraction fails)",
          "Your LLM server is not running or the URL is wrong. Check "
          "ORIVELLUM_AI_URL / config.yaml serving.base_url. Verify the server is "
-         "running: curl http://127.0.0.1:13305/v1/models (Lemonade) or "
+         "running: curl http://127.0.0.1:13305/api/v1/models (Lemonade) or "
          "curl http://127.0.0.1:11434/v1/models (Ollama)."),
         ("Semantic search returns poor results or nothing",
          "Embeddings may be missing or dimension-mismatched. Go to System → "

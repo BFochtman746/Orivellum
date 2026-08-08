@@ -330,7 +330,7 @@ code("# 1. Visit https://lemonade-server.ai and download the Windows installer\n
      "# 2. Run the installer\n"
      "# 3. Lemonade registers itself to START AUTOMATICALLY AT LOGIN — no manual launch needed\n\n"
      "# Verify it is running:\n"
-     "Invoke-WebRequest http://127.0.0.1:8000/api/v0/health -UseBasicParsing\n"
+     "Invoke-WebRequest http://127.0.0.1:13305/api/v1/models -UseBasicParsing\n"
      "# Expected: {\"status\":\"ok\"}")
 tip("Lemonade installs as a background service. After the first install it starts automatically — "
     "you will never need to launch it manually again.")
@@ -360,7 +360,7 @@ h(2, "Connect Orivellum to Lemonade")
 numbered("Open Orivellum in your browser")
 numbered("Go to System page → Settings section")
 numbered('Under "Local AI (Lemonade)" verify the URL is set to:')
-code("http://127.0.0.1:8000/v1")
+code("http://127.0.0.1:13305/api/v1")
 numbered("The model slots are already configured in config.yaml — no manual model ID entry needed")
 numbered("Click Save Settings — the green indicator confirms the connection")
 
