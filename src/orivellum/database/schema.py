@@ -1745,4 +1745,76 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         CREATE INDEX IF NOT EXISTS kr_conv_id       ON knowledge_retrievals(conv_id);
         CREATE INDEX IF NOT EXISTS kr_retrieved_at  ON knowledge_retrievals(retrieved_at);
     """),
+
+    # ── Forge Website Factory ─────────────────────────────────────────────────
+    # Integrates the Forge governed website-build pipeline into Orivellum as a
+    # first-class capability.  Each ForgeProject produces one or more ForgeJobs
+    # (PLAN → DESIGN → BUILD → VERIFY → REVIEW → RELEASE).  Events stream from
+    # a dedicated table so SSE subscribers can tail from a cursor.
+
+    (103, "Forge website factory — projects table", """
+        CREATE TABLE IF NOT EXISTS forge_projects (
+            id          TEXT PRIMARY KEY,
+            work_id     TEXT REFERENCES works(id) ON DELETE SET NULL,
+            name        TEXT NOT NULL,
+            brief       TEXT NOT NULL DEFAULT '',
+            status      TEXT NOT NULL DEFAULT 'active',
+            build_dir   TEXT,
+            config      TEXT NOT NULL DEFAULT '{}',
+            created_at  TEXT NOT NULL,
+            updated_at  TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS fp_work_id   ON forge_projects(work_id);
+        CREATE INDEX IF NOT EXISTS fp_status    ON forge_projects(status);
+        CREATE INDEX IF NOT EXISTS fp_created   ON forge_projects(created_at);
+    """),
+
+    (104, "Forge website factory — jobs table", """
+        CREATE TABLE IF NOT EXISTS forge_jobs (
+            id             TEXT PRIMARY KEY,
+            project_id     TEXT NOT NULL REFERENCES forge_projects(id) ON DELETE CASCADE,
+            type           TEXT NOT NULL,
+            status         TEXT NOT NULL DEFAULT 'pending',
+            instruction    TEXT,
+            plan_job_id    TEXT,
+            design_job_id  TEXT,
+            target_job_id  TEXT,
+            build_dir      TEXT,
+            created_at     TEXT NOT NULL,
+            started_at     TEXT,
+            completed_at   TEXT,
+            meta           TEXT NOT NULL DEFAULT '{}'
+        );
+        CREATE INDEX IF NOT EXISTS fj_project_id ON forge_jobs(project_id);
+        CREATE INDEX IF NOT EXISTS fj_status     ON forge_jobs(status);
+        CREATE INDEX IF NOT EXISTS fj_type       ON forge_jobs(type);
+        CREATE INDEX IF NOT EXISTS fj_created    ON forge_jobs(created_at);
+    """),
+
+    (105, "Forge website factory — events table", """
+        CREATE TABLE IF NOT EXISTS forge_events (
+            id         TEXT PRIMARY KEY,
+            job_id     TEXT NOT NULL REFERENCES forge_jobs(id) ON DELETE CASCADE,
+            phase      TEXT NOT NULL,
+            message    TEXT NOT NULL,
+            data_json  TEXT,
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS fe_job_id     ON forge_events(job_id);
+        CREATE INDEX IF NOT EXISTS fe_created_at ON forge_events(created_at);
+    """),
+
+    (106, "Forge website factory — artifacts table", """
+        CREATE TABLE IF NOT EXISTS forge_artifacts (
+            id            TEXT PRIMARY KEY,
+            job_id        TEXT NOT NULL REFERENCES forge_jobs(id) ON DELETE CASCADE,
+            artifact_type TEXT NOT NULL,
+            content_json  TEXT NOT NULL,
+            sha256        TEXT,
+            created_at    TEXT NOT NULL,
+            UNIQUE(job_id, artifact_type)
+        );
+        CREATE INDEX IF NOT EXISTS fa_job_id        ON forge_artifacts(job_id);
+        CREATE INDEX IF NOT EXISTS fa_artifact_type ON forge_artifacts(artifact_type);
+    """),
 ]

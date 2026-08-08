@@ -33,6 +33,8 @@ import IntakePage from '@/pages/intake/index';
 import TopicsPage from '@/pages/topics/index';
 import ActionsPage from '@/pages/actions/index';
 import GraphPage from '@/pages/graph/index';
+import ForgePage from '@/pages/forge/index';
+import ForgeDetail from '@/pages/forge/detail';
 import NotFound from '@/pages/not-found';
 
 const queryClient = new QueryClient({
@@ -93,6 +95,8 @@ function Router() {
         <Route path="/topics">{() => <RouteWithBoundary component={TopicsPage} />}</Route>
         <Route path="/actions">{() => <RouteWithBoundary component={ActionsPage} />}</Route>
         <Route path="/graph">{() => <RouteWithBoundary component={GraphPage} />}</Route>
+        <Route path="/forge">{() => <RouteWithBoundary component={ForgePage} />}</Route>
+        <Route path="/forge/:projectId">{() => <RouteWithBoundary component={ForgeDetail} />}</Route>
         <Route component={NotFound} />
       </Switch>
     </AppLayout>

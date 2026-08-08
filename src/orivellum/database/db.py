@@ -5653,6 +5653,220 @@ class OrivellumDB:
             logger.debug("search_provenance failed (non-fatal): %s", exc)
             return []
 
+    # ── Forge Website Factory ─────────────────────────────────────────────────
+
+    def _forge_project_dict(self, row) -> dict:
+        d = dict(row)
+        try:
+            d["config_data"] = json.loads(d.get("config") or "{}")
+        except Exception:
+            d["config_data"] = {}
+        return d
+
+    def _forge_job_dict(self, row) -> dict:
+        d = dict(row)
+        try:
+            d["meta_data"] = json.loads(d.get("meta") or "{}")
+        except Exception:
+            d["meta_data"] = {}
+        return d
+
+    def create_forge_project(self, name: str, brief: str = "", work_id: str | None = None,
+                             config: dict | None = None) -> dict:
+        pid = _uuid()
+        now = _now()
+        with self._lock:
+            self._conn.execute(
+                """INSERT INTO forge_projects
+                   (id, work_id, name, brief, status, config, created_at, updated_at)
+                   VALUES (?,?,?,?,?,?,?,?)""",
+                (pid, work_id, name, brief, "active", json.dumps(config or {}), now, now),
+            )
+            self._conn.commit()
+            row = self._conn.execute("SELECT * FROM forge_projects WHERE id=?", (pid,)).fetchone()
+        return self._forge_project_dict(row)
+
+    def get_forge_project(self, project_id: str) -> dict | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM forge_projects WHERE id=?", (project_id,)
+            ).fetchone()
+        return self._forge_project_dict(row) if row else None
+
+    def list_forge_projects(self, work_id: str | None = None, limit: int = 50) -> list[dict]:
+        q = "SELECT * FROM forge_projects WHERE 1=1"
+        args: list = []
+        if work_id is not None:
+            q += " AND work_id=?"
+            args.append(work_id)
+        q += " ORDER BY created_at DESC LIMIT ?"
+        args.append(limit)
+        with self._lock:
+            rows = self._conn.execute(q, args).fetchall()
+        return [self._forge_project_dict(r) for r in rows]
+
+    def update_forge_project(self, project_id: str, config_update: dict | None = None,
+                             **fields) -> None:
+        fields["updated_at"] = _now()
+        if config_update:
+            with self._lock:
+                row = self._conn.execute(
+                    "SELECT config FROM forge_projects WHERE id=?", (project_id,)
+                ).fetchone()
+            existing: dict = {}
+            if row:
+                try:
+                    existing = json.loads(row["config"] or "{}")
+                except Exception:
+                    pass
+            existing.update(config_update)
+            fields["config"] = json.dumps(existing)
+        allowed = {"name", "brief", "status", "build_dir", "config", "updated_at"}
+        updates = {k: v for k, v in fields.items() if k in allowed}
+        if not updates:
+            return
+        set_clause = ", ".join(f"{k}=?" for k in updates)
+        vals = list(updates.values()) + [project_id]
+        with self._lock:
+            self._conn.execute(
+                f"UPDATE forge_projects SET {set_clause} WHERE id=?", vals
+            )
+            self._conn.commit()
+
+    def delete_forge_project(self, project_id: str) -> None:
+        with self._lock:
+            self._conn.execute("DELETE FROM forge_projects WHERE id=?", (project_id,))
+            self._conn.commit()
+
+    def create_forge_job(self, project_id: str, type: str, instruction: str | None = None,
+                         plan_job_id: str | None = None, design_job_id: str | None = None,
+                         target_job_id: str | None = None) -> dict:
+        jid = _uuid()
+        now = _now()
+        with self._lock:
+            self._conn.execute(
+                """INSERT INTO forge_jobs
+                   (id, project_id, type, status, instruction,
+                    plan_job_id, design_job_id, target_job_id, created_at, meta)
+                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                (jid, project_id, type, "pending", instruction,
+                 plan_job_id, design_job_id, target_job_id, now, "{}"),
+            )
+            self._conn.commit()
+            row = self._conn.execute("SELECT * FROM forge_jobs WHERE id=?", (jid,)).fetchone()
+        return self._forge_job_dict(row)
+
+    def get_forge_job(self, job_id: str) -> dict | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM forge_jobs WHERE id=?", (job_id,)
+            ).fetchone()
+        return self._forge_job_dict(row) if row else None
+
+    def list_forge_jobs(self, project_id: str, limit: int = 50) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM forge_jobs WHERE project_id=? ORDER BY created_at DESC LIMIT ?",
+                (project_id, limit),
+            ).fetchall()
+        return [self._forge_job_dict(r) for r in rows]
+
+    def update_forge_job(self, job_id: str, **fields) -> None:
+        allowed = {
+            "status", "instruction", "plan_job_id", "design_job_id",
+            "target_job_id", "build_dir", "started_at", "completed_at", "meta",
+        }
+        updates = {k: v for k, v in fields.items() if k in allowed}
+        if not updates:
+            return
+        set_clause = ", ".join(f"{k}=?" for k in updates)
+        vals = list(updates.values()) + [job_id]
+        with self._lock:
+            self._conn.execute(f"UPDATE forge_jobs SET {set_clause} WHERE id=?", vals)
+            self._conn.commit()
+
+    def append_forge_event(self, job_id: str, phase: str, message: str,
+                           data: dict | None = None) -> dict:
+        eid = _uuid()
+        now = _now()
+        data_json = json.dumps(data) if data is not None else None
+        with self._lock:
+            self._conn.execute(
+                """INSERT INTO forge_events
+                   (id, job_id, phase, message, data_json, created_at)
+                   VALUES (?,?,?,?,?,?)""",
+                (eid, job_id, phase, message, data_json, now),
+            )
+            self._conn.commit()
+        return {"id": eid, "job_id": job_id, "phase": phase,
+                "message": message, "data": data, "created_at": now}
+
+    def list_forge_events(self, job_id: str, after_id: str | None = None,
+                          limit: int = 500) -> list[dict]:
+        if after_id:
+            with self._lock:
+                ts_row = self._conn.execute(
+                    "SELECT created_at FROM forge_events WHERE id=?", (after_id,)
+                ).fetchone()
+            after_ts = ts_row["created_at"] if ts_row else None
+            if after_ts:
+                with self._lock:
+                    rows = self._conn.execute(
+                        """SELECT * FROM forge_events
+                           WHERE job_id=? AND created_at > ?
+                           ORDER BY created_at ASC LIMIT ?""",
+                        (job_id, after_ts, limit),
+                    ).fetchall()
+            else:
+                rows = []
+        else:
+            with self._lock:
+                rows = self._conn.execute(
+                    "SELECT * FROM forge_events WHERE job_id=? ORDER BY created_at ASC LIMIT ?",
+                    (job_id, limit),
+                ).fetchall()
+        result = []
+        for r in rows:
+            d = dict(r)
+            try:
+                d["data"] = json.loads(d.get("data_json") or "null")
+            except Exception:
+                d["data"] = None
+            result.append(d)
+        return result
+
+    def save_forge_artifact(self, job_id: str, artifact_type: str, content: dict) -> dict:
+        aid = _uuid()
+        now = _now()
+        content_json = json.dumps(content, ensure_ascii=False)
+        import hashlib
+        sha = hashlib.sha256(content_json.encode()).hexdigest()
+        with self._lock:
+            self._conn.execute(
+                """INSERT INTO forge_artifacts
+                   (id, job_id, artifact_type, content_json, sha256, created_at)
+                   VALUES (?,?,?,?,?,?)
+                   ON CONFLICT(job_id, artifact_type) DO UPDATE SET
+                       content_json=excluded.content_json, sha256=excluded.sha256""",
+                (aid, job_id, artifact_type, content_json, sha, now),
+            )
+            self._conn.commit()
+            row = self._conn.execute(
+                "SELECT * FROM forge_artifacts WHERE job_id=? AND artifact_type=?",
+                (job_id, artifact_type),
+            ).fetchone()
+        return dict(row)
+
+    def get_forge_artifact(self, job_id: str, artifact_type: str) -> dict | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM forge_artifacts WHERE job_id=? AND artifact_type=?",
+                (job_id, artifact_type),
+            ).fetchone()
+        return dict(row) if row else None
+
+    # ── /Forge ────────────────────────────────────────────────────────────────
+
     def close(self) -> None:
         with self._lock:
             # Close the main writer connection.

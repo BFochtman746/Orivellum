@@ -22,7 +22,7 @@ import {
   ChevronRight, Plus, Search, Archive, RotateCcw,
   Pencil, Check, X, Menu, DownloadCloud, Feather,
   ALargeSmall, Loader2, CheckCircle2, ExternalLink, Gauge, Inbox, Wand2, SlidersHorizontal,
-  BookMarked, GraduationCap, Zap, Package,
+  BookMarked, GraduationCap, Zap, Package, Globe2,
 } from "lucide-react";
 import { useConnectivity } from "@/lib/useConnectivity";
 import { useQuery } from "@tanstack/react-query";
@@ -54,11 +54,12 @@ const PHASES = [
     id: "create",
     label: "Create",
     icon: Wand2,
-    routes: ["/studio", "/write", "/finishing"],
+    routes: ["/studio", "/write", "/finishing", "/forge"],
     items: [
       { name: "Studio",     href: "/studio",    icon: Mic },
       { name: "Write desk", href: "/write",     icon: Feather },
       { name: "Finishing",  href: "/finishing", icon: Package },
+      { name: "Forge",      href: "/forge",     icon: Globe2 },
     ],
   },
   {
@@ -746,6 +747,8 @@ function useRouteTitle(): string {
   if (path === "/mcos") return "Calibration";
   if (path === "/governance") return "Governance";
   if (path === "/review") return "Review";
+  if (path === "/forge") return "Forge";
+  if (path.match(/^\/forge\/[^/]+/)) return "Forge project";
   return "Orivellum";
 }
 
