@@ -13,6 +13,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
+import { AppState } from 'react-native';
 import * as Location from 'expo-location';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -234,7 +235,23 @@ export function useWeather() {
     }
   };
 
+  // Initial load on mount
   useEffect(() => { load(); }, []);
+
+  // Refresh when the app returns to the foreground — but only when the
+  // 15-minute cache has expired.  Mirrors the AppState pattern used in
+  // useMailAttentionCount.ts so the approach is consistent across hooks.
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active') {
+        const cacheAge = cache.current ? Date.now() - cache.current.fetchedAt : Infinity;
+        if (cacheAge >= CACHE_MS) {
+          load();
+        }
+      }
+    });
+    return () => sub.remove();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   return { status, data, reload: () => load(true) };
 }
