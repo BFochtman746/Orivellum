@@ -319,6 +319,7 @@ const NAV_ITEMS: NavItem[] = [
   { key: 'studio',        label: 'Studio',    icon: 'mic',            route: '/studio'        },
   { key: 'write',         label: 'Write',     icon: 'edit-3',         route: '/write'         },
   { key: 'actions',       label: 'Actions',   icon: 'zap',            route: '/actions'       },
+  { key: 'mail',          label: 'Mail',      icon: 'mail',           route: '/mail'          },
   { key: 'graph',         label: 'Graph',     icon: 'share-2',        route: '/graph'         },
   { key: 'review',        label: 'Review',    icon: 'shield',         route: '/review'        },
   { key: 'topics',        label: 'Topics',    icon: 'layers',         route: '/topics'        },
@@ -338,6 +339,7 @@ function currentRoute(path: string): string {
   if (path.includes('/studio')) return '/studio';
   if (path.includes('/write')) return '/write';
   if (path.includes('/actions')) return '/actions';
+  if (path.includes('/mail')) return '/mail';
   if (path.includes('/graph')) return '/graph';
   if (path.includes('/topics')) return '/topics';
   if (path.includes('/governance')) return '/governance';

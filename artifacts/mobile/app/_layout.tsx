@@ -420,6 +420,12 @@ export default function RootLayout() {
       router.push('/studio' as any);
     } else if (screen === 'governance') {
       router.push('/governance' as any);
+    } else if (screen === 'mail') {
+      router.push('/mail' as any);
+    } else if (screen.startsWith('mail/')) {
+      // e.g. "mail/abc123" → /mail/abc123 (decision detail)
+      const decisionId = screen.slice('mail/'.length);
+      router.push(`/mail/${decisionId}` as any);
     } else {
       // Fallback: trust whatever screen path the server specified.
       router.push(`/${screen}` as any);
