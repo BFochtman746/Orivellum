@@ -37,6 +37,7 @@ dependencies = [
     "kokoro-onnx>=0.4.5",
     "soundfile>=0.12.1",
     "youtube-transcript-api>=0.6",
+    "faster-whisper>=1.2.1",
 ]
 
 [project.optional-dependencies]
