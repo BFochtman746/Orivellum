@@ -7,3 +7,10 @@ uri = "file://orivellum_training_manual.pdf"
 type = "pdf"
 title = "Orivellum Ultimate Training Manual"
 description = "Installation · LLM Configuration · Database Maintenance · Complete Page Guide — August 2026"
+
+[[outputs]]
+id = "X4BTJE2CO92D0ixzxpZxq"
+uri = "file://Orivellum_System_Manual.docx"
+type = "word_document"
+title = "Orivellum System Manual"
+description = "Complete system manual — schema v106, all features, all routes, all capabilities, mobile app, architecture decisions, troubleshooting guide. August 8, 2026."

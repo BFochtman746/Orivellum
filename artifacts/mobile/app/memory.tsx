@@ -29,7 +29,7 @@ import * as Haptics from 'expo-haptics';
 import { useColors } from '@/hooks/useColors';
 import { Feather } from '@expo/vector-icons';
 import { mobileFetch } from '@/lib/api';
-import { useNavigation } from 'expo-router';
+import { useNavigation, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useVellumTokens } from '@/lib/tokens';
 import { SkeletonItem } from '@/components/SkeletonItem';
@@ -246,6 +246,7 @@ export default function MemoryScreen() {
   const T = useVellumTokens();
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
+  const router = useRouter();
   const isWeb = Platform.OS === 'web';
   const topPad = isWeb ? 67 : insets.top + 8;
 
@@ -514,7 +515,18 @@ export default function MemoryScreen() {
     <View style={[styles.screen, { backgroundColor: colors.background, paddingTop: topPad }]}>
       {/* Header */}
       <View style={[styles.header, { borderBottomColor: colors.border }]}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          {!isWeb && (
+            <Pressable
+              onPress={() => router.canGoBack() ? router.back() : router.replace('/' as any)}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              style={{ minHeight: 44, minWidth: 44, alignItems: 'center', justifyContent: 'center', marginRight: 2 }}
+              accessibilityRole="button"
+              accessibilityLabel="Back"
+            >
+              <Feather name="arrow-left" size={20} color={colors.foreground} />
+            </Pressable>
+          )}
           <Text style={{ fontSize: 20 }}>✨</Text>
           <Text style={[styles.title, { color: colors.foreground }]}>Memory</Text>
         </View>

@@ -148,18 +148,22 @@ function useSectionLabel(): string {
   if (path.includes('/conversations')) return 'Chats';
   if (path.includes('/books')) return 'Books';
   if (path.includes('/learn')) return 'Learn';
+  if (path.includes('/projects')) return 'Projects';
   if (path.includes('/intake')) return 'Load Anything';
   if (path.includes('/review')) return 'Review';
   if (path.includes('/backups')) return 'Backups';
   if (path.includes('/graph')) return 'Knowledge Graph';
   if (path.includes('/topics')) return 'Topic Graph';
   if (path.includes('/governance')) return 'Governance';
+  if (path.includes('/mcos')) return 'MCOS';
   if (path.includes('/system')) return 'System';
   if (path.includes('/studio')) return 'Studio';
   if (path.includes('/write')) return 'Write';
   if (path.includes('/actions')) return 'Actions';
+  if (path.includes('/forge')) return 'Forge';
   if (path.includes('/works')) return 'Works';
   if (path.includes('/library')) return 'Library';
+  if (path.includes('/memory')) return 'Memory';
   return 'Orivellum';
 }
 
@@ -309,7 +313,9 @@ const NAV_ITEMS: NavItem[] = [
   { key: 'works',         label: 'Works',     icon: 'book-open',      route: '/works'         },
   { key: 'books',         label: 'Books',     icon: 'book',           route: '/books'         },
   { key: 'learn',         label: 'Learn',     icon: 'award',          route: '/learn'         },
+  { key: 'projects',      label: 'Projects',  icon: 'compass',        route: '/projects'      },
   { key: 'library',       label: 'Library',   icon: 'folder',         route: '/library'       },
+  { key: 'forge',         label: 'Forge',     icon: 'globe',          route: '/forge'         },
   { key: 'studio',        label: 'Studio',    icon: 'mic',            route: '/studio'        },
   { key: 'write',         label: 'Write',     icon: 'edit-3',         route: '/write'         },
   { key: 'actions',       label: 'Actions',   icon: 'zap',            route: '/actions'       },
@@ -317,6 +323,7 @@ const NAV_ITEMS: NavItem[] = [
   { key: 'review',        label: 'Review',    icon: 'shield',         route: '/review'        },
   { key: 'topics',        label: 'Topics',    icon: 'layers',         route: '/topics'        },
   { key: 'governance',    label: 'Governance', icon: 'shield-off',    route: '/governance'    },
+  { key: 'mcos',          label: 'MCOS',      icon: 'bar-chart-2',    route: '/mcos'          },
   { key: 'system',        label: 'System',    icon: 'settings',       route: '/system'        },
   { key: 'backups',       label: 'Backups',   icon: 'hard-drive',     route: '/backups'       },
 ];
@@ -325,6 +332,7 @@ function currentRoute(path: string): string {
   if (path.includes('/conversations')) return '/conversations';
   if (path.includes('/books')) return '/books';
   if (path.includes('/learn')) return '/learn';
+  if (path.includes('/projects')) return '/projects';
   if (path.includes('/intake')) return '/intake';
   if (path.includes('/review')) return '/review';
   if (path.includes('/studio')) return '/studio';
@@ -333,8 +341,10 @@ function currentRoute(path: string): string {
   if (path.includes('/graph')) return '/graph';
   if (path.includes('/topics')) return '/topics';
   if (path.includes('/governance')) return '/governance';
+  if (path.includes('/mcos')) return '/mcos';
   if (path.includes('/system')) return '/system';
   if (path.includes('/backups')) return '/backups';
+  if (path.includes('/forge')) return '/forge';
   if (path.includes('/works')) return '/works';
   if (path.includes('/library')) return '/library';
   return '/';
@@ -796,7 +806,10 @@ function NativeAppLayout() {
         <Tabs.Screen name="works" />
         <Tabs.Screen name="books" />
         <Tabs.Screen name="learn" />
+        <Tabs.Screen name="projects" />
         <Tabs.Screen name="library" />
+        <Tabs.Screen name="forge" />
+        <Tabs.Screen name="mcos" />
         <Tabs.Screen name="write" />
         <Tabs.Screen name="actions" />
       </Tabs>

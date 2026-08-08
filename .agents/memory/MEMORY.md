@@ -16,6 +16,7 @@
 - [Library reprocess polling](orivellum-library-reprocess.md) — handleReprocess uses setInterval (2s, max 15 attempts) to poll refetch() until readiness leaves "imported"; shows toast.success/error based on final readiness.
 - [Briefing endpoint](orivellum-briefing.md) — GET /api/system/briefing returns time-of-day greeting; uses pending_task_count from dashboard_summary; Good morning/afternoon/evening based on UTC hour.
 - [Mobile app improvements](mobile-improvements.md) — URL pattern, missing hooks, navigation, component patterns, styles, and pitfalls for the Expo mobile app.
+- [Mobile parity & quality pass](mobile-parity-pass.md) — new pages (projects, project/[id], forge, forge/[id], mcos); fixed graph/memory/not-found; governance deep-link routing; themed login screen; SyncOverlay component.
 - [Mobile Works Detail tabs](mobile-works-detail-tabs.md) — Tab order, BrainstormTab API, book health card pattern in OverviewTab.
 - [Mobile Learn Tab](mobile-learn-tab.md) — SESSION_LIMIT=5 correct triggers session_done; /learning/concepts is in learning.py not works.py.
 - [Library page improvements](library-improvements.md) — Work filter chip added; import dialog uses Select for work picker; duplicate upload navigates to existing doc; backup download; file download hover button.

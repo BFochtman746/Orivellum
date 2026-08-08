@@ -9,7 +9,9 @@ import {
   TextInput,
   TouchableOpacity,
   View,
+  useColorScheme,
 } from 'react-native';
+import { useColors } from '@/hooks/useColors';
 import { syncToCache, flushMessageQueue } from '@/lib/offlineCache';
 import { TtsProvider } from '@/context/TtsContext';
 import { TtsMiniPlayer } from '@/components/TtsMiniPlayer';
@@ -119,6 +121,16 @@ function LoginScreen({ onSuccess }: { onSuccess: () => void }) {
   const [key, setKey] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const colorScheme = useColorScheme();
+  const isDark = colorScheme === 'dark';
+  const dynColors = {
+    bg:          isDark ? '#0f172a' : '#f8f7f4',
+    card:        isDark ? '#1e293b' : '#ffffff',
+    text:        isDark ? '#f1f5f9' : '#0f172a',
+    muted:       isDark ? '#94a3b8' : '#64748b',
+    border:      isDark ? '#334155' : '#e2e8f0',
+    primary:     '#7c9e8e',
+  };
 
   const handleSubmit = async () => {
     const trimmed = key.trim();
@@ -138,18 +150,22 @@ function LoginScreen({ onSuccess }: { onSuccess: () => void }) {
   };
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <SafeAreaView style={[styles.safeArea, { backgroundColor: dynColors.bg }]}>
       <KeyboardAvoidingView
         style={styles.centered}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
-        <Text style={styles.title}>Orivellum</Text>
-        <Text style={styles.subtitle}>Enter your API key to connect</Text>
+        <Text style={[styles.title, { color: dynColors.text }]}>Orivellum</Text>
+        <Text style={[styles.subtitle, { color: dynColors.muted }]}>Enter your API key to connect</Text>
 
         <TextInput
-          style={styles.input}
+          style={[styles.input, {
+            color: dynColors.text,
+            borderColor: dynColors.border,
+            backgroundColor: dynColors.card,
+          }]}
           placeholder="API key"
-          placeholderTextColor="#94a3b8"
+          placeholderTextColor={dynColors.muted}
           value={key}
           onChangeText={setKey}
           autoCapitalize="none"
@@ -163,7 +179,7 @@ function LoginScreen({ onSuccess }: { onSuccess: () => void }) {
         {!!error && <Text style={styles.errorText}>{error}</Text>}
 
         <TouchableOpacity
-          style={[styles.button, (!key.trim() || loading) && styles.buttonDisabled]}
+          style={[styles.button, { backgroundColor: dynColors.primary }, (!key.trim() || loading) && styles.buttonDisabled]}
           onPress={handleSubmit}
           disabled={!key.trim() || loading}
         >
@@ -173,11 +189,42 @@ function LoginScreen({ onSuccess }: { onSuccess: () => void }) {
           }
         </TouchableOpacity>
 
-        <Text style={styles.hint}>
+        <Text style={[styles.hint, { color: dynColors.muted }]}>
           Find your key in the API server startup logs or data/api_key.txt
         </Text>
       </KeyboardAvoidingView>
     </SafeAreaView>
+  );
+}
+
+// ── Sync overlay ─────────────────────────────────────────────────────────────
+
+function SyncOverlay() {
+  const colors = useColors();
+  return (
+    <View
+      style={{
+        position: 'absolute',
+        bottom: Platform.OS === 'ios' ? 90 : 70,
+        left: 20,
+        right: 20,
+        backgroundColor: colors.card,
+        borderRadius: 10,
+        borderWidth: 1,
+        borderColor: colors.border,
+        paddingHorizontal: 14,
+        paddingVertical: 8,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+        pointerEvents: 'none',
+      }}
+    >
+      <ActivityIndicator size="small" color={colors.primary} />
+      <Text style={{ color: colors.mutedForeground, fontSize: 12 }}>
+        Syncing offline cache…
+      </Text>
+    </View>
   );
 }
 
@@ -231,8 +278,32 @@ function RootLayoutNav() {
           title: '',
         }}
       />
+      {/* Stack screens with transparent/blur native headers */}
+      <Stack.Screen
+        name="project/[id]"
+        options={{
+          headerShown: true,
+          headerBackTitle: 'Projects',
+          headerStyle: { backgroundColor: 'transparent' },
+          headerTransparent: true,
+          headerBlurEffect: 'regular',
+          title: '',
+        }}
+      />
+      <Stack.Screen
+        name="forge/[id]"
+        options={{
+          headerShown: true,
+          headerBackTitle: 'Forge',
+          headerStyle: { backgroundColor: 'transparent' },
+          headerTransparent: true,
+          headerBlurEffect: 'regular',
+          title: '',
+        }}
+      />
       {/* Screens with fully-custom headers — suppress the native Stack header */}
       <Stack.Screen name="graph"   options={{ headerShown: false }} />
+      <Stack.Screen name="memory"  options={{ headerShown: false }} />
       <Stack.Screen name="backups" options={{ headerShown: false }} />
       <Stack.Screen name="review"  options={{ headerShown: false }} />
       <Stack.Screen name="topics"  options={{ headerShown: false }} />
@@ -333,8 +404,7 @@ export default function RootLayout() {
     } else if (screen === 'studio') {
       router.push('/studio' as any);
     } else if (screen === 'governance') {
-      // Governance lives in the Works tab on mobile.
-      router.push('/(tabs)' as any);
+      router.push('/governance' as any);
     } else {
       // Fallback: trust whatever screen path the server specified.
       router.push(`/${screen}` as any);
@@ -430,27 +500,7 @@ export default function RootLayout() {
                 Shown briefly while the background cache sync is running.
                 Positioned above the native tab bar (approx 80pt).       */}
             {syncing && (
-              <View
-                style={{
-                  position: 'absolute',
-                  bottom: Platform.OS === 'ios' ? 90 : 70,
-                  left: 20,
-                  right: 20,
-                  backgroundColor: 'rgba(15,23,42,0.82)',
-                  borderRadius: 10,
-                  paddingHorizontal: 14,
-                  paddingVertical: 8,
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  gap: 8,
-                  pointerEvents: 'none',
-                }}
-              >
-                <ActivityIndicator size="small" color="#7c9e8e" />
-                <Text style={{ color: '#e2e8f0', fontSize: 12 }}>
-                  Syncing offline cache…
-                </Text>
-              </View>
+              <SyncOverlay />
             )}
           </GestureHandlerRootView>
         </QueryClientProvider>
