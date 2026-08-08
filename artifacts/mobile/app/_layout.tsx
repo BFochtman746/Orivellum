@@ -399,8 +399,23 @@ export default function RootLayout() {
 
   const navigateToScreen = React.useCallback((screen: string) => {
     if (screen.startsWith('library/')) {
+      // e.g. "library/abc123" → /library/abc123
       const docId = screen.slice('library/'.length);
       router.push(`/library/${docId}` as any);
+    } else if (screen.startsWith('forge/')) {
+      // e.g. "forge/abc123" → /forge/abc123 (stack screen)
+      const projectId = screen.slice('forge/'.length);
+      router.push(`/forge/${projectId}` as any);
+    } else if (screen.startsWith('work/')) {
+      // e.g. "work/abc123" → /work/abc123 (stack screen)
+      const workId = screen.slice('work/'.length);
+      router.push(`/work/${workId}` as any);
+    } else if (screen === 'projects') {
+      router.push('/projects' as any);
+    } else if (screen === 'forge') {
+      router.push('/forge' as any);
+    } else if (screen === 'mcos') {
+      router.push('/mcos' as any);
     } else if (screen === 'studio') {
       router.push('/studio' as any);
     } else if (screen === 'governance') {
