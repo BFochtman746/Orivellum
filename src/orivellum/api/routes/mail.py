@@ -427,13 +427,19 @@ def update_mail_settings(body: MailSettingsBody):
         db._set_setting("mail_steward.send_enabled", "true" if body.send_enabled else "false")
     if body.lemonade_url is not None:
         url = body.lemonade_url.strip()
-        if not url.startswith("http://127.") and not url.startswith("http://localhost"):
+        if url == "":
+            # Empty string = reset to built-in default
+            db._set_setting("mail_steward.lemonade_url", "http://127.0.0.1:13305/api/v1")
+        elif not url.startswith("http://127.") and not url.startswith("http://localhost"):
             raise HTTPException(400, "Lemonade must be a loopback URL")
-        db._set_setting("mail_steward.lemonade_url", url)
+        else:
+            db._set_setting("mail_steward.lemonade_url", url)
     if body.lemonade_model is not None:
+        # Empty string = clear the model override (server picks default)
         db._set_setting("mail_steward.lemonade_model", body.lemonade_model.strip())
     if body.sync_folders is not None:
-        db._set_setting("mail_steward.sync_folders", json.dumps(body.sync_folders))
+        folders = body.sync_folders if body.sync_folders else ["inbox"]
+        db._set_setting("mail_steward.sync_folders", json.dumps(folders))
     if body.threat_feeds_enabled is not None:
         db._set_setting("mail_steward.threat_feeds", "true" if body.threat_feeds_enabled else "false")
     return {"updated": True}

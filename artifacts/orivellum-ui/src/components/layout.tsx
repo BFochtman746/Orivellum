@@ -22,7 +22,7 @@ import {
   ChevronRight, Plus, Search, Archive, RotateCcw,
   Pencil, Check, X, Menu, DownloadCloud, Feather,
   ALargeSmall, Loader2, CheckCircle2, ExternalLink, Gauge, Inbox, Wand2, SlidersHorizontal,
-  BookMarked, GraduationCap, Zap, Package, Globe2,
+  BookMarked, GraduationCap, Zap, Package, Globe2, Mail,
 } from "lucide-react";
 import { useConnectivity } from "@/lib/useConnectivity";
 import { useQuery } from "@tanstack/react-query";
@@ -79,9 +79,10 @@ const PHASES = [
     id: "act",
     label: "Act",
     icon: Zap,
-    routes: ["/actions"],
+    routes: ["/actions", "/mail"],
     items: [
       { name: "Actions", href: "/actions", icon: Zap },
+      { name: "Mail",    href: "/mail",    icon: Mail },
     ],
   },
   {
