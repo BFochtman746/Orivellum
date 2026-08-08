@@ -22,46 +22,45 @@ serving:
   # If you see connection errors, try: http://127.0.0.1:11434/v1  (Ollama-compat)
   base_url: "http://127.0.0.1:8000/api/v1"
 
-  # ── Model selection (A-01 Capability Study — Aug 2026) ───────────────────────
+  # ── Model selection (verified against Lemonade catalog — Aug 2026) ──────────
   # Pull models with: lemonade pull <name>
-  # Lemonade optimises automatically — NPU for 7-14 B, iGPU for 32-70 B.
+  # Names must match the Lemonade catalog EXACTLY — they double as API model IDs.
   # Use  lemonade list  to see downloaded models;  lemonade models  for all.
   #
-  # ── Current loadout (your Ryzen AI Max+ 395, 128 GB) ─────────────────────────
+  # Why MoE, not a dense 70B?  This machine's unified memory moves ~256 GB/s.
+  # A dense 70B reads all ~40 GB of weights for EVERY token → ~4-5 tok/s.
+  # MoE models activate only a few B params per token → 30-70 tok/s at equal
+  # or better quality.  (llama3.3-70b is also gone from the Lemonade catalog.)
+  #
   #  WORKHORSE options:
-  #    llama3.3-70b          — 70B iGPU, high single-pass quality, 128K ctx  (current)
-  #    Qwen3-30B-A3B         — 30B MoE, only 3B active → ~3× faster, same quality  ★ recommended
-  #    Qwen3-32B             — dense 32B, higher ceiling than MoE on hard tasks
+  #    Qwen3.6-35B-A3B-GGUF              — MoE 3B active, vision built in, ~23 GB  ★ current
+  #    Qwen3-30B-A3B-Instruct-2507-GGUF  — previous-gen MoE, ~17 GB
   #
   #  REASONER options:
-  #    phi4                  — 14B NPU, fast  (current)
-  #    gpt-oss-120b          — 120B MXFP4 (~65 GB), best local reasoning  ★ A-01 pick
+  #    gpt-oss-120b-mxfp-GGUF  — 120B MoE, native MXFP4 (~63 GB), best local  ★ current
+  #    gpt-oss-20b-mxfp4-GGUF  — smaller sibling (~12 GB) for lighter machines
   #
   #  CODER options:
-  #    qwen2.5-coder-32b     — 32B dense coder  (current)
-  #    Qwen3-Coder-30B-A3B   — MoE coder, 256K ctx, purpose-built for agents  ★ recommended
-  #    Qwen3.6-27B           — 27B dense, ~77% SWE-bench Verified
-  #
-  # Model names must match exactly what  `lemonade list`  shows after pulling.
-  workhorse_model: "llama3.3-70b"
-  reasoner_model:  "phi4"
-  coder_model:     "qwen2.5-coder-32b"
+  #    Qwen3-Coder-30B-A3B-Instruct-GGUF — MoE coder, 256K ctx, agent-tuned  ★ current
+  #    Qwen3-Coder-Next-GGUF             — bigger (~48 GB); use when reasoner isn't resident
+  workhorse_model: "Qwen3.6-35B-A3B-GGUF"
+  reasoner_model:  "gpt-oss-120b-mxfp-GGUF"
+  coder_model:     "Qwen3-Coder-30B-A3B-Instruct-GGUF"
 
   # ── Embeddings ────────────────────────────────────────────────────────────────
   # Options ranked by quality (all OpenAI-compatible /v1/embeddings):
-  #   Qwen3-Embedding-8B      — SOTA open-source, 70.6 MTEB, ~5 GB Q4  ★ current
-  #   nomic-embed-text        — ~0.3 GB, 8K ctx, lightweight CPU fallback
-  #   BGE-M3                  — dense + sparse + multi-vector, 100+ langs
+  #   Qwen3-Embedding-8B-GGUF       — SOTA open-source, 70.6 MTEB, ~8 GB Q8  ★ current
+  #   nomic-embed-text-v2-moe-GGUF  — ~0.5 GB, lightweight CPU fallback
   # NOTE: changing embedder requires a full re-index (different vector dims).
-  # Pull first:  lemonade pull Qwen3-Embedding-8B
+  # Pull first:  lemonade pull Qwen3-Embedding-8B-GGUF
   # Then trigger re-index from System Settings → Semantic Search → Re-index All.
-  embedder_model: "Qwen3-Embedding-8B"
+  embedder_model: "Qwen3-Embedding-8B-GGUF"
 
   # ── Vision / OCR ──────────────────────────────────────────────────────────────
-  # Qwen3-VL-8B: DocVQA ~96 (vs Tesseract ~72), 32-language OCR, GUI grounding.
-  # Apache 2.0, ~5 GB Q4.  Dramatically better on scanned / complex documents.
-  # To enable: lemonade pull Qwen3-VL-8B  then set: vision_model: "Qwen3-VL-8B"
-  vision_model: ""
+  # The workhorse (Qwen3.6-35B-A3B) is natively multimodal, so vision reuses it —
+  # no extra download, dramatically better than Tesseract on scanned documents.
+  # Set to "" to force classic Tesseract-first OCR.
+  vision_model: "Qwen3.6-35B-A3B-GGUF"
 
   # ── TTS / ASR ─────────────────────────────────────────────────────────────────
   # TTS model name for the AI server /v1/audio/speech endpoint.
@@ -103,20 +102,17 @@ serving:
   # ── Reranker ──────────────────────────────────────────────────────────────────
   # Leave empty → RRF (reciprocal-rank fusion) only.
   # A reranker typically gives +5–10% RAG precision at low extra latency.
-  # Options: "BAAI/bge-reranker-v2-m3" (MIT) or "Qwen3-Reranker-8B" (Apache 2.0)
+  # Optional: lemonade pull bge-reranker-v2-m3-GGUF  then set it here.
   reranker_model: ""
 
   # ── Context window ───────────────────────────────────────────────────────────
-  # llama3.3-70b supports 128 K tokens.  The Ryzen AI Max+ 395 iGPU KV-cache
-  # lives in unified LPDDR5X — no CPU spill — so the full window is usable.
-  # For NPU models (phi4, qwen2.5-7b) Lemonade manages context internally;
-  # setting 131072 here ensures Orivellum never prematurely trims prompts for
-  # the 70B model.  Reduce to 32768 if you prefer phi4 as the daily driver.
+  # All current models support ≥128 K tokens.  The Ryzen AI Max+ 395 iGPU
+  # KV-cache lives in unified LPDDR5X — no CPU spill — so the full window is
+  # usable.  The coder supports up to 256 K if you ever need more.
   context_window: 131072
 
   # ── Timeouts ─────────────────────────────────────────────────────────────────
-  # 70 B iGPU at ~25 tok/s: a 2 000-token reply ≈ 80 s.
-  # NPU models (phi4, qwen2.5-7b) are much faster — these are safe upper bounds.
+  # MoE models run 30-70 tok/s on this machine — these are safe upper bounds.
   timeout_sec: 300
   extraction_timeout_sec: 120
 

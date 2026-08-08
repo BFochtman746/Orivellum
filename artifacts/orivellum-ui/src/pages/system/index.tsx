@@ -2671,7 +2671,7 @@ function ModelPickerCard() {
                 <Input
                   value={coder}
                   onChange={(e) => setCoder(e.target.value)}
-                  placeholder={data?.coder.config || "e.g. qwen2.5-coder-32b"}
+                  placeholder={data?.coder.config || "e.g. Qwen3-Coder-30B-A3B-Instruct-GGUF"}
                   className="font-mono text-xs h-8"
                 />
                 {data?.coder.config && (

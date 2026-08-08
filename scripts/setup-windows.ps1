@@ -295,10 +295,10 @@ Write-Host "       https://lemonade-server.ai" -ForegroundColor DarkCyan
 Write-Host "       Lemonade handles NPU/iGPU acceleration automatically -- no GPU flags needed." -ForegroundColor DarkGray
 Write-Host ""
 Write-Host "       After installing, pull models:" -ForegroundColor Gray
-Write-Host "         lemonade pull llama3.3-70b        # 70B on iGPU, 128K context" -ForegroundColor Gray
-Write-Host "         lemonade pull phi4                # 14B on NPU, fast daily driver" -ForegroundColor Gray
-Write-Host "         lemonade pull qwen2.5-coder-32b   # 32B coder on iGPU" -ForegroundColor Gray
-Write-Host "         lemonade pull nomic-embed-text    # embeddings for semantic search" -ForegroundColor Gray
+Write-Host "         lemonade pull Qwen3.6-35B-A3B-GGUF                # Workhorse - MoE, vision built in" -ForegroundColor Gray
+Write-Host "         lemonade pull gpt-oss-120b-mxfp-GGUF              # Reasoner - best local reasoning" -ForegroundColor Gray
+Write-Host "         lemonade pull Qwen3-Coder-30B-A3B-Instruct-GGUF   # Coder - 256K context" -ForegroundColor Gray
+Write-Host "         lemonade pull Qwen3-Embedding-8B-GGUF             # Embeddings for semantic search" -ForegroundColor Gray
 Write-Host "       Full guide: scripts\windows\lemonade-setup.md" -ForegroundColor DarkGray
 Write-Host ""
 Write-Host "    2. Start Orivellum (from the project root):" -ForegroundColor White

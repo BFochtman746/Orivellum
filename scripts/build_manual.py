@@ -435,7 +435,7 @@ code("lemonade pull Qwen3.6-35B-A3B-GGUF                # Workhorse — MoE, vis
 h(2, "config.yaml — default model configuration")
 body("The project ships with these defaults already set in config.yaml. "
      "Edit the file to swap models at any time — no restart required for most settings:")
-code("models:\n"
+code("serving:\n"
      "  workhorse_model: \"Qwen3.6-35B-A3B-GGUF\"              # General chat & reasoning\n"
      "  reasoner_model:  \"gpt-oss-120b-mxfp-GGUF\"            # Deep analysis (brain icon in chat)\n"
      "  coder_model:     \"Qwen3-Coder-30B-A3B-Instruct-GGUF\" # Code & structured output\n"
