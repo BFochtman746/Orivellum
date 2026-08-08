@@ -22,7 +22,7 @@ import {
   ChevronRight, Plus, Search, Archive, RotateCcw,
   Pencil, Check, X, Menu, DownloadCloud, Feather,
   ALargeSmall, Loader2, CheckCircle2, ExternalLink, Gauge, Inbox, Wand2, SlidersHorizontal,
-  BookMarked, GraduationCap, Zap, Package, Globe2, Mail,
+  BookMarked, GraduationCap, Zap, Package, Globe2, Mail, Network, Workflow,
 } from "lucide-react";
 import { useConnectivity } from "@/lib/useConnectivity";
 import { useQuery } from "@tanstack/react-query";
@@ -45,9 +45,10 @@ const PHASES = [
     id: "import",
     label: "Import",
     icon: DownloadCloud,
-    routes: ["/library"],
+    routes: ["/library", "/intake"],
     items: [
       { name: "Library", href: "/library", icon: Library },
+      { name: "Intake",  href: "/intake",  icon: Workflow },
     ],
   },
   {
@@ -66,13 +67,14 @@ const PHASES = [
     id: "understand",
     label: "Understand",
     icon: BookOpen,
-    routes: ["/works", "/chat", "/books", "/learn", "/topics"],
+    routes: ["/works", "/chat", "/books", "/learn", "/topics", "/graph"],
     items: [
       { name: "Works",  href: "/works",  icon: BookOpen },
       { name: "Books",  href: "/books",  icon: BookMarked },
       { name: "Topics", href: "/topics", icon: FolderOpen },
       { name: "Learn",  href: "/learn",  icon: GraduationCap },
       { name: "Chat",   href: "/chat",   icon: MessageSquare },
+      { name: "Graph",  href: "/graph",  icon: Network },
     ],
   },
   {
@@ -798,8 +800,8 @@ const RAIL_ITEMS = [
   { label: "Chat",     href: "/chat",        icon: MessageSquare },
   { label: "Works",    href: "/works",       icon: BookOpen      },
   { label: "Library",  href: "/library",     icon: Library       },
-  { label: "Studio",   href: "/studio",      icon: Mic           },
-  { label: "Write",    href: "/write",       icon: Feather       },
+  { label: "Intake",   href: "/intake",      icon: Workflow      },
+  { label: "Graph",    href: "/graph",       icon: Network       },
   { label: "Review",   href: "/review",      icon: Inbox         },
   { label: "System",   href: "/system",      icon: HardDrive     },
 ] as const;
@@ -963,6 +965,8 @@ const NAV_ITEMS = [
   { label: "Chat",       href: "/chat",        icon: MessageSquare },
   { label: "Works",      href: "/works",       icon: BookOpen      },
   { label: "Library",    href: "/library",     icon: Library       },
+  { label: "Intake",     href: "/intake",      icon: Workflow      },
+  { label: "Graph",      href: "/graph",       icon: Network       },
   { label: "Studio",     href: "/studio",      icon: Mic           },
   { label: "Write",      href: "/write",       icon: Feather       },
   { label: "Actions",    href: "/actions",     icon: Zap           },

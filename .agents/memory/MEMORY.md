@@ -66,3 +66,4 @@
 - [VELLUM design system](vellum-design-system.md) — fonts, glass utilities, tokens, tier badges, editorial typography all applied; follow the page header pattern for new pages.
 - [Forge Website Factory integration](forge-integration.md) — native Python capability (schema v103–v106); config_update kwarg merges into project config JSON; build dirs under data/forge-builds/.
 - [A-01 Mail Steward](orivellum-mail-steward.md) — schema v107; Fernet token vault; lazy imports in __init__; nonce-gated actions; send requires send_enabled+Mail.Send scope; Phases 2–4 queued.
+- [Forensic eval fixes](orivellum-forensic-fixes.md) — F-1 base_url fix, F-6 TTS/ASR names, F-4 nav, email .eml/.msg, Lemonade card, MCP card; F-2/F-3/search refactor/command palette still pending.

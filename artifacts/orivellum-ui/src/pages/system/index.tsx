@@ -3,7 +3,7 @@ import { apiFetch } from "@/lib/auth";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
-import { Activity, Database, Cpu, CheckCircle2, XCircle, AlertCircle, AlertTriangle, Terminal, Sparkles, Moon, Brain, Trash2, ScrollText, User, Settings, Image as ImageIcon, Eye, Loader2, FileSearch, ClipboardCopy, ChevronDown, ChevronRight, Zap, Download, RotateCcw, FolderOpen, FolderPlus, Plus, X, GitMerge, Archive, Save, Mic2 } from "lucide-react";
+import { Activity, Database, Cpu, CheckCircle2, XCircle, AlertCircle, AlertTriangle, Terminal, Sparkles, Moon, Brain, Trash2, ScrollText, User, Settings, Image as ImageIcon, Eye, Loader2, FileSearch, ClipboardCopy, ChevronDown, ChevronRight, Zap, Download, RotateCcw, FolderOpen, FolderPlus, Plus, X, GitMerge, Archive, Save, Mic2, Network, Server, Plug, ExternalLink } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -2478,6 +2478,12 @@ $env:ORIVELLUM_AI_URL="http://127.0.0.1:11434/v1"`}
         </div>
       </div>
 
+      {/* Lemonade Engine */}
+      <LemonadeEngineCard />
+
+      {/* MCP Server */}
+      <McpCard />
+
       {/* Hardware Telemetry */}
       <HardwareCard />
 
@@ -2495,6 +2501,246 @@ $env:ORIVELLUM_AI_URL="http://127.0.0.1:11434/v1"`}
     </div>
   );
 }
+
+// ─── Lemonade Engine card ─────────────────────────────────────────────────────
+// Proxies /api/v1/health and /api/v1/system-info from the local Lemonade Server
+// to show the true picture of what's loaded and running — nvidia-smi / rocm-smi
+// are absent on Windows/Strix Halo, but Lemonade knows exactly what it's doing.
+
+interface LemonadeHealth {
+  status: string;
+  version?: string;
+  model_loaded?: boolean;
+  all_models_loaded?: Array<{ model_name: string; device?: string; recipe?: string; ctx_size?: number }>;
+}
+interface LemonadeSysInfo {
+  devices?: Record<string, unknown>;
+  recipes?: Record<string, unknown>;
+}
+interface LemonadeStats {
+  tokens_per_second?: number;
+  total_tokens?: number;
+  requests_total?: number;
+}
+interface LemonadeData {
+  available: boolean;
+  base_url?: string;
+  health?: LemonadeHealth;
+  system_info?: LemonadeSysInfo;
+  stats?: LemonadeStats;
+}
+
+function LemonadeEngineCard() {
+  const { data, isLoading, refetch, isFetching } = useQuery<LemonadeData>({
+    queryKey: ["system", "lemonade"],
+    queryFn: async () => {
+      const r = await apiFetch(`${API_BASE}/api/system/lemonade`);
+      if (!r.ok) return { available: false };
+      return r.json();
+    },
+    refetchInterval: 30_000,
+    staleTime: 25_000,
+  });
+
+  const available   = data?.available ?? false;
+  const health      = data?.health;
+  const models      = health?.all_models_loaded ?? [];
+  const stats       = data?.stats;
+  const tps         = stats?.tokens_per_second;
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between border-b border-border/50 pb-2">
+        <h2 className="text-xl font-serif font-medium flex items-center gap-2">
+          <Server className="w-5 h-5 text-muted-foreground" />
+          Lemonade Engine
+        </h2>
+        <button
+          onClick={() => refetch()}
+          disabled={isFetching}
+          className="text-xs font-mono text-muted-foreground hover:text-foreground transition-colors"
+        >
+          {isFetching ? "refreshing…" : "refresh"}
+        </button>
+      </div>
+
+      {isLoading ? (
+        <div className="space-y-2">
+          {[1, 2].map(i => <Skeleton key={i} className="h-10 w-full" />)}
+        </div>
+      ) : !available ? (
+        <div
+          className="rounded-lg border border-dashed p-5 text-sm"
+          style={{ borderColor: 'var(--gilt-line)', color: 'var(--ink-soft)' }}
+        >
+          <div className="flex items-center gap-2 mb-1">
+            <AlertTriangle className="w-4 h-4" style={{ color: 'var(--gilt)' }} />
+            <span className="font-medium">Lemonade not reachable</span>
+          </div>
+          <p className="text-xs" style={{ color: 'var(--ink-faint)' }}>
+            Check that Lemonade Server is running and that{" "}
+            <code className="font-mono">base_url</code> in{" "}
+            <code className="font-mono">config.yaml</code> ends in{" "}
+            <code className="font-mono">/api/v1</code>.
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {/* Status row */}
+          <div className="flex items-center justify-between rounded-lg border border-border/50 px-4 py-3">
+            <div className="flex items-center gap-2">
+              <span
+                className="w-2 h-2 rounded-full"
+                style={{ background: health?.status === "ok" || health?.model_loaded ? 'var(--green-2)' : 'var(--gilt)' }}
+              />
+              <span className="text-sm font-medium capitalize">
+                {health?.status ?? "running"}
+              </span>
+              {health?.version && (
+                <span className="text-[11px] font-mono text-muted-foreground">v{health.version}</span>
+              )}
+            </div>
+            {tps != null && (
+              <span className="text-xs font-mono" style={{ color: 'var(--ink-soft)' }}>
+                {Math.round(tps)} tok/s
+              </span>
+            )}
+          </div>
+
+          {/* Loaded models */}
+          {models.length > 0 ? (
+            <div className="rounded-lg border border-border/50 overflow-hidden divide-y divide-border/30">
+              {models.map((m, i) => (
+                <div key={i} className="flex items-center gap-3 px-4 py-2.5">
+                  <Cpu className="w-3.5 h-3.5 text-muted-foreground/60 shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <span className="text-xs font-mono font-medium truncate block">{m.model_name}</span>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    {m.device && (
+                      <span className="text-[10px] font-mono px-1.5 py-0.5 rounded"
+                            style={{ background: 'var(--green-soft)', color: 'var(--green)' }}>
+                        {m.device}
+                      </span>
+                    )}
+                    {m.ctx_size && (
+                      <span className="text-[10px] font-mono text-muted-foreground/60">
+                        {(m.ctx_size / 1024).toFixed(0)}K ctx
+                      </span>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-xs text-muted-foreground px-1">
+              No models currently loaded — Lemonade will load on first inference request.
+            </p>
+          )}
+
+          {data?.base_url && (
+            <p className="text-[11px] font-mono text-muted-foreground/50 px-1">
+              {data.base_url}
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+// ─── MCP Server card ──────────────────────────────────────────────────────────
+// Surfaces the MCP connect URL so the user can paste it into Claude Desktop,
+// Cursor, or any MCP client. Currently invisible in the UI despite being live.
+
+interface McpInfo {
+  name: string;
+  description: string;
+  protocol: string;
+  endpoint: string;
+  tools: string[];
+}
+
+function McpCard() {
+  const { data, isLoading } = useQuery<McpInfo>({
+    queryKey: ["system", "mcp-info"],
+    queryFn: async () => {
+      const r = await apiFetch(`${API_BASE}/api/mcp`);
+      if (!r.ok) throw new Error("mcp info failed");
+      return r.json();
+    },
+    staleTime: 5 * 60_000,
+  });
+
+  const [copied, setCopied] = useState(false);
+
+  function copyEndpoint() {
+    if (!data?.endpoint) return;
+    navigator.clipboard?.writeText(data.endpoint).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-2 border-b border-border/50 pb-2">
+        <Plug className="w-5 h-5 text-muted-foreground" />
+        <h2 className="text-xl font-serif font-medium">MCP Server</h2>
+      </div>
+
+      {isLoading ? (
+        <Skeleton className="h-24 w-full" />
+      ) : data ? (
+        <div className="space-y-3">
+          <p className="text-sm" style={{ color: 'var(--ink-soft)' }}>
+            {data.description ?? "Orivellum is an MCP server — any MCP client can query your knowledge base directly."}
+          </p>
+
+          {/* Connect URL */}
+          <div className="rounded-lg border border-border/50 px-4 py-3 flex items-center gap-3">
+            <Network className="w-4 h-4 shrink-0 text-muted-foreground" />
+            <code className="flex-1 text-xs font-mono truncate" title={data.endpoint}>
+              {data.endpoint}
+            </code>
+            <button
+              onClick={copyEndpoint}
+              className="text-[11px] font-mono px-2 py-1 rounded transition-colors shrink-0"
+              style={{
+                background: copied ? 'var(--green-soft)' : 'var(--paper-2)',
+                color:      copied ? 'var(--green)'      : 'var(--ink-soft)',
+              }}
+            >
+              {copied ? "copied ✓" : "copy"}
+            </button>
+          </div>
+
+          {/* Available tools */}
+          {data.tools?.length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {data.tools.map(t => (
+                <span key={t} className="text-[10px] font-mono px-2 py-0.5 rounded-full border border-border/50"
+                      style={{ color: 'var(--ink-soft)' }}>
+                  {t}
+                </span>
+              ))}
+            </div>
+          )}
+
+          <p className="text-[11px] font-mono" style={{ color: 'var(--ink-faint)' }}>
+            Protocol: {data.protocol} · Paste the URL above into Claude Desktop → Settings → MCP Servers.
+          </p>
+        </div>
+      ) : (
+        <div className="text-sm text-muted-foreground border border-dashed rounded-lg p-4 text-center">
+          MCP endpoint not responding.
+        </div>
+      )}
+    </div>
+  );
+}
+
 
 // ─── Hardware telemetry card ─────────────────────────────────────────────────
 

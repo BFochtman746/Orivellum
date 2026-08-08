@@ -678,6 +678,7 @@ def _extract_zip(path: Path) -> ExtractionResult:
         ".json": "json",
         ".py": "code", ".js": "code", ".ts": "code",
         ".pptx": "pptx", ".ppt": "pptx",
+        ".eml": "email", ".msg": "email",
     }
 
     all_text: list[str] = []
@@ -1025,6 +1026,139 @@ def _extract_audio(path: Path, db=None) -> ExtractionResult:
             _sh_enh.rmtree(_enh_tmp, ignore_errors=True)
 
 
+def _extract_email(path: Path) -> "ExtractionResult":
+    """Extract text from an .eml (RFC 2822) or Outlook .msg email file.
+
+    For .eml files, Python's stdlib ``email`` module parses headers and body
+    with no extra dependencies.  For .msg files the optional ``extract_msg``
+    package is tried; if absent the file is read as raw bytes and any readable
+    ASCII/UTF-8 content is returned.
+
+    Attachments within the message are noted in metadata but not recursively
+    extracted (the pipeline can re-process them if they are saved separately).
+    """
+    import email as _email_mod
+    import email.policy as _ep
+
+    suffix = path.suffix.lower()
+    attachments: list[str] = []
+
+    # ── .eml — stdlib ─────────────────────────────────────────────────────────
+    if suffix == ".eml":
+        try:
+            raw = path.read_bytes()
+            msg = _email_mod.message_from_bytes(raw, policy=_ep.default)
+            subject  = str(msg.get("Subject", "")).strip()
+            from_hdr = str(msg.get("From",    "")).strip()
+            to_hdr   = str(msg.get("To",      "")).strip()
+            date_hdr = str(msg.get("Date",    "")).strip()
+
+            body_parts: list[str] = []
+            for part in msg.walk():
+                ct = part.get_content_type()
+                cd = str(part.get("Content-Disposition", ""))
+                if "attachment" in cd:
+                    fn = part.get_filename()
+                    if fn:
+                        attachments.append(fn)
+                    continue
+                if ct == "text/plain":
+                    try:
+                        body_parts.append(part.get_content())
+                    except Exception:
+                        payload = part.get_payload(decode=True)
+                        if payload:
+                            body_parts.append(payload.decode("utf-8", errors="replace"))
+                elif ct == "text/html" and not body_parts:
+                    # Use HTML body only if no plain text was found
+                    try:
+                        body_parts.append(part.get_content())
+                    except Exception:
+                        pass
+
+            header_block = "\n".join(filter(None, [
+                f"Subject: {subject}" if subject else "",
+                f"From: {from_hdr}"   if from_hdr else "",
+                f"To: {to_hdr}"       if to_hdr   else "",
+                f"Date: {date_hdr}"   if date_hdr  else "",
+            ]))
+            body_text = "\n\n".join(body_parts).strip()
+            full_text = f"{header_block}\n\n{body_text}".strip() if body_text else header_block
+            if attachments:
+                full_text += f"\n\n[Attachments: {', '.join(attachments)}]"
+
+            return ExtractionResult(
+                kind="email",
+                full_text=full_text,
+                word_count=len(full_text.split()),
+                pages=[PageSegment(page=1, text=full_text)],
+                meta={
+                    "subject": subject, "from": from_hdr,
+                    "to": to_hdr, "date": date_hdr,
+                    "attachments": attachments,
+                },
+            )
+        except Exception as exc:
+            logger.warning("EML extraction failed for %s: %s", path.name, exc)
+            return ExtractionResult(kind="email", full_text="", word_count=0)
+
+    # ── .msg — Outlook compound document ─────────────────────────────────────
+    if suffix == ".msg":
+        try:
+            import extract_msg as _em  # type: ignore[import]
+            with _em.Message(str(path)) as m:
+                subject  = (m.subject  or "").strip()
+                from_hdr = (m.sender   or "").strip()
+                to_hdr   = (m.to       or "").strip()
+                date_hdr = str(m.date  or "").strip()
+                body_text = (m.body    or "").strip()
+                for att in (m.attachments or []):
+                    name = getattr(att, "longFilename", None) or getattr(att, "shortFilename", "attachment")
+                    if name:
+                        attachments.append(name)
+            header_block = "\n".join(filter(None, [
+                f"Subject: {subject}" if subject else "",
+                f"From: {from_hdr}"   if from_hdr else "",
+                f"To: {to_hdr}"       if to_hdr   else "",
+                f"Date: {date_hdr}"   if date_hdr  else "",
+            ]))
+            full_text = f"{header_block}\n\n{body_text}".strip() if body_text else header_block
+            if attachments:
+                full_text += f"\n\n[Attachments: {', '.join(attachments)}]"
+            return ExtractionResult(
+                kind="email",
+                full_text=full_text,
+                word_count=len(full_text.split()),
+                pages=[PageSegment(page=1, text=full_text)],
+                meta={
+                    "subject": subject, "from": from_hdr,
+                    "to": to_hdr, "date": date_hdr,
+                    "attachments": attachments,
+                },
+            )
+        except ImportError:
+            logger.info("extract_msg not installed — falling back to raw read for %s", path.name)
+        except Exception as exc:
+            logger.warning("MSG extraction failed for %s: %s", path.name, exc)
+
+        # Raw fallback — grab any readable text from the compound doc
+        try:
+            raw = path.read_bytes()
+            text = raw.decode("utf-8", errors="ignore").strip()
+            if len(text) > 50:
+                return ExtractionResult(
+                    kind="email", full_text=text,
+                    word_count=len(text.split()),
+                    pages=[PageSegment(page=1, text=text)],
+                    meta={"parse_method": "raw_fallback"},
+                )
+        except Exception:
+            pass
+        return ExtractionResult(kind="email", full_text="", word_count=0)
+
+    return ExtractionResult(kind="email", full_text="", word_count=0)
+
+
 _DISPATCH: dict[str, object] = {
     "pdf": _extract_pdf,
     "docx": _extract_docx,
@@ -1037,6 +1171,7 @@ _DISPATCH: dict[str, object] = {
     "zip": _extract_zip,
     "image": _extract_image,
     "audio": _extract_audio,
+    "email": _extract_email,
 }
 
 

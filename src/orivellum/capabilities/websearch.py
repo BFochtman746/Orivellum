@@ -877,9 +877,18 @@ def fetch_web_context(
     max_results: int = 3,
     timeout:     int = 5,
 ) -> list[dict]:
-    """Fetch top results for chat context injection.  Never raises.  URL-deduplicated."""
+    """Fetch top results for chat context injection.  Never raises.  URL-deduplicated.
+
+    Returns an empty list when grounding fails.  Callers should check whether
+    the list is empty and surface a ``grounding: "failed"`` signal to the user
+    rather than silently answering without web context.
+    """
     key = _api_key()
     if not key:
+        logger.warning(
+            "fetch_web_context: TAVILY_API_KEY is not set — "
+            "web grounding is disabled; chat will answer without web context."
+        )
         return []
     try:
         payload = json.dumps({
@@ -914,7 +923,11 @@ def fetch_web_context(
                 seen_urls.add(canon)
         return out
     except Exception as exc:
-        logger.debug("fetch_web_context non-fatal: %s", exc)
+        logger.warning(
+            "fetch_web_context: grounding failed for query %r — %s — "
+            "chat will answer without web context.",
+            query[:80], exc,
+        )
         return []
 
 

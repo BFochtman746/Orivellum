@@ -1751,6 +1751,58 @@ def system_hardware():
     return result
 
 
+@router.get("/system/lemonade")
+def system_lemonade():
+    """Proxy Lemonade Server telemetry — health, loaded models, device info, and stats.
+
+    This is the truthful hardware panel for a Strix Halo (unified memory) machine:
+    nvidia-smi and rocm-smi are absent on Windows, but Lemonade exposes the real
+    picture via its own /api/v1/health and /api/v1/system-info endpoints.
+    Returns an empty ``{"available": false}`` dict when Lemonade is unreachable.
+    """
+    cfg = get_config()
+    base = cfg.serving.base_url  # e.g. http://127.0.0.1:8000/api/v1
+
+    # Derive the Lemonade root (strip the /v1 suffix to get /api/v1's parent)
+    # base_url is expected to be http://host:port/api/v1
+    if "/api/v1" in base:
+        lemonade_root = base.split("/api/v1")[0]
+    elif "/v1" in base:
+        lemonade_root = base.rsplit("/v1", 1)[0]
+    else:
+        lemonade_root = base.rstrip("/")
+
+    import urllib.request as _urlr
+    import json as _json
+
+    def _get(path: str) -> dict | None:
+        try:
+            url = f"{lemonade_root}{path}"
+            req = _urlr.Request(url, headers={"Accept": "application/json"})
+            with _urlr.urlopen(req, timeout=3) as resp:
+                return _json.loads(resp.read().decode("utf-8"))
+        except Exception as exc:
+            logger.debug("Lemonade probe %s failed: %s", path, exc)
+            return None
+
+    health = _get("/api/v1/health")
+    if health is None:
+        return {"available": False, "base_url": lemonade_root}
+
+    sys_info = _get("/api/v1/system-info")
+
+    # Pull last-request stats if available (not all Lemonade builds expose this)
+    stats = _get("/api/v1/stats")
+
+    return {
+        "available": True,
+        "base_url": lemonade_root,
+        "health": health,
+        "system_info": sys_info,
+        "stats": stats,
+    }
+
+
 def _safe_int(v) -> int | None:
     try:
         return int(str(v).strip())

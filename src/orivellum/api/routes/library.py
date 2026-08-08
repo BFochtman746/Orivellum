@@ -113,6 +113,8 @@ _KIND_MAP = {
     ".html": "html", ".htm": "html",
     ".json": "json",
     ".zip": "zip",
+    ".eml": "email",  # RFC 2822 email file — stdlib email module parses
+    ".msg": "email",  # Outlook compound document — extract_msg or raw fallback
     ".rtf": "file",   # handled by markitdown fallback
     ".epub": "file",  # handled by markitdown fallback
     ".xml": "file",   # handled by markitdown fallback

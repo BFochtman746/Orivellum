@@ -20,7 +20,7 @@ serving:
   # Lemonade exposes an OpenAI-compatible API on port 8000 (primary) and an
   # Ollama-compatible bridge on port 11434.  Use 8000 for best compatibility.
   # If you see connection errors, try: http://127.0.0.1:11434/v1  (Ollama-compat)
-  base_url: "http://127.0.0.1:8000/v1"
+  base_url: "http://127.0.0.1:8000/api/v1"
 
   # ── Model selection (A-01 Capability Study — Aug 2026) ───────────────────────
   # Pull models with: lemonade pull <name>
@@ -67,11 +67,11 @@ serving:
   # TTS model name for the AI server /v1/audio/speech endpoint.
   # "tts-1-hd" gives higher quality; "tts-1" is faster.
   # Kokoro-82M (local ONNX) is used as fallback when AI server is unavailable.
-  tts_model: "tts-1-hd"
+  tts_model: "kokoro-v1"
   # ASR model for /v1/audio/transcriptions (sent to the AI server).
   # faster-whisper (CTranslate2) is ~4× faster when self-hosted.
   # Alternatives: "faster-whisper", "whisper-large-v3", "parakeet-tdt-1.1b"
-  asr_model: "whisper-1"
+  asr_model: "Whisper-Base"
   # Local STT fallback model size (faster-whisper — used when AI server is absent).
   # Options (accuracy ↑ / speed ↓): "tiny", "base", "small", "medium", "large-v3"
   # "base" (~150 MB, auto-downloaded) is a good default; "large-v3" matches cloud Whisper accuracy.
