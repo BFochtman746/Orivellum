@@ -44,7 +44,7 @@ import {
   Trash2, Wifi, WifiOff, Loader2, Cpu, Pencil, BookOpen, Archive, ArchiveRestore,
   AlertTriangle, FolderOpen, FileText, ChevronRight, ChevronLeft, X as XIcon, Zap, Brain,
   Globe, Paperclip, Download, Layers, HelpCircle, Compass, ChevronDown, ImageIcon, Square,
-  Sparkles, History, RefreshCw, ExternalLink,
+  Sparkles, History, RefreshCw, ExternalLink, Mail,
 } from "lucide-react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -1437,12 +1437,25 @@ export default function Chat() {
   const [deepMode,        setDeepMode]        = useState(false);
   const [scopeAll,        setScopeAll]        = useState(false); // false = "This work", true = "All works"
   const [webSearchOn,     setWebSearchOn]     = useState(false); // per-conversation web-search toggle
+  const [mailContextOn,   setMailContextOn]   = useState(false); // per-conversation mail context toggle
   const [dragOver,        setDragOver]        = useState(false);
   const [importing,       setImporting]       = useState(false);
 
   // Whether Tavily is configured — gates the globe button visibility
   const { data: webSearchStatus } = useGetWebSearchStatus();
   const tavilyConfigured = webSearchStatus?.configured ?? false;
+
+  // Whether Mail Steward is connected — gates the mail context button visibility
+  const { data: mailSummary } = useQuery({
+    queryKey: ["mail-summary"],
+    queryFn: async () => {
+      const r = await apiFetch(`${API_BASE}/mail/summary`);
+      return r.ok ? (r.json() as Promise<{ connected: boolean }>) : { connected: false };
+    },
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
+  });
+  const mailConnected = mailSummary?.connected ?? false;
 
   // ── Activity panel state ─────────────────────────────────────────────────
   const [activitySteps,      setActivitySteps]      = useState<ActivityStep[]>([]);
@@ -1531,6 +1544,12 @@ export default function Chat() {
   useEffect(() => {
     const ws = (activeConv?.conversation as any)?.web_search_enabled;
     setWebSearchOn(!!ws);
+  }, [activeId, activeConv?.conversation]);
+
+  // Sync mailContextOn from the active conversation
+  useEffect(() => {
+    const mc = (activeConv?.conversation as any)?.mail_context_enabled;
+    setMailContextOn(!!mc);
   }, [activeId, activeConv?.conversation]);
 
   // ── VisualViewport scroll-anchor preservation ────────────────────────────
@@ -2671,6 +2690,40 @@ export default function Chat() {
                   >
                     <ImageIcon className="w-4 h-4" />
                   </button>
+                  {/* Mail context toggle — only shown when Mail Steward is connected */}
+                  {mailConnected && activeId && (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const next = !mailContextOn;
+                        setMailContextOn(next);
+                        try {
+                          const resp = await apiFetch(`${API_BASE}/conversations/${activeId}/mail-context`, {
+                            method: "PUT",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ enabled: next }),
+                          });
+                          if (!resp.ok) {
+                            setMailContextOn(!next);
+                            const err = await resp.json().catch(() => ({}));
+                            toast.error((err as any).detail ?? "Could not toggle mail context");
+                          } else {
+                            queryClient.invalidateQueries({ queryKey: getGetConversationQueryKey(activeId) });
+                          }
+                        } catch {
+                          setMailContextOn(!next);
+                          toast.error("Could not toggle mail context");
+                        }
+                      }}
+                      title={mailContextOn
+                        ? "Mail context on — recent email summaries injected into chat (click to disable)"
+                        : "Mail context off — click to inject recent email summaries into chat replies"}
+                      className={`chat-icon-btn h-8 w-8 rounded flex items-center justify-center transition-colors
+                        ${mailContextOn ? "text-primary bg-primary/10 border border-primary/30" : "text-muted-foreground/50 hover:text-muted-foreground"}`}
+                    >
+                      <Mail className="w-4 h-4" />
+                    </button>
+                  )}
                   {/* Web search toggle — only shown when Tavily is configured */}
                   {tavilyConfigured && activeId && (
                     <button
