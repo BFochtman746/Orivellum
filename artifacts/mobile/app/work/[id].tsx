@@ -8,6 +8,7 @@ import {
   Alert,
   Animated,
   FlatList,
+  KeyboardAvoidingView,
   LayoutAnimation,
   Modal,
   Platform,
@@ -1256,6 +1257,12 @@ function GapsTab({
   );
 }
 
+// ─── Shared validation ────────────────────────────────────────────────────────
+/** Returns true when a string represents a positive whole number. */
+function isPositiveInteger(v: string): boolean {
+  return /^\d+$/.test(v.trim()) && parseInt(v.trim(), 10) >= 1;
+}
+
 // ─── Completeness Tab ─────────────────────────────────────────────────────────
 //
 // Mobile equivalent of the web CompletenessTab. Fetches
@@ -1342,14 +1349,11 @@ function CompletenessTab({
   const [chapterInput, setChapterInput]     = useState('');
   const [savingTargets, setSavingTargets]   = useState(false);
 
-  /** Returns true when a string is a positive integer (no decimals, no letters). */
-  const isValidTarget = (v: string) => /^\d+$/.test(v.trim()) && parseInt(v.trim(), 10) >= 1;
-
   // Real-time validation — derived from current input values so the UI reacts
   // on every keystroke. Fields open pre-populated with valid values, so there
   // is no error flash on open.
-  const wordError    = !isValidTarget(wordInput);
-  const chapterError = !isValidTarget(chapterInput);
+  const wordError    = !isPositiveInteger(wordInput);
+  const chapterError = !isPositiveInteger(chapterInput);
   const canSave      = !wordError && !chapterError;
 
   const openTargetEditor = () => {
@@ -1363,7 +1367,7 @@ function CompletenessTab({
     // keyboard submit). No fallback — invalid or empty values must block saving
     // consistently so the inline error messages are never contradicted by a
     // silent save.
-    if (!isValidTarget(wordInput) || !isValidTarget(chapterInput)) return;
+    if (!isPositiveInteger(wordInput) || !isPositiveInteger(chapterInput)) return;
     const wt = parseInt(wordInput.trim(), 10);
     const ct = parseInt(chapterInput.trim(), 10);
     setSavingTargets(true);
@@ -6029,6 +6033,62 @@ export default function WorkDetailScreen() {
     });
   };
 
+  // ── Unified settings sheet ────────────────────────────────────────────────
+  // Opens a bottom-sheet Modal with title, description, word target, and
+  // chapter target all in one place. Saves with a single PATCH call.
+  const [settingsOpen, setSettingsOpen]               = useState(false);
+  const [settingsTitleDraft, setSettingsTitleDraft]   = useState('');
+  const [settingsDescDraft, setSettingsDescDraft]     = useState('');
+  const [settingsWordDraft, setSettingsWordDraft]     = useState('');
+  const [settingsChapterDraft, setSettingsChapterDraft] = useState('');
+  const [savingSettings, setSavingSettings]           = useState(false);
+  const { mutate: updateWorkSettings } = useUpdateWork();
+
+  const openSettings = () => {
+    const currentMeta = (work as any)?.meta ?? {};
+    const targets = (currentMeta?.completeness_targets ?? {}) as { word_target?: number; chapter_target?: number };
+    setSettingsTitleDraft(work?.title ?? '');
+    setSettingsDescDraft((work as any)?.description ?? '');
+    setSettingsWordDraft(String(targets.word_target ?? 50000));
+    setSettingsChapterDraft(String(targets.chapter_target ?? 10));
+    setSettingsOpen(true);
+  };
+
+  const settingsTitleError   = settingsTitleDraft.trim() === '';
+  const settingsWordError    = !isPositiveInteger(settingsWordDraft);
+  const settingsChapterError = !isPositiveInteger(settingsChapterDraft);
+  const canSaveSettings      = !settingsTitleError && !settingsWordError && !settingsChapterError;
+
+  const saveSettings = () => {
+    if (!canSaveSettings) return;
+    const wt = parseInt(settingsWordDraft.trim(), 10);
+    const ct = parseInt(settingsChapterDraft.trim(), 10);
+    const currentMeta = (work as any)?.meta ?? {};
+    const mergedMeta = { ...currentMeta, completeness_targets: { word_target: wt, chapter_target: ct } };
+    setSavingSettings(true);
+    updateWorkSettings(
+      {
+        workId: id,
+        data: {
+          title: settingsTitleDraft.trim(),
+          description: settingsDescDraft.trim() || null,
+          meta: mergedMeta,
+        } as any,
+      },
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: getGetWorkQueryKey(id) });
+          setSettingsOpen(false);
+          setSavingSettings(false);
+        },
+        onError: () => {
+          Alert.alert('Error', 'Could not save changes. Please try again.');
+          setSavingSettings(false);
+        },
+      },
+    );
+  };
+
   // Tasks search state
   const [taskSearch, setTaskSearch] = useState('');
 
@@ -6715,33 +6775,49 @@ export default function WorkDetailScreen() {
 
   return (
     <View style={[styles.screen, { backgroundColor: colors.background, paddingTop: topPad }]}>
-      {/* Work title + type badge */}
+      {/* Work title + type badge + settings gear */}
       <View style={[styles.workHeader, { paddingHorizontal: 16, paddingBottom: 10 }]}>
-        {editingWorkTitle ? (
-          <TextInput
-            autoFocus
-            style={[styles.workTitle, { color: colors.foreground, borderBottomWidth: 2, borderBottomColor: colors.primary, marginBottom: 6 }]}
-            value={workTitleDraft}
-            onChangeText={setWorkTitleDraft}
-            onBlur={saveWorkTitle}
-            onSubmitEditing={saveWorkTitle}
-            returnKeyType="done"
-          />
-        ) : (
-          <Pressable
-            onPress={() => { setWorkTitleDraft(work?.title ?? ''); setEditingWorkTitle(true); }}
-            onLongPress={() => { setWorkTitleDraft(work?.title ?? ''); setEditingWorkTitle(true); }}
-            delayLongPress={500}
-          >
-            <Text style={[styles.workTitle, { color: colors.foreground }]} numberOfLines={2}>
-              {work?.title ?? ''}
-            </Text>
-          </Pressable>
-        )}
-        <View style={[styles.typeBadge, { backgroundColor: colors.muted }]}>
-          <Text style={[styles.typeBadgeText, { color: colors.mutedForeground }]}>
-            {work?.work_type ?? 'research'}
-          </Text>
+        <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8 }}>
+          <View style={{ flex: 1 }}>
+            {editingWorkTitle ? (
+              <TextInput
+                autoFocus
+                style={[styles.workTitle, { color: colors.foreground, borderBottomWidth: 2, borderBottomColor: colors.primary, marginBottom: 6 }]}
+                value={workTitleDraft}
+                onChangeText={setWorkTitleDraft}
+                onBlur={saveWorkTitle}
+                onSubmitEditing={saveWorkTitle}
+                returnKeyType="done"
+              />
+            ) : (
+              <Pressable
+                onPress={() => { setWorkTitleDraft(work?.title ?? ''); setEditingWorkTitle(true); }}
+                onLongPress={() => { setWorkTitleDraft(work?.title ?? ''); setEditingWorkTitle(true); }}
+                delayLongPress={500}
+              >
+                <Text style={[styles.workTitle, { color: colors.foreground }]} numberOfLines={2}>
+                  {work?.title ?? ''}
+                </Text>
+              </Pressable>
+            )}
+            <View style={[styles.typeBadge, { backgroundColor: colors.muted }]}>
+              <Text style={[styles.typeBadgeText, { color: colors.mutedForeground }]}>
+                {work?.work_type ?? 'research'}
+              </Text>
+            </View>
+          </View>
+          {/* Settings button — opens the unified edit sheet */}
+          {!editingWorkTitle && work && (
+            <Pressable
+              onPress={openSettings}
+              hitSlop={8}
+              style={{ padding: 8, borderRadius: 8, backgroundColor: colors.muted, marginTop: 2 }}
+              accessibilityRole="button"
+              accessibilityLabel="Edit work settings"
+            >
+              <Feather name="settings" size={16} color={colors.mutedForeground} />
+            </Pressable>
+          )}
         </View>
       </View>
 
@@ -6908,6 +6984,202 @@ export default function WorkDetailScreen() {
             )}
           </View>
         </View>
+      </Modal>
+
+      {/* ── Unified settings sheet ───────────────────────────────────────── */}
+      {/* Opens from a gear button in the work header. Edits title,           */}
+      {/* description, word target, and chapter target in one PATCH call.     */}
+      <Modal
+        visible={settingsOpen}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setSettingsOpen(false)}
+      >
+        {/* Scrim */}
+        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.45)' }} onPress={() => setSettingsOpen(false)} />
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={{ position: 'absolute', bottom: 0, left: 0, right: 0 }}
+        >
+          <View style={{
+            backgroundColor: colors.card,
+            borderTopLeftRadius: 20, borderTopRightRadius: 20,
+            borderTopWidth: 1, borderColor: colors.border,
+            paddingBottom: insets.bottom + 8,
+          }}>
+            {/* Handle + header */}
+            <View style={{ alignItems: 'center', paddingTop: 12, paddingBottom: 4 }}>
+              <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: colors.border }} />
+            </View>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+                           paddingHorizontal: 20, paddingVertical: 10 }}>
+              <Text style={{ fontSize: 16, fontFamily: 'Inter_600SemiBold', color: colors.foreground }}>
+                Edit work
+              </Text>
+              <Pressable onPress={() => setSettingsOpen(false)} hitSlop={8} accessibilityRole="button" accessibilityLabel="Close">
+                <Feather name="x" size={20} color={colors.mutedForeground} />
+              </Pressable>
+            </View>
+
+            {/* Form fields */}
+            <ScrollView
+              contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 16, gap: 16 }}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+            >
+              {/* Title */}
+              <View>
+                <Text style={{ fontSize: 11, fontFamily: 'Inter_500Medium', color: colors.mutedForeground, marginBottom: 4 }}>
+                  Title <Text style={{ color: T.rust }}>*</Text>
+                </Text>
+                <TextInput
+                  value={settingsTitleDraft}
+                  onChangeText={setSettingsTitleDraft}
+                  returnKeyType="next"
+                  placeholder="Work title"
+                  placeholderTextColor={colors.mutedForeground + '88'}
+                  style={{
+                    height: 44, paddingHorizontal: 12, borderRadius: 8, borderWidth: 1,
+                    borderColor: settingsTitleError ? T.rust : colors.primary + '60',
+                    backgroundColor: settingsTitleError ? T.rustSoft : colors.background,
+                    color: colors.foreground, fontFamily: 'Inter_400Regular', fontSize: 15,
+                  }}
+                  accessibilityLabel="Work title"
+                />
+                {settingsTitleError && (
+                  <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: T.rust, marginTop: 4 }}>
+                    Title is required.
+                  </Text>
+                )}
+              </View>
+
+              {/* Description */}
+              <View>
+                <Text style={{ fontSize: 11, fontFamily: 'Inter_500Medium', color: colors.mutedForeground, marginBottom: 4 }}>
+                  Description
+                </Text>
+                <TextInput
+                  value={settingsDescDraft}
+                  onChangeText={setSettingsDescDraft}
+                  multiline
+                  numberOfLines={3}
+                  returnKeyType="default"
+                  placeholder="Optional description…"
+                  placeholderTextColor={colors.mutedForeground + '88'}
+                  style={{
+                    minHeight: 80, paddingHorizontal: 12, paddingTop: 10, paddingBottom: 10,
+                    borderRadius: 8, borderWidth: 1, borderColor: colors.primary + '60',
+                    backgroundColor: colors.background,
+                    color: colors.foreground, fontFamily: 'Inter_400Regular', fontSize: 14,
+                    textAlignVertical: 'top',
+                  }}
+                  accessibilityLabel="Work description"
+                />
+              </View>
+
+              {/* Completeness targets — sub-section */}
+              <View style={{ backgroundColor: colors.muted + '55', borderRadius: 10, padding: 14, gap: 12 }}>
+                <Text style={{ fontSize: 10, fontFamily: 'Inter_700Bold', color: colors.mutedForeground,
+                               textTransform: 'uppercase', letterSpacing: 0.8 }}>
+                  Completeness targets
+                </Text>
+
+                {/* Word target */}
+                <View>
+                  <Text style={{ fontSize: 11, fontFamily: 'Inter_500Medium', color: colors.mutedForeground, marginBottom: 4 }}>
+                    Word target
+                  </Text>
+                  <TextInput
+                    value={settingsWordDraft}
+                    onChangeText={setSettingsWordDraft}
+                    keyboardType="number-pad"
+                    returnKeyType="next"
+                    placeholder="50000"
+                    placeholderTextColor={colors.mutedForeground + '88'}
+                    style={{
+                      height: 44, paddingHorizontal: 12, borderRadius: 8, borderWidth: 1,
+                      borderColor: settingsWordError ? T.rust : colors.primary + '60',
+                      backgroundColor: settingsWordError ? T.rustSoft : colors.background,
+                      color: colors.foreground, fontFamily: 'Inter_400Regular', fontSize: 15,
+                    }}
+                    accessibilityLabel="Word target"
+                  />
+                  {settingsWordError && (
+                    <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: T.rust, marginTop: 4 }}>
+                      {settingsWordDraft.trim() === '' ? 'Required — enter a word count.' : 'Must be a whole number greater than 0.'}
+                    </Text>
+                  )}
+                </View>
+
+                {/* Chapter target */}
+                <View>
+                  <Text style={{ fontSize: 11, fontFamily: 'Inter_500Medium', color: colors.mutedForeground, marginBottom: 4 }}>
+                    Chapter target
+                  </Text>
+                  <TextInput
+                    value={settingsChapterDraft}
+                    onChangeText={setSettingsChapterDraft}
+                    keyboardType="number-pad"
+                    returnKeyType="done"
+                    onSubmitEditing={saveSettings}
+                    placeholder="10"
+                    placeholderTextColor={colors.mutedForeground + '88'}
+                    style={{
+                      height: 44, paddingHorizontal: 12, borderRadius: 8, borderWidth: 1,
+                      borderColor: settingsChapterError ? T.rust : colors.primary + '60',
+                      backgroundColor: settingsChapterError ? T.rustSoft : colors.background,
+                      color: colors.foreground, fontFamily: 'Inter_400Regular', fontSize: 15,
+                    }}
+                    accessibilityLabel="Chapter target"
+                  />
+                  {settingsChapterError && (
+                    <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: T.rust, marginTop: 4 }}>
+                      {settingsChapterDraft.trim() === '' ? 'Required — enter a chapter count.' : 'Must be a whole number greater than 0.'}
+                    </Text>
+                  )}
+                </View>
+              </View>
+
+              {/* Save / Cancel */}
+              <View style={{ flexDirection: 'row', gap: 10 }}>
+                <Pressable
+                  onPress={saveSettings}
+                  disabled={savingSettings || !canSaveSettings}
+                  style={({ pressed }) => ({
+                    flex: 1, height: 48, borderRadius: 10, alignItems: 'center',
+                    justifyContent: 'center', flexDirection: 'row', gap: 6,
+                    backgroundColor: colors.primary,
+                    opacity: savingSettings || !canSaveSettings || pressed ? 0.45 : 1,
+                  })}
+                  accessibilityRole="button"
+                  accessibilityLabel="Save work settings"
+                >
+                  {savingSettings
+                    ? <ActivityIndicator size="small" color="#fff" />
+                    : <>
+                        <Feather name="check" size={16} color="#fff" />
+                        <Text style={{ fontFamily: 'Inter_600SemiBold', fontSize: 14, color: '#fff' }}>Save</Text>
+                      </>}
+                </Pressable>
+                <Pressable
+                  onPress={() => setSettingsOpen(false)}
+                  disabled={savingSettings}
+                  style={({ pressed }) => ({
+                    flex: 1, height: 48, borderRadius: 10, alignItems: 'center',
+                    justifyContent: 'center', flexDirection: 'row', gap: 6,
+                    borderWidth: 1, borderColor: colors.border,
+                    opacity: savingSettings || pressed ? 0.65 : 1,
+                  })}
+                  accessibilityRole="button"
+                  accessibilityLabel="Discard changes"
+                >
+                  <Feather name="x" size={16} color={colors.mutedForeground} />
+                  <Text style={{ fontFamily: 'Inter_500Medium', fontSize: 14, color: colors.mutedForeground }}>Cancel</Text>
+                </Pressable>
+              </View>
+            </ScrollView>
+          </View>
+        </KeyboardAvoidingView>
       </Modal>
     </View>
   );
