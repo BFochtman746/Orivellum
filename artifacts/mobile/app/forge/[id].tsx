@@ -27,6 +27,7 @@ import { mobileFetch } from '@/lib/api';
 import { useVellumTokens } from '@/lib/tokens';
 import { SkeletonItem } from '@/components/SkeletonItem';
 import { font, fontSerif } from '@/lib/typography';
+import * as WebBrowser from 'expo-web-browser';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -192,6 +193,7 @@ export default function ForgeDetailScreen() {
   const [approving, setApproving] = useState(false);
   const [rejecting, setRejecting] = useState(false);
   const [starting, setStarting] = useState(false);
+  const domain = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
 
   const { data, isLoading, isError, refetch } = useQuery<ForgeProjectDetail>({
     queryKey: ['mobile', 'forge', 'project', id],
@@ -207,6 +209,28 @@ export default function ForgeDetailScreen() {
 
   const awaitingJob = data?.jobs?.find(j => j.status === 'awaiting_approval');
   const latestJob = data?.latest_job ?? data?.jobs?.[0] ?? null;
+
+  // Find the most-recent completed BUILD job that has a build directory.
+  // This is the source for the preview URL.
+  // BUILD jobs use status "passed" on success (not "complete").
+  const buildJob = data?.jobs?.find(j => j.type === 'BUILD' && j.status === 'passed' && j.build_dir) ?? null;
+  const previewUrl = buildJob
+    ? `https://${domain}/api/forge/projects/${id}/jobs/${buildJob.id}/preview/index.html`
+    : null;
+
+  /** Open the built site in the system in-app browser (no auth required — the
+   *  preview endpoint serves static files directly from the build directory). */
+  const openPreview = async () => {
+    if (!previewUrl) return;
+    try {
+      await WebBrowser.openBrowserAsync(previewUrl, {
+        presentationStyle: WebBrowser.WebBrowserPresentationStyle.FULL_SCREEN,
+      });
+    } catch {
+      // Fall back to the system browser if WebBrowser is unavailable.
+      Linking.openURL(previewUrl);
+    }
+  };
 
   const handleApprove = async () => {
     if (!awaitingJob) return;
@@ -317,7 +341,22 @@ export default function ForgeDetailScreen() {
           {data.name}
         </Text>
         {data.status === 'complete' && (
-          <Feather name="check-circle" size={16} color={T.green} style={{ marginLeft: 4 }} />
+          previewUrl ? (
+            <Pressable
+              onPress={openPreview}
+              hitSlop={8}
+              style={{ flexDirection: 'row', alignItems: 'center', gap: 4,
+                       paddingHorizontal: 10, paddingVertical: 5, borderRadius: 16,
+                       backgroundColor: T.greenSoft, marginLeft: 4 }}
+              accessibilityRole="button"
+              accessibilityLabel="Preview built site"
+            >
+              <Feather name="external-link" size={12} color={T.green} />
+              <Text style={{ fontSize: 12, color: T.green, ...font('semibold') }}>Preview</Text>
+            </Pressable>
+          ) : (
+            <Feather name="check-circle" size={16} color={T.green} style={{ marginLeft: 4 }} />
+          )
         )}
       </View>
 
@@ -415,6 +454,32 @@ export default function ForgeDetailScreen() {
           <EventLog jobId={latestJob.id} />
         )}
 
+        {/* Preview card — shown when a BUILD job has completed */}
+        {previewUrl && (
+          <Pressable
+            onPress={openPreview}
+            style={({ pressed }) => [
+              styles.previewCard,
+              { backgroundColor: T.greenSoft, borderColor: T.green + '55', opacity: pressed ? 0.8 : 1 },
+            ]}
+            accessibilityRole="button"
+            accessibilityLabel="Open preview of built website"
+          >
+            <View style={styles.previewInner}>
+              <View style={[styles.previewIcon, { backgroundColor: T.green + '22' }]}>
+                <Feather name="monitor" size={20} color={T.green} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.previewTitle, { color: T.green }]}>Site ready — tap to preview</Text>
+                <Text style={[styles.previewSub, { color: colors.mutedForeground }]} numberOfLines={1}>
+                  Opens in browser · {previewUrl.replace(/^https?:\/\//, '').split('/').slice(0, 3).join('/')}…
+                </Text>
+              </View>
+              <Feather name="external-link" size={16} color={T.green} />
+            </View>
+          </Pressable>
+        )}
+
         {/* Job history */}
         {jobs.length > 0 && (
           <View style={[styles.section, { backgroundColor: colors.card, borderColor: colors.border }]}>
@@ -477,4 +542,10 @@ const styles = StyleSheet.create({
   emptyText: { fontSize: 15, lineHeight: 22, ...font('medium') },
   retryBtn: { paddingHorizontal: 20, paddingVertical: 10, borderRadius: 8, borderWidth: 1, minHeight: 44, alignItems: 'center', justifyContent: 'center' },
   retryText: { fontSize: 14, lineHeight: 20, ...font('medium') },
+  // Preview card
+  previewCard: { borderRadius: 12, borderWidth: 1, padding: 14, marginBottom: 14, minHeight: 64 },
+  previewInner: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  previewIcon: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
+  previewTitle: { fontSize: 14, lineHeight: 20, ...font('semibold') },
+  previewSub: { fontSize: 11, lineHeight: 16, marginTop: 2, ...font('regular') },
 });
