@@ -63,3 +63,4 @@
 - [GENESIS Book Origination System](orivellum-genesis.md) — schema v92; 10-gate ledger; _deps not auth import; ON CONFLICT uses excluded.updated_at; ledger_append needs UUID id.
 - [DeepFilterNet3 audio enhancement](orivellum-audio-enhancement.md) — step 0 in _extract_audio(); db setting audio_enhance_enabled; GET/PUT /system/settings/audio-enhance; AudioEnhancementCard in system page.
 - [VELLUM design system](vellum-design-system.md) — fonts, glass utilities, tokens, tier badges, editorial typography all applied; follow the page header pattern for new pages.
+- [Forge Website Factory integration](forge-integration.md) — native Python capability (schema v103–v106); config_update kwarg merges into project config JSON; build dirs under data/forge-builds/.
