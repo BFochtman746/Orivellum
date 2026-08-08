@@ -18,6 +18,7 @@ import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { mobileFetch } from '@/lib/api';
 import { font } from '@/lib/typography';
+import { useVellumTokens, alpha } from '@/lib/tokens';
 
 const _DOMAIN = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
 const _API = `https://${_DOMAIN}/api`;
@@ -47,29 +48,35 @@ interface WorkEntry {
 
 interface StagePalette { bg: string; text: string }
 
-const STAGE_PALETTE: Record<string, StagePalette> = {
-  B0:  { bg: 'rgba(113,113,122,0.13)', text: '#71717a' },
-  B1:  { bg: 'rgba(59,130,246,0.12)',  text: '#2563eb' },
-  B2:  { bg: 'rgba(59,130,246,0.12)',  text: '#2563eb' },
-  B3:  { bg: 'rgba(139,92,246,0.12)',  text: '#7c3aed' },
-  B4:  { bg: 'rgba(139,92,246,0.12)',  text: '#7c3aed' },
-  B5:  { bg: 'rgba(139,92,246,0.12)',  text: '#7c3aed' },
-  B6:  { bg: 'rgba(245,158,11,0.12)',  text: '#d97706' },
-  B7:  { bg: 'rgba(245,158,11,0.12)',  text: '#d97706' },
-  B8:  { bg: 'rgba(245,158,11,0.12)',  text: '#d97706' },
-  B9:  { bg: 'rgba(249,115,22,0.12)',  text: '#ea580c' },
-  B10: { bg: 'rgba(249,115,22,0.12)',  text: '#ea580c' },
-  B11: { bg: 'rgba(249,115,22,0.12)',  text: '#ea580c' },
-  B12: { bg: 'rgba(16,185,129,0.12)',  text: '#059669' },
-  B13: { bg: 'rgba(16,185,129,0.12)',  text: '#059669' },
-  B14: { bg: 'rgba(16,185,129,0.12)',  text: '#059669' },
-  B15: { bg: 'rgba(20,184,166,0.12)',  text: '#0d9488' },
-  B16: { bg: 'rgba(20,184,166,0.12)',  text: '#0d9488' },
-  B17: { bg: 'rgba(34,197,94,0.15)',   text: '#16a34a' },
-};
+// STAGE_PALETTE is built at runtime via buildStagePalette() so it uses tokens.
+// It is populated once in BooksScreen and cached here for sub-components.
+let _stagePaletteCache: Record<string, StagePalette> | null = null;
+
+function buildStagePalette(T: ReturnType<typeof useVellumTokens>, primary: string): Record<string, StagePalette> {
+  return {
+    B0:  { bg: 'rgba(113,113,122,0.13)', text: '#71717a' },
+    B1:  { bg: alpha(primary, 0.12),     text: primary },
+    B2:  { bg: alpha(primary, 0.12),     text: primary },
+    B3:  { bg: alpha(primary, 0.12),     text: primary },
+    B4:  { bg: alpha(primary, 0.12),     text: primary },
+    B5:  { bg: alpha(primary, 0.12),     text: primary },
+    B6:  { bg: alpha(T.gilt, 0.12),      text: T.gilt },
+    B7:  { bg: alpha(T.gilt, 0.12),      text: T.gilt },
+    B8:  { bg: alpha(T.gilt, 0.12),      text: T.gilt },
+    B9:  { bg: alpha(T.rust, 0.12),      text: T.rust },
+    B10: { bg: alpha(T.rust, 0.12),      text: T.rust },
+    B11: { bg: alpha(T.rust, 0.12),      text: T.rust },
+    B12: { bg: alpha(T.green, 0.12),     text: T.green },
+    B13: { bg: alpha(T.green, 0.12),     text: T.green },
+    B14: { bg: alpha(T.green, 0.12),     text: T.green },
+    B15: { bg: alpha(T.green, 0.12),     text: T.green },
+    B16: { bg: alpha(T.green, 0.12),     text: T.green },
+    B17: { bg: alpha(T.green, 0.15),     text: T.green },
+  };
+}
 
 function stagePalette(status: string): StagePalette {
-  return STAGE_PALETTE[status] ?? { bg: 'rgba(113,113,122,0.13)', text: '#71717a' };
+  return (_stagePaletteCache ?? {})[status] ?? { bg: 'rgba(113,113,122,0.13)', text: '#71717a' };
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
@@ -89,12 +96,13 @@ function formatWords(n: number): string {
 
 function ProgressBar({ pct, published }: { pct: number; published: boolean }) {
   const colors = useColors();
+  const T = useVellumTokens();
   return (
     <View style={[styles.progressTrack, { backgroundColor: colors.muted }]}>
       <View
         style={[
           styles.progressFill,
-          { width: `${pct}%` as any, backgroundColor: published ? '#22c55e' : colors.primary },
+          { width: `${pct}%` as any, backgroundColor: published ? T.green : colors.primary },
         ]}
       />
     </View>
@@ -105,6 +113,7 @@ function ProgressBar({ pct, published }: { pct: number; published: boolean }) {
 
 function BookCard({ book }: { book: BookEntry }) {
   const colors = useColors();
+  const T = useVellumTokens();
   const router = useRouter();
   const pct = stageProgress(book.pipeline_status);
   const isPublished = book.pipeline_status === 'B17';
@@ -123,7 +132,7 @@ function BookCard({ book }: { book: BookEntry }) {
         <Text style={[styles.cardTitle, { color: colors.foreground }]} numberOfLines={1}>
           {book.title}
         </Text>
-        {isPublished && <Feather name="star" size={13} color="#22c55e" />}
+        {isPublished && <Feather name="star" size={13} color={T.green} />}
         <View style={[styles.stageBadge, { backgroundColor: pal.bg }]}>
           <Text style={[styles.stageBadgeText, { color: pal.text }]}>
             {book.pipeline_status}
@@ -341,7 +350,7 @@ function CreateWorkModal({ visible, onClose, onCreated }: {
           </View>
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
             <Feather name="book" size={16} color={colors.primary} style={{ marginRight: 8 }} />
-            <Text style={{ fontSize: 16, fontFamily: 'Inter_700Bold', color: colors.foreground, flex: 1 }}>
+            <Text style={{ fontSize: 16, ...font('bold'), color: colors.foreground, flex: 1 }}>
               New Book
             </Text>
             <Pressable onPress={onClose} hitSlop={8}>
@@ -351,9 +360,9 @@ function CreateWorkModal({ visible, onClose, onCreated }: {
 
           {/* Type badge — locked to Writing */}
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-            <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: colors.mutedForeground }}>Type:</Text>
+            <Text style={{ fontSize: 11, ...font('regular'), color: colors.mutedForeground }}>Type:</Text>
             <View style={{ paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, backgroundColor: `${colors.primary}18` }}>
-              <Text style={{ fontSize: 11, fontFamily: 'Inter_600SemiBold', color: colors.primary }}>Writing</Text>
+              <Text style={{ fontSize: 11, ...font('semibold'), color: colors.primary }}>Writing</Text>
             </View>
           </View>
 
@@ -392,7 +401,7 @@ function CreateWorkModal({ visible, onClose, onCreated }: {
             {saving
               ? <ActivityIndicator size="small" color="#fff" />
               : <Feather name="plus" size={16} color="#fff" />}
-            <Text style={{ fontSize: 14, fontFamily: 'Inter_700Bold', color: '#fff' }}>
+            <Text style={{ fontSize: 14, ...font('bold'), color: '#fff' }}>
               {saving ? 'Creating…' : 'Create Book Work'}
             </Text>
           </Pressable>
@@ -406,10 +415,14 @@ function CreateWorkModal({ visible, onClose, onCreated }: {
 
 export default function BooksScreen() {
   const colors = useColors();
+  const T = useVellumTokens();
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const queryClient = useQueryClient();
   const [createOpen, setCreateOpen] = useState(false);
+
+  // Build (and cache) the stage palette with runtime tokens
+  _stagePaletteCache = buildStagePalette(T, colors.primary);
 
   const { data, isLoading, isError, refetch } = useQuery<{ books: BookEntry[] }>({
     queryKey: ['mobile', 'books'],
@@ -464,7 +477,7 @@ export default function BooksScreen() {
             })}
           >
             <Feather name="plus" size={14} color="#fff" />
-            <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: '#fff' }}>New Book</Text>
+            <Text style={{ fontSize: 12, ...font('semibold'), color: '#fff' }}>New Book</Text>
           </Pressable>
         </View>
         <Text style={[styles.pageSubtitle, { color: colors.mutedForeground }]}>
@@ -495,7 +508,7 @@ export default function BooksScreen() {
               })}
             >
               <Feather name="plus" size={15} color="#fff" />
-              <Text style={{ fontSize: 14, fontFamily: 'Inter_600SemiBold', color: '#fff' }}>New Book</Text>
+              <Text style={{ fontSize: 14, ...font('semibold'), color: '#fff' }}>New Book</Text>
             </Pressable>
           </View>
         ) : (
@@ -508,7 +521,7 @@ export default function BooksScreen() {
             )}
             {published.length > 0 && (
               <>
-                <Text style={[styles.sectionLabel, { color: '#16a34a' }]}>PUBLISHED</Text>
+                <Text style={[styles.sectionLabel, { color: T.green }]}>PUBLISHED</Text>
                 {published.map(b => <BookCard key={b.id} book={b} />)}
               </>
             )}
@@ -538,10 +551,10 @@ const styles = StyleSheet.create({
   content: { paddingHorizontal: 16, paddingTop: 16 },
   headerRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 4 },
   pageTitle: { fontSize: 26, fontFamily: 'Merriweather_700Bold' },
-  pageSubtitle: { fontSize: 13, fontFamily: 'Inter_400Regular', marginBottom: 20 },
+  pageSubtitle: { fontSize: 13, ...font('regular'), marginBottom: 20 },
   sectionLabel: {
     fontSize: 10,
-    fontFamily: 'Inter_600SemiBold',
+    ...font('semibold'),
     letterSpacing: 1.2,
     textTransform: 'uppercase',
     marginBottom: 8,
@@ -555,20 +568,20 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   cardHeader: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  cardTitle: { flex: 1, fontSize: 15, fontFamily: 'Inter_600SemiBold' },
+  cardTitle: { flex: 1, fontSize: 15, ...font('semibold') },
   stageBadge: { borderRadius: 6, paddingHorizontal: 7, paddingVertical: 2 },
-  stageBadgeText: { fontSize: 10, fontFamily: 'Inter_600SemiBold', letterSpacing: 0.5 },
-  cardDesc: { fontSize: 12, fontFamily: 'Inter_400Regular', lineHeight: 17 },
-  stageLabel: { fontSize: 11, fontFamily: 'Inter_500Medium' },
+  stageBadgeText: { fontSize: 10, ...font('semibold'), letterSpacing: 0.5 },
+  cardDesc: { fontSize: 12, ...font('regular'), lineHeight: 17 },
+  stageLabel: { fontSize: 11, ...font('medium') },
   progressTrack: { height: 4, borderRadius: 2, overflow: 'hidden' },
   progressFill: { height: '100%', borderRadius: 2 },
   statsRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 2 },
   statChip: { flexDirection: 'row', alignItems: 'center', gap: 3 },
-  statText: { fontSize: 11, fontFamily: 'Inter_400Regular' },
+  statText: { fontSize: 11, ...font('regular') },
   emptyBox: { alignItems: 'center', paddingTop: 64, gap: 12 },
-  emptyText: { fontSize: 15, fontFamily: 'Inter_500Medium' },
+  emptyText: { fontSize: 15, ...font('medium') },
   emptyHint: {
-    fontSize: 12, fontFamily: 'Inter_400Regular',
+    fontSize: 12, ...font('regular'),
     textAlign: 'center', maxWidth: 260, lineHeight: 18,
   },
   // Other Works section
@@ -577,20 +590,20 @@ const styles = StyleSheet.create({
     borderRadius: 10, borderWidth: 1,
     padding: 12, marginBottom: 8,
   },
-  otherTitle: { fontSize: 13, fontFamily: 'Inter_500Medium' },
-  otherType: { fontSize: 10, fontFamily: 'Inter_600SemiBold', letterSpacing: 0.6, marginTop: 2 },
+  otherTitle: { fontSize: 13, ...font('medium') },
+  otherType: { fontSize: 10, ...font('semibold'), letterSpacing: 0.6, marginTop: 2 },
   promoteBtn: {
     flexDirection: 'row', alignItems: 'center', gap: 4,
     paddingHorizontal: 10, paddingVertical: 6,
     borderRadius: 8, borderWidth: 1,
     minWidth: 80, justifyContent: 'center',
   },
-  promoteBtnText: { fontSize: 11, fontFamily: 'Inter_600SemiBold' },
+  promoteBtnText: { fontSize: 11, ...font('semibold') },
   // Create Work modal
   input: {
     borderWidth: 1, borderRadius: 8,
     paddingHorizontal: 12, paddingVertical: 11,
-    fontSize: 14, fontFamily: 'Inter_400Regular',
+    fontSize: 14, ...font('regular'),
   },
   inputMulti: { minHeight: 72, textAlignVertical: 'top' },
 });

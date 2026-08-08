@@ -22,6 +22,7 @@ import { mobileFetch } from '@/lib/api';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { font } from '@/lib/typography';
+import { useVellumTokens } from '@/lib/tokens';
 import * as Haptics from 'expo-haptics';
 
 const _semibold = font('semibold');
@@ -59,6 +60,7 @@ function DocRow({
   onDelete: () => void;
 }) {
   const colors = useColors();
+  const T = useVellumTokens();
   const swipeRef = useRef<Swipeable>(null);
   const isWeb = Platform.OS === 'web';
 
@@ -69,7 +71,7 @@ function DocRow({
           swipeRef.current?.close();
           onDelete();
         }}
-        style={[styles.deleteAction, { backgroundColor: '#ef4444' }]}
+        style={[styles.deleteAction, { backgroundColor: T.rust }]}
       >
         <Feather name="trash-2" size={18} color="#fff" />
         <Text style={styles.deleteActionText}>Delete</Text>
@@ -124,7 +126,7 @@ function DocRow({
           onPress={onDelete}
           style={{ position: 'absolute', right: 12, top: 0, bottom: 0, justifyContent: 'center' }}
         >
-          <Feather name="trash-2" size={16} color="#ef4444" />
+          <Feather name="trash-2" size={16} color={T.rust} />
         </Pressable>
       </View>
     );
@@ -148,6 +150,7 @@ function DocRow({
 
 export default function WriteScreen() {
   const colors = useColors();
+  const T = useVellumTokens();
   const insets = useSafeAreaInsets();
   const router = useRouter();
 
@@ -387,9 +390,9 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     borderRadius: 10,
   },
-  deleteActionText: { color: '#fff', fontSize: 13, fontWeight: '600' },
+  deleteActionText: { color: '#fff', fontSize: 13, ...font('semibold') },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   empty: { alignItems: 'center', paddingTop: 80, gap: 12 },
-  emptyTitle: { fontSize: 18, fontWeight: '600', marginTop: 8 },
+  emptyTitle: { fontSize: 18, ...font('semibold'), marginTop: 8 },
   emptySubtitle: { fontSize: 14 },
 });

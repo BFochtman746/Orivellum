@@ -17,7 +17,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 const FileSystem = require('expo-file-system/legacy') as typeof import('expo-file-system/legacy');
 import * as Sharing from 'expo-sharing';
 import { mobileFetch } from '@/lib/api';
-import { useRouter } from 'expo-router';
+import { useRouter, Stack } from 'expo-router';
+import { useVellumTokens } from '@/lib/tokens';
+import { font } from '@/lib/typography';
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -99,7 +101,7 @@ function BackupRow({
           </Text>
           {today && (
             <View style={[bkStyles.todayBadge, { backgroundColor: colors.primary + '20' }]}>
-              <Text style={{ fontSize: 9, fontFamily: 'Inter_600SemiBold', color: colors.primary }}>
+              <Text style={{ fontSize: 9, ...font('semibold'), color: colors.primary }}>
                 TODAY
               </Text>
             </View>
@@ -144,6 +146,7 @@ function BackupRow({
 
 export default function BackupsScreen() {
   const colors = useColors();
+  const T = useVellumTokens();
   const insets = useSafeAreaInsets();
   const router = useRouter();
 
@@ -252,6 +255,7 @@ export default function BackupsScreen() {
 
   return (
     <View style={[bkStyles.container, { backgroundColor: colors.background }]}>
+      <Stack.Screen options={{ title: 'Backups', headerShown: true, headerStyle: { backgroundColor: colors.background }, headerTintColor: colors.foreground }} />
       {/* Header */}
       <View
         style={[
@@ -339,14 +343,14 @@ export default function BackupsScreen() {
         </Pressable>
 
         {!!createErr && (
-          <Text style={[bkStyles.errMsg, { color: '#ef4444' }]}>{createErr}</Text>
+          <Text style={[bkStyles.errMsg, { color: T.rust }]}>{createErr}</Text>
         )}
 
         {/* Restore note */}
         <View style={[bkStyles.noteCard, { backgroundColor: colors.muted + '50', borderColor: colors.border }]}>
           <Feather name="info" size={13} color={colors.mutedForeground} style={{ marginTop: 1 }} />
           <Text style={[bkStyles.noteText, { color: colors.mutedForeground }]}>
-            <Text style={{ fontFamily: 'Inter_600SemiBold' }}>Restore requires the desktop web interface.</Text>
+            <Text style={{ ...font('semibold') }}>Restore requires the desktop web interface.</Text>
             {'  '}Save the ZIP to Files or send via AirDrop, then use the web Backups page to restore.
           </Text>
         </View>
@@ -417,7 +421,7 @@ const bkStyles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
   backBtn: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
-  headerTitle: { fontSize: 17, fontFamily: 'Inter_600SemiBold' },
+  headerTitle: { fontSize: 17, ...font('semibold') },
 
   scroll: { padding: 16, gap: 12 },
 
@@ -434,25 +438,25 @@ const bkStyles = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
     flexShrink: 0,
   },
-  infoTitle: { fontSize: 14, fontFamily: 'Inter_600SemiBold', marginBottom: 3 },
-  infoSub:   { fontSize: 12, fontFamily: 'Inter_400Regular', lineHeight: 17 },
+  infoTitle: { fontSize: 14, ...font('semibold'), marginBottom: 3 },
+  infoSub:   { fontSize: 12, ...font('regular'), lineHeight: 17 },
 
   primaryBtn: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
     gap: 8, paddingVertical: 14, borderRadius: 12,
   },
-  primaryBtnText: { fontSize: 15, fontFamily: 'Inter_600SemiBold', color: '#fff' },
+  primaryBtnText: { fontSize: 15, ...font('semibold'), color: '#fff' },
 
-  errMsg: { fontSize: 12, fontFamily: 'Inter_400Regular', textAlign: 'center' },
+  errMsg: { fontSize: 12, ...font('regular'), textAlign: 'center' },
 
   noteCard: {
     flexDirection: 'row', alignItems: 'flex-start',
     gap: 8, padding: 12, borderRadius: 8, borderWidth: 1,
   },
-  noteText: { flex: 1, fontSize: 12, fontFamily: 'Inter_400Regular', lineHeight: 17 },
+  noteText: { flex: 1, fontSize: 12, ...font('regular'), lineHeight: 17 },
 
   sectionLabel: {
-    fontSize: 11, fontFamily: 'Inter_600SemiBold',
+    fontSize: 11, ...font('semibold'),
     textTransform: 'uppercase', letterSpacing: 0.8,
     marginTop: 8,
   },
@@ -464,7 +468,7 @@ const bkStyles = StyleSheet.create({
     borderRadius: 10, borderWidth: 1,
   },
   emptyText: {
-    fontSize: 13, fontFamily: 'Inter_400Regular',
+    fontSize: 13, ...font('regular'),
     textAlign: 'center', lineHeight: 19,
   },
 
@@ -473,7 +477,7 @@ const bkStyles = StyleSheet.create({
     paddingHorizontal: 16, paddingVertical: 8,
     borderRadius: 8, borderWidth: 1,
   },
-  retryText: { fontSize: 12, fontFamily: 'Inter_500Medium' },
+  retryText: { fontSize: 12, ...font('medium') },
 
   row: {
     flexDirection: 'row', alignItems: 'center', gap: 12,
@@ -483,8 +487,8 @@ const bkStyles = StyleSheet.create({
     width: 36, height: 36, borderRadius: 8,
     alignItems: 'center', justifyContent: 'center', flexShrink: 0,
   },
-  rowName: { fontSize: 13, fontFamily: 'Inter_500Medium', flexShrink: 1 },
-  rowMeta: { fontSize: 11, fontFamily: 'Inter_400Regular', marginTop: 2 },
+  rowName: { fontSize: 13, ...font('medium'), flexShrink: 1 },
+  rowMeta: { fontSize: 11, ...font('regular'), marginTop: 2 },
   todayBadge: { paddingHorizontal: 5, paddingVertical: 2, borderRadius: 4, flexShrink: 0 },
 
   dlBtn: {

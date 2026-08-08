@@ -26,8 +26,10 @@ import {
 import { useColors } from '@/hooks/useColors';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useRouter, Stack } from 'expo-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useVellumTokens, alpha } from '@/lib/tokens';
+import { font } from '@/lib/typography';
 
 const DOMAIN = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
 const BASE = `https://${DOMAIN}/api`;
@@ -78,14 +80,21 @@ interface Finding {
   created_at: string;
 }
 
-// ── Severity colors ───────────────────────────────────────────────────────────
-
+// ── Severity colors — populated lazily from tokens in GovernanceScreen ────────
+// (Defined as a mutable record so the main component can fill it with T values)
 const SEV_COLOR: Record<string, string> = {
-  critical: '#dc2626',
-  high: '#f97316',
-  medium: '#f59e0b',
-  low: '#6b7280',
+  critical: '#B2431E',  // placeholder — overwritten by initSevColors()
+  high:     '#B2431E',
+  medium:   '#9A7B2E',
+  low:      '#6b7280',
 };
+
+function initSevColors(T: ReturnType<typeof useVellumTokens>, mutedFg: string) {
+  SEV_COLOR.critical = T.rust;
+  SEV_COLOR.high     = alpha(T.rust, 0.75);
+  SEV_COLOR.medium   = T.gilt;
+  SEV_COLOR.low      = mutedFg;
+}
 
 // ── Section wrapper ───────────────────────────────────────────────────────────
 
@@ -113,10 +122,14 @@ function Section({ title, icon, badge, children }: {
 
 export default function GovernanceScreen() {
   const colors = useColors();
+  const T = useVellumTokens();
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const qc = useQueryClient();
   const isWeb = Platform.OS === 'web';
+
+  // Initialise severity colours from tokens (runtime, theme-aware)
+  initSevColors(T, colors.mutedForeground);
 
   const [refreshing, setRefreshing] = useState(false);
   const [checkingChain, setCheckingChain] = useState(false);
@@ -254,6 +267,7 @@ export default function GovernanceScreen() {
 
   return (
     <View style={[s.container, { backgroundColor: colors.background }]}>
+      <Stack.Screen options={{ title: 'Governance', headerShown: true, headerStyle: { backgroundColor: colors.background }, headerTintColor: colors.foreground }} />
       {/* Header */}
       <View style={[s.header, { paddingTop: topPad + 8, borderBottomColor: colors.border, backgroundColor: colors.background }]}>
         <Pressable onPress={() => router.back()} style={s.backRow} hitSlop={8}>
@@ -278,9 +292,9 @@ export default function GovernanceScreen() {
         {stats && (
           <View style={s.statsRow}>
             {[
-              { label: 'Pending', value: stats.pending, color: '#f59e0b' },
-              { label: 'Approved', value: stats.approved, color: '#22c55e' },
-              { label: 'Rejected', value: stats.rejected, color: '#ef4444' },
+              { label: 'Pending', value: stats.pending, color: T.gilt },
+              { label: 'Approved', value: stats.approved, color: T.green },
+              { label: 'Rejected', value: stats.rejected, color: T.rust },
               { label: 'Total', value: stats.total, color: colors.mutedForeground },
             ].map((item) => (
               <View key={item.label} style={[s.statCard, { backgroundColor: item.color + '14', borderColor: item.color + '33' }]}>
@@ -299,7 +313,7 @@ export default function GovernanceScreen() {
               s.healthCard,
               {
                 backgroundColor: colors.card,
-                borderColor: unackedCount > 0 ? '#f59e0b55' : '#22c55e33',
+                borderColor: unackedCount > 0 ? alpha(T.gilt, 0.33) : alpha(T.green, 0.2),
                 opacity: pressed ? 0.8 : 1,
               },
             ]}
@@ -313,17 +327,17 @@ export default function GovernanceScreen() {
                 {
                   backgroundColor: passRate == null
                     ? colors.muted
-                    : passRate >= 80 ? '#22c55e22' : passRate >= 50 ? '#f59e0b22' : '#ef444422',
+                    : passRate >= 80 ? alpha(T.green, 0.13) : passRate >= 50 ? alpha(T.gilt, 0.13) : alpha(T.rust, 0.13),
                   borderColor: passRate == null
                     ? colors.border
-                    : passRate >= 80 ? '#22c55e66' : passRate >= 50 ? '#f59e0b66' : '#ef444466',
+                    : passRate >= 80 ? alpha(T.green, 0.4) : passRate >= 50 ? alpha(T.gilt, 0.4) : alpha(T.rust, 0.4),
                 },
               ]}>
                 {passRate != null ? (
                   <Text style={[
                     s.healthRate,
                     {
-                      color: passRate >= 80 ? '#22c55e' : passRate >= 50 ? '#f59e0b' : '#ef4444',
+                      color: passRate >= 80 ? T.green : passRate >= 50 ? T.gilt : T.rust,
                     },
                   ]}>
                     {passRate}%
@@ -348,9 +362,9 @@ export default function GovernanceScreen() {
               {/* Regression badge + chevron */}
               <View style={{ alignItems: 'flex-end', gap: 4 }}>
                 {unackedCount > 0 && (
-                  <View style={[s.regressionBadge, { backgroundColor: '#f59e0b22', borderColor: '#f59e0b55' }]}>
-                    <Feather name="alert-triangle" size={10} color="#f59e0b" />
-                    <Text style={[s.regressionText, { color: '#f59e0b' }]}>
+                  <View style={[s.regressionBadge, { backgroundColor: alpha(T.gilt, 0.13), borderColor: alpha(T.gilt, 0.33) }]}>
+                    <Feather name="alert-triangle" size={10} color={T.gilt} />
+                    <Text style={[s.regressionText, { color: T.gilt }]}>
                       {unackedCount} regression{unackedCount !== 1 ? 's' : ''}
                     </Text>
                   </View>
@@ -365,22 +379,22 @@ export default function GovernanceScreen() {
         <Section title="Audit Chain Integrity" icon="lock">
           {chainResult && (
             <View style={[s.chainResult, {
-              backgroundColor: chainResult.ok ? '#22c55e14' : '#ef444414',
-              borderColor: chainResult.ok ? '#22c55e44' : '#ef444444',
+              backgroundColor: chainResult.ok ? alpha(T.green, 0.08) : alpha(T.rust, 0.08),
+              borderColor: chainResult.ok ? alpha(T.green, 0.27) : alpha(T.rust, 0.27),
             }]}>
               <Feather name={chainResult.ok ? 'check-circle' : 'alert-triangle'} size={16}
-                color={chainResult.ok ? '#22c55e' : '#ef4444'} />
+                color={chainResult.ok ? T.green : T.rust} />
               <View style={{ flex: 1 }}>
-                <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: chainResult.ok ? '#22c55e' : '#ef4444' }}>
+                <Text style={{ fontSize: 13, ...font('semibold'), color: chainResult.ok ? T.green : T.rust }}>
                   {chainResult.ok ? 'Chain intact' : 'Chain broken'}
                 </Text>
                 {chainResult.rows_checked != null && (
-                  <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: colors.mutedForeground }}>
+                  <Text style={{ fontSize: 11, ...font('regular'), color: colors.mutedForeground }}>
                     {chainResult.rows_checked} rows verified · no tampering detected
                   </Text>
                 )}
                 {chainResult.reason && !chainResult.ok && (
-                  <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: '#ef4444', marginTop: 2 }}>
+                  <Text style={{ fontSize: 11, ...font('regular'), color: T.rust, marginTop: 2 }}>
                     {chainResult.reason}
                   </Text>
                 )}
@@ -405,11 +419,11 @@ export default function GovernanceScreen() {
             {conflicts.map((conflict) => (
               <View key={conflict.id} style={[s.conflictCard, { borderColor: colors.border }]}>
                 <View style={s.conflictHeader}>
-                  <Text style={{ fontSize: 10, fontFamily: 'Inter_600SemiBold', color: '#f59e0b', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                  <Text style={{ fontSize: 10, ...font('semibold'), color: T.gilt, textTransform: 'uppercase', letterSpacing: 0.5 }}>
                     {conflict.type === 'negation' ? 'Negation' : 'Conflicting values'}
                   </Text>
                   {conflict.work_title && (
-                    <Text style={{ fontSize: 10, fontFamily: 'Inter_400Regular', color: colors.mutedForeground }}>
+                    <Text style={{ fontSize: 10, ...font('regular'), color: colors.mutedForeground }}>
                       {conflict.work_title}
                     </Text>
                   )}
@@ -418,13 +432,13 @@ export default function GovernanceScreen() {
                 <View style={{ flexDirection: 'row', gap: 8, marginBottom: 10 }}>
                   {[conflict.claim_a, conflict.claim_b].map((claim, idx) => (
                     <View key={claim.id} style={[s.claimBox, { backgroundColor: colors.muted + '55', borderColor: colors.border, flex: 1 }]}>
-                      <Text style={{ fontSize: 9, fontFamily: 'Inter_700Bold', color: colors.mutedForeground, marginBottom: 2 }}>
+                      <Text style={{ fontSize: 9, ...font('bold'), color: colors.mutedForeground, marginBottom: 2 }}>
                         {idx === 0 ? 'A' : 'B'}
                       </Text>
-                      <Text style={{ fontSize: 12, fontFamily: 'Inter_500Medium', color: colors.foreground }} numberOfLines={2}>
+                      <Text style={{ fontSize: 12, ...font('medium'), color: colors.foreground }} numberOfLines={2}>
                         {claim.predicate}: {claim.value}
                       </Text>
-                      <Text style={{ fontSize: 10, fontFamily: 'Inter_400Regular', color: colors.mutedForeground, marginTop: 2 }}>
+                      <Text style={{ fontSize: 10, ...font('regular'), color: colors.mutedForeground, marginTop: 2 }}>
                         {Math.round(claim.confidence * 100)}% confidence
                       </Text>
                     </View>
@@ -445,7 +459,7 @@ export default function GovernanceScreen() {
                     >
                       {resolvingConflict === conflict.id
                         ? <ActivityIndicator size="small" color={colors.primary} />
-                        : <Text style={{ fontSize: 11, fontFamily: 'Inter_500Medium', color: colors.foreground, textAlign: 'center' }}>
+                        : <Text style={{ fontSize: 11, ...font('medium'), color: colors.foreground, textAlign: 'center' }}>
                             {res === 'keep_a' ? 'Keep A' : res === 'keep_b' ? 'Keep B' : 'Keep Both'}
                           </Text>
                       }
@@ -464,11 +478,11 @@ export default function GovernanceScreen() {
               <View key={finding.id} style={[s.findingRow, { borderTopColor: colors.border }]}>
                 <View style={[s.sevDot, { backgroundColor: SEV_COLOR[finding.severity] ?? colors.mutedForeground }]} />
                 <View style={{ flex: 1 }}>
-                  <Text style={{ fontSize: 13, fontFamily: 'Inter_400Regular', color: colors.foreground }} numberOfLines={2}>
+                  <Text style={{ fontSize: 13, ...font('regular'), color: colors.foreground }} numberOfLines={2}>
                     {finding.message}
                   </Text>
                   {finding.work_title && (
-                    <Text style={{ fontSize: 10, fontFamily: 'Inter_400Regular', color: colors.mutedForeground, marginTop: 1 }}>
+                    <Text style={{ fontSize: 10, ...font('regular'), color: colors.mutedForeground, marginTop: 1 }}>
                       {finding.work_title}
                     </Text>
                   )}
@@ -497,10 +511,10 @@ export default function GovernanceScreen() {
             </Text>
             {outboxItems.slice(0, 10).map((evt) => (
               <View key={evt.id} style={[s.outboxRow, { borderTopColor: colors.border }]}>
-                <Text style={{ fontSize: 12, fontFamily: 'Inter_500Medium', color: colors.foreground }} numberOfLines={1}>
+                <Text style={{ fontSize: 12, ...font('medium'), color: colors.foreground }} numberOfLines={1}>
                   {evt.event_type}
                 </Text>
-                <Text style={{ fontSize: 10, fontFamily: 'Inter_400Regular', color: colors.mutedForeground }}>
+                <Text style={{ fontSize: 10, ...font('regular'), color: colors.mutedForeground }}>
                   {evt.object_type ?? ''}{evt.object_id ? ' · ' + evt.object_id.slice(0, 8) : ''}
                 </Text>
               </View>
@@ -515,12 +529,12 @@ export default function GovernanceScreen() {
 
         {/* All clear */}
         {conflicts.length === 0 && findings.length === 0 && outboxItems.length === 0 && (
-          <View style={[s.allClear, { backgroundColor: '#22c55e12', borderColor: '#22c55e33' }]}>
-            <Feather name="check-circle" size={24} color="#22c55e" />
-            <Text style={{ fontSize: 14, fontFamily: 'Inter_600SemiBold', color: '#22c55e', marginTop: 8 }}>
+          <View style={[s.allClear, { backgroundColor: alpha(T.green, 0.07), borderColor: alpha(T.green, 0.2) }]}>
+            <Feather name="check-circle" size={24} color={T.green} />
+            <Text style={{ fontSize: 14, ...font('semibold'), color: T.green, marginTop: 8 }}>
               All clear
             </Text>
-            <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: colors.mutedForeground, textAlign: 'center', marginTop: 4 }}>
+            <Text style={{ fontSize: 12, ...font('regular'), color: colors.mutedForeground, textAlign: 'center', marginTop: 4 }}>
               No conflicts, findings, or pending outbox events.
             </Text>
           </View>
@@ -536,20 +550,20 @@ const s = StyleSheet.create({
   container: { flex: 1 },
   header: { paddingHorizontal: 16, paddingBottom: 14, borderBottomWidth: 1 },
   backRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 10 },
-  backLabel: { fontSize: 14, fontFamily: 'Inter_500Medium' },
-  title: { fontSize: 22, fontFamily: 'Inter_700Bold', letterSpacing: -0.3 },
-  subtitle: { fontSize: 12, fontFamily: 'Inter_400Regular', marginTop: 2 },
+  backLabel: { fontSize: 14, ...font('medium') },
+  title: { fontSize: 22, ...font('bold'), letterSpacing: -0.3 },
+  subtitle: { fontSize: 12, ...font('regular'), marginTop: 2 },
   // Stats
   statsRow: { flexDirection: 'row', gap: 8, marginBottom: 14 },
   statCard: { flex: 1, borderRadius: 8, borderWidth: 1, padding: 10, alignItems: 'center' },
-  statValue: { fontSize: 20, fontFamily: 'Inter_700Bold' },
-  statLabel: { fontSize: 10, fontFamily: 'Inter_400Regular', marginTop: 2 },
+  statValue: { fontSize: 20, ...font('bold') },
+  statLabel: { fontSize: 10, ...font('regular'), marginTop: 2 },
   // Section
   section: { borderRadius: 10, borderWidth: 1, padding: 14, marginBottom: 14 },
   sectionHead: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 12 },
-  sectionTitle: { fontSize: 10, fontFamily: 'Inter_700Bold', letterSpacing: 1 },
-  badge: { backgroundColor: '#ef4444', borderRadius: 8, paddingHorizontal: 5, paddingVertical: 1 },
-  badgeText: { fontSize: 9, fontFamily: 'Inter_700Bold', color: '#fff' },
+  sectionTitle: { fontSize: 10, ...font('bold'), letterSpacing: 1 },
+  badge: { backgroundColor: '#B2431E', borderRadius: 8, paddingHorizontal: 5, paddingVertical: 1 },
+  badgeText: { fontSize: 9, ...font('bold'), color: '#fff' },
   // Chain
   chainResult: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, borderRadius: 8, borderWidth: 1, padding: 10, marginBottom: 10 },
   // Action button
@@ -557,7 +571,7 @@ const s = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'flex-start',
     borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 7, marginTop: 4,
   },
-  actionBtnText: { fontSize: 13, fontFamily: 'Inter_500Medium' },
+  actionBtnText: { fontSize: 13, ...font('medium') },
   // Conflicts
   conflictCard: { borderWidth: 1, borderRadius: 8, padding: 10, marginBottom: 10 },
   conflictHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
@@ -569,16 +583,16 @@ const s = StyleSheet.create({
   resolveIcon: { padding: 4 },
   // Outbox
   outboxRow: { paddingVertical: 8, borderTopWidth: StyleSheet.hairlineWidth },
-  metaText: { fontSize: 12, fontFamily: 'Inter_400Regular', marginBottom: 6 },
+  metaText: { fontSize: 12, ...font('regular'), marginBottom: 6 },
   // All clear
   allClear: { borderRadius: 12, borderWidth: 1, padding: 24, alignItems: 'center', marginTop: 8 },
   // Prompt Health card
   healthCard: { borderRadius: 10, borderWidth: 1, padding: 12, marginBottom: 14 },
   healthInner: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   healthRing: { width: 48, height: 48, borderRadius: 24, borderWidth: 2, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
-  healthRate: { fontSize: 13, fontFamily: 'Inter_700Bold' },
-  healthTitle: { fontSize: 13, fontFamily: 'Inter_600SemiBold', marginBottom: 2 },
-  healthSub: { fontSize: 11, fontFamily: 'Inter_400Regular', lineHeight: 16 },
+  healthRate: { fontSize: 13, ...font('bold') },
+  healthTitle: { fontSize: 13, ...font('semibold'), marginBottom: 2 },
+  healthSub: { fontSize: 11, ...font('regular'), lineHeight: 16 },
   regressionBadge: { flexDirection: 'row', alignItems: 'center', gap: 3, borderWidth: 1, borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 },
-  regressionText: { fontSize: 10, fontFamily: 'Inter_600SemiBold' },
+  regressionText: { fontSize: 10, ...font('semibold') },
 });

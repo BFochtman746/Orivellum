@@ -18,6 +18,7 @@ import { Feather } from '@expo/vector-icons';
 import { mobileFetch } from '@/lib/api';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { font } from '@/lib/typography';
+import { useVellumTokens, alpha } from '@/lib/tokens';
 import { getApiToken } from '@/lib/token';
 
 const DOMAIN = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
@@ -86,10 +87,10 @@ function categoryIcon(cat: string): string {
 
 // ── Run status ─────────────────────────────────────────────────────────────────
 
-function RunStatusIcon({ status, colors }: { status: ActionRun['status']; colors: ReturnType<typeof useColors> }) {
+function RunStatusIcon({ status, colors, T }: { status: ActionRun['status']; colors: ReturnType<typeof useColors>; T: ReturnType<typeof useVellumTokens> }) {
   if (status === 'running') return <ActivityIndicator size="small" color={colors.primary} />;
-  if (status === 'done')    return <Feather name="check-circle" size={15} color="#22c55e" />;
-  return <Feather name="x-circle" size={15} color="#ef4444" />;
+  if (status === 'done')    return <Feather name="check-circle" size={15} color={T.green} />;
+  return <Feather name="x-circle" size={15} color={T.rust} />;
 }
 
 // ── Share output file ──────────────────────────────────────────────────────────
@@ -130,7 +131,7 @@ async function shareOutput(outputPath: string, label: string | null) {
 
 // ── Share button ───────────────────────────────────────────────────────────────
 
-function ShareOutputButton({ run, colors }: { run: ActionRun; colors: ReturnType<typeof useColors> }) {
+function ShareOutputButton({ run, colors, T }: { run: ActionRun; colors: ReturnType<typeof useColors>; T: ReturnType<typeof useVellumTokens> }) {
   const [state, setState] = useState<'idle' | 'busy' | 'done'>('idle');
   const handleShare = async () => {
     if (state === 'busy' || !run.output_path) return;
@@ -148,8 +149,8 @@ function ShareOutputButton({ run, colors }: { run: ActionRun; colors: ReturnType
     <Pressable onPress={handleShare} hitSlop={8} style={[st.runBtn, { borderColor: colors.border }]} disabled={state === 'busy'}>
       {state === 'busy'
         ? <ActivityIndicator size="small" color={colors.primary} />
-        : <Feather name={state === 'done' ? 'check' : 'download'} size={13} color={state === 'done' ? '#22c55e' : colors.primary} />}
-      <Text style={[st.runBtnLabel, { color: state === 'done' ? '#22c55e' : colors.primary }]}>
+        : <Feather name={state === 'done' ? 'check' : 'download'} size={13} color={state === 'done' ? T.green : colors.primary} />}
+      <Text style={[st.runBtnLabel, { color: state === 'done' ? T.green : colors.primary }]}>
         {state === 'done' ? 'Done' : Platform.OS === 'web' ? 'Download' : 'Share'}
       </Text>
     </Pressable>
@@ -161,23 +162,25 @@ function ShareOutputButton({ run, colors }: { run: ActionRun; colors: ReturnType
 function RunRow({
   run,
   colors,
+  T,
   onRetry,
 }: {
   run: ActionRun;
   colors: ReturnType<typeof useColors>;
+  T: ReturnType<typeof useVellumTokens>;
   onRetry: (runId: string) => void;
 }) {
   return (
     <View style={[st.runRow, { borderBottomColor: colors.border }]}>
       <View style={{ width: 20, alignItems: 'center', paddingTop: 1 }}>
-        <RunStatusIcon status={run.status} colors={colors} />
+        <RunStatusIcon status={run.status} colors={colors} T={T} />
       </View>
       <View style={{ flex: 1, minWidth: 0 }}>
         <Text style={[st.runName, { color: colors.foreground }]} numberOfLines={1}>
           {actionTitle(run.action_name)}
         </Text>
         {run.status === 'error' && run.error && (
-          <Text style={[st.runDetail, { color: '#ef4444' }]} numberOfLines={2}>{run.error}</Text>
+          <Text style={[st.runDetail, { color: T.rust }]} numberOfLines={2}>{run.error}</Text>
         )}
         {run.status !== 'error' && run.output_label && (
           <Text style={[st.runDetail, { color: colors.mutedForeground }]} numberOfLines={1}>{run.output_label}</Text>
@@ -188,7 +191,7 @@ function RunRow({
       </View>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 0 }}>
         {run.status === 'done' && run.output_path && (
-          <ShareOutputButton run={run} colors={colors} />
+          <ShareOutputButton run={run} colors={colors} T={T} />
         )}
         {run.status === 'error' && (
           <Pressable onPress={() => onRetry(run.id)} hitSlop={8} style={[st.runBtn, { borderColor: colors.border }]}>
@@ -298,6 +301,7 @@ function ActionSheet({
   onExecuted: () => void;
 }) {
   const colors = useColors();
+  const T = useVellumTokens();
   const insets = useSafeAreaInsets();
   const [rendered, setRendered] = useState(false);
   const slideAnim = useRef(new Animated.Value(600)).current;
@@ -442,7 +446,7 @@ function ActionSheet({
                   style={[
                     st.workPickerBtn,
                     {
-                      borderColor: missingWork ? '#f59e0b' : colors.border,
+                      borderColor: missingWork ? T.gilt : colors.border,
                       backgroundColor: colors.background,
                     },
                   ]}
@@ -471,7 +475,7 @@ function ActionSheet({
                     {key} *
                   </Text>
                   <TextInput
-                    style={[st.textInput, { borderColor: inputs[key] ? colors.border : '#f59e0b', color: colors.foreground, backgroundColor: colors.background }]}
+                    style={[st.textInput, { borderColor: inputs[key] ? colors.border : T.gilt, color: colors.foreground, backgroundColor: colors.background }]}
                     placeholder={fieldSchema.description ?? key}
                     placeholderTextColor={colors.mutedForeground}
                     value={inputs[key] ?? ''}
@@ -484,9 +488,9 @@ function ActionSheet({
 
             {/* Validation hint */}
             {!canRun && (
-              <View style={[st.validationHint, { backgroundColor: '#f59e0b18', borderColor: '#f59e0b44' }]}>
-                <Feather name="alert-circle" size={13} color="#f59e0b" />
-                <Text style={{ fontSize: 12, ...font('regular'), color: '#f59e0b', flex: 1 }}>
+              <View style={[st.validationHint, { backgroundColor: alpha(T.gilt, 0.1), borderColor: alpha(T.gilt, 0.27) }]}>
+                <Feather name="alert-circle" size={13} color={T.gilt} />
+                <Text style={{ fontSize: 12, ...font('regular'), color: T.gilt, flex: 1 }}>
                   {missingWork ? 'Select a Work to continue.' : `Fill in: ${missingText.join(', ')}`}
                 </Text>
               </View>
@@ -609,6 +613,7 @@ function ActionCard({
 
 export default function ActionsScreen() {
   const colors = useColors();
+  const T = useVellumTokens();
   const insets = useSafeAreaInsets();
 
   // Catalog
@@ -760,8 +765,8 @@ export default function ActionsScreen() {
           </View>
         ) : catalogError ? (
           <View style={[st.emptyCard, { borderColor: colors.border }]}>
-            <Feather name="alert-circle" size={20} color="#ef4444" />
-            <Text style={[st.emptyText, { color: '#ef4444' }]}>{catalogError}</Text>
+            <Feather name="alert-circle" size={20} color={T.rust} />
+            <Text style={[st.emptyText, { color: T.rust }]}>{catalogError}</Text>
             <Pressable onPress={fetchCatalog} style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}>
               <Text style={[st.retryLink, { color: colors.primary }]}>Retry</Text>
             </Pressable>
@@ -819,6 +824,7 @@ export default function ActionsScreen() {
                 key={run.id}
                 run={run}
                 colors={colors}
+                T={T}
                 onRetry={handleRetry}
               />
             ))}

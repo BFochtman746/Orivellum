@@ -19,11 +19,13 @@ import {
   View,
 } from 'react-native';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useRouter, Stack } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { useColors } from '@/hooks/useColors';
 import { mobileFetch } from '@/lib/api';
+import { useVellumTokens, alpha } from '@/lib/tokens';
+import { font } from '@/lib/typography';
 
 const DOMAIN = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
 const API    = `https://${DOMAIN}/api`;
@@ -86,6 +88,7 @@ function TopicCard({
   colors: ReturnType<typeof useColors>;
   onDocPress: (docId: string) => void;
 }) {
+  const T = useVellumTokens();
   const { data: detail, isLoading: detailLoading } = useQuery<TopicDetail>({
     queryKey: ['topic', topic.id],
     queryFn: async () => {
@@ -126,7 +129,7 @@ function TopicCard({
           {topic.match_reason && topic.match_reason !== 'name' ? (
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
               <Feather name="search" size={9} color={colors.primary} />
-              <Text style={{ fontSize: 10, fontFamily: 'Inter_500Medium', color: colors.primary }}>
+              <Text style={{ fontSize: 10, ...font('medium'), color: colors.primary }}>
                 {MATCH_REASON_LABEL[topic.match_reason]}
               </Text>
             </View>
@@ -167,9 +170,9 @@ function TopicCard({
 
           {/* Gaps callout */}
           {detail?.profile?.gaps && detail.profile.gaps.length > 0 && (
-            <View style={[s.gapsBox, { backgroundColor: '#92400e10', borderColor: '#f59e0b33' }]}>
-              <Feather name="alert-triangle" size={11} color="#d97706" style={{ marginTop: 1 }} />
-              <Text style={[s.gapsText, { color: '#92400e' }]}>
+            <View style={[s.gapsBox, { backgroundColor: alpha(T.gilt, 0.08), borderColor: alpha(T.gilt, 0.2) }]}>
+              <Feather name="alert-triangle" size={11} color={T.gilt} style={{ marginTop: 1 }} />
+              <Text style={[s.gapsText, { color: T.gilt }]}>
                 {detail.profile.gaps.slice(0, 2).join(' · ')}
               </Text>
             </View>
@@ -231,7 +234,7 @@ function TopicCard({
                           </Text>
                         )}
                         {doc.readiness === 'ready' && (
-                          <View style={[s.readyDot, { backgroundColor: '#22c55e' }]} />
+                          <View style={[s.readyDot, { backgroundColor: T.green }]} />
                         )}
                       </View>
                     </View>
@@ -251,6 +254,7 @@ function TopicCard({
 
 export default function TopicsScreen() {
   const colors      = useColors();
+  const T           = useVellumTokens();
   const insets      = useSafeAreaInsets();
   const router      = useRouter();
   const qc          = useQueryClient();
@@ -330,6 +334,7 @@ export default function TopicsScreen() {
 
   return (
     <View style={[s.container, { backgroundColor: colors.background }]}>
+      <Stack.Screen options={{ title: 'Topics', headerShown: true, headerStyle: { backgroundColor: colors.background }, headerTintColor: colors.foreground }} />
       {/* Header */}
       <View style={[s.header, {
         paddingTop: insets.top + 10,
@@ -367,7 +372,7 @@ export default function TopicsScreen() {
           ? <ActivityIndicator size="small" color={colors.primary} style={{ width: 15 }} />
           : <Feather name="search" size={15} color={colors.mutedForeground} />}
         <TextInput
-          style={[s.searchInput, { color: colors.foreground, fontFamily: 'Inter_400Regular' }]}
+          style={[s.searchInput, { color: colors.foreground }]}
           placeholder="Search topics and documents…"
           placeholderTextColor={colors.mutedForeground}
           value={search}
@@ -386,7 +391,7 @@ export default function TopicsScreen() {
       {isSearchMode && searchError && (
         <View style={{ paddingHorizontal: 16, paddingVertical: 6, backgroundColor: colors.muted + '55', flexDirection: 'row', alignItems: 'center', gap: 6 }}>
           <Feather name="wifi-off" size={11} color={colors.mutedForeground} />
-          <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: colors.mutedForeground }}>
+          <Text style={{ fontSize: 11, ...font('regular'), color: colors.mutedForeground }}>
             Server unreachable — showing name matches only
           </Text>
         </View>
@@ -486,8 +491,8 @@ const s = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
   backBtn:     { padding: 2 },
-  headerTitle: { fontSize: 20, fontFamily: 'Inter_700Bold', letterSpacing: -0.3 },
-  headerSub:   { fontSize: 12, fontFamily: 'Inter_400Regular', marginTop: 1 },
+  headerTitle: { fontSize: 20, ...font('bold'), letterSpacing: -0.3 },
+  headerSub:   { fontSize: 12, ...font('regular'), marginTop: 1 },
 
   // Search
   searchRow: {
@@ -498,7 +503,7 @@ const s = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     gap: 8,
   },
-  searchInput: { flex: 1, fontSize: 15, paddingVertical: 0 },
+  searchInput: { flex: 1, fontSize: 15, paddingVertical: 0, ...font('regular') },
 
   // Topic card
   card: {
@@ -520,15 +525,15 @@ const s = StyleSheet.create({
     justifyContent: 'center',
     flexShrink: 0,
   },
-  topicName:  { fontSize: 14, fontFamily: 'Inter_600SemiBold', marginBottom: 1 },
-  topicDesc:  { fontSize: 11, fontFamily: 'Inter_400Regular', lineHeight: 15 },
+  topicName:  { fontSize: 14, ...font('semibold'), marginBottom: 1 },
+  topicDesc:  { fontSize: 11, ...font('regular'), lineHeight: 15 },
   countBadge: {
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 10,
     flexShrink: 0,
   },
-  countText: { fontSize: 11, fontFamily: 'Inter_600SemiBold' },
+  countText: { fontSize: 11, ...font('semibold') },
 
   // Expanded body
   expandedBody: {
@@ -538,8 +543,8 @@ const s = StyleSheet.create({
     paddingBottom: 10,
     gap: 4,
   },
-  profileText:    { fontSize: 12, fontFamily: 'Inter_400Regular', lineHeight: 17, marginBottom: 2 },
-  profilePurpose: { fontSize: 11, fontFamily: 'Inter_400Regular', lineHeight: 16, marginBottom: 6 },
+  profileText:    { fontSize: 12, ...font('regular'), lineHeight: 17, marginBottom: 2 },
+  profilePurpose: { fontSize: 11, ...font('regular'), lineHeight: 16, marginBottom: 6 },
 
   gapsBox: {
     flexDirection: 'row',
@@ -550,10 +555,10 @@ const s = StyleSheet.create({
     padding: 8,
     marginBottom: 8,
   },
-  gapsText: { fontSize: 11, fontFamily: 'Inter_400Regular', flex: 1, lineHeight: 15 },
+  gapsText: { fontSize: 11, ...font('regular'), flex: 1, lineHeight: 15 },
 
-  sectionLabel: { fontSize: 10, fontFamily: 'Inter_500Medium', letterSpacing: 0.8, marginTop: 4, marginBottom: 6 },
-  emptyInner:   { fontSize: 12, fontFamily: 'Inter_400Regular', textAlign: 'center', paddingVertical: 12 },
+  sectionLabel: { fontSize: 10, ...font('medium'), letterSpacing: 0.8, marginTop: 4, marginBottom: 6 },
+  emptyInner:   { fontSize: 12, ...font('regular'), textAlign: 'center', paddingVertical: 12 },
 
   // Doc rows inside expanded card
   docRow: {
@@ -562,15 +567,15 @@ const s = StyleSheet.create({
     paddingVertical: 9,
     gap: 10,
   },
-  docTitle:   { fontSize: 13, fontFamily: 'Inter_500Medium', marginBottom: 2 },
+  docTitle:   { fontSize: 13, ...font('medium'), marginBottom: 2 },
   docMetaRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  docMeta:    { fontSize: 10, fontFamily: 'Inter_400Regular' },
+  docMeta:    { fontSize: 10, ...font('regular') },
   readyDot:   { width: 5, height: 5, borderRadius: 3 },
 
   // Empty / error states
   center:     { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 10, padding: 32 },
-  emptyTitle: { fontSize: 17, fontFamily: 'Inter_600SemiBold', textAlign: 'center' },
-  emptyText:  { fontSize: 14, fontFamily: 'Inter_400Regular', textAlign: 'center', lineHeight: 20 },
+  emptyTitle: { fontSize: 17, ...font('semibold'), textAlign: 'center' },
+  emptyText:  { fontSize: 14, ...font('regular'), textAlign: 'center', lineHeight: 20 },
   retryBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -581,5 +586,5 @@ const s = StyleSheet.create({
     paddingVertical: 8,
     marginTop: 4,
   },
-  retryText: { fontSize: 13, fontFamily: 'Inter_500Medium' },
+  retryText: { fontSize: 13, ...font('medium') },
 });

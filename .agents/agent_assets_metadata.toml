@@ -14,3 +14,10 @@ uri = "file://Orivellum_System_Manual.docx"
 type = "word_document"
 title = "Orivellum System Manual"
 description = "Complete system manual — schema v106, all features, all routes, all capabilities, mobile app, architecture decisions, troubleshooting guide. August 8, 2026."
+
+[[outputs]]
+id = "DWUNqAIt-J7WxfS4lp9g4"
+uri = "file://docs/manual/Orivellum_Installation_Guide.docx"
+type = "word_document"
+title = "Orivellum Installation Guide"
+description = "Complete setup guide with installation steps, Lemonade AI server setup, 12 recommended LLM models table, environment variables reference, and illustrated sections."
