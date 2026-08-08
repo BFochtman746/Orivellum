@@ -2,6 +2,7 @@ import React, { useCallback, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Animated,
   Modal,
   Pressable,
   RefreshControl,
@@ -19,6 +20,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { mobileFetch } from '@/lib/api';
 import { font } from '@/lib/typography';
 import { useVellumTokens, alpha } from '@/lib/tokens';
+import { useSheetAnimation } from '@/lib/useSheetAnimation';
 
 const _DOMAIN = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
 const _API = `https://${_DOMAIN}/api`;
@@ -295,6 +297,8 @@ function CreateWorkModal({ visible, onClose, onCreated }: {
   const [description, setDescription] = useState('');
   const [saving, setSaving] = useState(false);
 
+  const { rendered, slideAnim, fadeAnim } = useSheetAnimation(visible, 420);
+
   const handleCreate = async () => {
     if (!title.trim()) {
       Alert.alert('Title required', 'Give your book a title to get started.');
@@ -324,26 +328,26 @@ function CreateWorkModal({ visible, onClose, onCreated }: {
     }
   };
 
+  if (!rendered) return null;
+
   return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="slide"
-      onRequestClose={onClose}
-    >
-      <View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.4)' }}>
-        <Pressable style={{ flex: 1 }} onPress={onClose} />
-        <View style={{
-          backgroundColor: colors.card,
-          borderTopLeftRadius: 20,
-          borderTopRightRadius: 20,
-          borderTopWidth: StyleSheet.hairlineWidth,
-          borderColor: colors.border,
-          paddingHorizontal: 20,
-          paddingTop: 20,
-          paddingBottom: insets.bottom + 28,
-          gap: 14,
-        }}>
+    <Modal transparent visible={rendered} animationType="none" onRequestClose={onClose}>
+      <Animated.View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.4)', opacity: fadeAnim }]}>
+        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+      </Animated.View>
+      <Animated.View style={{
+        position: 'absolute', bottom: 0, left: 0, right: 0,
+        backgroundColor: colors.card,
+        borderTopLeftRadius: 20,
+        borderTopRightRadius: 20,
+        borderTopWidth: StyleSheet.hairlineWidth,
+        borderColor: colors.border,
+        paddingHorizontal: 20,
+        paddingTop: 20,
+        paddingBottom: insets.bottom + 28,
+        gap: 14,
+        transform: [{ translateY: slideAnim }],
+      }}>
           {/* Handle + header */}
           <View style={{ alignItems: 'center', marginBottom: 2 }}>
             <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: colors.border }} />
@@ -405,8 +409,7 @@ function CreateWorkModal({ visible, onClose, onCreated }: {
               {saving ? 'Creating…' : 'Create Book Work'}
             </Text>
           </Pressable>
-        </View>
-      </View>
+      </Animated.View>
     </Modal>
   );
 }

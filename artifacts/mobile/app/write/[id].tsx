@@ -16,6 +16,7 @@ import {
   ActionSheetIOS,
   ActivityIndicator,
   Alert,
+  Animated,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -33,6 +34,7 @@ import { Feather } from '@expo/vector-icons';
 import { useColors } from '@/hooks/useColors';
 import { mobileFetch } from '@/lib/api';
 import { font } from '@/lib/typography';
+import { useSheetAnimation } from '@/lib/useSheetAnimation';
 
 const DOMAIN = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
 const API = `https://${DOMAIN}/api`;
@@ -247,18 +249,15 @@ function AIResultOverlay({
   visible, text, streaming, onAccept, onInsert, onDiscard,
 }: AIResultOverlayProps) {
   const colors = useColors();
-  if (!visible) return null;
+  const { rendered, slideAnim, fadeAnim } = useSheetAnimation(visible, 480);
+  if (!rendered) return null;
 
   return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="slide"
-      onRequestClose={onDiscard}
-    >
-      <View style={styles.overlayBackdrop}>
+    <Modal transparent visible={rendered} animationType="none" onRequestClose={onDiscard}>
+      <Animated.View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.45)', opacity: fadeAnim }]}>
         <Pressable style={StyleSheet.absoluteFill} onPress={streaming ? undefined : onDiscard} />
-        <View style={[styles.overlayCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+      </Animated.View>
+      <Animated.View style={[styles.overlayCard, { backgroundColor: colors.card, borderColor: colors.border, position: 'absolute', bottom: 0, left: 0, right: 0, transform: [{ translateY: slideAnim }] }]}>
           {/* Header */}
           <View style={styles.overlayHeader}>
             <View style={styles.overlayTitleRow}>
@@ -333,8 +332,7 @@ function AIResultOverlay({
               </Pressable>
             </View>
           )}
-        </View>
-      </View>
+      </Animated.View>
     </Modal>
   );
 }
@@ -352,18 +350,20 @@ interface WorkPickerProps {
 function WorkPickerSheet({ visible, works, currentWorkId, onSelect, onClose }: WorkPickerProps) {
   const colors = useColors();
   const insets = useSafeAreaInsets();
-  if (!visible) return null;
+  const { rendered, slideAnim, fadeAnim } = useSheetAnimation(visible, 400);
+  if (!rendered) return null;
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <View style={styles.sheetBackdrop}>
+    <Modal transparent visible={rendered} animationType="none" onRequestClose={onClose}>
+      <Animated.View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.4)', opacity: fadeAnim }]}>
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
-        <View
-          style={[
-            styles.sheet,
-            { backgroundColor: colors.card, borderColor: colors.border, paddingBottom: insets.bottom + 16 },
-          ]}
-        >
+      </Animated.View>
+      <Animated.View
+        style={[
+          styles.sheet,
+          { backgroundColor: colors.card, borderColor: colors.border, paddingBottom: insets.bottom + 16, position: 'absolute', bottom: 0, left: 0, right: 0, transform: [{ translateY: slideAnim }] },
+        ]}
+      >
           <View style={[styles.sheetHandle, { backgroundColor: colors.border }]} />
           <Text style={[styles.sheetTitle, { color: colors.foreground }]}>Link to Work</Text>
 
@@ -423,8 +423,7 @@ function WorkPickerSheet({ visible, works, currentWorkId, onSelect, onClose }: W
               </Pressable>
             ))}
           </ScrollView>
-        </View>
-      </View>
+      </Animated.View>
     </Modal>
   );
 }

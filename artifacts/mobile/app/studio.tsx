@@ -31,6 +31,7 @@ import { useVellumTokens } from '@/lib/tokens';
 import { font, fontSerif } from '@/lib/typography';
 import { SkeletonItem } from '@/components/SkeletonItem';
 import { mobileFetch } from '@/lib/api';
+import { useSheetAnimation } from '@/lib/useSheetAnimation';
 import { getApiToken } from '@/lib/token';
 import * as Haptics from 'expo-haptics';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -2360,6 +2361,7 @@ function ImagePanel({ onGenerated }: { onGenerated: () => void }) {
 
   // ── Backend settings modal ───────────────────────────────────────────────────
   const [settingsVisible, setSettingsVisible] = useState(false);
+  const { rendered: studioSettingsRendered, slideAnim: studioSettingsSlideAnim, fadeAnim: studioSettingsFadeAnim } = useSheetAnimation(settingsVisible, 500);
   const [urlInput, setUrlInput] = useState('');
   const [loadingUrl, setLoadingUrl] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -2448,19 +2450,17 @@ function ImagePanel({ onGenerated }: { onGenerated: () => void }) {
     <>
       {/* ── Backend settings modal ─────────────────────────────────────────────── */}
       <Modal
-        visible={settingsVisible}
-        animationType="slide"
         transparent
+        visible={studioSettingsRendered}
+        animationType="none"
         onRequestClose={() => setSettingsVisible(false)}
       >
-        <Pressable
-          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' }}
-          onPress={() => setSettingsVisible(false)}
+        <Animated.View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.45)', opacity: studioSettingsFadeAnim }]}>
+          <Pressable style={StyleSheet.absoluteFill} onPress={() => setSettingsVisible(false)} />
+        </Animated.View>
+        <Animated.View
+          style={[imgSettingsStyles.sheet, { backgroundColor: colors.card, borderColor: colors.border, position: 'absolute', bottom: 0, left: 0, right: 0, transform: [{ translateY: studioSettingsSlideAnim }] }]}
         >
-          <Pressable
-            onPress={() => {/* swallow taps inside the sheet */}}
-            style={[imgSettingsStyles.sheet, { backgroundColor: colors.card, borderColor: colors.border }]}
-          >
             <View style={imgSettingsStyles.handle} />
 
             <Text style={[imgSettingsStyles.title, { color: colors.foreground }]}>
@@ -2537,8 +2537,7 @@ function ImagePanel({ onGenerated }: { onGenerated: () => void }) {
                 }
               </Pressable>
             </View>
-          </Pressable>
-        </Pressable>
+        </Animated.View>
       </Modal>
 
       <SectionCard

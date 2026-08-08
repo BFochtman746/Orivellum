@@ -24,6 +24,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { font } from '@/lib/typography';
+import { useSheetAnimation } from '@/lib/useSheetAnimation';
 import type { Work, ActivityItem } from '@workspace/api-client-react';
 import { OfflineBanner, ErrorScreen } from '@/components/OfflineBanner';
 import { WeatherCard } from '@/components/WeatherCard';
@@ -1748,6 +1749,7 @@ export default function DashboardScreen() {
 
   const [showWorkspaceHealth, setShowWorkspaceHealth] = useState(false);
   const [aiSettingsOpen, setAiSettingsOpen] = useState(false);
+  const { rendered: aiSettingsRendered, slideAnim: aiSettingsSlideAnim, fadeAnim: aiSettingsFadeAnim } = useSheetAnimation(aiSettingsOpen, 300);
   const [aiExtractionEnabled, setAiExtractionEnabled] = useState<boolean | null>(null);
   const [aiRerankEnabled, setAiRerankEnabled] = useState<boolean | null>(null);
   const [aiSettingsLoading, setAiSettingsLoading] = useState(false);
@@ -1935,14 +1937,15 @@ export default function DashboardScreen() {
 
     {/* AI Settings bottom sheet */}
     <Modal
-      visible={aiSettingsOpen}
       transparent
-      animationType="slide"
+      visible={aiSettingsRendered}
+      animationType="none"
       onRequestClose={() => setAiSettingsOpen(false)}
     >
-      <View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.35)' }}>
-        <Pressable style={{ flex: 1 }} onPress={() => setAiSettingsOpen(false)} />
-        <View style={{ backgroundColor: colors.card, borderTopLeftRadius: 16, borderTopRightRadius: 16, borderTopWidth: 1, borderColor: colors.border, paddingHorizontal: 20, paddingTop: 16, paddingBottom: botPad + 24 }}>
+      <Animated.View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.35)', opacity: aiSettingsFadeAnim }]}>
+        <Pressable style={StyleSheet.absoluteFill} onPress={() => setAiSettingsOpen(false)} />
+      </Animated.View>
+      <Animated.View style={{ position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: colors.card, borderTopLeftRadius: 16, borderTopRightRadius: 16, borderTopWidth: 1, borderColor: colors.border, paddingHorizontal: 20, paddingTop: 16, paddingBottom: botPad + 24, transform: [{ translateY: aiSettingsSlideAnim }] }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 18 }}>
             <Feather name="settings" size={16} color={colors.primary} style={{ marginRight: 8 }} />
             <Text style={{ fontSize: 16, fontFamily: 'Inter_700Bold', color: colors.foreground, flex: 1 }}>AI Settings</Text>
@@ -1981,8 +1984,7 @@ export default function DashboardScreen() {
               </TouchableOpacity>
             </View>
           ))}
-        </View>
-      </View>
+      </Animated.View>
     </Modal>
     </>
   );

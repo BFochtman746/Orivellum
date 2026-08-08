@@ -43,6 +43,7 @@ import { OfflineBanner } from '@/components/OfflineBanner';
 import { readCache, writeCache } from '@/lib/cache';
 import { queueMessage, flushMessageQueue, getOutboxForConversation } from '@/lib/offlineCache';
 import { font } from '@/lib/typography';
+import { useSheetAnimation } from '@/lib/useSheetAnimation';
 
 const LAST_MODEL_KEY = 'orivellum:lastModel';
 
@@ -716,6 +717,8 @@ export default function ChatScreen() {
   // Work context controls
   const [contextSheetOpen, setContextSheetOpen] = useState(false);
   const [scopeAll, setScopeAll] = useState(false);
+  const { rendered: ctxRendered, slideAnim: ctxSlideAnim, fadeAnim: ctxFadeAnim } = useSheetAnimation(contextSheetOpen, 480);
+  const { rendered: modelPickerRendered, slideAnim: modelPickerSlideAnim, fadeAnim: modelPickerFadeAnim } = useSheetAnimation(modelPickerVisible, 340);
   const [pinnedDocIds, setPinnedDocIds] = useState<Set<string>>(new Set());
 
   const { data, isLoading, isError, refetch } = useGetConversation(id, { query: { staleTime: 10_000 } } as any);
@@ -1534,24 +1537,27 @@ export default function ChatScreen() {
     >
       {/* Work context sheet — scope toggle + file pin list */}
       <Modal
-        visible={contextSheetOpen}
         transparent
-        animationType="slide"
+        visible={ctxRendered}
+        animationType="none"
         onRequestClose={() => setContextSheetOpen(false)}
       >
-        <View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.4)' }}>
-          <Pressable style={{ flex: 1 }} onPress={() => setContextSheetOpen(false)} />
-          <View style={{
-            backgroundColor: colors.card,
-            borderTopLeftRadius: 20,
-            borderTopRightRadius: 20,
-            borderTopWidth: 1,
-            borderColor: colors.border,
-            paddingTop: 20,
-            paddingHorizontal: 16,
-            paddingBottom: insets.bottom + 20,
-            maxHeight: '75%',
-          }}>
+        <Animated.View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.4)', opacity: ctxFadeAnim }]}>
+          <Pressable style={StyleSheet.absoluteFill} onPress={() => setContextSheetOpen(false)} />
+        </Animated.View>
+        <Animated.View style={{
+          position: 'absolute', bottom: 0, left: 0, right: 0,
+          backgroundColor: colors.card,
+          borderTopLeftRadius: 20,
+          borderTopRightRadius: 20,
+          borderTopWidth: 1,
+          borderColor: colors.border,
+          paddingTop: 20,
+          paddingHorizontal: 16,
+          paddingBottom: insets.bottom + 20,
+          maxHeight: '75%',
+          transform: [{ translateY: ctxSlideAnim }],
+        }}>
             {/* Header */}
             <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16 }}>
               <Text style={{ fontSize: 16, ...font('bold'), color: colors.foreground, flex: 1 }}>
@@ -1665,25 +1671,23 @@ export default function ChatScreen() {
                 })}
               </ScrollView>
             )}
-          </View>
-        </View>
+          </Animated.View>
       </Modal>
 
       {/* Model picker modal — Android / web */}
       <Modal
-        visible={modelPickerVisible}
         transparent
-        animationType="slide"
+        visible={modelPickerRendered}
+        animationType="none"
         onRequestClose={() => setModelPickerVisible(false)}
       >
-        <Pressable
-          style={[styles.modalOverlay]}
-          onPress={() => setModelPickerVisible(false)}
+        <Animated.View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.45)', opacity: modelPickerFadeAnim }]}>
+          <Pressable style={StyleSheet.absoluteFill} onPress={() => setModelPickerVisible(false)} />
+        </Animated.View>
+        <Animated.View
+          style={[styles.modelSheet, { backgroundColor: colors.card, borderColor: colors.border, position: 'absolute', bottom: 0, left: 0, right: 0, transform: [{ translateY: modelPickerSlideAnim }] }]}
+          onStartShouldSetResponder={() => true}
         >
-          <View
-            style={[styles.modelSheet, { backgroundColor: colors.card, borderColor: colors.border }]}
-            onStartShouldSetResponder={() => true}
-          >
             <Text style={[styles.modelSheetTitle, { color: colors.foreground }]}>Select AI Model</Text>
             <ScrollView>
               {models.map((m: any) => (
@@ -1716,8 +1720,7 @@ export default function ChatScreen() {
                 </Pressable>
               ))}
             </ScrollView>
-          </View>
-        </Pressable>
+        </Animated.View>
       </Modal>
 
       <View style={{ flex: 1, paddingTop: topPad }}>

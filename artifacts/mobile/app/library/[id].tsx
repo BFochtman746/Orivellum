@@ -17,10 +17,12 @@ import {
   TTS_SPEED_KEY,
   type TtsSpeed,
 } from '@/components/TtsSettingsSheet';
+import { useSheetAnimation } from '@/lib/useSheetAnimation';
 import { createAudioPlayer, setAudioModeAsync, type AudioPlayer } from 'expo-audio';
 import {
   ActivityIndicator,
   Alert,
+  Animated,
   Modal,
   Platform,
   Pressable,
@@ -263,6 +265,7 @@ export default function LibraryDocDetail() {
   const [bulkReviewing, setBulkReviewing] = useState<'approve' | 'dismiss' | null>(null);
   const [showWorkPicker, setShowWorkPicker] = useState(false);
   const [linkingWork, setLinkingWork] = useState(false);
+  const { rendered: workPickerRendered, slideAnim: workPickerSlideAnim, fadeAnim: workPickerFadeAnim } = useSheetAnimation(showWorkPicker, 400);
   const [lifecycleUpdating, setLifecycleUpdating] = useState(false);
   const [reprocessing, setReprocessing] = useState(false);
   const [processingProgress, setProcessingProgress] = useState<{
@@ -1682,9 +1685,11 @@ export default function LibraryDocDetail() {
       </ScrollView>
 
       {/* Work Picker Modal */}
-      <Modal visible={showWorkPicker} transparent animationType="slide" onRequestClose={() => setShowWorkPicker(false)}>
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalSheet, { backgroundColor: colors.background, borderTopColor: colors.border }]}>
+      <Modal transparent visible={workPickerRendered} animationType="none" onRequestClose={() => setShowWorkPicker(false)}>
+        <Animated.View style={[StyleSheet.absoluteFill, { backgroundColor: '#00000060', opacity: workPickerFadeAnim }]}>
+          <Pressable style={StyleSheet.absoluteFill} onPress={() => setShowWorkPicker(false)} />
+        </Animated.View>
+        <Animated.View style={[styles.modalSheet, { backgroundColor: colors.background, borderTopColor: colors.border, position: 'absolute', bottom: 0, left: 0, right: 0, transform: [{ translateY: workPickerSlideAnim }] }]}>
             <View style={styles.modalHeader}>
               <Text style={[styles.modalTitle, { color: colors.foreground }]}>Link to Work</Text>
               <Pressable onPress={() => setShowWorkPicker(false)} hitSlop={8}>
@@ -1725,8 +1730,7 @@ export default function LibraryDocDetail() {
                 <Text style={[styles.modalLoadingText, { color: colors.mutedForeground }]}>Saving…</Text>
               </View>
             )}
-          </View>
-        </View>
+          </Animated.View>
       </Modal>
 
       {/* Read Aloud voice/speed settings sheet */}

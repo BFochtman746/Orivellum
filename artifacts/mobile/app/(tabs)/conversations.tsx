@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Animated,
   FlatList,
   Modal,
   Platform,
@@ -69,6 +70,7 @@ import { stripMarkdown } from '@/lib/stripMarkdown';
 import { readCache, writeCache } from '@/lib/cache';
 import { SkeletonItem } from '@/components/SkeletonItem';
 import { EmptyState } from '@/components/EmptyState';
+import { useSheetAnimation } from '@/lib/useSheetAnimation';
 
 function ConversationItem({ item, onArchive, onDelete, onRename }: { item: Conversation; onArchive?: (id: string) => void; onDelete?: (id: string) => void; onRename?: (id: string, title: string) => void }) {
   const colors = useColors();
@@ -181,6 +183,8 @@ export default function ConversationsScreen() {
   const [memoryOpen, setMemoryOpen] = useState(false);
   const [memoryFacts, setMemoryFacts] = useState<any[]>([]);
   const [memoryLoading, setMemoryLoading] = useState(false);
+  const { rendered: personaRendered, slideAnim: personaSlideAnim, fadeAnim: personaFadeAnim } = useSheetAnimation(personaSheetOpen, 440);
+  const { rendered: memoryRendered, slideAnim: memorySlideAnim, fadeAnim: memoryFadeAnim } = useSheetAnimation(memoryOpen, 400);
 
   const openMemorySheet = async () => {
     setMemoryOpen(true);
@@ -601,23 +605,26 @@ export default function ConversationsScreen() {
 
       {/* Persona picker bottom sheet */}
       <Modal
-        visible={personaSheetOpen}
         transparent
-        animationType="slide"
+        visible={personaRendered}
+        animationType="none"
         onRequestClose={() => setPersonaSheetOpen(false)}
       >
-        <View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.4)' }}>
-          <Pressable style={{ flex: 1 }} onPress={() => setPersonaSheetOpen(false)} />
-          <View style={{
-            backgroundColor: colors.card,
-            borderTopLeftRadius: 20,
-            borderTopRightRadius: 20,
-            borderTopWidth: 1,
-            borderColor: colors.border,
-            paddingTop: 20,
-            paddingHorizontal: 16,
-            paddingBottom: insets.bottom + 24,
-          }}>
+        <Animated.View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.4)', opacity: personaFadeAnim }]}>
+          <Pressable style={StyleSheet.absoluteFill} onPress={() => setPersonaSheetOpen(false)} />
+        </Animated.View>
+        <Animated.View style={{
+          position: 'absolute', bottom: 0, left: 0, right: 0,
+          backgroundColor: colors.card,
+          borderTopLeftRadius: 20,
+          borderTopRightRadius: 20,
+          borderTopWidth: 1,
+          borderColor: colors.border,
+          paddingTop: 20,
+          paddingHorizontal: 16,
+          paddingBottom: insets.bottom + 24,
+          transform: [{ translateY: personaSlideAnim }],
+        }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
               <Text style={{ fontSize: 16, ...font('bold'), color: colors.foreground, flex: 1 }}>
                 Choose a persona
@@ -686,20 +693,20 @@ export default function ConversationsScreen() {
                 </Text>
               )}
             </Pressable>
-          </View>
-        </View>
+        </Animated.View>
       </Modal>
 
       {/* Memory bottom sheet */}
       <Modal
-        visible={memoryOpen}
         transparent
-        animationType="slide"
+        visible={memoryRendered}
+        animationType="none"
         onRequestClose={() => setMemoryOpen(false)}
       >
-        <View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.35)' }}>
-          <Pressable style={{ flex: 1 }} onPress={() => setMemoryOpen(false)} />
-          <View style={[styles.memorySheet, { backgroundColor: colors.card, borderColor: colors.border, paddingBottom: insets.bottom + 16 }]}>
+        <Animated.View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.35)', opacity: memoryFadeAnim }]}>
+          <Pressable style={StyleSheet.absoluteFill} onPress={() => setMemoryOpen(false)} />
+        </Animated.View>
+        <Animated.View style={[styles.memorySheet, { position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: colors.card, borderColor: colors.border, paddingBottom: insets.bottom + 16, transform: [{ translateY: memorySlideAnim }] }]}>
             <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
               <Text style={{ fontSize: 18, marginRight: 8 }}>✨</Text>
               <Text style={{ fontSize: 16, ...font('bold'), color: colors.foreground, flex: 1 }}>Memory</Text>
@@ -737,8 +744,7 @@ export default function ConversationsScreen() {
                 )}
               />
             )}
-          </View>
-        </View>
+          </Animated.View>
       </Modal>
     </View>
   );
