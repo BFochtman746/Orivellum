@@ -18,6 +18,112 @@ import {
 
 const BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
 
+// ── Exported send-flow (injectable for unit tests) ────────────────────────────
+
+export interface WebSendFlowResponse {
+  ok: boolean;
+  statusText: string;
+  json: () => Promise<unknown>;
+}
+export type WebSendFlowFetch = (url: string, opts?: RequestInit) => Promise<WebSendFlowResponse>;
+
+export interface WebSendFlowResult {
+  success: boolean;
+  error: string | null;
+  /** Every URL called, in order. Lets tests assert absent calls. */
+  calledUrls: string[];
+}
+
+/**
+ * Executes the ordered 3-step send chain for the web compose screen:
+ *   1. PATCH /mail/drafts/:actionId     — persist current editor text
+ *   2. POST  /mail/decisions/:recordId/send-nonce — fresh single-use token
+ *   3. POST  /mail/decisions/:recordId/send       — deliver
+ *
+ * Exported so unit tests can import this function directly.
+ * The component's handleSend calls it with apiFetch as fetchFn.
+ * fetchFn must return a Response-like object with .ok and .statusText.
+ */
+export async function executeWebSendFlow(
+  actionId: string,
+  recordId: string,
+  bodyText: string | null,
+  fetchFn: WebSendFlowFetch,
+  base: string,
+): Promise<WebSendFlowResult> {
+  const calledUrls: string[] = [];
+
+  // Step 1 — persist latest edits; abort on any error (HTTP or network)
+  const patchUrl = `${base}/mail/drafts/${actionId}`;
+  calledUrls.push(patchUrl);
+  let saveRes: WebSendFlowResponse;
+  try {
+    saveRes = await fetchFn(patchUrl, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ body_text: bodyText }),
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "Network error saving draft";
+    return { success: false, error: msg, calledUrls };
+  }
+  if (!saveRes.ok) {
+    return {
+      success: false,
+      error: "Draft save failed: " + saveRes.statusText,
+      calledUrls,
+    };
+  }
+
+  // Step 2 — fresh single-use nonce; abort on any error or bad JSON
+  const nonceUrl = `${base}/mail/decisions/${recordId}/send-nonce`;
+  calledUrls.push(nonceUrl);
+  let nonceRes: WebSendFlowResponse;
+  try {
+    nonceRes = await fetchFn(nonceUrl, { method: "POST" });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "Network error fetching nonce";
+    return { success: false, error: msg, calledUrls };
+  }
+  if (!nonceRes.ok) {
+    return {
+      success: false,
+      error: "Could not obtain send nonce: " + nonceRes.statusText,
+      calledUrls,
+    };
+  }
+  let nonce: string;
+  try {
+    const nonceJson = (await nonceRes.json()) as { nonce?: unknown };
+    if (typeof nonceJson.nonce !== "string" || nonceJson.nonce.length === 0) {
+      return { success: false, error: "Server returned an invalid nonce", calledUrls };
+    }
+    nonce = nonceJson.nonce;
+  } catch {
+    return { success: false, error: "Invalid nonce response from server", calledUrls };
+  }
+
+  // Step 3 — deliver; abort on any error
+  const sendUrl = `${base}/mail/decisions/${recordId}/send`;
+  calledUrls.push(sendUrl);
+  let sendRes: WebSendFlowResponse;
+  try {
+    sendRes = await fetchFn(sendUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action_request_id: actionId, nonce }),
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "Network error sending";
+    return { success: false, error: msg, calledUrls };
+  }
+  if (!sendRes.ok) {
+    const detail = (await sendRes.json().catch(() => ({}))) as { detail?: string };
+    return { success: false, error: detail?.detail ?? "Send failed", calledUrls };
+  }
+  return { success: true, error: null, calledUrls };
+}
+
 function parseSearch(search: string): Record<string, string> {
   const out: Record<string, string> = {};
   const q = search.startsWith("?") ? search.slice(1) : search;
@@ -92,43 +198,19 @@ export default function ComposePage() {
     if (!actionId || !recordId) return;
     setSending(true);
     try {
-      // 1. Save latest edits — abort the send if this fails
-      const saveRes = await apiFetch(`${BASE}/mail/drafts/${actionId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ body_text: bodyText }),
-      });
-      if (!saveRes.ok) {
-        const e = await saveRes.json().catch(() => ({}));
-        throw new Error("Draft save failed: " + ((e as any).detail || saveRes.statusText));
-      }
-
-      // 2. Fetch a fresh send nonce (never stored in URL)
-      const nonceRes = await apiFetch(`${BASE}/mail/decisions/${recordId}/send-nonce`, {
-        method: "POST",
-      });
-      if (!nonceRes.ok) {
-        const e = await nonceRes.json().catch(() => ({}));
-        throw new Error("Could not obtain send nonce: " + ((e as any).detail || nonceRes.statusText));
-      }
-      const { nonce } = await nonceRes.json();
-
-      // 3. Send
-      const sendRes = await apiFetch(`${BASE}/mail/decisions/${recordId}/send`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action_request_id: actionId, nonce }),
-      });
-      if (!sendRes.ok) {
-        const e = await sendRes.json().catch(() => ({}));
-        throw new Error((e as any).detail || "Send failed");
+      // Delegates to the exported executeWebSendFlow: PATCH → nonce → send.
+      // Aborts at the first non-ok response so we never deliver a stale draft.
+      const result = await executeWebSendFlow(
+        actionId, recordId, bodyText, apiFetch as WebSendFlowFetch, BASE,
+      );
+      if (!result.success) {
+        toast.error(result.error ?? "Failed to send");
+        return;
       }
       toast.success("Reply sent via Outlook");
       qc.invalidateQueries({ queryKey: ["mail-attention"] });
       qc.invalidateQueries({ queryKey: ["mail-summary"] });
       navigate("/mail");
-    } catch (e: any) {
-      toast.error(e.message || "Failed to send");
     } finally {
       setSending(false);
     }

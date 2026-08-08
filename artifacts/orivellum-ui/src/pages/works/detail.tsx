@@ -2930,8 +2930,8 @@ function CompletenessTab({ workId }: { workId: string }) {
 
           return (
             <div className="mt-3 space-y-2.5">
-              {contentDim && contentDim.target > 0 && (() => {
-                const pct = Math.min(100, Math.round((contentDim.current / contentDim.target) * 100));
+              {contentDim && Number(contentDim.target) > 0 && (() => {
+                const pct = Math.min(100, Math.round((Number(contentDim.current) / Number(contentDim.target)) * 100));
                 return (
                   <div>
                     <div className="flex items-center justify-between mb-1">
@@ -2950,8 +2950,8 @@ function CompletenessTab({ workId }: { workId: string }) {
                   </div>
                 );
               })()}
-              {structDim && structDim.target > 0 && (() => {
-                const pct = Math.min(100, Math.round((structDim.current / structDim.target) * 100));
+              {structDim && Number(structDim.target) > 0 && (() => {
+                const pct = Math.min(100, Math.round((Number(structDim.current) / Number(structDim.target)) * 100));
                 return (
                   <div>
                     <div className="flex items-center justify-between mb-1">

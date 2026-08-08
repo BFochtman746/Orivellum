@@ -26,6 +26,8 @@ import { useColors } from '@/hooks/useColors';
 import { useVellumTokens, alpha } from '@/lib/tokens';
 import { font } from '@/lib/typography';
 import { mobileFetchJson } from '@/lib/api';
+import { executeSendFlow } from '@/lib/mail-send-flow';
+import type { SendFlowFetch, SendFlowResult } from '@/lib/mail-send-flow';
 import * as Haptics from 'expo-haptics';
 
 const DOMAIN = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
@@ -95,35 +97,25 @@ export default function ComposeScreen() {
     if (!actionRequestId || !recordId) return;
     setSending(true);
     try {
-      // 1. Save edits first — abort if save fails so we never send stale content
-      const saved = await saveDraft();
-      if (!saved) { setSending(false); return; }
-
-      // 2. Fetch a fresh nonce — never held in URL or persistent state
-      const { nonce } = await mobileFetchJson<{ nonce: string }>(
-        `${API}/mail/decisions/${recordId}/send-nonce`,
-        { method: 'POST' },
+      // Delegates to the exported executeSendFlow: PATCH → nonce → send.
+      // Aborts at the first failure so we never deliver a stale draft.
+      const result = await executeSendFlow(
+        actionRequestId, recordId, bodyText, mobileFetchJson, API,
       );
-
-      // 3. Send
-      await mobileFetchJson(`${API}/mail/decisions/${recordId}/send`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action_request_id: actionRequestId, nonce }),
-      });
-
+      if (!result.success) {
+        Alert.alert('Send failed', result.error ?? 'Could not send reply');
+        return;
+      }
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
       qc.invalidateQueries({ queryKey: ['mail-attention'] });
       qc.invalidateQueries({ queryKey: ['mail-summary'] });
       Alert.alert('Sent', 'Your reply was sent via Outlook.', [
         { text: 'OK', onPress: () => router.replace('/mail' as any) },
       ]);
-    } catch (e: any) {
-      Alert.alert('Send failed', e.message ?? 'Could not send reply');
     } finally {
       setSending(false);
     }
-  }, [actionRequestId, recordId, saveDraft, qc, router]);
+  }, [actionRequestId, recordId, bodyText, qc, router]);
 
   const sendEnabled = !!summary?.send_enabled;
   const busy = saving || sending;
