@@ -113,9 +113,17 @@ function useReviewCount(): number {
 /**
  * Polls GET /api/mail/summary every 30 s and returns high_attention count
  * when the account is connected, 0 otherwise.
+ *
+ * Returns 0 immediately while the user is viewing any /mail route — the badge
+ * is redundant when they're already looking at the queue.  Triggers a fresh
+ * poll the moment they leave /mail so the count is up-to-date right away.
  */
 function useMailAttentionCount(): number {
   const [count, setCount] = useState(0);
+  const path = usePathname();
+  const onMailRoute = path.startsWith('/mail');
+  const prevOnMailRef = useRef(onMailRoute);
+
   const poll = useCallback(async () => {
     try {
       const r = await mobileFetch(`${_REVIEW_API}/mail/summary`);
@@ -127,12 +135,24 @@ function useMailAttentionCount(): number {
       // silently fail — badge just won't update until next poll
     }
   }, []);
+
+  // Regular 30 s interval
   useEffect(() => {
     poll();
     const t = setInterval(poll, 30_000);
     return () => clearInterval(t);
   }, [poll]);
-  return count;
+
+  // Immediate re-poll when leaving the mail route so the badge is fresh
+  useEffect(() => {
+    if (prevOnMailRef.current && !onMailRoute) {
+      poll();
+    }
+    prevOnMailRef.current = onMailRoute;
+  }, [onMailRoute, poll]);
+
+  // While on any /mail screen the badge is meaningless — suppress it
+  return onMailRoute ? 0 : count;
 }
 
 // ── Server status ──────────────────────────────────────────────────────────────

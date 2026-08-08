@@ -25,7 +25,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { Feather } from '@expo/vector-icons';
-import { Stack, useRouter } from 'expo-router';
+import { Stack, useFocusEffect, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useColors } from '@/hooks/useColors';
 import { useVellumTokens, alpha } from '@/lib/tokens';
@@ -258,6 +258,10 @@ export default function MailScreen() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  // Re-fetch immediately every time this screen comes into focus —
+  // this also drives the _layout badge to re-poll right on enter.
+  useFocusEffect(useCallback(() => { load(true); }, [load]));
 
   useEffect(() => {
     const t = setInterval(() => load(true), 30_000);

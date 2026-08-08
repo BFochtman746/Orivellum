@@ -493,9 +493,24 @@ function PhaseNav({ location, onNavigate }: { location: string; onNavigate: () =
     refetchInterval: 30_000,
     staleTime: 25_000,
   });
-  const mailAttentionCount = (mailSummary?.connected && mailSummary?.high_attention)
+  // Suppress the badge while the user is already viewing the Mail workspace —
+  // it's redundant when they're looking at the queue.  Invalidate on exit so
+  // the badge is fresh the moment they navigate away.
+  const rawMailCount = (mailSummary?.connected && mailSummary?.high_attention)
     ? mailSummary.high_attention
     : 0;
+  const onMailRoute = location.startsWith("/mail");
+  const mailAttentionCount = onMailRoute ? 0 : rawMailCount;
+
+  const qcLayout = useQueryClient();
+  const prevOnMailRef = useRef(onMailRoute);
+  useEffect(() => {
+    if (prevOnMailRef.current && !onMailRoute) {
+      // Just left the mail workspace — re-fetch immediately
+      qcLayout.invalidateQueries({ queryKey: ["mail-summary"] });
+    }
+    prevOnMailRef.current = onMailRoute;
+  }, [onMailRoute, qcLayout]);
 
   return (
     <div className="space-y-0.5">
