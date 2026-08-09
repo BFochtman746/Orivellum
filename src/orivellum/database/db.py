@@ -3330,6 +3330,19 @@ class OrivellumDB:
             self._conn.execute(
                 "DELETE FROM book_chapters WHERE source_doc_id=?", (doc_id,)
             )
+            # Link new chapters to the Work's existing pipeline (if any) so a
+            # reprocess doesn't orphan them — create_book_pipeline() only links
+            # orphans when the pipeline is first created, so without this the
+            # Books page chapter count silently drops to 0 after a reprocess.
+            pipeline_id = None
+            if work_id:
+                prow = self._conn.execute(
+                    """SELECT bp.id FROM book_pipelines bp
+                       JOIN objects o ON o.id=bp.id AND o.lifecycle != 'deleted'
+                       WHERE bp.work_id=? ORDER BY bp.created_at DESC LIMIT 1""",
+                    (work_id,),
+                ).fetchone()
+                pipeline_id = prow["id"] if prow else None
             for ch in chapters:
                 cid = _uuid()
                 self._conn.execute(
@@ -3344,8 +3357,8 @@ class OrivellumDB:
                     """INSERT INTO book_chapters(id,pipeline_id,work_id,seq,level,title,
                        text,source_doc_id,citations,status,meta,created_at,updated_at,
                        citation_count,extraction_method)
-                       VALUES(?,NULL,?,?,?,?,?,?,'[]','extracted',?,?,?,0,'heading_parser')""",
-                    (cid, work_id, ch["seq"], ch.get("level", 1), ch["title"],
+                       VALUES(?,?,?,?,?,?,?,?,'[]','extracted',?,?,?,0,'heading_parser')""",
+                    (cid, pipeline_id, work_id, ch["seq"], ch.get("level", 1), ch["title"],
                      ch.get("text", ""), doc_id, _ch_meta_json, now, now),
                 )
         return n
