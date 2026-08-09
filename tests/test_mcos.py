@@ -265,6 +265,33 @@ class TestApiEndpoints(unittest.TestCase):
                         any(b["case_count"] > 0
                             for b in resp.json()["benchmarks"]))
 
+    def test_benchmarks_self_heal_when_eval_results_missing(self):
+        """eval_results is never read by the listing, but it must still be
+        validated + healed so benchmark runs don't fail on insert later."""
+        with tempfile.TemporaryDirectory() as tmp:
+            app, db, _cfg = _make_app(tmp)
+            client = TestClient(app, raise_server_exceptions=False,
+                                headers=AUTH_HEADERS)
+            _seed_doc_and_chunk(db)
+            resp = client.post("/api/mcos/seed")
+            self.assertEqual(resp.status_code, 200)
+
+            with db._lock:
+                db._conn.execute("DROP TABLE IF EXISTS eval_results")
+                db._conn.commit()
+
+            resp = client.get("/api/mcos/benchmarks")
+            self.assertEqual(resp.status_code, 200)
+            self.assertGreaterEqual(len(resp.json()["benchmarks"]), 4)
+
+            # Table restored — a full benchmark run (writes eval_results)
+            # must now succeed end-to-end.
+            from orivellum.capabilities.mcos import run_benchmark
+            run_id = run_benchmark(db, _cfg, "rag_retrieval")
+            resp = client.get(f"/api/mcos/runs/{run_id}")
+            self.assertEqual(resp.status_code, 200)
+            self.assertGreaterEqual(len(resp.json()["results"]), 1)
+
     def test_benchmarks_error_detail_is_structured(self):
         """Non-table failures must return a descriptive detail, not a 500 blob."""
         with tempfile.TemporaryDirectory() as tmp:

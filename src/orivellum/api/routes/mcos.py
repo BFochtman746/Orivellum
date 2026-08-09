@@ -116,6 +116,24 @@ def _heal_mcos_tables(db) -> bool:
         return False
 
 
+# Every table created by the v52 migration.  The listing endpoint validates
+# all of them (not just the ones it reads) so a partially-missing schema is
+# repaired before a benchmark run trips over it.
+_MCOS_TABLES = ("benchmarks", "benchmark_cases", "eval_runs", "eval_results")
+
+
+def _missing_mcos_tables(db) -> list[str]:
+    """Return the v52 tables absent from sqlite_master (empty when healthy)."""
+    with db._lock:
+        present = {
+            r[0] for r in db._conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name IN "
+                "(?,?,?,?)", _MCOS_TABLES,
+            ).fetchall()
+        }
+    return [t for t in _MCOS_TABLES if t not in present]
+
+
 def _list_benchmarks_rows(db) -> list[dict]:
     with db._lock:
         benches = [dict(r) for r in db._conn.execute(
@@ -171,6 +189,23 @@ def list_benchmarks():
     import sqlite3
     db = get_db()
     try:
+        # Validate the FULL v52 table set up front — including eval_results,
+        # which this listing never reads but benchmark runs write to.
+        missing = _missing_mcos_tables(db)
+        if missing:
+            logger.warning("MCOS tables missing: %s (schema v%d) — attempting "
+                           "self-heal", missing, _schema_version(db))
+            if not _heal_mcos_tables(db) or _missing_mcos_tables(db):
+                raise HTTPException(
+                    status_code=500,
+                    detail=(
+                        f"MCOS tables are missing ({', '.join(missing)}; "
+                        f"database schema v{_schema_version(db)}, MCOS needs "
+                        "v52+) and automatic repair failed. Restart the server "
+                        "to re-run migrations; if this persists, check the "
+                        "server log for the failing migration."
+                    ),
+                )
         return {"benchmarks": _list_benchmarks_rows(db)}
     except sqlite3.OperationalError as exc:
         msg = str(exc)
