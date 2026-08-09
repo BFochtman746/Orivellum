@@ -22,6 +22,9 @@ import ProjectDetail from '@/pages/projects/detail';
 import Studio from '@/pages/studio/index';
 import WriteDeskPage from '@/pages/write/index';
 import WritingHub from '@/pages/writing/index';
+import LearningHub from '@/pages/learning/index';
+import LearningSession from '@/pages/learning/session';
+import KnowledgeReview from '@/pages/learning/review';
 import Backups from '@/pages/backups/index';
 import System from '@/pages/system/index';
 import GovernancePage from '@/pages/governance/index';
@@ -121,6 +124,9 @@ function RoutedPages() {
         <Route path="/studio">{() => <RouteWithBoundary component={Studio} />}</Route>
         <Route path="/write">{() => <RouteWithBoundary component={WriteDeskPage} />}</Route>
         <Route path="/writing">{() => <RouteWithBoundary component={WritingHub} />}</Route>
+        <Route path="/learning/session/:workId">{() => <RouteWithBoundary component={LearningSession} />}</Route>
+        <Route path="/learning/review">{() => <RouteWithBoundary component={KnowledgeReview} />}</Route>
+        <Route path="/learning">{() => <RouteWithBoundary component={LearningHub} />}</Route>
         <Route path="/backups">{() => <RouteWithBoundary component={Backups} />}</Route>
         <Route path="/system">{() => <RouteWithBoundary component={System} />}</Route>
         <Route path="/mcos">{() => <RouteWithBoundary component={Mcos} />}</Route>

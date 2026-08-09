@@ -43,7 +43,14 @@ export function AppFrame({ app, children }: { app: AppDef; children: React.React
     setLocation("/");
   };
 
-  const isActive = (href: string) => path === href || path.startsWith(href + "/");
+  // A chip is active when its href matches the path — but if several route
+  // hrefs prefix-match (e.g. "/learning" and "/learning/review"), only the
+  // longest (most specific) match lights up.
+  const matches = (href: string) => path === href || path.startsWith(href + "/");
+  const bestMatch = app.routes
+    .filter((r) => matches(r.href))
+    .reduce<string | null>((best, r) => (best && best.length >= r.href.length ? best : r.href), null);
+  const isActive = (href: string) => href === bestMatch;
 
   return (
     <div className="gd-shell @container" data-conn={conn.state}>

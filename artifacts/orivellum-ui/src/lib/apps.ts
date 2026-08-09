@@ -64,13 +64,16 @@ export const APPS: AppDef[] = [
     name: "Learning",
     tagline: "Study, mastery & topics",
     icon: GraduationCap,
-    entry: "/learn",
+    entry: "/learning",
     routes: [
-      { name: "Learn", href: "/learn" },
+      // Hub supersedes the old /learn landing page; /learn stays owned so
+      // legacy deep links keep rendering inside the Learning frame.
+      { name: "Study", href: "/learning" },
       { name: "Projects", href: "/projects" },
+      { name: "Review", href: "/learning/review" },
       { name: "Topics", href: "/topics" },
     ],
-    own: ["/learn", "/projects", "/topics"],
+    own: ["/learning", "/learn", "/projects", "/topics"],
   },
   {
     id: "chat",

@@ -3410,7 +3410,7 @@ function DepMapSVG({
   );
 }
 
-function LearnTab({ workId }: { workId: string }) {
+export function LearnTab({ workId }: { workId: string }) {
   const [phase, setPhase]       = useState<LearnPhase>("loading");
   const [session, setSession]   = useState<LearningSession | null>(null);
   const [answer, setAnswer]     = useState("");
