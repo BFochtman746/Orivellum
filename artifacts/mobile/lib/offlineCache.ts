@@ -27,8 +27,9 @@
 
 import { mobileFetch } from './api';
 import { readCache, writeCache } from './cache';
+import { apiOrigin } from '@/lib/server';
 
-const API_BASE = () => `https://${process.env.EXPO_PUBLIC_DOMAIN ?? ''}/api`;
+const API_BASE = () => `${apiOrigin()}/api`;
 
 export interface SyncResult {
   worksCount: number;

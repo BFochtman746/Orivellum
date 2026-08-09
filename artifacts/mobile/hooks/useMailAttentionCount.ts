@@ -20,9 +20,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { mobileFetch } from '@/lib/api';
 import { usePathname } from 'expo-router';
+import { apiOrigin } from '@/lib/server';
 
-const _DOMAIN   = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
-const _BASE_API = `https://${_DOMAIN}/api`;
+const _DOMAIN = () => apiOrigin(); // API origin (user-configurable server)
+const _BASE_API = () => `${_DOMAIN()}/api`;
 
 export function useMailAttentionCount(): number {
   const [count, setCount] = useState(0);
@@ -32,7 +33,7 @@ export function useMailAttentionCount(): number {
 
   const poll = useCallback(async () => {
     try {
-      const r = await mobileFetch(`${_BASE_API}/mail/summary`);
+      const r = await mobileFetch(`${_BASE_API()}/mail/summary`);
       if (r.ok) {
         const data = await r.json();
         setCount(data.connected ? ((data.high_attention as number) ?? 0) : 0);

@@ -71,6 +71,7 @@ import { readCache, writeCache } from '@/lib/cache';
 import { SkeletonItem } from '@/components/SkeletonItem';
 import { EmptyState } from '@/components/EmptyState';
 import { useSheetAnimation } from '@/lib/useSheetAnimation';
+import { apiOrigin } from '@/lib/server';
 
 function ConversationItem({ item, onArchive, onDelete, onRename }: { item: Conversation; onArchive?: (id: string) => void; onDelete?: (id: string) => void; onRename?: (id: string, title: string) => void }) {
   const colors = useColors();
@@ -190,8 +191,8 @@ export default function ConversationsScreen() {
     setMemoryOpen(true);
     setMemoryLoading(true);
     try {
-      const domain = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
-      const r = await mobileFetch(`https://${domain}/api/memory`);
+      const domain = apiOrigin();
+      const r = await mobileFetch(`${domain}/api/memory`);
       if (r.ok) setMemoryFacts((await r.json()).facts ?? []);
     } catch { /* non-fatal */ }
     finally { setMemoryLoading(false); }
@@ -248,9 +249,9 @@ export default function ConversationsScreen() {
   } | null>({
     queryKey: ['msg-search', debouncedSearch.trim()],
     queryFn: async () => {
-      const domain = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
+      const domain = apiOrigin();
       const r = await mobileFetch(
-        `https://${domain}/api/conversations/search?q=${encodeURIComponent(debouncedSearch.trim())}&limit=30`
+        `${domain}/api/conversations/search?q=${encodeURIComponent(debouncedSearch.trim())}&limit=30`
       );
       if (!r.ok) return null;
       return r.json();
@@ -277,8 +278,8 @@ export default function ConversationsScreen() {
     const trimmed = newTitle.trim();
     if (!trimmed) return;
     try {
-      const domain = process.env.EXPO_PUBLIC_DOMAIN;
-      await mobileFetch(`https://${domain}/api/conversations/${convId}`, {
+      const domain = apiOrigin();
+      await mobileFetch(`${domain}/api/conversations/${convId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title: trimmed }),
@@ -299,8 +300,8 @@ export default function ConversationsScreen() {
 
   const handleDelete = async (convId: string) => {
     try {
-      const domain = process.env.EXPO_PUBLIC_DOMAIN;
-      const r = await mobileFetch(`https://${domain}/api/conversations/${convId}`, { method: 'DELETE' });
+      const domain = apiOrigin();
+      const r = await mobileFetch(`${domain}/api/conversations/${convId}`, { method: 'DELETE' });
       if (r.ok) {
         queryClient.invalidateQueries({ queryKey: getListConversationsQueryKey({ archived: false, limit: 200 }) });
         refetch();
@@ -312,8 +313,8 @@ export default function ConversationsScreen() {
 
   const handleArchive = async (convId: string) => {
     try {
-      const domain = process.env.EXPO_PUBLIC_DOMAIN;
-      const r = await mobileFetch(`https://${domain}/api/conversations/${convId}`, {
+      const domain = apiOrigin();
+      const r = await mobileFetch(`${domain}/api/conversations/${convId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ archived: true }),

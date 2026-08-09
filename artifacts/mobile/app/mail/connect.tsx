@@ -22,9 +22,10 @@ import { useVellumTokens } from '@/lib/tokens';
 import { font } from '@/lib/typography';
 import { mobileFetchJson } from '@/lib/api';
 import * as Haptics from 'expo-haptics';
+import { apiOrigin } from '@/lib/server';
 
-const DOMAIN = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
-const API = `https://${DOMAIN}/api`;
+const DOMAIN = () => apiOrigin(); // API origin (user-configurable server)
+const API = () => `${DOMAIN()}/api`;
 
 type Step = 'idle' | 'pending' | 'polling' | 'done' | 'error';
 
@@ -61,7 +62,7 @@ export default function MailConnectScreen() {
 
   const doPoll = useCallback(async (h: string) => {
     try {
-      const data = await mobileFetchJson<PollResponse>(`${API}/mail/connect/poll`, {
+      const data = await mobileFetchJson<PollResponse>(`${API()}/mail/connect/poll`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ handle: h }),
@@ -86,7 +87,7 @@ export default function MailConnectScreen() {
     setStep('pending');
     setError('');
     try {
-      const data = await mobileFetchJson<DeviceCodeResponse>(`${API}/mail/connect/start`, { method: 'POST' });
+      const data = await mobileFetchJson<DeviceCodeResponse>(`${API()}/mail/connect/start`, { method: 'POST' });
       setUserCode(data.user_code);
       setVerifyUrl(data.verification_uri);
       setHandle(data.handle);

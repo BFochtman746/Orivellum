@@ -24,8 +24,8 @@ import { getApiToken } from '@/lib/token';
 import { useVellumTokens } from '@/lib/tokens';
 import { font } from '@/lib/typography';
 
-const DOMAIN = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
-const API_BASE = `https://${DOMAIN}`;
+const DOMAIN = () => apiOrigin(); // API origin (user-configurable server)
+const API_BASE = () => `${DOMAIN()}`;
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -159,7 +159,7 @@ function ProfileCard({
         // Re-run intake to check if extraction has finished
         setActionBusy(action.id);
         try {
-          const resp = await mobileFetch(`${API_BASE}/api/intake`, {
+          const resp = await mobileFetch(`${API_BASE()}/api/intake`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ doc_id: profile.doc_id }),
@@ -178,7 +178,7 @@ function ProfileCard({
       case 'chat': {
         setActionBusy(action.id);
         try {
-          const convResp = await mobileFetch(`${API_BASE}/api/conversations`, {
+          const convResp = await mobileFetch(`${API_BASE()}/api/conversations`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -195,7 +195,7 @@ function ProfileCard({
           const groundedPrompt = (!profile.filed_to_id && profile.text_snippet)
             ? `Document excerpt:\n\n${profile.text_snippet}\n\n---\n\n${basePrompt}`
             : basePrompt;
-          await mobileFetch(`${API_BASE}/api/conversations/${id}/messages`, {
+          await mobileFetch(`${API_BASE()}/api/conversations/${id}/messages`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ text: groundedPrompt, stream: false }),
@@ -230,7 +230,7 @@ function ProfileCard({
         // Create a conversation then POST the extraction prompt as the first message
         setActionBusy(action.id);
         try {
-          const convResp = await mobileFetch(`${API_BASE}/api/conversations`, {
+          const convResp = await mobileFetch(`${API_BASE()}/api/conversations`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -246,7 +246,7 @@ function ProfileCard({
           const groundedPrompt = (!profile.filed_to_id && profile.text_snippet)
             ? `Document excerpt:\n\n${profile.text_snippet}\n\n---\n\n${basePrompt}`
             : basePrompt;
-          await mobileFetch(`${API_BASE}/api/conversations/${id}/messages`, {
+          await mobileFetch(`${API_BASE()}/api/conversations/${id}/messages`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ text: groundedPrompt, stream: false }),
@@ -273,7 +273,7 @@ function ProfileCard({
                 setActionBusy(action.id);
                 try {
                   const resp = await mobileFetch(
-                    `${API_BASE}/api/library/${profile.doc_id}/lifecycle`,
+                    `${API_BASE()}/api/library/${profile.doc_id}/lifecycle`,
                     {
                       method: 'PATCH',
                       headers: { 'Content-Type': 'application/json' },
@@ -308,7 +308,7 @@ function ProfileCard({
                 setActionBusy(action.id);
                 try {
                   // Fire-and-forget POST — returns immediately with {job_id, status}
-                  const resp = await mobileFetch(`${API_BASE}/api/intake/research`, {
+                  const resp = await mobileFetch(`${API_BASE()}/api/intake/research`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ doc_id: profile.doc_id, confirmed: true }),
@@ -324,7 +324,7 @@ function ProfileCard({
                   for (let i = 0; i < MAX_POLLS; i++) {
                     await new Promise<void>(r => setTimeout(r, 2000));
                     const statusResp = await mobileFetch(
-                      `${API_BASE}/api/intake/${docId}/research-status`
+                      `${API_BASE()}/api/intake/${docId}/research-status`
                     );
                     if (!statusResp.ok) throw new Error('Research status unavailable');
                     const job = await statusResp.json() as {
@@ -443,6 +443,7 @@ function ProfileCard({
 // ── Main screen ────────────────────────────────────────────────────────────────
 
 import { useRouter } from 'expo-router';
+import { apiOrigin } from '@/lib/server';
 
 export default function IntakeScreen() {
   const colors = useColors();
@@ -475,7 +476,7 @@ export default function IntakeScreen() {
     setPhase('scanning');
     setFileName(name);
     try {
-      const res = await mobileFetch(`${API_BASE}/api/studio/ocr`, {
+      const res = await mobileFetch(`${API_BASE()}/api/studio/ocr`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ content_b64: base64 }),
@@ -501,7 +502,7 @@ export default function IntakeScreen() {
   const runIntake = async (docId: string) => {
     setPhase('profiling');
     try {
-      const resp = await mobileFetch(`${API_BASE}/api/intake`, {
+      const resp = await mobileFetch(`${API_BASE()}/api/intake`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ doc_id: docId }),
@@ -526,7 +527,7 @@ export default function IntakeScreen() {
       const form = new FormData();
       form.append('file', { uri, name, type: mimeType } as any);
       // Use mobileFetch so the bearer token is attached automatically
-      const resp = await mobileFetch(`${API_BASE}/api/library/upload`, {
+      const resp = await mobileFetch(`${API_BASE()}/api/library/upload`, {
         method: 'POST',
         body: form as any,
       });

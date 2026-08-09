@@ -20,11 +20,12 @@ import { mobileFetch } from '@/lib/api';
 import { useRouter, Stack } from 'expo-router';
 import { useVellumTokens } from '@/lib/tokens';
 import { font } from '@/lib/typography';
+import { apiOrigin } from '@/lib/server';
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
-const DOMAIN = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
-const API    = `https://${DOMAIN}/api`;
+const DOMAIN = () => apiOrigin(); // API origin (user-configurable server)
+const API = () => `${DOMAIN()}/api`;
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -159,7 +160,7 @@ export default function BackupsScreen() {
   const { data, isLoading, isError, refetch } = useQuery<{ backups: Backup[]; count: number }>({
     queryKey: ['mobile', 'backups'],
     queryFn: async () => {
-      const r = await mobileFetch(`${API}/backups`);
+      const r = await mobileFetch(`${API()}/backups`);
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       return r.json();
     },
@@ -177,7 +178,7 @@ export default function BackupsScreen() {
     setCreating(true);
     setCreateErr('');
     try {
-      const r = await mobileFetch(`${API}/backups`, { method: 'POST' });
+      const r = await mobileFetch(`${API()}/backups`, { method: 'POST' });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       await refetch();
     } catch (e: any) {
@@ -198,7 +199,7 @@ export default function BackupsScreen() {
     try {
       // 1. Fetch with auth
       const r = await mobileFetch(
-        `${API}/backups/${encodeURIComponent(backup.name)}/download`,
+        `${API()}/backups/${encodeURIComponent(backup.name)}/download`,
       );
       if (!r.ok) throw new Error(`Server returned HTTP ${r.status}`);
 

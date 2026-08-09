@@ -39,12 +39,13 @@ import { SkeletonItem } from '@/components/SkeletonItem';
 import { EmptyState } from '@/components/EmptyState';
 import { mobileFetch } from '@/lib/api';
 import * as Haptics from 'expo-haptics';
+import { apiOrigin } from '@/lib/server';
 
 const SWIPE_THRESHOLD = 60;  // px to commit a swipe decision
 const SWIPE_EXIT     = 450;  // px card travels before it leaves screen
 
-const DOMAIN = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
-const API = `https://${DOMAIN}/api`;
+const DOMAIN = () => apiOrigin(); // API origin (user-configurable server)
+const API = () => `${DOMAIN()}/api`;
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -222,7 +223,7 @@ function ReviewCard({
     }
     setPending(decision);
     try {
-      const r = await mobileFetch(`${API}/review/${item.id}/resolve`, {
+      const r = await mobileFetch(`${API()}/review/${item.id}/resolve`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -558,7 +559,7 @@ export default function ReviewScreen() {
   const fetchQueue = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
     try {
-      const r = await mobileFetch(`${API}/review/queue`);
+      const r = await mobileFetch(`${API()}/review/queue`);
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const data: QueueResponse = await r.json();
       setItems(data.items ?? []);

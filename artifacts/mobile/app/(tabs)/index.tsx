@@ -31,6 +31,7 @@ import { WeatherCard } from '@/components/WeatherCard';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import { mobileFetch } from '@/lib/api';
+import { apiOrigin } from '@/lib/server';
 
 function StatCard({ label, value, icon }: { label: string; value: number | undefined; icon: string }) {
   const colors = useColors();
@@ -148,14 +149,14 @@ function MiniGauge({
   );
 }
 
-const _HW_API = `https://${process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000'}/api/system/hardware`;
+const _HW_API = () => `${apiOrigin()}/api/system/hardware`;
 
 function ServerHealthCard() {
   const colors = useColors();
   const { data, isLoading } = useQuery<MobileHwData | null>({
     queryKey: ['system', 'hardware'],
     queryFn: async () => {
-      const r = await mobileFetch(_HW_API);
+      const r = await mobileFetch(_HW_API());
       if (!r.ok) return null;
       return r.json();
     },
@@ -240,7 +241,7 @@ const _REVIEW_TYPE_LABELS: Record<string, string> = {
   duplicate:  'Duplicate',
 };
 
-const _REVIEW_QUEUE_URL = `https://${process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000'}/api/review/queue`;
+const _REVIEW_QUEUE_URL = () => `${apiOrigin()}/api/review/queue`;
 
 function ReviewQueueTile() {
   const colors = useColors();
@@ -253,7 +254,7 @@ function ReviewQueueTile() {
   } | null>({
     queryKey: ['review', 'queue', 'dashboard-tile'],
     queryFn: async () => {
-      const r = await mobileFetch(_REVIEW_QUEUE_URL);
+      const r = await mobileFetch(_REVIEW_QUEUE_URL());
       if (!r.ok) return null;
       return r.json();
     },
@@ -344,8 +345,8 @@ function StudioCard() {
 
 // ── System health — constants & types ─────────────────────────────────────────
 
-const _SYS_DOMAIN = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
-const _SYS_API = `https://${_SYS_DOMAIN}/api`;
+const _SYS_DOMAIN = () => apiOrigin(); // API origin (user-configurable server)
+const _SYS_API = () => `${_SYS_DOMAIN()}/api`;
 
 interface SystemHealthData {
   status: string;
@@ -446,7 +447,7 @@ function DiagnosticsSheet({ visible, onClose }: { visible: boolean; onClose: () 
     setFetchErr('');
     setResult(null);
     try {
-      const r = await mobileFetch(`${_SYS_API}/system/diagnostics`);
+      const r = await mobileFetch(`${_SYS_API()}/system/diagnostics`);
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       setResult(await r.json());
     } catch (e: any) {
@@ -717,7 +718,7 @@ function RunLogSheet({
     setLines([]);
     setLogErr('');
     setLogLoading(true);
-    mobileFetch(`${_SYS_API}/actions/runs/${run.id}/log`)
+    mobileFetch(`${_SYS_API()}/actions/runs/${run.id}/log`)
       .then(r => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))
       .then(d => setLines(d.lines ?? []))
       .catch(e => setLogErr(e?.message ?? 'Could not load log'))
@@ -728,7 +729,7 @@ function RunLogSheet({
     if (!run) return;
     setRetrying(true);
     try {
-      const resp = await mobileFetch(`${_SYS_API}/actions/runs/${run.id}/retry`, { method: 'POST' });
+      const resp = await mobileFetch(`${_SYS_API()}/actions/runs/${run.id}/retry`, { method: 'POST' });
       if (!resp.ok) {
         const err = await resp.json().catch(() => ({}));
         throw new Error((err as any).detail ?? `HTTP ${resp.status}`);
@@ -927,7 +928,7 @@ function ActionLauncherSheet({
   const { data: actionsData, isLoading: actionsLoading } = useQuery<{ actions: ActionDef[] }>({
     queryKey: ['actions', 'list'],
     queryFn: async () => {
-      const r = await mobileFetch(`${_SYS_API}/actions`);
+      const r = await mobileFetch(`${_SYS_API()}/actions`);
       if (!r.ok) return { actions: [] };
       return r.json();
     },
@@ -939,7 +940,7 @@ function ActionLauncherSheet({
   const { data: worksData } = useQuery<{ works: WorkEntry[] }>({
     queryKey: ['works', 'list-short'],
     queryFn: async () => {
-      const r = await mobileFetch(`${_SYS_API}/works`);
+      const r = await mobileFetch(`${_SYS_API()}/works`);
       if (!r.ok) return { works: [] };
       return r.json();
     },
@@ -968,7 +969,7 @@ function ActionLauncherSheet({
     setErrorMap(prev => ({ ...prev, [action.name]: '' }));
     setSubmitting(action.name);
     try {
-      const resp = await mobileFetch(`${_SYS_API}/actions/${action.name}/execute`, {
+      const resp = await mobileFetch(`${_SYS_API()}/actions/${action.name}/execute`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(actionInputs),
@@ -1271,7 +1272,7 @@ function AutomationActivityCard() {
   const { data, isLoading, refetch } = useQuery<{ runs: ActionRun[]; count: number }>({
     queryKey: ['actions', 'runs'],
     queryFn: async () => {
-      const r = await mobileFetch(`${_SYS_API}/actions/runs?limit=10`);
+      const r = await mobileFetch(`${_SYS_API()}/actions/runs?limit=10`);
       if (!r.ok) return { runs: [], count: 0 };
       return r.json();
     },
@@ -1525,7 +1526,7 @@ function SystemHealthCard() {
   const { data: health } = useQuery<SystemHealthData | null>({
     queryKey: ['system', 'svc-health'],
     queryFn: async () => {
-      const r = await mobileFetch(`${_SYS_API}/system/health`);
+      const r = await mobileFetch(`${_SYS_API()}/system/health`);
       return r.ok ? r.json() : null;
     },
     refetchInterval: 60_000,
@@ -1535,7 +1536,7 @@ function SystemHealthCard() {
   const { data: embeddings } = useQuery<EmbeddingsStatusData | null>({
     queryKey: ['system', 'embeddings-status'],
     queryFn: async () => {
-      const r = await mobileFetch(`${_SYS_API}/system/embeddings/status`);
+      const r = await mobileFetch(`${_SYS_API()}/system/embeddings/status`);
       return r.ok ? r.json() : null;
     },
     refetchInterval: 60_000,
@@ -1545,7 +1546,7 @@ function SystemHealthCard() {
   const { data: nightshift } = useQuery<NightshiftStatusData | null>({
     queryKey: ['system', 'nightshift-status-dash'],
     queryFn: async () => {
-      const r = await mobileFetch(`${_SYS_API}/system/nightshift/status`);
+      const r = await mobileFetch(`${_SYS_API()}/system/nightshift/status`);
       return r.ok ? r.json() : null;
     },
     refetchInterval: 60_000,
@@ -1757,8 +1758,8 @@ export default function DashboardScreen() {
   const openAiSettings = async () => {
     setAiSettingsOpen(true);
     try {
-      const domain = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
-      const r = await mobileFetch(`https://${domain}/api/system/settings`);
+      const domain = apiOrigin();
+      const r = await mobileFetch(`${domain}/api/system/settings`);
       if (r.ok) {
         const d = await r.json();
         setAiExtractionEnabled(d.ai_extraction_enabled === 'true' || d.ai_extraction_enabled === true);
@@ -1768,9 +1769,9 @@ export default function DashboardScreen() {
   };
 
   const patchSetting = async (key: string, value: boolean) => {
-    const domain = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
+    const domain = apiOrigin();
     try {
-      await mobileFetch(`https://${domain}/api/system/settings`, {
+      await mobileFetch(`${domain}/api/system/settings`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ [key]: value }),

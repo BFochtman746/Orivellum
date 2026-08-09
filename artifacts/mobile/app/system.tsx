@@ -32,20 +32,21 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useVellumTokens, alpha } from '@/lib/tokens';
 import { font, fontSerif } from '@/lib/typography';
 import { SkeletonItem } from '@/components/SkeletonItem';
+import { apiOrigin } from '@/lib/server';
 
-const DOMAIN = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
-const API = `https://${DOMAIN}/api`;
+const DOMAIN = () => apiOrigin(); // API origin (user-configurable server)
+const API = () => `${DOMAIN()}/api`;
 
 // ── API helpers ───────────────────────────────────────────────────────────────
 
 async function fetchJson(path: string) {
-  const r = await mobileFetch(`${API}${path}`);
+  const r = await mobileFetch(`${API()}${path}`);
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   return r.json();
 }
 
 async function postJson(path: string, body?: object) {
-  const r = await mobileFetch(`${API}${path}`, {
+  const r = await mobileFetch(`${API()}${path}`, {
     method: 'POST',
     headers: body ? { 'Content-Type': 'application/json' } : undefined,
     body: body ? JSON.stringify(body) : undefined,
@@ -142,7 +143,7 @@ function ProfileSection() {
   const [loaded,  setLoaded]  = useState(false);
 
   useEffect(() => {
-    mobileFetch(`${API}/system/profile`)
+    mobileFetch(`${API()}/system/profile`)
       .then(r => r.ok ? r.json() : null)
       .then(d => {
         if (!d) return;
@@ -157,7 +158,7 @@ function ProfileSection() {
   const save = async () => {
     setSaving(true);
     try {
-      await mobileFetch(`${API}/system/profile`, {
+      await mobileFetch(`${API()}/system/profile`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ user_name: name, user_bio: bio, communication_style: style }),
@@ -390,7 +391,7 @@ export default function SystemScreen() {
   const toggleAudioEnhancement = async (val: boolean) => {
     setAudioEnhToggling(true);
     try {
-      const r = await mobileFetch(`${API}/system/settings/audio-enhance`, {
+      const r = await mobileFetch(`${API()}/system/settings/audio-enhance`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ enabled: val }),
@@ -408,7 +409,7 @@ export default function SystemScreen() {
     setProbing(true);
     setProbeResult(null);
     try {
-      const res = await mobileFetch(`${API}/system/embeddings/probe`, { method: 'POST' });
+      const res = await mobileFetch(`${API()}/system/embeddings/probe`, { method: 'POST' });
       const data = await res.json();
       setProbeResult(res.ok ? `✓ ${data.message ?? 'Embeddings working'}` : `✗ ${data.detail ?? 'Probe failed'}`);
     } catch (e: any) {

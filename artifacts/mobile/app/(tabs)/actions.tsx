@@ -20,9 +20,10 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { font } from '@/lib/typography';
 import { useVellumTokens, alpha } from '@/lib/tokens';
 import { getApiToken } from '@/lib/token';
+import { apiOrigin } from '@/lib/server';
 
-const DOMAIN = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
-const API = `https://${DOMAIN}/api`;
+const DOMAIN = () => apiOrigin(); // API origin (user-configurable server)
+const API = () => `${DOMAIN()}/api`;
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -96,7 +97,7 @@ function RunStatusIcon({ status, colors, T }: { status: ActionRun['status']; col
 // ── Share output file ──────────────────────────────────────────────────────────
 
 async function shareOutput(outputPath: string, label: string | null) {
-  const url = `${API}/studio/outputs/serve?path=${encodeURIComponent(outputPath)}`;
+  const url = `${API()}/studio/outputs/serve?path=${encodeURIComponent(outputPath)}`;
   if (Platform.OS === 'web') {
     const resp = await mobileFetch(url);
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
@@ -353,7 +354,7 @@ function ActionSheet({
     setPreviewing(true);
     setPreviewMsg(null);
     try {
-      const r = await mobileFetch(`${API}/actions/${action.name}/preview`, {
+      const r = await mobileFetch(`${API()}/actions/${action.name}/preview`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(inputs),
@@ -371,7 +372,7 @@ function ActionSheet({
   const handleExecute = async () => {
     setExecuting(true);
     try {
-      const r = await mobileFetch(`${API}/actions/${action.name}/execute`, {
+      const r = await mobileFetch(`${API()}/actions/${action.name}/execute`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(inputs),
@@ -639,7 +640,7 @@ export default function ActionsScreen() {
   // ── Fetch catalog ────────────────────────────────────────────────────────────
   const fetchCatalog = useCallback(async () => {
     try {
-      const r = await mobileFetch(`${API}/actions`);
+      const r = await mobileFetch(`${API()}/actions`);
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const d = await r.json();
       setActions(d.actions ?? []);
@@ -654,7 +655,7 @@ export default function ActionsScreen() {
   // ── Fetch runs ───────────────────────────────────────────────────────────────
   const fetchRuns = useCallback(async () => {
     try {
-      const r = await mobileFetch(`${API}/actions/runs?limit=20`);
+      const r = await mobileFetch(`${API()}/actions/runs?limit=20`);
       if (!r.ok) return;
       const d = await r.json();
       setRuns(d.runs ?? []);
@@ -669,7 +670,7 @@ export default function ActionsScreen() {
   // ── Fetch works ──────────────────────────────────────────────────────────────
   const fetchWorks = useCallback(async () => {
     try {
-      const r = await mobileFetch(`${API}/works`);
+      const r = await mobileFetch(`${API()}/works`);
       if (!r.ok) return;
       const d = await r.json();
       setWorks(d.works ?? []);
@@ -709,7 +710,7 @@ export default function ActionsScreen() {
   // ── Retry ─────────────────────────────────────────────────────────────────────
   const handleRetry = useCallback(async (runId: string) => {
     try {
-      const r = await mobileFetch(`${API}/actions/runs/${runId}/retry`, { method: 'POST' });
+      const r = await mobileFetch(`${API()}/actions/runs/${runId}/retry`, { method: 'POST' });
       if (!r.ok) {
         const err = await r.json().catch(() => ({ detail: 'Retry failed' }));
         throw new Error(err.detail ?? 'Retry failed');

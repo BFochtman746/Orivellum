@@ -37,6 +37,15 @@ import * as Device from 'expo-device';
 import * as Notifications from 'expo-notifications';
 import { setBaseUrl } from '@workspace/api-client-react';
 import { loadToken, saveToken, validateKey } from '@/lib/token';
+import {
+  DEFAULT_ORIGIN,
+  apiOrigin,
+  clearServerOrigin,
+  isCustomServer,
+  loadServerOrigin,
+  normalizeOrigin,
+  saveServerOrigin,
+} from '@/lib/server';
 
 // ── Push notifications ────────────────────────────────────────────────────────
 
@@ -99,10 +108,10 @@ async function registerForPushNotificationsAsync(
   }
 }
 
-const BASE_URL = `https://${process.env.EXPO_PUBLIC_DOMAIN ?? ''}`;
-
-// Set API base URL for Expo — bundles run outside the web proxy and need absolute URLs
-setBaseUrl(BASE_URL);
+// Set API base URL for Expo — bundles run outside the web proxy and need
+// absolute URLs.  Starts at the build-time default; RootLayout re-applies
+// it after `loadServerOrigin()` restores any user-configured server.
+setBaseUrl(apiOrigin());
 
 SplashScreen.preventAutoHideAsync();
 
@@ -119,6 +128,8 @@ const queryClient = new QueryClient({
 
 function LoginScreen({ onSuccess }: { onSuccess: () => void }) {
   const [key, setKey] = useState('');
+  // Pre-fill with the stored custom server so re-login keeps the setting.
+  const [server, setServer] = useState(isCustomServer() ? apiOrigin() : '');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const colorScheme = useColorScheme();
@@ -136,16 +147,30 @@ function LoginScreen({ onSuccess }: { onSuccess: () => void }) {
     const trimmed = key.trim();
     if (!trimmed) return;
     setError('');
-    setLoading(true);
 
-    const valid = await validateKey(trimmed, BASE_URL);
+    // Empty server field → build-time default (Replit dev environment).
+    const serverText = server.trim();
+    const origin = serverText ? normalizeOrigin(serverText) : DEFAULT_ORIGIN;
+    if (!origin) {
+      setError('Server address looks invalid — try e.g. http://100.92.116.70:8080');
+      return;
+    }
+
+    setLoading(true);
+    const valid = await validateKey(trimmed, origin);
     if (valid) {
+      if (serverText) {
+        await saveServerOrigin(origin);
+      } else {
+        await clearServerOrigin();
+      }
+      setBaseUrl(apiOrigin());
       await saveToken(trimmed);
       setLoading(false);
       onSuccess();
     } else {
       setLoading(false);
-      setError('Invalid key — check your API server startup logs.');
+      setError('Could not connect — check the server address and API key.');
     }
   };
 
@@ -157,6 +182,23 @@ function LoginScreen({ onSuccess }: { onSuccess: () => void }) {
       >
         <Text style={[styles.title, { color: dynColors.text }]}>Orivellum</Text>
         <Text style={[styles.subtitle, { color: dynColors.muted }]}>Enter your API key to connect</Text>
+
+        <TextInput
+          style={[styles.input, {
+            color: dynColors.text,
+            borderColor: dynColors.border,
+            backgroundColor: dynColors.card,
+          }]}
+          placeholder="Server address (e.g. http://100.92.116.70:8080)"
+          placeholderTextColor={dynColors.muted}
+          value={server}
+          onChangeText={setServer}
+          autoCapitalize="none"
+          autoCorrect={false}
+          keyboardType="url"
+          editable={!loading}
+          returnKeyType="next"
+        />
 
         <TextInput
           style={[styles.input, {
@@ -190,7 +232,8 @@ function LoginScreen({ onSuccess }: { onSuccess: () => void }) {
         </TouchableOpacity>
 
         <Text style={[styles.hint, { color: dynColors.muted }]}>
-          Find your key in the API server startup logs or data/api_key.txt
+          Find your key in the API server startup logs or data/api_key.txt.
+          Leave the server address empty to use the built-in default.
         </Text>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -331,10 +374,17 @@ export default function RootLayout() {
   const [syncing, setSyncing] = useState(false);
 
   useEffect(() => {
-    loadToken().then((token) => {
-      bearerTokenRef.current = token;
-      setAuthState(token ? 'authenticated' : 'unauthenticated');
-    });
+    // Restore the stored server origin FIRST so every subsequent request
+    // (generated hooks + hand-rolled fetches) targets the right server.
+    loadServerOrigin()
+      .then((origin) => {
+        setBaseUrl(origin);
+        return loadToken();
+      })
+      .then((token) => {
+        bearerTokenRef.current = token;
+        setAuthState(token ? 'authenticated' : 'unauthenticated');
+      });
   }, []);
 
   useEffect(() => {
@@ -348,7 +398,7 @@ export default function RootLayout() {
     if (authState !== 'authenticated') return;
     const token = bearerTokenRef.current;
     if (!token) return;
-    registerForPushNotificationsAsync(BASE_URL, token);
+    registerForPushNotificationsAsync(apiOrigin(), token);
   }, [authState]);
 
   // ── Offline cache sync ────────────────────────────────────────────────────

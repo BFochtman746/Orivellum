@@ -35,9 +35,10 @@ import { useSheetAnimation } from '@/lib/useSheetAnimation';
 import { getApiToken } from '@/lib/token';
 import * as Haptics from 'expo-haptics';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { apiOrigin } from '@/lib/server';
 
-const DOMAIN = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
-const API = `https://${DOMAIN}/api`;
+const DOMAIN = () => apiOrigin(); // API origin (user-configurable server)
+const API = () => `${DOMAIN()}/api`;
 
 // ── Voice catalog — mirrors _VOICE_CATALOG in studio.py ──────────────────────
 // Full 28-voice catalog with perceptual dimensions and genre tags.
@@ -119,7 +120,7 @@ function fmtDuration(sec: number): string {
 }
 
 function serveUrl(path: string) {
-  return `${API}/studio/outputs/serve?path=${encodeURIComponent(path)}`;
+  return `${API()}/studio/outputs/serve?path=${encodeURIComponent(path)}`;
 }
 
 /**
@@ -578,7 +579,7 @@ function VoiceBrowserCard({
           const isSelected = v.id === selectedId;
           const isPlaying  = audio.playingKey === `sample-${v.id}`;
           const isLoading  = audio.loadingKey === `sample-${v.id}`;
-          const sampleUri  = `${API}/studio/voices/${encodeURIComponent(v.id)}/sample`;
+          const sampleUri  = `${API()}/studio/voices/${encodeURIComponent(v.id)}/sample`;
 
           return (
             <Pressable
@@ -914,7 +915,7 @@ function VoiceDesignerCard({
     setResult(null);
     setErrorMsg('');
     try {
-      const resp = await mobileFetch(`${API}/studio/voices/design`, {
+      const resp = await mobileFetch(`${API()}/studio/voices/design`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ description: description.trim() }),
@@ -1059,7 +1060,7 @@ function VoiceDesignerCard({
               { id: m.voice_id, name: m.voice_id };
             const isPlaying = audio.playingKey === `sample-${v.id}`;
             const isLoading = audio.loadingKey === `sample-${v.id}`;
-            const sampleUri = `${API}/studio/voices/${encodeURIComponent(v.id)}/sample`;
+            const sampleUri = `${API()}/studio/voices/${encodeURIComponent(v.id)}/sample`;
             const accentCol = v.accent === 'british' ? '#3b82f6' : T.gilt;
             const genderSym = v.gender === 'feminine' ? '♀' : v.gender === 'masculine' ? '♂' : '◆';
             const score = m.match_score ?? 0;
@@ -1303,7 +1304,7 @@ function VoiceRecommenderCard({
     setErrorMsg('');
 
     try {
-      const resp = await mobileFetch(`${API}/studio/voices/recommend`, {
+      const resp = await mobileFetch(`${API()}/studio/voices/recommend`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ work_id: wid, top_n: 5 }),
@@ -1507,7 +1508,7 @@ function VoiceRecommenderCard({
               { id: rec.voice_id, name: rec.voice_id };
             const isPlaying  = audio.playingKey === `sample-${v.id}`;
             const isLoading  = audio.loadingKey === `sample-${v.id}`;
-            const sampleUri  = `${API}/studio/voices/${encodeURIComponent(v.id)}/sample`;
+            const sampleUri  = `${API()}/studio/voices/${encodeURIComponent(v.id)}/sample`;
             const accentCol  = v.accent === 'british' ? '#3b82f6' : T.gilt;
             const genderSym  = v.gender === 'feminine' ? '♀' : v.gender === 'masculine' ? '♂' : '◆';
             const score      = rec.score ?? 0;
@@ -1769,7 +1770,7 @@ function useStreamingTTS() {
     abortRef.current = controller;
 
     try {
-      const resp = await mobileFetch(`${API}/studio/tts`, {
+      const resp = await mobileFetch(`${API()}/studio/tts`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text, voice, speed, stream: true }),
@@ -1840,7 +1841,7 @@ function useStreamingTTS() {
               // Prefer the serve URL the server computed; fall back to building
               // it from path so both v1 (uri field) and v2 (path-only) work.
               const concatUri = (evt.uri as string | undefined)
-                ? `${API.replace('/api', '')}${evt.uri}`
+                ? `${API().replace('/api', '')}${evt.uri}`
                 : serveUrl(evt.path as string);
               concatReceivedRef.current = true;
               if (mountedRef.current) {
@@ -1982,7 +1983,7 @@ function PremiumEngineBadge() {
   const [premium, setPremium] = React.useState(false);
 
   React.useEffect(() => {
-    mobileFetch(`${API}/studio/status`)
+    mobileFetch(`${API()}/studio/status`)
       .then(r => r.ok ? r.json() : null)
       .then(d => {
         if (!d?.tts) return;
@@ -2100,7 +2101,7 @@ function TTSPanel({
   const [recWorkId, setRecWorkId] = useState<string | null>(null);
 
   useEffect(() => {
-    mobileFetch(`${API}/works`)
+    mobileFetch(`${API()}/works`)
       .then(r => r.ok ? r.json() : null)
       .then(d => {
         if (d?.works) {
@@ -2368,7 +2369,7 @@ function ImagePanel({ onGenerated }: { onGenerated: () => void }) {
 
   const loadStatus = async () => {
     try {
-      const r = await mobileFetch(`${API}/studio/image-status`);
+      const r = await mobileFetch(`${API()}/studio/image-status`);
       if (r.ok) setStatus(await r.json());
     } catch {}
   };
@@ -2383,7 +2384,7 @@ function ImagePanel({ onGenerated }: { onGenerated: () => void }) {
     setSettingsVisible(true);
     setLoadingUrl(true);
     try {
-      const r = await mobileFetch(`${API}/system/settings/image-gen`);
+      const r = await mobileFetch(`${API()}/system/settings/image-gen`);
       if (r.ok) {
         const d = await r.json();
         setUrlInput(d.url ?? '');
@@ -2395,7 +2396,7 @@ function ImagePanel({ onGenerated }: { onGenerated: () => void }) {
   const saveSettings = async () => {
     setSaving(true);
     try {
-      const r = await mobileFetch(`${API}/system/settings/image-gen`, {
+      const r = await mobileFetch(`${API()}/system/settings/image-gen`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url: urlInput.trim() }),
@@ -2416,7 +2417,7 @@ function ImagePanel({ onGenerated }: { onGenerated: () => void }) {
     setLoading(true);
     setResultUri(null);
     try {
-      const resp = await mobileFetch(`${API}/studio/image`, {
+      const resp = await mobileFetch(`${API()}/studio/image`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -2708,7 +2709,7 @@ function OutputsPanel({
         onPress: async () => {
           if (audio.playingKey === out.path) audio.stop();
           try {
-            const r = await mobileFetch(`${API}/studio/outputs/archive?path=${encodeURIComponent(out.path)}`, {
+            const r = await mobileFetch(`${API()}/studio/outputs/archive?path=${encodeURIComponent(out.path)}`, {
               method: 'DELETE',
             });
             if (!r.ok) throw new Error();
@@ -2831,7 +2832,7 @@ function WorkshopPanel() {
 
   // Load works list for the context picker
   useEffect(() => {
-    mobileFetch(`${API}/works`)
+    mobileFetch(`${API()}/works`)
       .then(r => r.ok ? r.json() : null)
       .then(d => {
         if (d?.works) {
@@ -2860,7 +2861,7 @@ function WorkshopPanel() {
     setPhase('generating');
     startProgress();
     try {
-      const r = await mobileFetch(`${API}/generate/workshop/execute`, {
+      const r = await mobileFetch(`${API()}/generate/workshop/execute`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -2893,7 +2894,7 @@ function WorkshopPanel() {
     setPhase('planning');
     setErrorMsg('');
     try {
-      const r = await mobileFetch(`${API}/generate/workshop/plan`, {
+      const r = await mobileFetch(`${API()}/generate/workshop/plan`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ request: goal.trim(), work_id: workId }),
@@ -2956,7 +2957,7 @@ function WorkshopPanel() {
     // Build a share payload that includes the critique + download link so the
     // recipient can open the actual document file from a browser.
     // downloadUrl is already API-relative: "/api/generate/download?path=..."
-    const fileLink = downloadUrl ? `https://${DOMAIN}${downloadUrl}` : null;
+    const fileLink = downloadUrl ? `${DOMAIN()}${downloadUrl}` : null;
     const body = [
       critique || 'Document generated successfully.',
       fileLink ? `\nDocument file: ${fileLink}` : '',
@@ -3305,7 +3306,7 @@ function AudiobookPanel({
 
   // Load works list
   useEffect(() => {
-    mobileFetch(`${API}/works`)
+    mobileFetch(`${API()}/works`)
       .then(r => r.ok ? r.json() : null)
       .then(d => {
         if (d?.works) {
@@ -3412,7 +3413,7 @@ function AudiobookPanel({
         return;
       }
       try {
-        const sr = await mobileFetch(`${API}/studio/tts/work/${jid}/status`);
+        const sr = await mobileFetch(`${API()}/studio/tts/work/${jid}/status`);
 
         // 404 → server was restarted, job record is gone → show interrupted state
         if (sr.status === 404) {
@@ -3544,7 +3545,7 @@ function AudiobookPanel({
     setStatusReceived(false);
     startTimer();
     try {
-      const resp = await mobileFetch(`${API}/studio/tts/work/start`, {
+      const resp = await mobileFetch(`${API()}/studio/tts/work/start`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -3564,7 +3565,7 @@ function AudiobookPanel({
       // Guard the async-start race: if the user cancelled while the POST was
       // in-flight, delete the newly-created job and do not start polling.
       if (cancelledRef.current) {
-        mobileFetch(`${API}/studio/tts/work/${job_id}`, { method: 'DELETE' }).catch(() => {});
+        mobileFetch(`${API()}/studio/tts/work/${job_id}`, { method: 'DELETE' }).catch(() => {});
         return;
       }
 
@@ -3600,7 +3601,7 @@ function AudiobookPanel({
     // Signal the server to stop the background job; also used as a
     // deferred DELETE if job_id arrives after cancel was pressed.
     if (jobId) {
-      mobileFetch(`${API}/studio/tts/work/${jobId}`, { method: 'DELETE' }).catch(() => {});
+      mobileFetch(`${API()}/studio/tts/work/${jobId}`, { method: 'DELETE' }).catch(() => {});
     }
   };
 
@@ -4590,7 +4591,7 @@ export default function StudioScreen() {
 
   const loadVoices = async () => {
     try {
-      const r = await mobileFetch(`${API}/studio/voices`);
+      const r = await mobileFetch(`${API()}/studio/voices`);
       if (r.ok) {
         const data = await r.json();
         const list: VoiceEntry[] = (data.voices ?? [])
@@ -4613,7 +4614,7 @@ export default function StudioScreen() {
 
   const loadOutputs = async () => {
     try {
-      const r = await mobileFetch(`${API}/studio/outputs`);
+      const r = await mobileFetch(`${API()}/studio/outputs`);
       if (r.ok) {
         const data = await r.json();
         setOutputs(data.outputs ?? []);

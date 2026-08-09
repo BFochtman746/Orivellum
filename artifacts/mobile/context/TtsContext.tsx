@@ -18,6 +18,7 @@ import { Alert } from 'react-native';
 import { createAudioPlayer, setAudioModeAsync, type AudioPlayer } from 'expo-audio';
 import { mobileFetch } from '@/lib/api';
 import { getApiToken } from '@/lib/token';
+import { apiOrigin } from '@/lib/server';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -73,7 +74,7 @@ const TtsContext = createContext<TtsContextValue>({
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const _TTS_STALE = 'tts-stale';
-const _DOMAIN = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
+const _DOMAIN = () => apiOrigin(); // API origin (user-configurable server)
 
 // ── Provider ─────────────────────────────────────────────────────────────────
 
@@ -112,7 +113,7 @@ export function TtsProvider({ children }: { children: ReactNode }) {
       if (inflight) return inflight;
 
       const p = (async () => {
-        const res = await mobileFetch(`https://${_DOMAIN}/api/studio/tts`, {
+        const res = await mobileFetch(`${_DOMAIN()}/api/studio/tts`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ text: parts[i], voice, speed, return_url: true }),
@@ -156,7 +157,7 @@ export function TtsProvider({ children }: { children: ReactNode }) {
         if (sessionCounterRef.current !== sessionId) return;
 
         const token = getApiToken();
-        const uri = `https://${_DOMAIN}/api/studio/outputs/serve?path=${encodeURIComponent(servePath)}`;
+        const uri = `${_DOMAIN()}/api/studio/outputs/serve?path=${encodeURIComponent(servePath)}`;
 
         // Tear down the previous player before creating a new one
         playerRef.current?.remove();

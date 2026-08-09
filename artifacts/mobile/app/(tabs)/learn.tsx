@@ -21,6 +21,7 @@ import { useVellumTokens } from '@/lib/tokens';
 import { SkeletonItem } from '@/components/SkeletonItem';
 import { EmptyState } from '@/components/EmptyState';
 import { font, fontSerif } from '@/lib/typography';
+import { apiOrigin } from '@/lib/server';
 
 interface LearnWork {
   id: string;
@@ -83,8 +84,8 @@ interface LearnHealth {
 function LearningHealthCard() {
   const colors = useColors();
   const T = useVellumTokens();
-  const domain = process.env.EXPO_PUBLIC_DOMAIN;
-  const apiBase = domain ? `https://${domain}/api` : 'http://localhost:8000/api';
+  const domain = apiOrigin();
+  const apiBase = domain ? `${domain}/api` : 'http://localhost:8000/api';
   const { data } = useQuery<LearnHealth>({
     queryKey: ['mobile', 'learn', 'health'],
     queryFn: () => mobileFetch(`${apiBase}/learn/health`).then(r => r.json()),

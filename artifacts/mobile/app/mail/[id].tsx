@@ -21,9 +21,10 @@ import { useVellumTokens, alpha } from '@/lib/tokens';
 import { font } from '@/lib/typography';
 import { mobileFetchJson } from '@/lib/api';
 import * as Haptics from 'expo-haptics';
+import { apiOrigin } from '@/lib/server';
 
-const DOMAIN = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
-const API = `https://${DOMAIN}/api`;
+const DOMAIN = () => apiOrigin(); // API origin (user-configurable server)
+const API = () => `${DOMAIN()}/api`;
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -129,14 +130,14 @@ export default function MailDetailScreen() {
 
   const { data: detail, isLoading, error } = useQuery<DecisionDetail>({
     queryKey: ['mail-decision', id],
-    queryFn: () => mobileFetchJson(`${API}/mail/decisions/${id}`),
+    queryFn: () => mobileFetchJson(`${API()}/mail/decisions/${id}`),
     enabled: !!id,
     staleTime: 15_000,
   });
 
   const { data: summary } = useQuery<MailSummary>({
     queryKey: ['mail-summary'],
-    queryFn: () => mobileFetchJson(`${API}/mail/summary`),
+    queryFn: () => mobileFetchJson(`${API()}/mail/summary`),
     staleTime: 30_000,
   });
 
@@ -151,7 +152,7 @@ export default function MailDetailScreen() {
     setActing(true);
     try {
       const data = await mobileFetchJson<{ action_request_id: string }>(
-        `${API}/mail/decisions/${id}/draft`,
+        `${API()}/mail/decisions/${id}/draft`,
         { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ nonce: draftAction.nonce }) },
       );
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
@@ -180,7 +181,7 @@ export default function MailDetailScreen() {
     if (!id) return;
     setActing(true);
     try {
-      await mobileFetchJson(`${API}/mail/decisions/${id}/move`, {
+      await mobileFetchJson(`${API()}/mail/decisions/${id}/move`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ destination: 'review', nonce: moveAction.nonce }),
@@ -205,7 +206,7 @@ export default function MailDetailScreen() {
           onPress: async () => {
             setActing(true);
             try {
-              await mobileFetchJson(`${API}/mail/decisions/${id}/add-to-knowledge`, {
+              await mobileFetchJson(`${API()}/mail/decisions/${id}/add-to-knowledge`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ work_id: null, research: false }),
@@ -225,7 +226,7 @@ export default function MailDetailScreen() {
             setActing(true);
             try {
               const result = await mobileFetchJson<{ researched: boolean }>(
-                `${API}/mail/decisions/${id}/add-to-knowledge`,
+                `${API()}/mail/decisions/${id}/add-to-knowledge`,
                 {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },

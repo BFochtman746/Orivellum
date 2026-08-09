@@ -25,6 +25,7 @@ import { useRouter } from 'expo-router';
 import { OfflineBanner, ErrorScreen } from '@/components/OfflineBanner';
 import { useVellumTokens } from '@/lib/tokens';
 import { EmptyState } from '@/components/EmptyState';
+import { apiOrigin } from '@/lib/server';
 
 function LibraryCardSkeleton() {
   const colors = useColors();
@@ -205,11 +206,11 @@ export default function LibraryScreen() {
   // banner auto-hides as soon as the circuit reopens, without requiring navigation.
   useEffect(() => {
     setEmbeddingsBannerDismissed(false);           // reset dismiss on mode switch
-    const domain = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
+    const domain = apiOrigin();
     if (searchMode === 'keyword') { setEmbeddingsDown(false); return; }
     let cancelled = false;
     const check = () => {
-      mobileFetch(`https://${domain}/api/system/embeddings/status`)
+      mobileFetch(`${domain}/api/system/embeddings/status`)
         .then(r => r.ok ? r.json() : null)
         .then((data: any) => { if (!cancelled) setEmbeddingsDown(data?.circuit_open === true); })
         .catch(() => { if (!cancelled) setEmbeddingsDown(false); });
@@ -258,7 +259,7 @@ export default function LibraryScreen() {
       setUploadIndex(0);
       setUploadTotal(assets.length);
 
-      const domain = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
+      const domain = apiOrigin();
       let importedCount  = 0;
       let duplicateCount = 0;
       let failedCount    = 0;
@@ -293,7 +294,7 @@ export default function LibraryScreen() {
                 });
               };
               xhr.onerror = () => reject(new Error('Network error during upload'));
-              xhr.open('POST', `https://${domain}/api/library/upload`);
+              xhr.open('POST', `${domain}/api/library/upload`);
               const token = getApiToken();
               if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
               xhr.send(form as any);
@@ -787,8 +788,8 @@ export default function LibraryScreen() {
                 item.readiness === 'error' || item.readiness === 'no_text'
                   ? async () => {
                       try {
-                        const domain = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
-                        await mobileFetch(`https://${domain}/api/library/${item.id}/reprocess`, { method: 'POST' });
+                        const domain = apiOrigin();
+                        await mobileFetch(`${domain}/api/library/${item.id}/reprocess`, { method: 'POST' });
                         refetchList();
                       } catch {
                         Alert.alert('Error', 'Could not queue reprocess');

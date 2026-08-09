@@ -30,12 +30,13 @@ import { useRouter, Stack } from 'expo-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useVellumTokens, alpha } from '@/lib/tokens';
 import { font } from '@/lib/typography';
+import { apiOrigin } from '@/lib/server';
 
-const DOMAIN = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
-const BASE = `https://${DOMAIN}/api`;
+const DOMAIN = () => apiOrigin(); // API origin (user-configurable server)
+const BASE = () => `${DOMAIN()}/api`;
 
 async function gFetch(path: string) {
-  const r = await mobileFetch(`${BASE}${path}`);
+  const r = await mobileFetch(`${BASE()}${path}`);
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   return r.json();
 }
@@ -216,7 +217,7 @@ export default function GovernanceScreen() {
   const handleResolveConflict = async (conflictId: string, resolution: 'keep_a' | 'keep_b' | 'keep_both') => {
     setResolvingConflict(conflictId);
     try {
-      const r = await mobileFetch(`${BASE}/governance/conflicts/${conflictId}/resolve`, {
+      const r = await mobileFetch(`${BASE()}/governance/conflicts/${conflictId}/resolve`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ resolution }),
@@ -234,7 +235,7 @@ export default function GovernanceScreen() {
   const handleResolveFinding = async (findingId: string) => {
     setResolvingFinding(findingId);
     try {
-      const r = await mobileFetch(`${BASE}/governance/findings/${findingId}/resolve`, {
+      const r = await mobileFetch(`${BASE()}/governance/findings/${findingId}/resolve`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ resolution: 'acknowledged' }),

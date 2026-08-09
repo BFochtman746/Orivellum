@@ -29,6 +29,7 @@ import { useVellumTokens } from '@/lib/tokens';
 import { SkeletonItem } from '@/components/SkeletonItem';
 import { font, fontSerif } from '@/lib/typography';
 import * as WebBrowser from 'expo-web-browser';
+import { apiOrigin } from '@/lib/server';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -122,8 +123,8 @@ function PipelineStepper({ jobs, currentStatus }: { jobs: ForgeJob[]; currentSta
 
 function EventLog({ jobId }: { jobId: string }) {
   const colors = useColors();
-  const domain = process.env.EXPO_PUBLIC_DOMAIN;
-  const apiBase = domain ? `https://${domain}/api` : 'http://localhost:8000/api';
+  const domain = apiOrigin();
+  const apiBase = domain ? `${domain}/api` : 'http://localhost:8000/api';
 
   const { data } = useQuery<{ events: ForgeEvent[] }>({
     queryKey: ['mobile', 'forge', 'events', jobId],
@@ -194,7 +195,7 @@ export default function ForgeDetailScreen() {
   const [approving, setApproving] = useState(false);
   const [rejecting, setRejecting] = useState(false);
   const [starting, setStarting] = useState(false);
-  const domain = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
+  const domain = apiOrigin();
 
   const { data, isLoading, isError, error, refetch } = useQuery<ForgeProjectDetail>({
     queryKey: ['mobile', 'forge', 'project', id],
@@ -224,7 +225,7 @@ export default function ForgeDetailScreen() {
   // BUILD jobs use status "passed" on success (not "complete").
   const buildJob = data?.jobs?.find(j => j.type === 'BUILD' && j.status === 'passed' && j.build_dir) ?? null;
   const previewUrl = buildJob
-    ? `https://${domain}/api/forge/projects/${id}/jobs/${buildJob.id}/preview/index.html`
+    ? `${domain}/api/forge/projects/${id}/jobs/${buildJob.id}/preview/index.html`
     : null;
 
   /** Share the preview URL via the native share sheet. */

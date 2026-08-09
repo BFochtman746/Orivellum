@@ -35,9 +35,10 @@ import { useColors } from '@/hooks/useColors';
 import { mobileFetch } from '@/lib/api';
 import { font } from '@/lib/typography';
 import { useSheetAnimation } from '@/lib/useSheetAnimation';
+import { apiOrigin } from '@/lib/server';
 
-const DOMAIN = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
-const API = `https://${DOMAIN}/api`;
+const DOMAIN = () => apiOrigin(); // API origin (user-configurable server)
+const API = () => `${DOMAIN()}/api`;
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -474,7 +475,7 @@ export default function WriteEditorScreen() {
     if (!id) return;
     (async () => {
       try {
-        const r = await mobileFetch(`${API}/write/documents/${id}`);
+        const r = await mobileFetch(`${API()}/write/documents/${id}`);
         if (!r.ok) throw new Error('Not found');
         const data: WriteDoc = await r.json();
         setDoc(data);
@@ -493,7 +494,7 @@ export default function WriteEditorScreen() {
   useEffect(() => {
     (async () => {
       try {
-        const r = await mobileFetch(`${API}/works?limit=200`);
+        const r = await mobileFetch(`${API()}/works?limit=200`);
         if (r.ok) {
           const data = await r.json();
           const list: Work[] = (data.works ?? data.items ?? []).map((w: any) => ({
@@ -533,7 +534,7 @@ export default function WriteEditorScreen() {
         pendingSaveRef.current = null;
         isSavingRef.current = true;
         try {
-          const r = await mobileFetch(`${API}/write/documents/${id}`, {
+          const r = await mobileFetch(`${API()}/write/documents/${id}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -631,7 +632,7 @@ export default function WriteEditorScreen() {
       setLinkedWorkId(workId);
       if (!id) return;
       try {
-        await mobileFetch(`${API}/write/documents/${id}`, {
+        await mobileFetch(`${API()}/write/documents/${id}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ work_id: workId ?? '__none__' }),
@@ -693,7 +694,7 @@ export default function WriteEditorScreen() {
       aiAbortRef.current = ctrl;
 
       try {
-        const resp = await mobileFetch(`${API}/write/documents/${id}/ai`, {
+        const resp = await mobileFetch(`${API()}/write/documents/${id}/ai`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({

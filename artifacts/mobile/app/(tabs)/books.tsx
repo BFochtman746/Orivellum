@@ -21,9 +21,10 @@ import { mobileFetch } from '@/lib/api';
 import { font } from '@/lib/typography';
 import { useVellumTokens, alpha } from '@/lib/tokens';
 import { useSheetAnimation } from '@/lib/useSheetAnimation';
+import { apiOrigin } from '@/lib/server';
 
-const _DOMAIN = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
-const _API = `https://${_DOMAIN}/api`;
+const _DOMAIN = () => apiOrigin(); // API origin (user-configurable server)
+const _API = () => `${_DOMAIN()}/api`;
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
@@ -204,7 +205,7 @@ function OtherWorksSection({
 
   const { data, isLoading } = useQuery<{ works: WorkEntry[] }>({
     queryKey: ['mobile', 'works-all'],
-    queryFn: () => mobileFetch(`${_API}/works`).then(r => r.json()),
+    queryFn: () => mobileFetch(`${_API()}/works`).then(r => r.json()),
     staleTime: 30_000,
   });
 
@@ -215,7 +216,7 @@ function OtherWorksSection({
     if (promoting.has(work.id)) return;
     setPromoting(prev => new Set([...prev, work.id]));
     try {
-      const r = await mobileFetch(`${_API}/works/${work.id}/pipeline`, { method: 'POST' });
+      const r = await mobileFetch(`${_API()}/works/${work.id}/pipeline`, { method: 'POST' });
       if (!r.ok) {
         const body = await r.json().catch(() => ({}));
         Alert.alert('Could not start pipeline', (body as any).detail ?? 'Please try again.');
@@ -306,7 +307,7 @@ function CreateWorkModal({ visible, onClose, onCreated }: {
     }
     setSaving(true);
     try {
-      const r = await mobileFetch(`${_API}/works`, {
+      const r = await mobileFetch(`${_API()}/works`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title: title.trim(), work_type: 'writing', description: description.trim() || undefined }),
@@ -431,7 +432,7 @@ export default function BooksScreen() {
 
   const { data, isLoading, isError, refetch } = useQuery<{ books: BookEntry[] }>({
     queryKey: ['mobile', 'books'],
-    queryFn: () => mobileFetch(`${_API}/books`).then(r => r.json()),
+    queryFn: () => mobileFetch(`${_API()}/books`).then(r => r.json()),
     staleTime: 20_000,
     refetchInterval: 60_000,
   });

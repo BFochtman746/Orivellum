@@ -35,9 +35,10 @@ import { useVellumTokens } from '@/lib/tokens';
 import { SkeletonItem } from '@/components/SkeletonItem';
 import { EmptyState } from '@/components/EmptyState';
 import { font, fontSerif } from '@/lib/typography';
+import { apiOrigin } from '@/lib/server';
 
-const DOMAIN = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
-const API = `https://${DOMAIN}/api`;
+const DOMAIN = () => apiOrigin(); // API origin (user-configurable server)
+const API = () => `${DOMAIN()}/api`;
 
 interface MemoryFact {
   id: string;
@@ -271,7 +272,7 @@ export default function MemoryScreen() {
     else setLoading(true);
     setError(false);
     try {
-      const res = await mobileFetch(`${API}/memory`);
+      const res = await mobileFetch(`${API()}/memory`);
       if (!res.ok) throw new Error(`status ${res.status}`);
       const data = await res.json();
       setFacts(data.facts ?? []);
@@ -312,7 +313,7 @@ export default function MemoryScreen() {
     }
     setSavingId(fact.id);
     try {
-      const res = await mobileFetch(`${API}/system/user-memory/${fact.id}`, {
+      const res = await mobileFetch(`${API()}/system/user-memory/${fact.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ value: trimmed }),
@@ -354,7 +355,7 @@ export default function MemoryScreen() {
             setDeletingId(fact.id);
             try {
               const res = await mobileFetch(
-                `${API}/system/user-memory/${fact.id}`,
+                `${API()}/system/user-memory/${fact.id}`,
                 { method: 'DELETE' },
               );
               if (!res.ok) throw new Error(`status ${res.status}`);
@@ -388,7 +389,7 @@ export default function MemoryScreen() {
             setClearingAll(true);
             try {
               const res = await mobileFetch(
-                `${API}/system/user-memory`,
+                `${API()}/system/user-memory`,
                 { method: 'DELETE' },
               );
               if (!res.ok) throw new Error(`status ${res.status}`);

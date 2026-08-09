@@ -39,12 +39,13 @@ import { useColors } from '@/hooks/useColors';
 import { useVellumTokens } from '@/lib/tokens';
 import { Feather } from '@expo/vector-icons';
 import { mobileFetch } from '@/lib/api';
+import { apiOrigin } from '@/lib/server';
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
-const DOMAIN = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
-const API    = `https://${DOMAIN}/api`;
+const DOMAIN = () => apiOrigin(); // API origin (user-configurable server)
+const API = () => `${DOMAIN()}/api`;
 
 export const NODE_COLORS: Record<string, string> = {
   person:    '#527A8A',
@@ -392,8 +393,8 @@ export function KnowledgeGraphView({
   // ── Fetch ──────────────────────────────────────────────────────────────────
 
   const url = workId
-    ? `${API}/graph?work_id=${workId}&limit=120`
-    : `${API}/graph?limit=150`;
+    ? `${API()}/graph?work_id=${workId}&limit=120`
+    : `${API()}/graph?limit=150`;
 
   const { data, isLoading, isError, refetch } = useQuery<GraphData>({
     queryKey: ['graph', workId ?? 'global'],

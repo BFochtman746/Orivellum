@@ -26,9 +26,10 @@ import { useColors } from '@/hooks/useColors';
 import { mobileFetch } from '@/lib/api';
 import { useVellumTokens, alpha } from '@/lib/tokens';
 import { font } from '@/lib/typography';
+import { apiOrigin } from '@/lib/server';
 
-const DOMAIN = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
-const API    = `https://${DOMAIN}/api`;
+const DOMAIN = () => apiOrigin(); // API origin (user-configurable server)
+const API = () => `${DOMAIN()}/api`;
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -92,7 +93,7 @@ function TopicCard({
   const { data: detail, isLoading: detailLoading } = useQuery<TopicDetail>({
     queryKey: ['topic', topic.id],
     queryFn: async () => {
-      const r = await mobileFetch(`${API}/topics/${topic.id}`);
+      const r = await mobileFetch(`${API()}/topics/${topic.id}`);
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       return r.json();
     },
@@ -281,7 +282,7 @@ export default function TopicsScreen() {
   }>({
     queryKey: ['topics'],
     queryFn:  async () => {
-      const r = await mobileFetch(`${API}/topics`);
+      const r = await mobileFetch(`${API()}/topics`);
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       return r.json();
     },
@@ -296,7 +297,7 @@ export default function TopicsScreen() {
   } = useQuery<{ topics: Topic[]; total: number }>({
     queryKey: ['topics-search', debouncedQuery],
     queryFn:  async () => {
-      const r = await mobileFetch(`${API}/topics?q=${encodeURIComponent(debouncedQuery)}`);
+      const r = await mobileFetch(`${API()}/topics?q=${encodeURIComponent(debouncedQuery)}`);
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       return r.json();
     },

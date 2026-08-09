@@ -51,6 +51,7 @@ import { KnowledgeGraphView } from '@/components/KnowledgeGraphView';
 import { SkeletonItem } from '@/components/SkeletonItem';
 import { EmptyState } from '@/components/EmptyState';
 import { font, fontSerif } from '@/lib/typography';
+import { apiOrigin } from '@/lib/server';
 
 type Tab = 'overview' | 'docs' | 'knowledge' | 'tasks' | 'conversations' | 'learn' | 'gaps' | 'completeness' | 'book' | 'brainstorm' | 'intelligence' | 'trailer' | 'genesis' | 'graph';
 
@@ -264,8 +265,8 @@ function KnowledgeRow({ item, onReviewed, onDelete }: { item: KnowledgeItem; onR
     }
     setReviewing(true);
     try {
-      const domain = process.env.EXPO_PUBLIC_DOMAIN;
-      const res = await mobileFetch(`https://${domain}/api/knowledge/${item.id}/review`, {
+      const domain = apiOrigin();
+      const res = await mobileFetch(`${domain}/api/knowledge/${item.id}/review`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ review_status: action === 'approve' ? 'approved' : 'rejected' }),
@@ -643,7 +644,7 @@ function IdeaCard({
 function BrainstormTab({ workId, colors, initialSeed, initialContext }: { workId: string; colors: any; initialSeed?: string; initialContext?: string }) {
   const T = useVellumTokens();
   const insets = useSafeAreaInsets();
-  const domain = process.env.EXPO_PUBLIC_DOMAIN ?? '';
+  const domain = apiOrigin();
 
   const [seed,         setSeed]         = React.useState(initialSeed ?? '');
   const [contextType,  setContextType]  = React.useState<string>(initialContext ?? 'general');
@@ -657,7 +658,7 @@ function BrainstormTab({ workId, colors, initialSeed, initialContext }: { workId
 
   const loadHistory = React.useCallback(async () => {
     try {
-      const res = await mobileFetch(`https://${domain}/api/works/${workId}/brainstorm`);
+      const res = await mobileFetch(`${domain}/api/works/${workId}/brainstorm`);
       if (res.ok) setHistory(await res.json());
     } catch {
       // silently ignore — history is optional
@@ -675,7 +676,7 @@ function BrainstormTab({ workId, colors, initialSeed, initialContext }: { workId
     setActiveSession(null);
     setShowOthers(false);
     try {
-      const res = await mobileFetch(`https://${domain}/api/works/${workId}/brainstorm`, {
+      const res = await mobileFetch(`${domain}/api/works/${workId}/brainstorm`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -703,7 +704,7 @@ function BrainstormTab({ workId, colors, initialSeed, initialContext }: { workId
     setApproving(ideaId);
     try {
       const res = await mobileFetch(
-        `https://${domain}/api/works/${workId}/brainstorm/${sessionId}/ideas/${ideaId}/approve`,
+        `${domain}/api/works/${workId}/brainstorm/${sessionId}/ideas/${ideaId}/approve`,
         { method: 'POST' }
       );
       if (!res.ok) throw new Error('Approval failed');
@@ -986,7 +987,7 @@ function GapsTab({
    *  when no pipeline exists (same terminal criterion as the web Gaps tab). */
   pipelineActive?: boolean;
 }) {
-  const domain = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
+  const domain = apiOrigin();
   const T = useVellumTokens();
   const insets = useSafeAreaInsets();
   const [data, setData] = useState<any>(null);
@@ -997,7 +998,7 @@ function GapsTab({
     setLoading(true);
     setError(false);
     try {
-      const res = await mobileFetch(`https://${domain}/api/works/${workId}/gaps`);
+      const res = await mobileFetch(`${domain}/api/works/${workId}/gaps`);
       if (!res.ok) throw new Error('gaps error');
       setData(await res.json());
     } catch {
@@ -1302,7 +1303,7 @@ function CompletenessTab({
   const colors = useColors();
   const T = useVellumTokens();
   const insets = useSafeAreaInsets();
-  const domain = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
+  const domain = apiOrigin();
   const queryClient = useQueryClient();
 
   // ── Completeness data (manual fetch + poll) ───────────────────────────────
@@ -1313,7 +1314,7 @@ function CompletenessTab({
   const fetchCompleteness = useCallback(async () => {
     setError(false);
     try {
-      const res = await mobileFetch(`https://${domain}/api/works/${workId}/completeness`);
+      const res = await mobileFetch(`${domain}/api/works/${workId}/completeness`);
       if (!res.ok) throw new Error('completeness error');
       setData(await res.json());
     } catch {
@@ -1824,7 +1825,7 @@ function TrailerPackageViewMobile({ pkg, colors }: { pkg: TrailerPkgMobile; colo
   type NarrState = 'idle' | 'loading' | 'playing';
   const [narrState, setNarrState] = useState<NarrState>('idle');
   const narrPlayerRef = useRef<AudioPlayer | null>(null);
-  const narrDomain = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
+  const narrDomain = apiOrigin();
 
   useEffect(() => {
     return () => { narrPlayerRef.current?.remove(); };
@@ -1848,7 +1849,7 @@ function TrailerPackageViewMobile({ pkg, colors }: { pkg: TrailerPkgMobile; colo
       const token = getApiToken();
 
       // Synthesise via the same endpoint TtsContext uses (return_url → JSON path)
-      const ttsRes = await mobileFetch(`https://${narrDomain}/api/studio/tts`, {
+      const ttsRes = await mobileFetch(`${narrDomain}/api/studio/tts`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text, voice: 'af_heart', speed: 1.0, return_url: true }),
@@ -1860,7 +1861,7 @@ function TrailerPackageViewMobile({ pkg, colors }: { pkg: TrailerPkgMobile; colo
       const { path } = await ttsRes.json() as { path: string };
 
       const serveUri =
-        `https://${narrDomain}/api/studio/outputs/serve?path=${encodeURIComponent(path)}`;
+        `${narrDomain}/api/studio/outputs/serve?path=${encodeURIComponent(path)}`;
 
       const player = createAudioPlayer({
         uri: serveUri,
@@ -2130,7 +2131,7 @@ function TrailerPackageViewMobile({ pkg, colors }: { pkg: TrailerPkgMobile; colo
 
 function TrailerItemMobile({ trailer, workId, colors }: { trailer: TrailerListItemMobile; workId: string; colors: any }) {
   const T = useVellumTokens();
-  const domain = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
+  const domain = apiOrigin();
   const [expanded, setExpanded]           = useState(false);
   const [fullTrailer, setFullTrailer]     = useState<TrailerPackageMobile | null>(null);
   const [loadingFull, setLoadingFull]     = useState(false);
@@ -2141,7 +2142,7 @@ function TrailerItemMobile({ trailer, workId, colors }: { trailer: TrailerListIt
     if (loadingFull) return;
     setLoadingFull(true);
     try {
-      const r = await mobileFetch(`https://${domain}/api/works/${workId}/trailers/${trailer.id}`);
+      const r = await mobileFetch(`${domain}/api/works/${workId}/trailers/${trailer.id}`);
       if (r.ok) setFullTrailer(await r.json());
     } catch { /* non-fatal */ }
     finally { setLoadingFull(false); }
@@ -2209,7 +2210,7 @@ function TrailerItemMobile({ trailer, workId, colors }: { trailer: TrailerListIt
 }
 
 function TrailerTab({ workId, colors }: { workId: string; colors: any }) {
-  const domain = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
+  const domain = apiOrigin();
   const insets = useSafeAreaInsets();
   const [trailers, setTrailers]     = useState<TrailerListItemMobile[]>([]);
   const [loading, setLoading]       = useState(true);
@@ -2218,7 +2219,7 @@ function TrailerTab({ workId, colors }: { workId: string; colors: any }) {
 
   const fetchTrailers = useCallback(async () => {
     try {
-      const r = await mobileFetch(`https://${domain}/api/works/${workId}/trailers`);
+      const r = await mobileFetch(`${domain}/api/works/${workId}/trailers`);
       if (r.ok) {
         const data = await r.json();
         setTrailers(data.trailers ?? []);
@@ -2246,7 +2247,7 @@ function TrailerTab({ workId, colors }: { workId: string; colors: any }) {
   const handleGenerate = async () => {
     setGenerating(true);
     try {
-      const r = await mobileFetch(`https://${domain}/api/works/${workId}/trailer`, {
+      const r = await mobileFetch(`${domain}/api/works/${workId}/trailer`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
       });
@@ -2345,13 +2346,13 @@ const GENERATE_FORMATS: { key: GenerateFormat; label: string; icon: string; endp
 ];
 
 function GenerateSection({ workId, colors }: { workId: string; colors: any }) {
-  const domain = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
+  const domain = apiOrigin();
   const [busy, setBusy] = useState<Record<GenerateFormat, boolean>>({ excel: false, pdf: false, docx: false, slides: false });
 
   const handleGenerate = async (fmt: typeof GENERATE_FORMATS[number]) => {
     setBusy(prev => ({ ...prev, [fmt.key]: true }));
     try {
-      const res = await mobileFetch(`https://${domain}/api${fmt.endpoint}`, {
+      const res = await mobileFetch(`${domain}/api${fmt.endpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ work_id: workId, ...fmt.body }),
@@ -2365,7 +2366,7 @@ function GenerateSection({ workId, colors }: { workId: string; colors: any }) {
       if (Platform.OS === 'web') {
         // Web: open the download URL in a new tab
         const { Linking } = await import('react-native');
-        await Linking.openURL(`https://${domain}${data.download_url}`);
+        await Linking.openURL(`${domain}${data.download_url}`);
         return;
       }
 
@@ -2375,7 +2376,7 @@ function GenerateSection({ workId, colors }: { workId: string; colors: any }) {
       const token = getApiToken();
       const dest  = `${FileSystem.cacheDirectory ?? ''}${data.filename}`;
       const dl = await FileSystem.downloadAsync(
-        `https://${domain}${data.download_url}`,
+        `${domain}${data.download_url}`,
         dest,
         { headers: token ? { authorization: `Bearer ${token}` } : undefined },
       );
@@ -3243,8 +3244,8 @@ function MobileLearnTab({ workId, colors }: { workId: string; colors: any }) {
   const SESSION_LIMIT = 5; // correct answers before "session complete" screen
   const INTERLEAVED_SESSION_LENGTH = 10; // questions per interleaved session
 
-  const domain = process.env.EXPO_PUBLIC_DOMAIN;
-  const apiBase = `https://${domain}/api`;
+  const domain = apiOrigin();
+  const apiBase = `${domain}/api`;
 
   const fetchSummary = async () => {
     const r = await mobileFetch(`${apiBase}/works/${workId}/learning/summary`);
@@ -4998,7 +4999,7 @@ function GenesisGateRow({
   onRefresh: () => void;
 }) {
   const T = useVellumTokens();
-  const domain = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
+  const domain = apiOrigin();
   const [expanded, setExpanded] = useState(false);
   const [detail, setDetail] = useState<GenesisStageDetail | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
@@ -5015,7 +5016,7 @@ function GenesisGateRow({
     if (detail || loadingDetail) return;
     setLoadingDetail(true);
     try {
-      const r = await mobileFetch(`https://${domain}/api/works/${workId}/genesis/stages/${stage.code}`);
+      const r = await mobileFetch(`${domain}/api/works/${workId}/genesis/stages/${stage.code}`);
       if (r.ok) setDetail(await r.json());
     } catch { /* non-fatal */ }
     finally { setLoadingDetail(false); }
@@ -5032,7 +5033,7 @@ function GenesisGateRow({
     }
     setGating(true);
     try {
-      const r = await mobileFetch(`https://${domain}/api/works/${workId}/genesis/stages/${stage.code}/gate`, {
+      const r = await mobileFetch(`${domain}/api/works/${workId}/genesis/stages/${stage.code}/gate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ decision: 'pass', author: authorInput.trim(), note: noteInput.trim() }),
@@ -5262,7 +5263,7 @@ function GenesisGateRow({
 function GenesisTab({ workId, colors }: { workId: string; colors: any }) {
   const T = useVellumTokens();
   const insets = useSafeAreaInsets();
-  const domain = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
+  const domain = apiOrigin();
   const [book, setBook] = useState<GenesisBook | null>(null);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
@@ -5287,7 +5288,7 @@ function GenesisTab({ workId, colors }: { workId: string; colors: any }) {
     setLoading(true);
     setFetchError('');
     try {
-      const r = await mobileFetch(`https://${domain}/api/works/${workId}/genesis`);
+      const r = await mobileFetch(`${domain}/api/works/${workId}/genesis`);
       if (r.status === 404) { setNotFound(true); setBook(null); return; }
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const data = await r.json();
@@ -5310,7 +5311,7 @@ function GenesisTab({ workId, colors }: { workId: string; colors: any }) {
     }
     setIniting(true);
     try {
-      const r = await mobileFetch(`https://${domain}/api/works/${workId}/genesis`, {
+      const r = await mobileFetch(`${domain}/api/works/${workId}/genesis`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ mode: initMode, length: len, acts: initActs }),
@@ -5334,7 +5335,7 @@ function GenesisTab({ workId, colors }: { workId: string; colors: any }) {
     setVerifying(true);
     setVerifyResult(null);
     try {
-      const r = await mobileFetch(`https://${domain}/api/works/${workId}/genesis/verify`);
+      const r = await mobileFetch(`${domain}/api/works/${workId}/genesis/verify`);
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       setVerifyResult(await r.json());
     } catch (e: any) {
@@ -5351,7 +5352,7 @@ function GenesisTab({ workId, colors }: { workId: string; colors: any }) {
     }
     setSealing(true);
     try {
-      const r = await mobileFetch(`https://${domain}/api/works/${workId}/genesis/seal`, {
+      const r = await mobileFetch(`${domain}/api/works/${workId}/genesis/seal`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ author: sealAuthor.trim() }),
@@ -5830,7 +5831,7 @@ export default function WorkDetailScreen() {
   const [brainstormContext, setBrainstormContext] = useState<string>('general');
 
   // ── Book / Pipeline tab state ──────────────────────────────────────────────
-  const domain = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
+  const domain = apiOrigin();
   const [pipeline, setPipeline] = useState<any>(null);
   const [pipelineLoading, setPipelineLoading] = useState(false);
   const [advancingPipeline, setAdvancingPipeline] = useState(false);
@@ -5842,7 +5843,7 @@ export default function WorkDetailScreen() {
     if (!id) return;
     setPipelineLoading(true);
     try {
-      const res = await mobileFetch(`https://${domain}/api/works/${id}/pipeline`);
+      const res = await mobileFetch(`${domain}/api/works/${id}/pipeline`);
       if (res.ok) setPipeline(await res.json());
       else if (res.status === 404) setPipeline(null);
     } catch { /* non-fatal */ }
@@ -5851,7 +5852,7 @@ export default function WorkDetailScreen() {
 
   const startPipeline = async () => {
     try {
-      const res = await mobileFetch(`https://${domain}/api/works/${id}/pipeline`, { method: 'POST' });
+      const res = await mobileFetch(`${domain}/api/works/${id}/pipeline`, { method: 'POST' });
       if (res.ok) {
         await fetchPipeline();
         // Keep the Books tab in sync — invalidate both the books list and the
@@ -5872,7 +5873,7 @@ export default function WorkDetailScreen() {
   const advancePipeline = async () => {
     setAdvancingPipeline(true);
     try {
-      const res = await mobileFetch(`https://${domain}/api/works/${id}/pipeline/advance`, { method: 'POST' });
+      const res = await mobileFetch(`${domain}/api/works/${id}/pipeline/advance`, { method: 'POST' });
       if (res.ok) { fetchPipeline(); }
       else {
         const json = await res.json().catch(() => ({}));
@@ -5886,7 +5887,7 @@ export default function WorkDetailScreen() {
     if (!id) return;
     setChaptersLoading(true);
     try {
-      const res = await mobileFetch(`https://${domain}/api/works/${id}/chapters`);
+      const res = await mobileFetch(`${domain}/api/works/${id}/chapters`);
       if (res.ok) {
         const json = await res.json();
         // Flatten: [{doc_title, chapters:[...]}] → flat list annotated with doc_title
@@ -5924,7 +5925,7 @@ export default function WorkDetailScreen() {
   // Eagerly fetch gap count so the Intelligence badge appears before the tab is visited.
   useEffect(() => {
     if (!id) return;
-    mobileFetch(`https://${domain}/api/works/${id}/gaps`)
+    mobileFetch(`${domain}/api/works/${id}/gaps`)
       .then(r => r.ok ? r.json() : null)
       .then(d => {
         if (!d) return;
@@ -5953,7 +5954,7 @@ export default function WorkDetailScreen() {
     if (!id) return;
     setBookIntelLoading(true);
     try {
-      const res = await mobileFetch(`https://${domain}/api/works/${id}/book-intelligence`);
+      const res = await mobileFetch(`${domain}/api/works/${id}/book-intelligence`);
       if (res.ok) setBookIntel(await res.json());
       else setBookIntel(null);
     } catch { /* non-fatal */ }
@@ -6186,7 +6187,7 @@ export default function WorkDetailScreen() {
   const handleToggleTask = async (taskId: string, currentStatus: string | undefined) => {
     const next = (currentStatus === 'done' || currentStatus === 'complete' || currentStatus === 'completed') ? 'pending' : 'completed';
     try {
-      await mobileFetch(`https://${domain}/api/works/${id}/tasks/${taskId}`, {
+      await mobileFetch(`${domain}/api/works/${id}/tasks/${taskId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: next }),
@@ -6202,7 +6203,7 @@ export default function WorkDetailScreen() {
   // Delete a knowledge item by id (called from KnowledgeRow long-press).
   const handleDeleteKnowledge = async (itemId: string) => {
     try {
-      await mobileFetch(`https://${domain}/api/knowledge/${itemId}`, { method: 'DELETE' });
+      await mobileFetch(`${domain}/api/knowledge/${itemId}`, { method: 'DELETE' });
       queryClient.invalidateQueries({ queryKey: getGetWorkStatsQueryKey(id) });
       refetchKn();
     } catch {
@@ -6213,7 +6214,7 @@ export default function WorkDetailScreen() {
   // Delete a task by id (called from TaskRow long-press).
   const handleDeleteTask = async (taskId: string) => {
     try {
-      await mobileFetch(`https://${domain}/api/works/${id}/tasks/${taskId}`, { method: 'DELETE' });
+      await mobileFetch(`${domain}/api/works/${id}/tasks/${taskId}`, { method: 'DELETE' });
       queryClient.invalidateQueries({ queryKey: getGetWorkTasksQueryKey(id) });
       queryClient.invalidateQueries({ queryKey: getGetWorkStatsQueryKey(id) });
       refetchTasks();
@@ -6355,7 +6356,7 @@ export default function WorkDetailScreen() {
               keyExtractor={(d) => d.id ?? ''}
               renderItem={({ item }) => <DocItem doc={item} onReprocess={async (docId) => {
                 try {
-                  await mobileFetch(`https://${domain}/api/library/${docId}/reprocess`, { method: 'POST' });
+                  await mobileFetch(`${domain}/api/library/${docId}/reprocess`, { method: 'POST' });
                   refetchDocs();
                 } catch { /* non-fatal */ }
               }} />}
@@ -6746,8 +6747,8 @@ export default function WorkDetailScreen() {
             workId={id}
             onOpenFullGraph={() => router.push({ pathname: '/graph', params: { work_id: id, work_title: work?.title ?? '' } } as any)}
             onReprocess={() => {
-              const domain = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
-              mobileFetch(`https://${domain}/api/library/reprocess-all`, { method: 'POST' })
+              const domain = apiOrigin();
+              mobileFetch(`${domain}/api/library/reprocess-all`, { method: 'POST' })
                 .catch(() => {});
               Alert.alert('Reprocessing', 'Reprocess triggered. The graph will refresh once documents are ready.');
             }}

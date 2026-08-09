@@ -22,9 +22,10 @@ import { useVellumTokens, alpha } from '@/lib/tokens';
 import { font } from '@/lib/typography';
 import { mobileFetchJson } from '@/lib/api';
 import * as Haptics from 'expo-haptics';
+import { apiOrigin } from '@/lib/server';
 
-const DOMAIN = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
-const API = `https://${DOMAIN}/api`;
+const DOMAIN = () => apiOrigin(); // API origin (user-configurable server)
+const API = () => `${DOMAIN()}/api`;
 
 interface MailSettings {
   send_enabled: boolean;
@@ -77,13 +78,13 @@ export default function MailSettingsScreen() {
 
   const { data: settings, isLoading } = useQuery<MailSettings>({
     queryKey: ['mail-settings'],
-    queryFn: () => mobileFetchJson(`${API}/mail/settings`),
+    queryFn: () => mobileFetchJson(`${API()}/mail/settings`),
     staleTime: 60_000,
   });
 
   const { data: summary } = useQuery<MailSummary>({
     queryKey: ['mail-summary'],
-    queryFn: () => mobileFetchJson(`${API}/mail/summary`),
+    queryFn: () => mobileFetchJson(`${API()}/mail/summary`),
     staleTime: 30_000,
   });
 
@@ -101,7 +102,7 @@ export default function MailSettingsScreen() {
     setSaving(true);
     try {
       const folders = syncFolders.split(',').map(s => s.trim()).filter(Boolean);
-      await mobileFetchJson(`${API}/mail/settings`, {
+      await mobileFetchJson(`${API()}/mail/settings`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -135,7 +136,7 @@ export default function MailSettingsScreen() {
           onPress: async () => {
             setDisconnecting(true);
             try {
-              await mobileFetchJson(`${API}/mail/disconnect`, {
+              await mobileFetchJson(`${API()}/mail/disconnect`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ confirm: 'disconnect' }),

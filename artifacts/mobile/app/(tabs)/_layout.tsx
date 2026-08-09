@@ -34,6 +34,7 @@ import {
   useGetSystemHealth,
   getGetSystemHealthQueryKey,
 } from '@workspace/api-client-react';
+import { apiOrigin } from '@/lib/server';
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -81,8 +82,8 @@ function PulsingDot() {
 
 // ── Review queue badge ──────────────────────────────────────────────────────
 
-const _REVIEW_DOMAIN = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
-const _REVIEW_API = `https://${_REVIEW_DOMAIN}/api`;
+const _REVIEW_DOMAIN = () => apiOrigin(); // API origin (user-configurable server)
+const _REVIEW_API = () => `${_REVIEW_DOMAIN()}/api`;
 
 /**
  * Polls GET /api/review/queue every 60 s and returns the pending item count.
@@ -92,7 +93,7 @@ function useReviewCount(): number {
   const [count, setCount] = useState(0);
   const poll = useCallback(async () => {
     try {
-      const r = await mobileFetch(`${_REVIEW_API}/review/queue`);
+      const r = await mobileFetch(`${_REVIEW_API()}/review/queue`);
       if (r.ok) {
         const data = await r.json();
         setCount((data.count as number) ?? 0);

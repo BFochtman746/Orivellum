@@ -29,9 +29,10 @@ import { mobileFetchJson } from '@/lib/api';
 import { executeSendFlow } from '@/lib/mail-send-flow';
 import type { SendFlowFetch, SendFlowResult } from '@/lib/mail-send-flow';
 import * as Haptics from 'expo-haptics';
+import { apiOrigin } from '@/lib/server';
 
-const DOMAIN = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
-const API = `https://${DOMAIN}/api`;
+const DOMAIN = () => apiOrigin(); // API origin (user-configurable server)
+const API = () => `${DOMAIN()}/api`;
 
 interface DecisionDetail {
   record: { id: string; subject: string | null; sender_domain: string | null };
@@ -56,14 +57,14 @@ export default function ComposeScreen() {
 
   const { data: detail } = useQuery<DecisionDetail>({
     queryKey: ['mail-decision', recordId],
-    queryFn: () => mobileFetchJson(`${API}/mail/decisions/${recordId}`),
+    queryFn: () => mobileFetchJson(`${API()}/mail/decisions/${recordId}`),
     enabled: !!recordId,
     staleTime: 60_000,
   });
 
   const { data: summary } = useQuery<MailSummary>({
     queryKey: ['mail-summary'],
-    queryFn: () => mobileFetchJson(`${API}/mail/summary`),
+    queryFn: () => mobileFetchJson(`${API()}/mail/summary`),
     staleTime: 30_000,
   });
 
@@ -78,7 +79,7 @@ export default function ComposeScreen() {
     if (!actionRequestId) return false;
     setSaving(true);
     try {
-      await mobileFetchJson(`${API}/mail/drafts/${actionRequestId}`, {
+      await mobileFetchJson(`${API()}/mail/drafts/${actionRequestId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ body_text: bodyText }),
@@ -100,7 +101,7 @@ export default function ComposeScreen() {
       // Delegates to the exported executeSendFlow: PATCH → nonce → send.
       // Aborts at the first failure so we never deliver a stale draft.
       const result = await executeSendFlow(
-        actionRequestId, recordId, bodyText, mobileFetchJson, API,
+        actionRequestId, recordId, bodyText, mobileFetchJson, API(),
       );
       if (!result.success) {
         Alert.alert('Send failed', result.error ?? 'Could not send reply');

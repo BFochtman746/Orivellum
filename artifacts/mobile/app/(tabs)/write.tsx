@@ -24,11 +24,12 @@ import { useRouter } from 'expo-router';
 import { font } from '@/lib/typography';
 import { useVellumTokens } from '@/lib/tokens';
 import * as Haptics from 'expo-haptics';
+import { apiOrigin } from '@/lib/server';
 
 const _semibold = font('semibold');
 
-const DOMAIN = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
-const API = `https://${DOMAIN}/api`;
+const DOMAIN = () => apiOrigin(); // API origin (user-configurable server)
+const API = () => `${DOMAIN()}/api`;
 
 interface WriteDoc {
   id: string;
@@ -162,7 +163,7 @@ export default function WriteScreen() {
 
   const fetchDocs = useCallback(async () => {
     try {
-      const r = await mobileFetch(`${API}/write/documents`);
+      const r = await mobileFetch(`${API()}/write/documents`);
       if (r.ok) {
         const data = await r.json();
         setDocs((data.documents as WriteDoc[]) ?? []);
@@ -188,7 +189,7 @@ export default function WriteScreen() {
     if (creating) return;
     setCreating(true);
     try {
-      const r = await mobileFetch(`${API}/write/documents`, {
+      const r = await mobileFetch(`${API()}/write/documents`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title: 'Untitled', content_text: '' }),
@@ -216,7 +217,7 @@ export default function WriteScreen() {
             style: 'destructive',
             onPress: async () => {
               try {
-                await mobileFetch(`${API}/write/documents/${doc.id}`, {
+                await mobileFetch(`${API()}/write/documents/${doc.id}`, {
                   method: 'DELETE',
                 });
                 setDocs((prev) => prev.filter((d) => d.id !== doc.id));

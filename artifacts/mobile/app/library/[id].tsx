@@ -41,6 +41,7 @@ import { useVellumTokens, VELLUM_LIGHT } from '@/lib/tokens';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useGetDocument, useListWorks } from '@workspace/api-client-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { apiOrigin } from '@/lib/server';
 
 // ── Related documents collapsible section ────────────────────────────────────
 
@@ -64,7 +65,7 @@ function RelatedSection({ docId, domain, colors, onNavigate, onTopicPress }: {
   const { data, isLoading } = useQuery<{ doc_id: string; related: RelatedDoc[] }>({
     queryKey: ['doc-related-mobile', docId],
     queryFn: async () => {
-      const res = await mobileFetch(`https://${domain}/api/library/${docId}/related`);
+      const res = await mobileFetch(`${domain}/api/library/${docId}/related`);
       if (!res.ok) throw new Error('Failed to load related');
       return res.json();
     },
@@ -158,7 +159,7 @@ function ChunksSection({ docId, domain, colors }: {
   const { data, isLoading } = useQuery<{ chunks: Array<{ id: string; page: number; text: string }>; count: number }>({
     queryKey: ['doc-chunks-mobile', docId],
     queryFn: async () => {
-      const res = await mobileFetch(`https://${domain}/api/library/${docId}/chunks`);
+      const res = await mobileFetch(`${domain}/api/library/${docId}/chunks`);
       if (!res.ok) throw new Error('Failed to load chunks');
       return res.json();
     },
@@ -325,7 +326,7 @@ export default function LibraryDocDetail() {
   const handleReprocess = async () => {
     setReprocessing(true);
     try {
-      const res = await mobileFetch(`https://${domain}/api/library/${id}/reprocess`, { method: 'POST' });
+      const res = await mobileFetch(`${domain}/api/library/${id}/reprocess`, { method: 'POST' });
       if (!res.ok) throw new Error('Reprocess failed');
       // Poll until readiness changes from imported/error/no_text
       let attempts = 0;
@@ -362,7 +363,7 @@ export default function LibraryDocDetail() {
 
     try {
       // ── 1. Start async generation job ──────────────────────────────────────
-      const startRes = await mobileFetch(`https://${domain}/api/studio/tts/document`, {
+      const startRes = await mobileFetch(`${domain}/api/studio/tts/document`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ doc_id: id, voice: ttsVoice, speed: ttsSpeed }),
@@ -389,7 +390,7 @@ export default function LibraryDocDetail() {
       // Exit silently if cancelled between POST response and job ID commit.
       if (dlRunRef.current !== runId) {
         // Cancel the server job immediately since we won't track it.
-        mobileFetch(`https://${domain}/api/studio/tts/document/${job_id}`, { method: 'DELETE' }).catch(() => {});
+        mobileFetch(`${domain}/api/studio/tts/document/${job_id}`, { method: 'DELETE' }).catch(() => {});
         return;
       }
 
@@ -408,7 +409,7 @@ export default function LibraryDocDetail() {
         if (dlRunRef.current !== runId) return;
 
         const statusRes = await mobileFetch(
-          `https://${domain}/api/studio/tts/document/${job_id}/status`,
+          `${domain}/api/studio/tts/document/${job_id}/status`,
         );
 
         if (dlRunRef.current !== runId) return;
@@ -461,7 +462,7 @@ export default function LibraryDocDetail() {
 
       const token = getApiToken();
       const downloadUrl =
-        `https://${domain}/api/studio/outputs/serve?path=${encodeURIComponent(mp3Path)}`;
+        `${domain}/api/studio/outputs/serve?path=${encodeURIComponent(mp3Path)}`;
       const localUri = (FileSystem.documentDirectory ?? '') + filename;
 
       const dlResult = await FileSystem.downloadAsync(downloadUrl, localUri, {
@@ -616,7 +617,7 @@ export default function LibraryDocDetail() {
     setDlProgress(null);
     // Best-effort server-side cancel; fire-and-forget.
     if (jobId) {
-      mobileFetch(`https://${domain}/api/studio/tts/document/${jobId}`, { method: 'DELETE' }).catch(() => {});
+      mobileFetch(`${domain}/api/studio/tts/document/${jobId}`, { method: 'DELETE' }).catch(() => {});
     }
   };
 
@@ -654,7 +655,7 @@ export default function LibraryDocDetail() {
     try {
       await setAudioModeAsync({ playsInSilentMode: true });
       const token = getApiToken();
-      const uri = `https://${domain}/api/library/${id}/download`;
+      const uri = `${domain}/api/library/${id}/download`;
       const player = createAudioPlayer({
         uri,
         headers: token ? { authorization: `Bearer ${token}` } : undefined,
@@ -747,7 +748,7 @@ export default function LibraryDocDetail() {
     }
   };
 
-  const domain = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
+  const domain = apiOrigin();
 
   // ── TTS helpers (split text into parts; synthesis + playback in TtsContext) ──
 
@@ -788,7 +789,7 @@ export default function LibraryDocDetail() {
   const { data: knData, isLoading: knLoading, isError: knError, refetch: refetchKn } = useQuery({
     queryKey: ['library-knowledge', id],
     queryFn: async () => {
-      const res = await mobileFetch(`https://${domain}/api/library/${id}/knowledge`);
+      const res = await mobileFetch(`${domain}/api/library/${id}/knowledge`);
       if (!res.ok) throw new Error('Failed to load knowledge');
       return res.json();
     },
@@ -833,7 +834,7 @@ export default function LibraryDocDetail() {
         if (token) headers['Authorization'] = `Bearer ${token}`;
 
         const response = await fetch(
-          `https://${domain}/api/library/${id}/progress`,
+          `${domain}/api/library/${id}/progress`,
           { signal: controller.signal, headers },
         );
 
@@ -896,7 +897,7 @@ export default function LibraryDocDetail() {
     const trimmed = titleDraft.trim();
     if (!trimmed || trimmed === doc?.title) return;
     try {
-      await mobileFetch(`https://${domain}/api/library/${id}`, {
+      await mobileFetch(`${domain}/api/library/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title: trimmed }),
@@ -922,7 +923,7 @@ export default function LibraryDocDetail() {
       // Prefer already-extracted text; fall back to joining chunks
       let text: string = (doc?.extracted_text as string) || '';
       if (!text.trim()) {
-        const res = await mobileFetch(`https://${domain}/api/library/${id}/chunks`);
+        const res = await mobileFetch(`${domain}/api/library/${id}/chunks`);
         // Bail if the user navigated away or issued a newer listen request
         if (listenGenRef.current !== gen || !mountedRef.current) return;
         if (res.ok) {
@@ -956,7 +957,7 @@ export default function LibraryDocDetail() {
   const handleReview = async (itemId: string, status: 'approved' | 'rejected') => {
     setReviewing(itemId);
     try {
-      const res = await mobileFetch(`https://${domain}/api/knowledge/${itemId}/review`, {
+      const res = await mobileFetch(`${domain}/api/knowledge/${itemId}/review`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ review_status: status }),
@@ -978,7 +979,7 @@ export default function LibraryDocDetail() {
     try {
       const results = await Promise.allSettled(
         pending.map(async (item: any) => {
-          const res = await mobileFetch(`https://${domain}/api/knowledge/${item.id}/review`, {
+          const res = await mobileFetch(`${domain}/api/knowledge/${item.id}/review`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ review_status: status }),
@@ -1021,7 +1022,7 @@ export default function LibraryDocDetail() {
           onPress: async () => {
             setLifecycleUpdating(true);
             try {
-              const res = await mobileFetch(`https://${domain}/api/library/${id}/lifecycle`, {
+              const res = await mobileFetch(`${domain}/api/library/${id}/lifecycle`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ lifecycle: lc }),
@@ -1057,7 +1058,7 @@ export default function LibraryDocDetail() {
   const handleLinkWork = async (workId: string | null) => {
     setLinkingWork(true);
     try {
-      const res = await mobileFetch(`https://${domain}/api/library/${id}`, {
+      const res = await mobileFetch(`${domain}/api/library/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ work_id: workId }),

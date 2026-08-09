@@ -28,6 +28,7 @@ import { Feather } from '@expo/vector-icons';
 import { useColors } from '@/hooks/useColors';
 import { mobileFetch } from '@/lib/api';
 import { ErrorScreen } from '@/components/OfflineBanner';
+import { apiOrigin } from '@/lib/server';
 
 // ─── severity colours ─────────────────────────────────────────────────────────
 
@@ -263,8 +264,8 @@ export default function WorkIntelligenceScreen() {
   const isWeb    = Platform.OS === 'web';
   const { id, chapterId: targetChapterId } = useLocalSearchParams<{ id: string; chapterId?: string }>();
   const navigation = useNavigation();
-  const domain   = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
-  const base     = `https://${domain}/api`;
+  const domain = apiOrigin();
+  const base     = `${domain}/api`;
 
   // Refs for scroll-to-chapter deep-link
   const scrollViewRef   = useRef<ScrollView>(null);

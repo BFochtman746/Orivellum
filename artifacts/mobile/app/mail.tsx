@@ -34,9 +34,10 @@ import { SkeletonItem } from '@/components/SkeletonItem';
 import { EmptyState } from '@/components/EmptyState';
 import { mobileFetchJson } from '@/lib/api';
 import * as Haptics from 'expo-haptics';
+import { apiOrigin } from '@/lib/server';
 
-const DOMAIN = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
-const API = `https://${DOMAIN}/api`;
+const DOMAIN = () => apiOrigin(); // API origin (user-configurable server)
+const API = () => `${DOMAIN()}/api`;
 
 const SWIPE_THRESHOLD = 60;
 const SWIPE_EXIT = 420;
@@ -345,8 +346,8 @@ export default function MailScreen() {
   const load = useCallback(async (refresh = false) => {
     try {
       const [sum, att] = await Promise.all([
-        mobileFetchJson<MailSummary>(`${API}/mail/summary`),
-        mobileFetchJson<AttentionResponse>(`${API}/mail/attention?limit=100`),
+        mobileFetchJson<MailSummary>(`${API()}/mail/summary`),
+        mobileFetchJson<AttentionResponse>(`${API()}/mail/attention?limit=100`),
       ]);
       setSummary(sum);
       setRecords(sorted(att.decisions));
@@ -374,7 +375,7 @@ export default function MailScreen() {
   const handleSync = useCallback(async () => {
     setSyncing(true);
     try {
-      await mobileFetchJson(`${API}/mail/sync`, { method: 'POST' });
+      await mobileFetchJson(`${API()}/mail/sync`, { method: 'POST' });
       setTimeout(() => load(true), 3000);
     } catch (e: any) {
       Alert.alert('Sync failed', e.message ?? 'Could not trigger sync');
@@ -400,14 +401,14 @@ export default function MailScreen() {
             try {
               const detail = await mobileFetchJson<{
                 available_actions: Array<{ type: string; nonce: string; label: string }>;
-              }>(`${API}/mail/decisions/${id}`);
+              }>(`${API()}/mail/decisions/${id}`);
               const moveAction = detail.available_actions.find(a => a.type === 'MOVE');
               if (!moveAction) {
                 // No move action available — treat as defer
                 setDeferred(prev => new Set([...prev, id]));
                 return;
               }
-              await mobileFetchJson(`${API}/mail/decisions/${id}/move`, {
+              await mobileFetchJson(`${API()}/mail/decisions/${id}/move`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ destination: 'review', nonce: moveAction.nonce }),

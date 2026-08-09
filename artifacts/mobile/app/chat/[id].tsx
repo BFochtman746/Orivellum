@@ -44,6 +44,7 @@ import { readCache, writeCache } from '@/lib/cache';
 import { queueMessage, flushMessageQueue, getOutboxForConversation } from '@/lib/offlineCache';
 import { font } from '@/lib/typography';
 import { useSheetAnimation } from '@/lib/useSheetAnimation';
+import { apiOrigin } from '@/lib/server';
 
 const LAST_MODEL_KEY = 'orivellum:lastModel';
 
@@ -365,8 +366,8 @@ function MessageBubble({ message, colors, T, isDark, onResend, onRetry, highligh
           return (
             <Pressable
               onPress={() => {
-                const domain = process.env.EXPO_PUBLIC_DOMAIN;
-                const url = `https://${domain}${gd.download_url}`;
+                const domain = apiOrigin();
+                const url = `${domain}${gd.download_url}`;
                 (async () => {
                   try {
                     if (Platform.OS === 'web') {
@@ -1027,8 +1028,8 @@ export default function ChatScreen() {
       const b64 = await FileSystem.readAsStringAsync(asset.uri, {
         encoding: 'base64' as any,
       });
-      const domain = process.env.EXPO_PUBLIC_DOMAIN;
-      const resp = await mobileFetch(`https://${domain}/api/extract-file`, {
+      const domain = apiOrigin();
+      const resp = await mobileFetch(`${domain}/api/extract-file`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ filename: asset.name, content_b64: b64 }),
@@ -1048,8 +1049,8 @@ export default function ChatScreen() {
 
   // ── Download a generated document (authenticated) ────────────────────────
   const downloadGeneratedDoc = async (downloadPath: string, filename: string) => {
-    const domain = process.env.EXPO_PUBLIC_DOMAIN;
-    const url = `https://${domain}${downloadPath}`;
+    const domain = apiOrigin();
+    const url = `${domain}${downloadPath}`;
     try {
       if (Platform.OS === 'web') {
         const resp = await mobileFetch(url);
@@ -1117,8 +1118,8 @@ export default function ChatScreen() {
     setLocalMessages(prev => [...prev, userMsg]);
 
     try {
-      const domain = process.env.EXPO_PUBLIC_DOMAIN;
-      const resp = await mobileFetch(`https://${domain}/api/generate/from-prompt`, {
+      const domain = apiOrigin();
+      const resp = await mobileFetch(`${domain}/api/generate/from-prompt`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1198,8 +1199,8 @@ export default function ChatScreen() {
     setWebSearch(next); // optimistic
     setWebSearchLoading(true);
     try {
-      const domain = process.env.EXPO_PUBLIC_DOMAIN;
-      await mobileFetch(`https://${domain}/api/conversations/${id}/web-search`, {
+      const domain = apiOrigin();
+      await mobileFetch(`${domain}/api/conversations/${id}/web-search`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ enabled: next }),
@@ -1255,8 +1256,8 @@ export default function ChatScreen() {
     });
 
     try {
-      const domain = process.env.EXPO_PUBLIC_DOMAIN;
-      const url = `https://${domain}/api/conversations/${id}/continue`;
+      const domain = apiOrigin();
+      const url = `${domain}/api/conversations/${id}/continue`;
       const resp = await mobileFetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1401,8 +1402,8 @@ export default function ChatScreen() {
     setSending(true);
 
     try {
-      const domain = process.env.EXPO_PUBLIC_DOMAIN;
-      const url = `https://${domain}/api/conversations/${id}/messages`;
+      const domain = apiOrigin();
+      const url = `${domain}/api/conversations/${id}/messages`;
       // Build the API text: prepend extracted document content when a file is attached
       let apiText = trimmed || (imageToSend ? 'What is in this image?' : '');
       if (fileToSend) {

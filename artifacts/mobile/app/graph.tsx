@@ -15,9 +15,10 @@ import { useQuery } from '@tanstack/react-query';
 import { mobileFetch } from '@/lib/api';
 import { KnowledgeGraphView } from '@/components/KnowledgeGraphView';
 import { SkeletonItem } from '@/components/SkeletonItem';
+import { apiOrigin } from '@/lib/server';
 
-const DOMAIN = process.env.EXPO_PUBLIC_DOMAIN ?? 'localhost:8000';
-const API    = `https://${DOMAIN}/api`;
+const DOMAIN = () => apiOrigin(); // API origin (user-configurable server)
+const API = () => `${DOMAIN()}/api`;
 
 export default function GraphScreen() {
   const colors = useColors();
@@ -32,8 +33,8 @@ export default function GraphScreen() {
   // KnowledgeGraphView shares the same React Query cache key, so this
   // result is served from cache — no duplicate network call.
   const endpoint = scopedWorkId
-    ? `${API}/graph?work_id=${scopedWorkId}&limit=120`
-    : `${API}/graph?limit=150`;
+    ? `${API()}/graph?work_id=${scopedWorkId}&limit=120`
+    : `${API()}/graph?limit=150`;
 
   const { isLoading, isError, data, refetch } = useQuery({
     queryKey: ['graph', scopedWorkId ?? 'global'],
