@@ -24,6 +24,7 @@ import {
   useGetWebSearchStatus,
 } from "@workspace/api-client-react";
 import { useConnectivity } from "@/lib/useConnectivity";
+import { isLegacyShell } from "@/lib/apps";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { Card } from "@/components/ui/card";
@@ -2145,8 +2146,21 @@ export default function Chat() {
 
   const conv = activeConv?.conversation;
 
+  // Inside the GD Chat app the whole surface flips to the dark token set so
+  // the thread reads as one continuous dark workspace; the legacy console
+  // keeps the light parchment look untouched.  The class is applied at the
+  // document root (with cleanup on unmount) so portal-rendered content —
+  // Select dropdowns, Sheets/drawers, toasts — inherits the dark tokens too;
+  // the wrapper class below covers the first paint before the effect runs.
+  const gdDark = !isLegacyShell();
+  useEffect(() => {
+    if (!gdDark) return;
+    document.documentElement.classList.add("dark");
+    return () => document.documentElement.classList.remove("dark");
+  }, [gdDark]);
+
   return (
-    <div className="flex-1 min-h-0 flex gap-0 md:gap-6 animate-in fade-in duration-500">
+    <div className={`flex-1 min-h-0 flex gap-0 md:gap-6 animate-in fade-in duration-500 ${gdDark ? "dark text-foreground" : ""}`}>
       {/* ── Sidebar — full-width on mobile when no conv selected ─────── */}
       <Card className={`flex flex-col shrink-0 rounded-xl overflow-hidden border-border/50 w-full md:w-72 ${activeId ? "hidden md:flex" : "flex"}`}>
         <div className="p-4 border-b border-border/50 bg-muted/10 space-y-3">
