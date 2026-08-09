@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { format } from "date-fns";
 import { toast } from "sonner";
+import { useGdDark } from "@/lib/useGdDark";
 
 const API = `${import.meta.env.BASE_URL}api/forge`.replace(/\/+/g, "/").replace(/\/$/, "");
 
@@ -37,6 +38,7 @@ const STATUS_META: Record<string, { label: string; color: string; icon: any }> =
 };
 
 export default function ForgePage() {
+  const gdDark = useGdDark();
   const [, navigate] = useLocation();
   const queryClient = useQueryClient();
   const [showNew, setShowNew] = useState(false);
@@ -76,7 +78,7 @@ export default function ForgePage() {
   const projects = data?.projects ?? [];
 
   return (
-    <div className="space-y-8 animate-in fade-in duration-500 pb-20">
+    <div className={`space-y-8 animate-in fade-in duration-500 pb-20 ${gdDark ? "dark text-foreground" : ""}`}>
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>

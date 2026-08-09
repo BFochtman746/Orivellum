@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { format } from "date-fns";
 import { toast } from "sonner";
+import { useGdDark } from "@/lib/useGdDark";
 
 const API = `${import.meta.env.BASE_URL}api/forge`.replace(/\/+/g, "/").replace(/\/$/, "");
 
@@ -148,6 +149,7 @@ function ConceptCard({
 // ── Main page ──────────────────────────────────────────────────────────────────
 
 export default function ForgeDetail() {
+  const gdDark = useGdDark();
   const { projectId } = useParams();
   const [, navigate] = useLocation();
   const queryClient = useQueryClient();
@@ -291,9 +293,11 @@ export default function ForgeDetail() {
     return "DONE";
   })();
 
+  const darkCls = gdDark ? "dark text-foreground" : "";
+
   if (isLoading) {
     return (
-      <div className="space-y-4">
+      <div className={`space-y-4 ${darkCls}`}>
         <Skeleton className="h-8 w-48" />
         <Skeleton className="h-64 rounded-xl" />
       </div>
@@ -302,14 +306,14 @@ export default function ForgeDetail() {
 
   if (!project) {
     return (
-      <div className="text-center py-20 text-muted-foreground">
+      <div className={`text-center py-20 text-muted-foreground ${darkCls}`}>
         Project not found. <Link href="/forge" className="text-primary hover:underline">Back to Forge</Link>
       </div>
     );
   }
 
   return (
-    <div className="space-y-8 animate-in fade-in duration-500 pb-20">
+    <div className={`space-y-8 animate-in fade-in duration-500 pb-20 ${darkCls}`}>
       {/* Breadcrumb */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3 text-sm font-mono uppercase tracking-widest text-muted-foreground">

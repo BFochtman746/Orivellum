@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/select";
 import { KnowledgeGraph, GNode } from "@/components/knowledge-graph";
 import { apiFetch } from "@/lib/auth";
+import { useGdDark } from "@/lib/useGdDark";
 import { useListWorks } from "@workspace/api-client-react";
 
 const API_BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
@@ -26,6 +27,7 @@ const ENTITY_KINDS = [
 ];
 
 export default function GraphPage() {
+  const gdDark = useGdDark();
   const [, navigate]    = useLocation();
   const [workId,    setWorkId]    = useState<string>("all");
   const [hiddenKinds, setHiddenKinds] = useState<Set<string>>(new Set());
@@ -69,7 +71,7 @@ export default function GraphPage() {
   };
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-500">
+    <div className={`space-y-6 animate-in fade-in duration-500 ${gdDark ? "dark text-foreground" : ""}`}>
       {/* Header — VELLUM page-head pattern */}
       <div className="flex items-start gap-3 flex-wrap">
         <Link href="/library">

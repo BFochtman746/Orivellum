@@ -17,7 +17,9 @@ import {
   Presentation, CheckCircle2, AlertTriangle, ChevronRight, Wand2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Link } from "wouter";
+import { Link, useLocation, useSearch } from "wouter";
+import { Globe2, Network, ChevronLeft } from "lucide-react";
+import { useGdDark } from "@/lib/useGdDark";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
@@ -1515,10 +1517,152 @@ function DocumentWorkshopPanel() {
   );
 }
 
+// ── Studio hub — GD tool grid + recent-outputs shelf ─────────────────────────
+// Entry screen of the Studio app: pick a tool, do the job, collect the output.
+// Tools deep-link into the existing tabbed tool view via /studio?tool=…, and
+// Forge / Graph keep their own routes inside the Studio frame.
+
+const HUB_TOOLS = [
+  { key: "voice",    href: "/studio?tool=voice",    icon: Volume2,  title: "Voice & narration", desc: "Read text aloud, preview voices, build audiobooks" },
+  { key: "workshop", href: "/studio?tool=workshop", icon: Wand2,    title: "Document workshop", desc: "Generate Word, PDF, Excel & slide documents" },
+  { key: "image",    href: "/studio?tool=image",    icon: ImageIcon, title: "Image generation",  desc: "Create images from text prompts" },
+  { key: "forge",    href: "/forge",                icon: Globe2,   title: "Forge websites",    desc: "Plan, build & release sites under quality gates" },
+  { key: "graph",    href: "/graph",                icon: Network,  title: "Knowledge graph",   desc: "Explore how your knowledge connects" },
+  { key: "outputs",  href: "/studio?tool=outputs",  icon: Video,    title: "Outputs",           desc: "Browse, play & download everything you've made" },
+] as const;
+
+function StudioHub() {
+  const [, setLocation] = useLocation();
+  const { data: outputsResp, isLoading: loadingOutputs } = useListStudioOutputs(
+    { query: { staleTime: 15_000 } } as any
+  );
+  const recent: any[] = ((outputsResp as any)?.outputs ?? []).slice(0, 5);
+
+  function serveUrl(path: string) {
+    return `${BASE}/studio/outputs/serve?path=${encodeURIComponent(path)}`;
+  }
+  function handleDownload(out: any) {
+    const a = document.createElement("a");
+    a.href = serveUrl(out.path);
+    a.download = out.name;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  }
+
+  return (
+    <div className="pb-10">
+      {/* Section header */}
+      <div className="flex items-end justify-between gap-3 pt-2 pb-4">
+        <div>
+          <p className="gd-eyebrow">Production floor</p>
+          <h2
+            className="mt-1"
+            style={{
+              fontFamily: "var(--gd-display)",
+              fontSize: 24,
+              fontWeight: 600,
+              letterSpacing: "0.04em",
+              textTransform: "uppercase",
+              color: "var(--gd-text)",
+            }}
+          >
+            Studio
+          </h2>
+        </div>
+        <button className="gd-chip" onClick={() => setLocation("/system")} data-testid="chip-studio-settings">
+          <Settings2 className="w-3.5 h-3.5" aria-hidden /> Settings
+        </button>
+      </div>
+
+      {/* Tool grid */}
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {HUB_TOOLS.map(({ key, href, icon: Icon, title, desc }) => (
+          <Link key={key} href={href} className="gd-tile" data-testid={`tile-tool-${key}`}>
+            <div className="flex items-start gap-3">
+              <Icon className="w-5 h-5 shrink-0 mt-0.5" style={{ color: "var(--gd-accent)" }} aria-hidden />
+              <div className="min-w-0 flex-1">
+                <div style={{ fontFamily: "var(--gd-display)", fontSize: 16, fontWeight: 600, letterSpacing: "0.02em" }}>
+                  {title}
+                </div>
+                <p className="text-[12px] mt-1 leading-relaxed" style={{ color: "var(--gd-muted)" }}>
+                  {desc}
+                </p>
+              </div>
+              <ChevronRight className="w-4 h-4 shrink-0 mt-1" style={{ color: "var(--gd-dim)" }} aria-hidden />
+            </div>
+          </Link>
+        ))}
+      </div>
+
+      {/* Recent outputs shelf */}
+      <div className="flex items-end justify-between gap-3 mt-8 pb-3">
+        <p className="gd-eyebrow">Fresh off the press</p>
+        {recent.length > 0 && (
+          <Link href="/studio?tool=outputs" className="gd-eyebrow" style={{ color: "var(--gd-accent)" }} data-testid="link-all-outputs">
+            All outputs →
+          </Link>
+        )}
+      </div>
+      {loadingOutputs ? (
+        <div className="grid gap-2">
+          {[1, 2, 3].map((i) => <Skeleton key={i} className="h-12 w-full rounded-[10px]" />)}
+        </div>
+      ) : recent.length > 0 ? (
+        <div className="grid gap-2">
+          {recent.map((out) => (
+            <div key={out.path} className="gd-row w-full" data-testid={`row-output-${out.name}`}>
+              {out.kind === "audio" ? (
+                <FileAudio className="w-4 h-4 shrink-0" style={{ color: "var(--gd-dim)" }} aria-hidden />
+              ) : out.kind === "image" ? (
+                <ImageIcon className="w-4 h-4 shrink-0" style={{ color: "var(--gd-dim)" }} aria-hidden />
+              ) : (
+                <FileText className="w-4 h-4 shrink-0" style={{ color: "var(--gd-dim)" }} aria-hidden />
+              )}
+              <span className="flex-1 min-w-0 text-left text-[13px] truncate">{out.label || out.name}</span>
+              <span className="gd-eyebrow shrink-0">{out.kind}</span>
+              <button
+                onClick={() => handleDownload(out)}
+                className="gd-iconbtn shrink-0"
+                title={`Download ${out.name}`}
+                aria-label={`Download ${out.name}`}
+                data-testid={`button-download-${out.name}`}
+              >
+                <Download className="w-4 h-4" aria-hidden />
+              </button>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="gd-panel text-center py-8" style={{ borderStyle: "dashed" }} data-testid="panel-no-outputs">
+          <Video className="w-8 h-8 mx-auto mb-2" style={{ color: "var(--gd-dim)" }} aria-hidden />
+          <p className="text-[14px] font-medium">Nothing produced yet</p>
+          <p className="text-[12px] mt-1" style={{ color: "var(--gd-muted)" }}>
+            Pick a tool above — everything you generate collects here.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Page ──────────────────────────────────────────────────────────────────────
 
+const TOOL_TABS = ["voice", "image", "workshop", "outputs"] as const;
+type ToolTab = (typeof TOOL_TABS)[number];
+
 export default function Studio() {
-  const [mainTab, setMainTab] = useState<"voice" | "image" | "workshop" | "outputs">("voice");
+  const gdDark = useGdDark();
+  // Tool selection lives in the URL (?tool=…) so hub tiles, deep links, and
+  // the browser back button all agree.  useSearch (not useLocation) is what
+  // re-renders on query-string-only navigation — the pathname stays /studio.
+  const [, setLocation] = useLocation();
+  const searchStr = useSearch();
+  const rawTool = new URLSearchParams(searchStr).get("tool");
+  const mainTab: ToolTab | null = (TOOL_TABS as readonly string[]).includes(rawTool ?? "")
+    ? (rawTool as ToolTab)
+    : null;
+  const setMainTab = (t: ToolTab) => setLocation(`/studio?tool=${t}`);
 
   const MAIN_TABS = [
     { id: "voice",    label: "Voice Studio",       icon: Volume2 },
@@ -1527,30 +1671,47 @@ export default function Studio() {
     { id: "outputs",  label: "Recent Outputs",     icon: Video },
   ] as const;
 
+  // No tool selected → the Studio hub (tool grid + outputs shelf)
+  if (mainTab === null) {
+    return (
+      <div className={gdDark ? "dark text-foreground" : ""}>
+        <StudioHub />
+      </div>
+    );
+  }
+
   return (
-    <div className="flex-1 min-h-0 flex flex-col animate-in fade-in duration-500">
+    <div className={`flex-1 min-h-0 flex flex-col animate-in fade-in duration-500 ${gdDark ? "dark text-foreground" : ""}`}>
       {/* Page header */}
       <div className="flex items-center justify-between px-6 py-4 border-b border-border/50 shrink-0">
-        <div>
-          <span className="eyebrow mb-1">The Press Room</span>
-          <h1 className="vellum-h1">Studio</h1>
-          <div className="gilt-rule w-24" />
-          <p className="text-[13px] mt-1" style={{ color: 'var(--ink-soft)' }}>
-            Voice narration · Image generation · Document workshop
-          </p>
+        <div className="flex items-center gap-3 min-w-0">
+          {/* Back to the Studio hub */}
+          <button
+            onClick={() => setLocation("/studio")}
+            className="gd-iconbtn shrink-0"
+            aria-label="Back to Studio tools"
+            data-testid="button-back-to-hub"
+          >
+            <ChevronLeft className="w-5 h-5" aria-hidden />
+          </button>
+          <div className="min-w-0">
+            <span className="eyebrow mb-1">The Press Room</span>
+            <h1 className="vellum-h1">Studio</h1>
+            <div className="gilt-rule w-24" />
+          </div>
         </div>
         <div className="flex items-center gap-2">
           <ErrorBoundary label="service status bar">
             <ServiceStatusBar />
           </ErrorBoundary>
-          <Button asChild variant="outline" size="sm" className="gap-2 shrink-0">
+          <Button asChild variant="outline" size="sm" className="gap-2 shrink-0 hidden sm:inline-flex">
             <Link href="/system"><Settings2 className="w-4 h-4" /> Settings</Link>
           </Button>
         </div>
       </div>
 
       {/* Main tab bar */}
-      <div className="flex items-center gap-0 border-b border-border/50 px-6 shrink-0 bg-muted/20">
+      <div className="flex items-center gap-0 border-b border-border/50 px-6 shrink-0 bg-muted/20 overflow-x-auto">
         {MAIN_TABS.map(tab => {
           const Icon = tab.icon;
           return (
