@@ -382,18 +382,23 @@ def llm_harvest(result: "ExtractionResult", doc_id: str,
         except Exception:
             template = _EXTRACT_PROMPT
 
+    from orivellum.capabilities.shield import wrap as _shield_wrap
+
     for chunk_text in _chunk_texts:
         chunk_text = chunk_text.strip()
         if not chunk_text:
             continue
 
+        # Spotlighting: fence the document text so the model treats any
+        # instructions inside it as data to extract from, never to follow.
+        _fenced = _shield_wrap(chunk_text, source=f"document \u201c{doc_title}\u201d")
         try:
-            prompt = template.format(title=doc_title, chunk=chunk_text)
+            prompt = template.format(title=doc_title, chunk=_fenced)
         except Exception as exc:
             # Bad DB template (e.g. stray unescaped brace) — never break harvest.
             logger.warning("harvest.extract template format failed (%s) — "
                            "falling back to default", exc)
-            prompt = _EXTRACT_PROMPT.format(title=doc_title, chunk=chunk_text)
+            prompt = _EXTRACT_PROMPT.format(title=doc_title, chunk=_fenced)
 
         raw = _call_llm_sync(prompt, base_url, model, timeout, db=db)
         if not raw:
@@ -646,10 +651,14 @@ def llm_harvest_by_chapters(
                 continue
 
             try:
+                from orivellum.capabilities.shield import wrap as _shield_wrap2
                 prompt = _FICTION_CHAPTER_PROMPT.format(
                     title=doc_title,
                     chapter_title=chapter_title,
-                    chunk=chapter_text,
+                    chunk=_shield_wrap2(
+                        chapter_text,
+                        source=f"document \u201c{doc_title}\u201d",
+                    ),
                 )
             except Exception as exc:
                 logger.debug("llm_harvest_by_chapters: prompt format error ch%d.%d: %s",

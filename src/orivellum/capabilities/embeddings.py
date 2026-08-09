@@ -719,8 +719,10 @@ def semantic_search(query: str, db: "OrivellumDB", object_type: str = "knowledge
                             k.source_doc_id, k.source_chunk_id, k.source_offset,
                             k.meta, k.created_at
                      FROM vectors v JOIN knowledge k ON k.id = v.object_id
+                     LEFT JOIN documents sd ON sd.id = k.source_doc_id
                      WHERE v.object_type='knowledge'
-                       AND k.review_status NOT IN ('rejected','superseded_duplicate')"""
+                       AND k.review_status NOT IN ('rejected','superseded_duplicate')
+                       AND COALESCE(sd.quarantined, 0) = 0"""
     elif object_type == "conv_chunk":
         # Conversation exchange chunks — each row is one user+assistant turn.
         # Use LEFT JOIN for conversations so chunks from deleted or test conversations
@@ -739,7 +741,8 @@ def semantic_search(query: str, db: "OrivellumDB", object_type: str = "knowledge
                      FROM vectors v
                      JOIN chunks c ON c.id = v.object_id
                      JOIN documents d ON d.id = c.doc_id
-                     WHERE v.object_type='chunk'"""
+                     WHERE v.object_type='chunk'
+                       AND COALESCE(d.quarantined, 0) = 0"""
 
     entries = _load_vecs(db, object_type, all_sql, ())
 

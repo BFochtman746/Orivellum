@@ -21,6 +21,7 @@ import {
   BookOpen, Cpu, Sparkles, ThumbsUp, ThumbsDown, Link2, Info,
   List, History, Star, GitBranch, ChevronDown,
   BookHeadphones, Loader2, Play, Pause, X, Download, Network, Search,
+  ShieldAlert,
 } from "lucide-react";
 import {
   Tooltip, TooltipContent, TooltipProvider, TooltipTrigger,
@@ -1259,6 +1260,26 @@ export default function DocumentDetail() {
   const readiness: string = doc.readiness ?? "imported";
   const hasError = readiness === "error" || readiness === "no_text";
   const title = doc.title || doc.source || "Untitled Document";
+  const quarantined: number = Number((doc as any).quarantined ?? 0);
+  const shieldFindings: Array<Record<string, unknown>> =
+    ((doc as any).meta?.shield?.findings as Array<Record<string, unknown>>) ?? [];
+
+  const handleQuarantineResolve = async (decision: "approve" | "reject") => {
+    try {
+      const r = await apiFetch(`${BASE}/review/quarantine:${docId}/resolve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ decision }),
+      });
+      if (!r.ok) throw new Error(String(r.status));
+      toast.success(decision === "approve"
+        ? "Document released — reprocessing now"
+        : "Document kept in quarantine");
+      queryClient.invalidateQueries({ queryKey: getGetDocumentQueryKey(docId!) });
+    } catch {
+      toast.error("Could not update quarantine status");
+    }
+  };
   const docLifecycle: string = (doc as any).lifecycle ?? "draft";
 
   const lifecycleOptions = [
@@ -1451,6 +1472,69 @@ export default function DocumentDetail() {
           </Button>
         </div>
       </div>
+
+      {/* Quarantine banner — ingestion shield tripped at import */}
+      {quarantined > 0 && (
+        <div className="rounded-lg border p-4"
+             style={{ borderColor: "color-mix(in srgb, var(--rust) 40%, transparent)", background: "var(--rust-soft)" }}>
+          <div className="flex items-start gap-3">
+            <ShieldAlert className="w-5 h-5 shrink-0 mt-0.5" style={{ color: "var(--rust)" }} />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium" style={{ color: "var(--rust)" }}>
+                {quarantined === 2 ? "Kept in quarantine" : "Quarantined at import"}
+              </p>
+              <p className="text-xs text-muted-foreground mt-1">
+                The import safety screen found {shieldFindings.length || "suspicious"} pattern
+                {shieldFindings.length === 1 ? "" : "s"} that look like hidden instructions.
+                The document is stored and readable here, but it is hidden from search, chat,
+                and AI processing until released.
+              </p>
+              {shieldFindings.length > 0 && (
+                <ul className="mt-2 space-y-0.5">
+                  {shieldFindings.slice(0, 5).map((f, i) => (
+                    <li key={i} className="text-[11px] font-mono text-muted-foreground truncate">
+                      {String(f.kind ?? "?")}: “{String(f.match ?? "")}”
+                    </li>
+                  ))}
+                  {shieldFindings.length > 5 && (
+                    <li className="text-[11px] text-muted-foreground">
+                      …and {shieldFindings.length - 5} more
+                    </li>
+                  )}
+                </ul>
+              )}
+              <div className="flex gap-2 mt-3">
+                {quarantined === 1 && (
+                  <>
+                    <Button size="sm" variant="outline" onClick={() => handleQuarantineResolve("approve")}>
+                      <CheckCircle2 className="w-3.5 h-3.5 mr-1.5" /> Release & process
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={() => handleQuarantineResolve("reject")}
+                            className="text-muted-foreground">
+                      Keep quarantined
+                    </Button>
+                  </>
+                )}
+                {quarantined === 2 && (
+                  <Button size="sm" variant="outline" onClick={async () => {
+                    // Re-open then release: flip back to pending first is not
+                    // needed — release directly via PATCH-style resolve.
+                    try {
+                      const r = await apiFetch(`${BASE}/review/quarantine:${docId}/reopen`, { method: "POST" });
+                      if (!r.ok) throw new Error(String(r.status));
+                      queryClient.invalidateQueries({ queryKey: getGetDocumentQueryKey(docId!) });
+                    } catch {
+                      toast.error("Could not reopen quarantine review");
+                    }
+                  }}>
+                    Reconsider
+                  </Button>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Header */}
       <div>

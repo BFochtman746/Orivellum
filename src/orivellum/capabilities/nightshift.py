@@ -794,6 +794,7 @@ def _pass_context_prefix_backfill(db: "OrivellumDB", report: list[str]) -> None:
                    FROM chunks c
                    JOIN documents d ON d.id = c.doc_id
                    WHERE c.context_prefix IS NULL AND length(c.text) > 40
+                     AND COALESCE(d.quarantined, 0) = 0
                    ORDER BY d.created_at DESC
                    LIMIT 20""",
             ).fetchall()

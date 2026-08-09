@@ -29,7 +29,7 @@ router = APIRouter(prefix="/api")
 
 _DEFER_DAYS = 7
 _VALID_DECISIONS = {"approve", "reject", "defer"}
-_VALID_TYPES = {"knowledge", "reclassify", "suggestion", "duplicate"}
+_VALID_TYPES = {"knowledge", "reclassify", "suggestion", "duplicate", "quarantine"}
 
 
 def _now_iso() -> str:
@@ -186,6 +186,47 @@ def review_queue(limit: int = 200):
             "created_at": p.get("created_at") or "",
         })
 
+    # 5. Quarantined documents (ingestion shield tripped at import)
+    with db._lock:
+        rows = db._conn.execute(
+            """SELECT d.id, d.title, d.kind, d.work_id, d.meta, d.created_at,
+                      w.title AS work_title
+               FROM documents d
+               LEFT JOIN works w ON w.id = d.work_id
+               WHERE d.quarantined = 1
+               ORDER BY d.created_at DESC LIMIT 100""",
+        ).fetchall()
+    for r in rows:
+        key = f"quarantine:{r['id']}"
+        if key in deferred:
+            continue
+        shield_meta = _jload(r["meta"], {}).get("shield") or {}
+        findings = shield_meta.get("findings") or []
+        kinds = sorted({f.get("kind", "?") for f in findings})
+        items.append({
+            "id": key,
+            "item_type": "quarantine",
+            "title": f"Quarantined: \u201c{r['title'] or r['id'][:8]}\u201d",
+            "description": (
+                "The import safety screen found "
+                f"{len(findings)} suspicious pattern(s) in this document"
+                + (f" ({', '.join(kinds[:4])})" if kinds else "")
+                + ". It is stored but hidden from search, chat, and AI "
+                  "processing until you release it."
+            ),
+            # Security items should surface first in the queue.
+            "confidence": 0.0,
+            "work_id": r["work_id"],
+            "work_title": r["work_title"],
+            "evidence": {
+                "doc_id": r["id"],
+                "doc_title": r["title"],
+                "doc_kind": r["kind"],
+                "findings": findings[:10],
+            },
+            "created_at": r["created_at"],
+        })
+
     # Most uncertain first; None confidence treated as 0.5
     items.sort(key=lambda i: i["confidence"] if i["confidence"] is not None else 0.5)
     counts: dict[str, int] = {}
@@ -206,6 +247,7 @@ _PENDING_SQL = {
     "knowledge": "SELECT 1 FROM knowledge WHERE id=? AND review_status='ai_auto'",
     "reclassify": "SELECT 1 FROM pending_reclassify WHERE id=?",
     "duplicate": "SELECT 1 FROM doc_dupes WHERE id=? AND resolved=0",
+    "quarantine": "SELECT 1 FROM documents WHERE id=? AND quarantined=1",
 }
 
 
@@ -256,6 +298,8 @@ def review_resolve(item_type: str, item_id: str, body: ResolveBody,
         result = _resolve_reclassify(db, item_id, body, background_tasks)
     elif item_type == "suggestion":
         result = _resolve_suggestion(db, item_id, body)
+    elif item_type == "quarantine":
+        result = _resolve_quarantine(db, item_id, body, background_tasks)
     else:  # duplicate
         result = _resolve_duplicate(db, item_id, body)
 
@@ -325,6 +369,69 @@ def _resolve_reclassify(db, item_id: str, body: ResolveBody,
                 )
                 reprocess_queued = True
     return {"ok": True, "decision": body.decision, "reprocess_queued": reprocess_queued}
+
+
+def _resolve_quarantine(db, item_id: str, body: ResolveBody,
+                        background_tasks: BackgroundTasks) -> dict:
+    """approve = release the document (marks it safe and reprocesses it so it
+    finally gets chunked/indexed/harvested); reject = keep it isolated.
+    The release mark means a reprocess will not re-quarantine it."""
+    # Atomic claim: only the caller whose UPDATE flips quarantined=1 away
+    # applies side effects.
+    new_state = 0 if body.decision == "approve" else 2
+    with db._lock:
+        cur = db._conn.execute(
+            "UPDATE documents SET quarantined=? WHERE id=? AND quarantined=1",
+            (new_state, item_id),
+        )
+        claimed = cur.rowcount
+        db._conn.commit()
+    if not claimed:
+        raise HTTPException(409, "Item was already resolved by another request")
+
+    reprocess_queued = False
+    if body.decision == "approve":
+        # Record the human release (so reprocess skips the screen) and queue
+        # the full pipeline — the doc was never chunked/harvested/embedded.
+        db.set_document_quarantine(item_id, 0, released=True)
+        doc = db.get_document(item_id)
+        if doc:
+            from orivellum.capabilities.pipeline import process_document, resolve_file_path
+            file_path = resolve_file_path(doc.get("source") or "", item_id, db)
+            if file_path:
+                db.update_document_extracted(item_id, "", 0, readiness="imported",
+                                             error_message=None)
+                background_tasks.add_task(
+                    process_document,
+                    doc_id=item_id,
+                    file_path=str(file_path),
+                    kind=doc.get("kind") or "file",
+                    work_id=doc.get("work_id"),
+                    title=doc.get("title", ""),
+                    db=db,
+                )
+                reprocess_queued = True
+    return {"ok": True, "decision": body.decision,
+            "reprocess_queued": reprocess_queued}
+
+
+@router.post("/review/quarantine:{item_id}/reopen")
+def review_quarantine_reopen(item_id: str):
+    """Move a kept-quarantined document (state 2) back to pending review
+    (state 1) so it reappears in the queue and can be released."""
+    db = get_db()
+    with db._lock:
+        cur = db._conn.execute(
+            "UPDATE documents SET quarantined=1 WHERE id=? AND quarantined=2",
+            (item_id,),
+        )
+        claimed = cur.rowcount
+        db._conn.commit()
+    if not claimed:
+        raise HTTPException(404, "Document is not in kept-quarantine state")
+    db.audit("review.quarantine_reopened", object_id=item_id,
+             object_type="document", actor="user")
+    return {"ok": True}
 
 
 def _resolve_suggestion(db, item_id: str, body: ResolveBody) -> dict:

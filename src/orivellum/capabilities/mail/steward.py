@@ -321,6 +321,23 @@ def send_draft(db: Any, action_request_id: str, nonce: str) -> dict[str, Any]:
     if not store.consume_nonce(nonce, action["mail_record_id"], ACTION_SEND):
         raise MailStewardError("Invalid or already-used send nonce")
 
+    # Capability gate (CaMeL rule): once mail_trusted_domains is configured,
+    # replies may only go to trusted domains and a drafted body that trips
+    # the injection screen is refused.  Inactive while the setting is empty.
+    from orivellum.capabilities import shield as _shield
+    record = store.get_mail_record(action["mail_record_id"]) or {}
+    assessment = store.get_latest_assessment(action["mail_record_id"]) or {}
+    try:
+        _shield.gate_send_reply(
+            db,
+            sender_domain=record.get("sender_domain"),
+            body_text=assessment.get("suggested_reply") or "",
+        )
+    except _shield.GateDenied as gd:
+        store.create_audit_event(action["mail_record_id"], "ACTION_REJECTED",
+                                 result="GATE_DENIED")
+        raise MailStewardError(str(gd))
+
     client = _get_fresh_client(db)
     if not client:
         raise MailStewardError("Not connected to Microsoft Graph")

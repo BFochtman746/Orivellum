@@ -304,6 +304,7 @@ async def library_scan_duplicates(background_tasks: BackgroundTasks):
                FROM documents d
                LEFT JOIN minhash_sig ms ON ms.doc_id = d.id
                WHERE d.readiness = 'ready'
+                 AND COALESCE(d.quarantined, 0) = 0
                  AND ms.doc_id IS NULL
                  AND d.extracted_text IS NOT NULL
                  AND d.extracted_text != ''"""

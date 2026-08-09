@@ -1944,4 +1944,17 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             created_at   TEXT NOT NULL DEFAULT (datetime('now'))
         );
     """),
+
+    # v110 — Ingestion shield: document quarantine flag.
+    #   0 = clean / never flagged
+    #   1 = quarantined, awaiting human review (injection screen tripped at
+    #       import; doc is stored + inspectable but NOT chunked, indexed,
+    #       harvested, or embedded — blast-radius isolation)
+    #   2 = reviewed and kept quarantined (stays isolated, leaves the queue)
+    # Screen findings live in documents.meta JSON under the "shield" key.
+    (110, "Ingestion shield: documents.quarantined flag", """
+        ALTER TABLE documents ADD COLUMN quarantined INTEGER NOT NULL DEFAULT 0;
+        CREATE INDEX IF NOT EXISTS doc_quarantined ON documents(quarantined)
+            WHERE quarantined > 0;
+    """),
 ]

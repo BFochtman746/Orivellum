@@ -23,6 +23,7 @@ import { toast } from "sonner";
 import {
   Inbox, ThumbsUp, ThumbsDown, Clock, CheckCircle2, Sparkles,
   RefreshCw, Copy, FileQuestion, Lightbulb, Loader2, ExternalLink,
+  ShieldAlert,
 } from "lucide-react";
 
 const BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
@@ -31,7 +32,7 @@ const BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/
 
 interface ReviewItem {
   id: string;
-  item_type: "knowledge" | "reclassify" | "suggestion" | "duplicate";
+  item_type: "knowledge" | "reclassify" | "suggestion" | "duplicate" | "quarantine";
   title: string;
   description: string;
   confidence: number | null;
@@ -77,6 +78,12 @@ const TYPE_META: Record<ReviewItem["item_type"], {
     badgeCls: "border",
     badgeStyle: { borderColor: 'var(--line-2)', color: 'var(--ink-soft)', background: 'transparent' },
     borderStyle: { borderLeftColor: 'var(--ink-soft)' },
+  },
+  quarantine: {
+    label: "Quarantined", icon: ShieldAlert,
+    badgeCls: "border",
+    badgeStyle: { borderColor: 'var(--rust)', color: 'var(--rust)', background: 'var(--rust-soft)' },
+    borderStyle: { borderLeftColor: 'var(--rust)' },
   },
 };
 
@@ -137,6 +144,21 @@ function EvidenceLine({ item }: { item: ReviewItem }) {
     parts.push(
       <span key="n" className="font-mono text-[11px]">{(ev.doc_ids as unknown[]).length} documents</span>,
     );
+  } else if (item.item_type === "quarantine" && ev.doc_id) {
+    parts.push(
+      <Link key="doc" href={`/library/${ev.doc_id}`}
+            className="inline-flex items-center gap-1 text-primary hover:underline">
+        <ExternalLink className="w-3 h-3" />{String(ev.doc_title ?? "Inspect document")}
+      </Link>,
+    );
+    if (Array.isArray(ev.findings) && ev.findings.length > 0) {
+      const kinds = Array.from(new Set(
+        (ev.findings as Array<Record<string, unknown>>).map((f) => String(f.kind ?? "?")),
+      ));
+      parts.push(
+        <span key="kinds" className="font-mono text-[11px]">{kinds.join(" · ")}</span>,
+      );
+    }
   }
 
   if (item.work_title && item.work_id) {

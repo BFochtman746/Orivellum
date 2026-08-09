@@ -2259,6 +2259,7 @@ class OrivellumDB:
             JOIN chunks c ON c.id = chunks_fts.chunk_id
             JOIN documents d ON d.id = c.doc_id
             WHERE chunks_fts MATCH ?{work_clause}
+              AND COALESCE(d.quarantined, 0) = 0
             ORDER BY bm25(chunks_fts)
             LIMIT {cap}"""
 
@@ -2271,6 +2272,7 @@ class OrivellumDB:
             JOIN chunks c ON c.id = chunks_fts.chunk_id
             JOIN documents d ON d.id = c.doc_id
             WHERE chunks_fts MATCH ?{work_clause}
+              AND COALESCE(d.quarantined, 0) = 0
             LIMIT {cap}"""
 
         with self._lock:
@@ -2857,7 +2859,9 @@ class OrivellumDB:
                          limit: int = 20) -> list[dict]:
         q = """SELECT k.* FROM knowledge_fts f
                JOIN knowledge k ON k.id = f.knowledge_id
-               WHERE knowledge_fts MATCH ?"""
+               LEFT JOIN documents sd ON sd.id = k.source_doc_id
+               WHERE knowledge_fts MATCH ?
+                 AND COALESCE(sd.quarantined, 0) = 0"""
         args: list = [query]
         if work_id:
             q += " AND k.work_id=?"
@@ -2993,6 +2997,7 @@ class OrivellumDB:
                 f" JOIN chunks c ON c.id = chunks_fts.chunk_id"
                 f" JOIN documents d ON d.id = c.doc_id"
                 f" WHERE chunks_fts MATCH ?"
+                f" AND COALESCE(d.quarantined, 0) = 0"
             )
             args.append(query)
         else:
@@ -3000,7 +3005,7 @@ class OrivellumDB:
                 f"{_select}"
                 f" FROM chunks c"
                 f" JOIN documents d ON d.id = c.doc_id"
-                f" WHERE 1=1"
+                f" WHERE COALESCE(d.quarantined, 0) = 0"
             )
 
         if after_date:
@@ -3300,6 +3305,47 @@ class OrivellumDB:
             self._conn.execute(
                 "UPDATE documents SET extracted_text=?, word_count=?, readiness=?, error_message=? WHERE id=?",
                 (extracted_text, word_count, readiness, error_message, doc_id),
+            )
+
+    def set_document_quarantine(self, doc_id: str, state: int,
+                                findings: list | None = None,
+                                released: bool = False) -> None:
+        """Set the ingestion-shield quarantine state on a document.
+
+        state: 0 clean/released, 1 pending review, 2 reviewed & kept isolated.
+        ``findings`` (screen results) are merged into meta JSON under
+        "shield"; ``released=True`` records a human release so reprocessing
+        does not re-quarantine the same document.
+        """
+        import json as _json
+        with self.governed_write(
+            operation="document.quarantine",
+            event_type="document.quarantine",
+            object_id=doc_id,
+            object_type="document",
+            payload={"state": state, "released": released},
+            actor="system" if not released else "user",
+            detail=f"quarantine state={state}"
+                   + (f" findings={len(findings)}" if findings else "")
+                   + (" released" if released else ""),
+        ):
+            row = self._conn.execute(
+                "SELECT meta FROM documents WHERE id=?", (doc_id,)
+            ).fetchone()
+            try:
+                meta = _json.loads(row["meta"] or "{}") if row else {}
+            except Exception:
+                meta = {}
+            shield = meta.get("shield") or {}
+            if findings is not None:
+                shield["findings"] = findings[:50]
+            if released:
+                shield["released"] = True
+            shield["state"] = state
+            meta["shield"] = shield
+            self._conn.execute(
+                "UPDATE documents SET quarantined=?, meta=? WHERE id=?",
+                (state, _json.dumps(meta), doc_id),
             )
 
     def upsert_book_chapters(self, doc_id: str, work_id: str | None,

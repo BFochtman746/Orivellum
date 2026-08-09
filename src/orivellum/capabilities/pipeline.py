@@ -437,6 +437,68 @@ def process_document(doc_id: str, file_path: str, kind: str,
             except Exception as meta_exc:
                 logger.debug("Could not persist extraction meta for %s: %s", doc_id, meta_exc)
 
+        # Step 1.5: ingestion shield — screen extracted text for known
+        # injection shapes BEFORE the document touches search, harvest, or
+        # any model.  A flagged document is stored and inspectable (extracted
+        # text saved, readiness "ready") but is NOT chunked, indexed,
+        # harvested, or embedded until a human releases it from the review
+        # queue — blast-radius isolation, not deletion.  A previously
+        # released document is never re-quarantined on reprocess.
+        try:
+            from orivellum.capabilities import shield as _shield
+            _prev = db.get_document(doc_id) or {}
+            _prev_meta = _prev.get("meta") or {}
+            if isinstance(_prev_meta, str):
+                import json as _json2
+                try:
+                    _prev_meta = _json2.loads(_prev_meta or "{}")
+                except Exception:
+                    _prev_meta = {}
+            _released = bool((_prev_meta.get("shield") or {}).get("released"))
+            if not _released:
+                _scr = _shield.screen(result.full_text, source=f"document:{title}")
+                if not _scr.clean:
+                    logger.warning(
+                        "Doc %s QUARANTINED — %d injection screen finding(s)",
+                        doc_id, len(_scr.findings),
+                    )
+                    db.set_document_quarantine(doc_id, 1, findings=_scr.findings)
+                    try:
+                        # Reprocess edge case: drop any chunks AND vectors
+                        # indexed by a previous (clean) run so the doc leaves
+                        # lexical and semantic search.  Vectors first — the
+                        # semantic cache invalidates on vector-count change,
+                        # so this also flushes stale cached embeddings.
+                        with db._lock:
+                            db._conn.execute(
+                                "DELETE FROM vectors WHERE object_type='chunk' "
+                                "AND object_id IN (SELECT id FROM chunks WHERE doc_id=?)",
+                                (doc_id,))
+                            db._conn.execute(
+                                "DELETE FROM vectors WHERE object_type='knowledge' "
+                                "AND object_id IN "
+                                "(SELECT id FROM knowledge WHERE source_doc_id=?)",
+                                (doc_id,))
+                            db._conn.commit()
+                        db.delete_chunks(doc_id)
+                    except Exception as _cleanup_exc:
+                        # Retrieval-side quarantined filters still exclude this
+                        # doc even if cleanup fails — but make it visible.
+                        logger.warning(
+                            "Quarantine cleanup for doc %s incomplete: %s",
+                            doc_id, _cleanup_exc)
+                    db.update_document_extracted(
+                        doc_id,
+                        extracted_text=result.full_text,
+                        word_count=result.word_count,
+                        readiness="ready",
+                    )
+                    return  # isolated: no chunks, no harvest, no embeddings
+        except Exception as _shield_exc:
+            # The shield must never break ingestion of legitimate documents.
+            logger.warning("Ingestion shield failed for doc %s (non-fatal): %s",
+                           doc_id, _shield_exc)
+
         # Step 2: chunk and index
         chunk_and_store(result, doc_id, db)
 

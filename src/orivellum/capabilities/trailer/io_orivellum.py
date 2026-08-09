@@ -42,6 +42,7 @@ def book_text_from_work(db, work_id: str) -> str:
                FROM documents d
                WHERE d.work_id=? AND d.readiness='ready' AND d.extracted_text IS NOT NULL
                  AND d.extracted_text != ''
+                 AND COALESCE(d.quarantined, 0) = 0
                ORDER BY d.title""",
             (work_id,),
         ).fetchall()
