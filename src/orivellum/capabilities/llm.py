@@ -35,6 +35,19 @@ class LLMResult:
     finish_reason: str | None = None
 
 
+def decode_tok_per_s(n_tokens: int | None, decode_seconds: float) -> float | None:
+    """Pure decode rate from a streaming call.
+
+    ``decode_seconds`` is the window from FIRST token delivery to stream end,
+    which excludes the first token's own generation time — so the numerator
+    must exclude it too: ``(n_tokens - 1) / decode_seconds``.  Requires at
+    least two tokens and a window > 0.5 s to avoid wild small-sample rates.
+    """
+    if not n_tokens or n_tokens < 2 or decode_seconds <= 0.5:
+        return None
+    return (n_tokens - 1) / decode_seconds
+
+
 def record_llm_call(
     db: Any,
     *,
@@ -45,17 +58,29 @@ def record_llm_call(
     completion_tokens: int | None = None,
     ok: bool = True,
     error: str | None = None,
+    ttft_ms: float | None = None,
+    tok_per_s: float | None = None,
+    streamed: bool = False,
 ) -> None:
-    """Best-effort telemetry insert.  Never raises."""
+    """Best-effort telemetry insert.  Never raises.
+
+    ``ttft_ms`` (time-to-first-token) and ``tok_per_s`` (decode rate) are only
+    meaningful for streaming calls; leave them ``None`` when unknown — the
+    measurement layer treats NULL as "not measured", never as zero.
+    """
     if db is None:
         return
     try:
         with db._lock:
             db._conn.execute(
                 "INSERT INTO llm_calls (purpose, model, latency_ms, prompt_tokens,"
-                " completion_tokens, ok, error) VALUES (?,?,?,?,?,?,?)",
+                " completion_tokens, ok, error, ttft_ms, tok_per_s, streamed)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?)",
                 (purpose, model, latency_ms, prompt_tokens, completion_tokens,
-                 1 if ok else 0, (error or None)),
+                 1 if ok else 0, (error or None),
+                 round(ttft_ms, 1) if ttft_ms is not None else None,
+                 round(tok_per_s, 2) if tok_per_s is not None else None,
+                 1 if streamed else 0),
             )
             db._conn.commit()
     except Exception as exc:  # pragma: no cover — telemetry must never break callers
@@ -122,9 +147,17 @@ def llm_call(
 
     latency_ms = int((time.monotonic() - started) * 1000)
     ok = err is None and text is not None
+    # Non-streaming decode rate: completion tokens over total wall clock.
+    # This under-reports the true decode rate (prompt processing is included)
+    # but is directionally useful; streaming calls record the precise rate.
+    _tps = (
+        c_tok / (latency_ms / 1000.0)
+        if ok and c_tok and latency_ms > 0 else None
+    )
     record_llm_call(
         db, purpose=purpose, model=model, latency_ms=latency_ms,
         prompt_tokens=p_tok, completion_tokens=c_tok, ok=ok, error=err,
+        tok_per_s=_tps,
     )
     return LLMResult(text, ok, model, latency_ms, p_tok, c_tok, err,
                      finish_reason=finish_reason if err is None else None)

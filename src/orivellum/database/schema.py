@@ -1911,4 +1911,37 @@ MIGRATIONS: list[tuple[int, str, str]] = [
     (108, "Add mail_context_enabled column to conversations", """
         ALTER TABLE conversations ADD COLUMN mail_context_enabled INTEGER NOT NULL DEFAULT 0;
     """),
+
+    # v109 — Measurement layer: richer LLM telemetry, bench runs, golden queries.
+    #   * llm_calls gains ttft_ms / tok_per_s / streamed so streaming paths can
+    #     record time-to-first-token and decode rate (NULL when unknown — never
+    #     guessed).
+    #   * bench_runs stores one summary row per benchmark / eval run.
+    #   * golden_queries is the curated retrieval golden set scored by
+    #     capabilities/evalset.py (nDCG@k / Recall@k per channel).
+    (109, "Measurement layer: llm telemetry columns, bench_runs, golden_queries", """
+        ALTER TABLE llm_calls ADD COLUMN ttft_ms REAL;
+        ALTER TABLE llm_calls ADD COLUMN tok_per_s REAL;
+        ALTER TABLE llm_calls ADD COLUMN streamed INTEGER NOT NULL DEFAULT 0;
+
+        CREATE TABLE IF NOT EXISTS bench_runs (
+            id      INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts      TEXT NOT NULL DEFAULT (datetime('now')),
+            kind    TEXT NOT NULL,
+            label   TEXT NOT NULL DEFAULT '',
+            summary TEXT NOT NULL DEFAULT '{}'
+        );
+        CREATE INDEX IF NOT EXISTS br_kind_ts ON bench_runs(kind, ts);
+
+        CREATE TABLE IF NOT EXISTS golden_queries (
+            id           TEXT PRIMARY KEY,
+            query        TEXT NOT NULL,
+            kind         TEXT NOT NULL DEFAULT 'chunk',
+            relevant_ids TEXT NOT NULL DEFAULT '[]',
+            work_id      TEXT,
+            notes        TEXT NOT NULL DEFAULT '',
+            source       TEXT NOT NULL DEFAULT 'manual',
+            created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+    """),
 ]

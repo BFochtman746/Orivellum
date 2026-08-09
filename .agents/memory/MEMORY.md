@@ -75,3 +75,4 @@
 - [Toast systems](orivellum-toasts.md) — shadcn useToast and sonner toast() need their own mounted Toasters; sonner's was missing for months so its toasts silently never rendered.
 - [Weather card design](orivellum-weather.md) — Open-Meteo minutely_15 nowcast + AQI; city-local timestamp rules; SWR cache locKey; forced-load generation guard.
 - [Voice platform roadmap](orivellum-voice-roadmap.md) — premium TTS slot is empty by design; fill with ROCm sidecar (Chatterbox first); steal Voice Forge gates/caching, never port the Java app.
+- [Test suite stability](orivellum-test-suite-stability.md) — never get_event_loop() in tests; drain shared executor before temp-dir cleanup; full suite OOMs in this container — run ~10-file chunks.

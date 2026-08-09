@@ -3,7 +3,7 @@ import { apiFetch } from "@/lib/auth";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
-import { Activity, Database, Cpu, CheckCircle2, XCircle, AlertCircle, AlertTriangle, Terminal, Sparkles, Moon, Brain, Trash2, ScrollText, User, Settings, Image as ImageIcon, Eye, Loader2, FileSearch, ClipboardCopy, ChevronDown, ChevronRight, Zap, Download, RotateCcw, FolderOpen, FolderPlus, Plus, X, GitMerge, Archive, Save, Mic2, Network, Server, Plug, ExternalLink, ListOrdered } from "lucide-react";
+import { Activity, Database, Cpu, CheckCircle2, XCircle, AlertCircle, AlertTriangle, Terminal, Sparkles, Moon, Brain, Trash2, ScrollText, User, Settings, Image as ImageIcon, Eye, Loader2, FileSearch, ClipboardCopy, ChevronDown, ChevronRight, Zap, Download, RotateCcw, FolderOpen, FolderPlus, Plus, X, GitMerge, Archive, Save, Mic2, Network, Server, Plug, ExternalLink, ListOrdered, Gauge } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -1990,6 +1990,251 @@ function SemanticSearchCard() {
 
 // ─── Database statistics card ─────────────────────────────────────────────────
 
+// ── Measurement Lab — bench runs, live telemetry, retrieval eval ─────────────
+
+type TelemetrySummary = {
+  hours: number;
+  total_calls: number;
+  purposes: Record<string, {
+    calls: number; errors: number;
+    latency_ms_p50: number | null; latency_ms_p95: number | null;
+    ttft_ms_p50: number | null; ttft_ms_p95: number | null;
+    tok_per_s_median: number | null; measured_ttft: number;
+  }>;
+};
+
+type BenchRun = { id: number; ts: string; kind: string; label: string; summary: Record<string, unknown> };
+
+type EvalChannel = { ndcg: number | null; recall: number | null; scored: number; error: string | null };
+
+function MeasurementLabCard() {
+  const [runningBench, setRunningBench] = useState<string | null>(null);
+  const [runningEval, setRunningEval] = useState(false);
+  const [seeding, setSeeding] = useState(false);
+
+  const { data: telemetry } = useQuery({
+    queryKey: ["bench", "telemetry"],
+    queryFn: async () => {
+      const r = await apiFetch(`${API_BASE}/api/bench/telemetry/summary?hours=24`);
+      if (!r.ok) return null;
+      return r.json() as Promise<TelemetrySummary>;
+    },
+    refetchInterval: 30_000,
+    staleTime: 20_000,
+  });
+
+  const { data: benchStatus, refetch: refetchStatus } = useQuery({
+    queryKey: ["bench", "status"],
+    queryFn: async () => {
+      const r = await apiFetch(`${API_BASE}/api/bench/status`);
+      if (!r.ok) return null;
+      return r.json() as Promise<{ running: boolean; kind: string | null }>;
+    },
+    refetchInterval: (query) => {
+      const d = query.state.data as { running: boolean } | null;
+      return d?.running || runningBench ? 3_000 : 30_000;
+    },
+    staleTime: 2_000,
+  });
+
+  // Server status is the source of truth — clear the local spinner (and pull
+  // fresh results) once the server reports the benchmark finished.
+  useEffect(() => {
+    if (benchStatus && !benchStatus.running && runningBench) {
+      setRunningBench(null);
+      refetchRuns();
+    }
+  }, [benchStatus, runningBench]);
+
+  const { data: runsData, refetch: refetchRuns } = useQuery({
+    queryKey: ["bench", "runs"],
+    queryFn: async () => {
+      const r = await apiFetch(`${API_BASE}/api/bench/runs?limit=6`);
+      if (!r.ok) return null;
+      return r.json() as Promise<{ runs: BenchRun[] }>;
+    },
+    refetchInterval: (query) => (runningBench || benchStatus?.running ? 5_000 : 60_000),
+    staleTime: 5_000,
+  });
+
+  const { data: goldensData, refetch: refetchGoldens } = useQuery({
+    queryKey: ["bench", "goldens"],
+    queryFn: async () => {
+      const r = await apiFetch(`${API_BASE}/api/bench/goldens`);
+      if (!r.ok) return null;
+      return r.json() as Promise<{ goldens: unknown[] }>;
+    },
+    staleTime: 30_000,
+  });
+
+  async function startBench(kind: string) {
+    setRunningBench(kind);
+    try {
+      const r = await apiFetch(`${API_BASE}/api/bench/run`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ kind }),
+      });
+      if (r.ok) {
+        toast.success(`${kind} benchmark started — results appear below when done`);
+        refetchStatus();
+      } else {
+        const j = await r.json().catch(() => null);
+        toast.error(j?.detail || "Could not start benchmark");
+        setRunningBench(null);
+      }
+    } catch {
+      toast.error("Benchmark request failed");
+      setRunningBench(null);
+    }
+  }
+
+  async function autoSeed() {
+    setSeeding(true);
+    try {
+      const r = await apiFetch(`${API_BASE}/api/bench/goldens/auto-seed`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ n: 20 }),
+      });
+      const j = await r.json().catch(() => null);
+      if (r.ok) {
+        toast.success(`Seeded ${j?.created ?? 0} golden queries from your library`);
+        refetchGoldens();
+      } else {
+        toast.error(j?.detail || "Auto-seed failed");
+      }
+    } catch {
+      toast.error("Auto-seed request failed");
+    } finally {
+      setSeeding(false);
+    }
+  }
+
+  async function runEval() {
+    setRunningEval(true);
+    try {
+      const r = await apiFetch(`${API_BASE}/api/bench/eval/retrieval`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ k: 5 }),
+      });
+      const j = await r.json().catch(() => null);
+      if (r.ok) {
+        toast.success("Retrieval eval complete");
+        refetchRuns();
+      } else {
+        toast.error(j?.detail || "Eval failed");
+      }
+    } catch {
+      toast.error("Eval request failed");
+    } finally {
+      setRunningEval(false);
+    }
+  }
+
+  const chat = telemetry?.purposes?.["chat.stream"];
+  const goldenCount = goldensData?.goldens?.length ?? 0;
+  const latestEval = runsData?.runs?.find((r) => r.kind === "retrieval_eval");
+  const evalChannels = latestEval?.summary?.channels as Record<string, EvalChannel> | undefined;
+
+  return (
+    <Card className="vellum-card">
+      <CardContent className="p-6">
+        <div className="flex items-start gap-3">
+          <Gauge className="w-5 h-5 mt-0.5 shrink-0 text-primary" />
+          <div className="flex-1 space-y-4">
+            <div>
+              <h3 className="font-medium text-sm">Measurement Lab</h3>
+              <p className="text-sm text-muted-foreground max-w-xl">
+                Live speed telemetry and repeatable benchmarks — measure first, then tune.
+              </p>
+            </div>
+
+            {/* Live chat telemetry */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
+              <div>
+                <div className="text-xs text-muted-foreground">Chat first response (median)</div>
+                <div className="font-mono">{chat?.ttft_ms_p50 != null ? `${(chat.ttft_ms_p50 / 1000).toFixed(1)}s` : "—"}</div>
+              </div>
+              <div>
+                <div className="text-xs text-muted-foreground">Generation speed (median)</div>
+                <div className="font-mono">{chat?.tok_per_s_median != null ? `${chat.tok_per_s_median} tok/s` : "—"}</div>
+              </div>
+              <div>
+                <div className="text-xs text-muted-foreground">Chat calls (24h)</div>
+                <div className="font-mono">{chat?.calls ?? 0}</div>
+              </div>
+              <div>
+                <div className="text-xs text-muted-foreground">Errors (24h)</div>
+                <div className="font-mono">{chat?.errors ?? 0}</div>
+              </div>
+            </div>
+
+            {/* Bench buttons */}
+            <div className="flex flex-wrap gap-2">
+              {(["ttft", "generation", "cache"] as const).map((kind) => (
+                <Button
+                  key={kind}
+                  size="sm"
+                  variant="outline"
+                  disabled={runningBench !== null}
+                  onClick={() => startBench(kind)}
+                  data-testid={`button-bench-${kind}`}
+                >
+                  {runningBench === kind ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Zap className="w-3.5 h-3.5 mr-1.5" />}
+                  {kind === "ttft" ? "First-token sweep" : kind === "generation" ? "Generation speed" : "Prefix cache check"}
+                </Button>
+              ))}
+            </div>
+
+            {/* Retrieval eval */}
+            <div className="space-y-2 pt-1 border-t border-border/50">
+              <div className="flex items-center justify-between gap-3 flex-wrap pt-2">
+                <div className="text-sm">
+                  <span className="font-medium">Retrieval quality</span>
+                  <span className="text-muted-foreground ml-2 text-xs">{goldenCount} golden queries</span>
+                </div>
+                <div className="flex gap-2">
+                  <Button size="sm" variant="outline" disabled={seeding} onClick={autoSeed} data-testid="button-goldens-seed">
+                    {seeding ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Plus className="w-3.5 h-3.5 mr-1.5" />}
+                    Seed from library
+                  </Button>
+                  <Button size="sm" disabled={runningEval || goldenCount === 0} onClick={runEval} data-testid="button-eval-run">
+                    {runningEval ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Activity className="w-3.5 h-3.5 mr-1.5" />}
+                    Score retrieval
+                  </Button>
+                </div>
+              </div>
+              {evalChannels && (
+                <div className="grid grid-cols-3 gap-3 text-sm">
+                  {(["fts", "semantic", "hybrid"] as const).map((ch) => {
+                    const c = evalChannels[ch];
+                    return (
+                      <div key={ch}>
+                        <div className="text-xs text-muted-foreground capitalize">{ch === "fts" ? "Keyword" : ch}</div>
+                        <div className="font-mono text-xs">
+                          {c?.ndcg != null ? `nDCG ${c.ndcg}` : c?.error ? "unavailable" : "—"}
+                          {c?.recall != null && <span className="text-muted-foreground"> · R {c.recall}</span>}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              {latestEval && (
+                <p className="text-[11px] text-muted-foreground">
+                  Last scored {relativeTime(latestEval.ts)} · top-5 · higher is better (1.0 = perfect)
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 function DatabaseStatsCard() {
   const { data, isLoading } = useQuery({
     queryKey: ["system", "stats"],
@@ -2514,6 +2759,9 @@ export default function System() {
 
       {/* Cross-encoder Search Reranker */}
       <RerankerCard />
+
+      {/* Measurement Lab — benchmarks, telemetry, retrieval eval */}
+      <MeasurementLabCard />
 
       {/* Vision Model Setting */}
       <VisionModelCard />

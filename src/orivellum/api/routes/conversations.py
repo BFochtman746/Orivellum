@@ -2694,6 +2694,18 @@ async def _stream_response(
         _CHUNK_TIMEOUT_SEC = 30
         _first_token_received = False
         _timed_out = False  # set True on asyncio.TimeoutError to mark message incomplete
+        # ── Streaming telemetry (v109 measurement layer) ─────────────────────
+        # _ttft_monotonic: monotonic timestamp of the FIRST delta that carried
+        # any generated text (content or reasoning) — measured, never guessed.
+        # _delta_count: number of deltas carrying text.  llama.cpp-family
+        # servers emit one delta per token, so this doubles as a completion-
+        # token estimate when the final chunk carries no usage block.
+        # _usage_prompt/_usage_completion: provider-reported usage when the
+        # final stream chunk includes it (stream_options / server default).
+        _ttft_monotonic: float | None = None
+        _delta_count = 0
+        _usage_prompt: int | None = None
+        _usage_completion: int | None = None
 
         try:
             import httpx
@@ -2723,6 +2735,14 @@ async def _stream_response(
                             break
                         try:
                             d = json.loads(chunk)
+                            _usage = d.get("usage")
+                            if isinstance(_usage, dict):
+                                _usage_prompt = _usage.get("prompt_tokens") or _usage_prompt
+                                _usage_completion = (
+                                    _usage.get("completion_tokens") or _usage_completion
+                                )
+                            if not d.get("choices"):
+                                continue  # usage-only final chunk has no choices
                             choice0 = d["choices"][0]
                             # Capture finish_reason — set on the final chunk
                             fr = choice0.get("finish_reason")
@@ -2733,10 +2753,16 @@ async def _stream_response(
                             # reasoning in a separate field rather than inside content.
                             reasoning = delta.get("reasoning_content") or ""
                             if reasoning:
+                                if _ttft_monotonic is None:
+                                    _ttft_monotonic = _time.monotonic()
+                                _delta_count += 1
                                 thinking_text += reasoning
                                 yield f"data: {json.dumps({'thinking': reasoning})}\n\n"
                             raw = delta.get("content") or ""
                             if raw:
+                                if _ttft_monotonic is None:
+                                    _ttft_monotonic = _time.monotonic()
+                                _delta_count += 1
                                 _tag_buf += raw
                                 # Process buffer, splitting on <think> / </think> tags.
                                 # The while-loop drains _tag_buf until a partial tag
@@ -2928,12 +2954,29 @@ async def _stream_response(
     finally:
         # Single telemetry record covering EVERY terminal path — early returns
         # (intent/clarify/council), normal completion, timeout, error, and
-        # client disconnect. Tokens are unavailable in the streaming path.
+        # client disconnect.  Completion tokens come from the provider usage
+        # block when the final chunk carries one; otherwise the delta count is
+        # used (llama.cpp-family servers emit one delta per token).  TTFT and
+        # decode rate are only recorded when actually measured.
+        _now = _time.monotonic()
+        _ttft_ms = (
+            (_ttft_monotonic - _stream_started) * 1000.0
+            if _ttft_monotonic is not None else None
+        )
+        _c_tok = _usage_completion if _usage_completion else (
+            _delta_count if _delta_count > 0 else None
+        )
+        _decode_s = (_now - _ttft_monotonic) if _ttft_monotonic is not None else 0.0
+        # The decode window starts AFTER the first token arrived, so the rate
+        # excludes that token from the numerator — see decode_tok_per_s.
+        from orivellum.capabilities.llm import decode_tok_per_s as _dtps
+        _tps = _dtps(_c_tok, _decode_s)
         record_llm_call(
             db, purpose=_stream_purpose, model=model,
-            latency_ms=int((_time.monotonic() - _stream_started) * 1000),
-            prompt_tokens=None, completion_tokens=None,
+            latency_ms=int((_now - _stream_started) * 1000),
+            prompt_tokens=_usage_prompt, completion_tokens=_c_tok,
             ok=_stream_ok, error=_stream_err,
+            ttft_ms=_ttft_ms, tok_per_s=_tps, streamed=True,
         )
 
 
