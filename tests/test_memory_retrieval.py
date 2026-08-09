@@ -483,7 +483,7 @@ class TestGetMemoryEndpoint(unittest.TestCase):
 
         # Patch get_db to return our test db
         with _patch("orivellum.api.routes.conversations.get_db", return_value=self.db):
-            result = asyncio.get_event_loop().run_until_complete(
+            result = asyncio.run(
                 get_memory(q=None, include_evidence=False)
             )
 
@@ -505,7 +505,7 @@ class TestGetMemoryEndpoint(unittest.TestCase):
         # module-level symbol that the route resolves at call time.
         with _patch("orivellum.api.routes.conversations.get_db", return_value=self.db), \
              _patch("orivellum.capabilities.memory._channel_semantic", return_value=[]):
-            result = asyncio.get_event_loop().run_until_complete(
+            result = asyncio.run(
                 get_memory(q="Neovim editor", include_evidence=False)
             )
 
@@ -522,7 +522,7 @@ class TestGetMemoryEndpoint(unittest.TestCase):
 
         with _patch("orivellum.api.routes.conversations.get_db", return_value=self.db), \
              _patch("orivellum.capabilities.memory._channel_semantic", return_value=[]):
-            result = asyncio.get_event_loop().run_until_complete(
+            result = asyncio.run(
                 get_memory(q="zsh shell", include_evidence=False)
             )
 
@@ -539,7 +539,7 @@ class TestGetMemoryEndpoint(unittest.TestCase):
         from orivellum.api.routes.conversations import get_memory
 
         with _patch("orivellum.api.routes.conversations.get_db", return_value=self.db):
-            result = asyncio.get_event_loop().run_until_complete(
+            result = asyncio.run(
                 get_memory(q="  ", include_evidence=False)
             )
 

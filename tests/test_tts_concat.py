@@ -114,10 +114,19 @@ class TestConcatFailurePath(unittest.TestCase):
     """Confirms the share-button fallback contract when ffmpeg concat fails."""
 
     def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
+        self._tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.client = _make_client(Path(self._tmp.name))
 
     def tearDown(self):
+        # Drain the shared background executor first: the TTS stream submits
+        # fire-and-forget registration jobs (_register_output_bg) that keep
+        # writing into this test's temp data dir after the response finishes.
+        # Without the drain, TemporaryDirectory cleanup races those writes
+        # (OSError: Directory not empty).  ignore_cleanup_errors covers the
+        # rare untracked fallback thread spawned if a job submits new work
+        # while the pool is shutting down.
+        from orivellum.api import executor as _exec
+        _exec.shutdown(wait=True)  # lazily re-created by the next test
         self._tmp.cleanup()
 
     def _post_multi_segment(self) -> list[dict]:
@@ -218,10 +227,19 @@ class TestConcatSingleSegmentPath(unittest.TestCase):
     """Single-segment text: server reuses the segment path; concat event emitted."""
 
     def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
+        self._tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.client = _make_client(Path(self._tmp.name))
 
     def tearDown(self):
+        # Drain the shared background executor first: the TTS stream submits
+        # fire-and-forget registration jobs (_register_output_bg) that keep
+        # writing into this test's temp data dir after the response finishes.
+        # Without the drain, TemporaryDirectory cleanup races those writes
+        # (OSError: Directory not empty).  ignore_cleanup_errors covers the
+        # rare untracked fallback thread spawned if a job submits new work
+        # while the pool is shutting down.
+        from orivellum.api import executor as _exec
+        _exec.shutdown(wait=True)  # lazily re-created by the next test
         self._tmp.cleanup()
 
     # Short text = exactly 1 segment (well under 900 chars)
@@ -282,10 +300,19 @@ class TestConcatEmptyOutputFallback(unittest.TestCase):
     """When ffmpeg exits 0 but the concat file is 0 bytes, treat it as failure."""
 
     def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
+        self._tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.client = _make_client(Path(self._tmp.name))
 
     def tearDown(self):
+        # Drain the shared background executor first: the TTS stream submits
+        # fire-and-forget registration jobs (_register_output_bg) that keep
+        # writing into this test's temp data dir after the response finishes.
+        # Without the drain, TemporaryDirectory cleanup races those writes
+        # (OSError: Directory not empty).  ignore_cleanup_errors covers the
+        # rare untracked fallback thread spawned if a job submits new work
+        # while the pool is shutting down.
+        from orivellum.api import executor as _exec
+        _exec.shutdown(wait=True)  # lazily re-created by the next test
         self._tmp.cleanup()
 
     def _post_with_empty_concat(self) -> list[dict]:
