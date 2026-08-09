@@ -425,6 +425,81 @@ def cosine(a: list[float], b: list[float]) -> float:
     return dot / ((na ** 0.5) * (nb ** 0.5))
 
 
+# Known-safe canary text: never derived from batch content, so a pathological
+# input can never make the health check misclassify a live endpoint as down.
+_CANARY_TEXT = "embedding health canary"
+# Max failed embed attempts tolerated per top-level resilient call before we
+# stop retrying — prevents a flaky endpoint from being hammered with dozens of
+# long-timeout calls whose canaries keep overriding the cooldown policy.
+_RESILIENT_FAIL_BUDGET = 6
+
+
+def _embed_batch_resilient(texts: list[str],
+                           _budget: dict | None = None) -> list[list[float]] | None:
+    """Embed a batch with a size-scaled timeout and adaptive splitting.
+
+    A fixed 30 s timeout is fine for one text but not for a batch of 16 long
+    chunks on a large local embedder — the first backfill batch would time
+    out, open the cooldown, and kill an entire reindex at 0 items. Strategy:
+
+    1. Try the whole batch with a timeout that scales with batch size.
+    2. On failure, embed a fixed known-safe canary (bypassing the cooldown the
+       failure just opened). Canary dead → endpoint is genuinely down → None.
+    3. Canary alive → the batch was just too big/slow — bisect and recurse.
+    4. A single text that still fails on a live endpoint is retried once
+       hard-truncated before giving up, so one pathological item can't stall
+       the whole backfill forever.
+
+    A shared failure budget bounds the total number of failed attempts per
+    top-level call so a flaky endpoint isn't hammered indefinitely.
+
+    Returns vectors aligned with ``texts``, or None when the endpoint is down
+    or the failure budget is exhausted.
+    """
+    if _budget is None:
+        _budget = {"fails": _RESILIENT_FAIL_BUDGET}
+
+    timeout = _EMBED_TIMEOUT + 5 * len(texts)
+    vecs = embed_texts(texts, timeout=timeout)
+    if vecs is not None:
+        return vecs
+
+    _budget["fails"] -= 1
+    if _budget["fails"] < 0:
+        logger.warning("Embedding failure budget exhausted — stopping backfill "
+                       "attempt (endpoint flaky?)")
+        return None
+
+    # Health check with a fixed safe string — batch content must never be the
+    # canary, or a pathological text would masquerade as an endpoint outage.
+    canary = embed_texts([_CANARY_TEXT],
+                         timeout=_EMBED_TIMEOUT + 30, bypass_cooldown=True)
+    if canary is None:
+        return None                         # endpoint genuinely down
+
+    if len(texts) == 1:
+        # Endpoint alive but this one text fails — try it hard-truncated.
+        retry = embed_texts([texts[0][:1500]],
+                            timeout=_EMBED_TIMEOUT, bypass_cooldown=True)
+        if retry is not None:
+            logger.warning("Embedded one text only after hard truncation "
+                           "(len %d -> 1500)", len(texts[0]))
+        else:
+            _budget["fails"] -= 1
+        return retry
+
+    logger.info("Embedding batch of %d failed but endpoint is alive — "
+                "splitting batch", len(texts))
+    mid = len(texts) // 2
+    left = _embed_batch_resilient(texts[:mid], _budget)
+    if left is None:
+        return None
+    right = _embed_batch_resilient(texts[mid:], _budget)
+    if right is None:
+        return None
+    return left + right
+
+
 def backfill_embeddings(db: "OrivellumDB", max_items: int = 200) -> int:
     """Embed chunks, knowledge items, and conversation chunks that lack vectors.
 
@@ -469,7 +544,7 @@ def backfill_embeddings(db: "OrivellumDB", max_items: int = 200) -> int:
                 ]
             else:
                 texts = [r["text"] for r in batch]
-            vecs = embed_texts(texts)
+            vecs = _embed_batch_resilient(texts)
             if vecs is None:
                 return embedded  # endpoint down — stop quietly
             for r, v in zip(batch, vecs):
