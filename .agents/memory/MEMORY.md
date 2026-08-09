@@ -72,4 +72,5 @@
 - [GD app-hub pattern](gd-app-hub-pattern.md) — gd-tile hubs + dark-token interior flip via useGdDark(); wouter useSearch (not useLocation) for ?param-only navigation.
 - [Mobile app retirement](mobile-retirement.md) — Expo app deleted Aug 2026; PWA is the only client; features to rebuild on web + leftover backend push plumbing.
 - [UI rebrand map](orivellum-rebrand.md) — manuscript-themed display names (Origination, Pressworks, Correspondence, Night Scriptorium, Scriptorium, The Chancery); routes/identifiers unchanged; Lemonade kept only on System card + setup commands.
+- [Weather card design](orivellum-weather.md) — Open-Meteo minutely_15 nowcast + AQI; city-local timestamp rules; SWR cache locKey; forced-load generation guard.
 - [Voice platform roadmap](orivellum-voice-roadmap.md) — premium TTS slot is empty by design; fill with ROCm sidecar (Chatterbox first); steal Voice Forge gates/caching, never port the Java app.
