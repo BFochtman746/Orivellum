@@ -585,10 +585,10 @@ function SidebarInner({ onNavigate }: { onNavigate: () => void }) {
       {/* Today / Dashboard — always pinned */}
       <div className="px-2 pb-1 pt-1">
         <Link
-          href="/"
+          href="/dashboard"
           onClick={onNavigate}
           className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors
-            ${location === "/" ? "bg-primary/10 text-primary" : "text-foreground/80 hover:bg-muted/50"}`}
+            ${location === "/dashboard" ? "bg-primary/10 text-primary" : "text-foreground/80 hover:bg-muted/50"}`}
         >
           <Activity className="w-4 h-4 shrink-0" />
           <span>Today</span>
@@ -773,7 +773,7 @@ function ProgressPanel({ open, onClose }: { open: boolean; onClose: () => void }
 function useRouteTitle(): string {
   const [location] = useLocation();
   const path = location.split("?")[0];
-  if (path === "/") return "Today";
+  if (path === "/" || path === "/dashboard") return "Today";
   if (path === "/chat") return "Chat";
   if (path.match(/^\/works\/[^/]+\/intelligence/)) return "Intelligence";
   if (path.match(/^\/works\/[^/]+/)) return "Work";
@@ -797,7 +797,7 @@ function useRouteTitle(): string {
 // ─── Nav Rail (tablet tier: 560px–1023px container width) ─────────────────────
 
 const RAIL_ITEMS = [
-  { label: "Today",    href: "/",           icon: Activity      },
+  { label: "Today",    href: "/dashboard",   icon: Activity      },
   { label: "Chat",     href: "/chat",        icon: MessageSquare },
   { label: "Works",    href: "/works",       icon: BookOpen      },
   { label: "Library",  href: "/library",     icon: Library       },
@@ -844,7 +844,7 @@ function NavRail({
       style={{ background: "var(--paper-2)", borderColor: "var(--line)" }}
     >
       {/* Brand sigil */}
-      <Link href="/" aria-label="Home">
+      <Link href="/dashboard" aria-label="Today">
         <div
           className="w-9 h-9 rounded-[10px] flex items-center justify-center font-serif font-bold text-sm mb-1 shrink-0 text-[#F4EEE1] mt-1"
           style={{ background: "var(--green-raw)" }}
@@ -858,7 +858,7 @@ function NavRail({
       {/* Primary nav items */}
       {RAIL_ITEMS.map(({ label, href, icon: Icon }) => {
         const isActive =
-          location === href || (href !== "/" && location.startsWith(href));
+          location === href || location.startsWith(href + "/") || location.startsWith(href + "?");
         const showBadge = href === "/review" && reviewCount > 0;
         return (
           <button
@@ -962,7 +962,7 @@ function NavRail({
 // ─── Mobile navigation bottom sheet ───────────────────────────────────────────
 
 const NAV_ITEMS = [
-  { label: "Today",      href: "/",           icon: Activity      },
+  { label: "Today",      href: "/dashboard",   icon: Activity      },
   { label: "Chat",       href: "/chat",        icon: MessageSquare },
   { label: "Works",      href: "/works",       icon: BookOpen      },
   { label: "Books",      href: "/books",       icon: BookMarked    },
@@ -1017,7 +1017,8 @@ function MobileNavSheet({ open, onClose }: { open: boolean; onClose: () => void 
             {NAV_ITEMS.map(({ label, href, icon: Icon }) => {
               const isActive =
                 location === href ||
-                (href !== "/" && location.startsWith(href));
+                location.startsWith(href + "/") ||
+                location.startsWith(href + "?");
               return (
                 <button
                   key={href}

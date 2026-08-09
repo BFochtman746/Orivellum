@@ -40,6 +40,9 @@ import MailConnectPage from '@/pages/mail/connect';
 import ComposePage from '@/pages/mail/compose';
 import MailSettingsPage from '@/pages/mail/settings';
 import NotFound from '@/pages/not-found';
+import HomeScreen from '@/pages/home/index';
+import { AppFrame } from '@/components/app-frame';
+import { getAppForPath, isLegacyShell } from '@/lib/apps';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -71,11 +74,40 @@ function RouteWithBoundary({ component: Page }: { component: React.ComponentType
   );
 }
 
+/**
+ * Shell — picks the frame that wraps a routed page:
+ *   - path owned by an app → GD-industrial AppFrame (full-screen, app nav only)
+ *   - legacy flag set (Home Screen "Legacy console") → old sidebar AppLayout
+ *   - unknown/legacy-only paths (/dashboard, /library/:id …) → old AppLayout
+ */
+function Shell({ children }: { children: React.ReactNode }) {
+  const [location] = useLocation();
+  const path = location.split('?')[0];
+  const app = isLegacyShell() ? null : getAppForPath(path);
+  if (app) return <AppFrame app={app}>{children}</AppFrame>;
+  return <AppLayout>{children}</AppLayout>;
+}
+
 function Router() {
   return (
-    <AppLayout>
+    <Switch>
+      {/* Home Screen launcher — full-screen, no app shell around it */}
+      <Route path="/">{() => <RouteWithBoundary component={HomeScreen} />}</Route>
+      <Route>
+        {() => (
+          <Shell>
+            <RoutedPages />
+          </Shell>
+        )}
+      </Route>
+    </Switch>
+  );
+}
+
+function RoutedPages() {
+  return (
       <Switch>
-        <Route path="/">{() => <RouteWithBoundary component={Dashboard} />}</Route>
+        <Route path="/dashboard">{() => <RouteWithBoundary component={Dashboard} />}</Route>
         <Route path="/works">{() => <RouteWithBoundary component={WorksList} />}</Route>
         <Route path="/works/:workId">{() => <RouteWithBoundary component={WorkDetail} />}</Route>
         <Route path="/works/:workId/intelligence">{() => <RouteWithBoundary component={WorkIntelligence} />}</Route>
@@ -107,7 +139,6 @@ function Router() {
         <Route path="/mail/settings">{() => <RouteWithBoundary component={MailSettingsPage} />}</Route>
         <Route component={NotFound} />
       </Switch>
-    </AppLayout>
   );
 }
 

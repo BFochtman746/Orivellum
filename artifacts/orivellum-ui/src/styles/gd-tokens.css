@@ -1,0 +1,362 @@
+/* ══════════════════════════════════════════════════════════════════════════
+   GD-INDUSTRIAL — TOKEN LAYER
+   Spec + rationale: design/GD-INDUSTRIAL.md (LCH values, contrast table,
+   deuteranopia pass). No component that uses this layer ever writes a hex.
+
+   Themes ride <html data-theme>:
+     hull      — dark gunmetal (default; night-usable command console)
+     daylight  — warm bone ground, steel figure (opponent-process mapping)
+
+   Per-app accent tint rides <html data-app>:
+     writing · learning · chat · studio · command · mail · library
+
+   Six layout laws (see spec §9): one scroll container at 100dvh; three
+   primitives (.gd-tile / .gd-row / .gd-panel); 4 tiles above the fold;
+   48px thumb targets; state is ambient (ribbon, not toasts); the shell
+   never moves.
+
+   Hard rules carried across every theme:
+   - --gd-violet marks machine-written text ONLY. Never decorative.
+   - --gd-danger appears on exactly one control per screen.
+   - Body text ≥ 7:1 (AAA) on every surface in the ramp.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+@import url('https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@500;600;700&family=Allerta+Stencil&family=IBM+Plex+Mono:ital,wght@0,400;0,600;1,400&display=swap');
+
+:root {
+  /* geometry + motion — theme-independent */
+  --gd-s1: 4px;  --gd-s2: 8px;  --gd-s3: 12px; --gd-s4: 16px;
+  --gd-s5: 24px; --gd-s6: 32px; --gd-s7: 48px;
+  --gd-pad: var(--gd-s4);
+  --gd-r: 10px;          /* machined corner — tighter than VELLUM's 14px */
+  --gd-r-sm: 6px;
+  --gd-tap: 48px;        /* minimum thumb target */
+  --gd-spring: cubic-bezier(0.22, 0.68, 0, 1);
+  --gd-fast: 130ms;
+  --gd-base: 220ms;
+
+  /* type — engineering plate / stencil / body / machine */
+  --gd-display: 'Saira Condensed', 'Arial Narrow', system-ui, sans-serif;
+  --gd-stencil: 'Allerta Stencil', 'Saira Condensed', system-ui, sans-serif;
+  --gd-body: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
+  --gd-data: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* ── HULL — dark gunmetal, the default ─────────────────────────────────── */
+html[data-theme='hull'] {
+  /* dominant: hull-steel ramp, ΔL=4 per step (≈ constant ΔE) */
+  --gd-bg:      #14181D;
+  --gd-surface: #1B2026;
+  --gd-card:    #232930;
+  --gd-card-hi: #2B323A;
+  --gd-line:    #39424C;
+  --gd-line-2:  #485460;
+
+  /* neutral: bone text family (warm figure on cool ground) */
+  --gd-text:  #EAE7E0;   /* 13.9:1 on bg — AAA */
+  --gd-muted: #A6B1BC;   /*  7.4:1 on bg — AAA */
+  --gd-dim:   #76838F;   /* metadata only, never body copy */
+
+  /* land accents (GDLS) */
+  --gd-olive:  #A8B36B;  /* grouping / classification */
+  --gd-bronze: #C9964B;  /* figure emphasis — the thing being worked on */
+
+  /* sea accents (GDEB) */
+  --gd-sonar: #3FC9B8;   /* live signal / common fate */
+  --gd-slate: #7C9BC0;   /* reference / continuity */
+
+  /* semantic states — adjusted off pure primaries */
+  --gd-danger:  #E5604A; /* ONE control per screen */
+  --gd-caution: #E0A93E;
+  --gd-success: #5FBF7E;
+  --gd-info:    #7C9BC0;
+  --gd-violet:  #A78BFA; /* machine-written text only */
+
+  /* default accent (overridden per app below) */
+  --gd-accent: #3FC9B8;
+  --gd-accent-ink: #04120F;  /* text on an accent-filled control */
+  --gd-accent-soft: rgba(63, 201, 184, 0.13);
+
+  /* soft plaques for fixed-identity accents (Home tiles) */
+  --gd-olive-soft:   rgba(168, 179, 107, 0.13);
+  --gd-bronze-soft:  rgba(201, 150, 75, 0.13);
+  --gd-sonar-soft:   rgba(63, 201, 184, 0.13);
+  --gd-slate-soft:   rgba(124, 155, 192, 0.14);
+  --gd-caution-soft: rgba(224, 169, 62, 0.13);
+
+  --gd-glass: rgba(27, 32, 38, 0.78);
+  --gd-shadow: 0 1px 2px rgba(0, 0, 0, 0.35), 0 8px 24px rgba(0, 0, 0, 0.42);
+  --gd-scheme: dark;
+}
+
+/* ── DAYLIGHT — warm bone ground, steel figure (not an inversion) ──────── */
+html[data-theme='daylight'] {
+  --gd-bg:      #E6E2D8;
+  --gd-surface: #EFECE3;
+  --gd-card:    #F7F5EE;
+  --gd-card-hi: #FFFEFA;
+  --gd-line:    #C9C4B7;
+  --gd-line-2:  #B1AC9E;
+
+  --gd-text:  #20262D;   /* 12.1:1 on bg — AAA */
+  --gd-muted: #4E5A66;   /*  7.1:1 on bg — AAA */
+  --gd-dim:   #6D7985;
+
+  --gd-olive:  #5F6E2A;
+  --gd-bronze: #8A6320;
+  --gd-sonar:  #0F7E71;
+  --gd-slate:  #3E608C;
+
+  --gd-danger:  #B23A24;
+  --gd-caution: #8A6412;
+  --gd-success: #1F7A44;
+  --gd-info:    #3E608C;
+  --gd-violet:  #6D4FD8;
+
+  --gd-accent: #0F7E71;
+  --gd-accent-ink: #F7F5EE;
+  --gd-accent-soft: rgba(15, 126, 113, 0.12);
+
+  --gd-olive-soft:   rgba(95, 110, 42, 0.12);
+  --gd-bronze-soft:  rgba(138, 99, 32, 0.12);
+  --gd-sonar-soft:   rgba(15, 126, 113, 0.12);
+  --gd-slate-soft:   rgba(62, 96, 140, 0.12);
+  --gd-caution-soft: rgba(138, 100, 18, 0.12);
+
+  --gd-glass: rgba(239, 236, 227, 0.80);
+  --gd-shadow: 0 1px 2px rgba(32, 38, 45, 0.08), 0 8px 24px rgba(32, 38, 45, 0.12);
+  --gd-scheme: light;
+}
+
+/* ── Per-app accent tint — the steel never changes, only the accent ────── */
+html[data-theme='hull'][data-app='writing']   { --gd-accent: #C9964B; --gd-accent-ink: #171004; --gd-accent-soft: rgba(201, 150, 75, 0.13); }
+html[data-theme='hull'][data-app='learning']  { --gd-accent: #A8B36B; --gd-accent-ink: #101206; --gd-accent-soft: rgba(168, 179, 107, 0.13); }
+html[data-theme='hull'][data-app='chat']      { --gd-accent: #3FC9B8; --gd-accent-ink: #04120F; --gd-accent-soft: rgba(63, 201, 184, 0.13); }
+html[data-theme='hull'][data-app='studio']    { --gd-accent: #7C9BC0; --gd-accent-ink: #0A1017; --gd-accent-soft: rgba(124, 155, 192, 0.14); }
+html[data-theme='hull'][data-app='command']   { --gd-accent: #E0A93E; --gd-accent-ink: #171004; --gd-accent-soft: rgba(224, 169, 62, 0.13); }
+html[data-theme='hull'][data-app='mail']      { --gd-accent: #7C9BC0; --gd-accent-ink: #0A1017; --gd-accent-soft: rgba(124, 155, 192, 0.14); }
+html[data-theme='hull'][data-app='library']   { --gd-accent: #A8B36B; --gd-accent-ink: #101206; --gd-accent-soft: rgba(168, 179, 107, 0.13); }
+
+html[data-theme='daylight'][data-app='writing']  { --gd-accent: #8A6320; --gd-accent-soft: rgba(138, 99, 32, 0.12); }
+html[data-theme='daylight'][data-app='learning'] { --gd-accent: #5F6E2A; --gd-accent-soft: rgba(95, 110, 42, 0.12); }
+html[data-theme='daylight'][data-app='chat']     { --gd-accent: #0F7E71; --gd-accent-soft: rgba(15, 126, 113, 0.12); }
+html[data-theme='daylight'][data-app='studio']   { --gd-accent: #3E608C; --gd-accent-soft: rgba(62, 96, 140, 0.12); }
+html[data-theme='daylight'][data-app='command']  { --gd-accent: #8A6412; --gd-accent-soft: rgba(138, 100, 18, 0.12); }
+html[data-theme='daylight'][data-app='mail']     { --gd-accent: #3E608C; --gd-accent-soft: rgba(62, 96, 140, 0.12); }
+html[data-theme='daylight'][data-app='library']  { --gd-accent: #5F6E2A; --gd-accent-soft: rgba(95, 110, 42, 0.12); }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   GD SHELL + THE THREE PRIMITIVES
+   Scoped under .gd-shell so legacy VELLUM pages keep their look during the
+   transition. Every value reads a token above — no hex below this line.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.gd-shell {
+  height: var(--visual-viewport-height, 100dvh); /* one shell, one height (L1) */
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--gd-bg);
+  color: var(--gd-text);
+  font-family: var(--gd-body);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* navigation layer — the only glass */
+.gd-head {
+  flex: 0 0 auto;
+  z-index: 20;
+  padding: calc(var(--sai-top, 0px) + var(--gd-s2)) var(--gd-pad) var(--gd-s2);
+  background: var(--gd-glass);
+  -webkit-backdrop-filter: saturate(160%) blur(18px);
+  backdrop-filter: saturate(160%) blur(18px);
+  border-bottom: 1px solid var(--gd-line);
+}
+
+.gd-head-row {
+  display: flex;
+  align-items: center;
+  gap: var(--gd-s3);
+  min-height: 36px;
+}
+
+/* stencil wordmark / app name */
+.gd-mark {
+  margin: 0;
+  font-family: var(--gd-stencil);
+  font-size: 16px;
+  line-height: 1;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--gd-text);
+}
+.gd-mark em { font-style: normal; color: var(--gd-accent); }
+
+/* engineering-plate eyebrow label */
+.gd-eyebrow {
+  font-family: var(--gd-data);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--gd-dim);
+}
+
+/* ── Ambient state ribbon (L5 — state is ambient, never a toast) ───────
+   Dual-coded for deuteranopia: color + bar WIDTH + text label.          */
+.gd-ribbon {
+  margin-top: var(--gd-s2);
+  height: 3px;
+  border-radius: 2px;
+  background: var(--gd-line);
+  position: relative;
+  overflow: hidden;
+}
+.gd-ribbon i {
+  position: absolute;
+  inset: 0;
+  transform-origin: left;
+  background: var(--gd-success);
+  transition: transform var(--gd-base) var(--gd-spring), background var(--gd-base) linear;
+}
+.gd-shell[data-conn='degraded'] .gd-ribbon i { background: var(--gd-caution); transform: scaleX(0.55); }
+.gd-shell[data-conn='down']     .gd-ribbon i { background: var(--gd-danger);  transform: scaleX(0.15); }
+
+.gd-ribbon-label {
+  display: flex;
+  gap: var(--gd-s2);
+  align-items: baseline;
+  padding-top: 6px;
+  font-family: var(--gd-data);
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--gd-dim);
+}
+.gd-ribbon-label b { color: var(--gd-success); font-weight: 600; }
+.gd-shell[data-conn='degraded'] .gd-ribbon-label b { color: var(--gd-caution); }
+.gd-shell[data-conn='down']     .gd-ribbon-label b { color: var(--gd-danger); }
+.gd-ribbon-label span {
+  margin-left: auto;
+  font-family: var(--gd-body);
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--gd-muted);
+}
+
+/* the ONE scroll container (L1) */
+.gd-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-y: contain;
+  padding: 0 var(--gd-pad);
+  padding-bottom: calc(var(--sai-bottom, 0px) + var(--gd-s7));
+}
+
+/* content host for legacy pages inside the app frame — pages manage their
+   own scrolling exactly as they did under the old AppLayout <main>.       */
+.gd-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── PRIMITIVE 1 — .gd-tile ───────────────────────────────────────────── */
+.gd-tile {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gd-s3);
+  min-height: var(--gd-tap);
+  padding: var(--gd-s4);
+  border-radius: var(--gd-r);
+  border: 1px solid var(--gd-line);
+  background: var(--gd-card);
+  color: var(--gd-text);
+  text-align: left;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform var(--gd-fast) var(--gd-spring), background var(--gd-fast) linear;
+}
+.gd-tile:active { transform: scale(0.97); background: var(--gd-card-hi); }
+
+/* ── PRIMITIVE 2 — .gd-row ────────────────────────────────────────────── */
+.gd-row {
+  display: flex;
+  align-items: center;
+  gap: var(--gd-s3);
+  min-height: var(--gd-tap);
+  padding: var(--gd-s3) var(--gd-s4);
+  border-radius: var(--gd-r-sm);
+  border: 1px solid var(--gd-line);
+  background: var(--gd-card);
+  color: var(--gd-text);
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  transition: background var(--gd-fast) linear;
+}
+.gd-row:active { background: var(--gd-card-hi); }
+
+/* ── PRIMITIVE 3 — .gd-panel ──────────────────────────────────────────── */
+.gd-panel {
+  padding: var(--gd-s4);
+  border-radius: var(--gd-r);
+  border: 1px solid var(--gd-line);
+  background: var(--gd-surface);
+}
+
+/* nav chip — used in the app frame's per-app nav strip */
+.gd-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 0 var(--gd-s3);
+  border-radius: 999px;
+  border: 1px solid var(--gd-line);
+  background: var(--gd-card);
+  color: var(--gd-muted);
+  font-family: var(--gd-data);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform var(--gd-fast) var(--gd-spring);
+}
+.gd-chip:active { transform: scale(0.96); }
+.gd-chip[data-active='true'] {
+  border-color: var(--gd-accent);
+  background: var(--gd-accent-soft);
+  color: var(--gd-accent);
+}
+
+/* 48×48 icon button (Home control etc.) */
+.gd-iconbtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--gd-tap);
+  height: var(--gd-tap);
+  border-radius: var(--gd-r-sm);
+  border: 1px solid var(--gd-line);
+  background: var(--gd-card);
+  color: var(--gd-text);
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform var(--gd-fast) var(--gd-spring), background var(--gd-fast) linear;
+}
+.gd-iconbtn:active { transform: scale(0.94); background: var(--gd-card-hi); }
+
+@media (prefers-reduced-motion: reduce) {
+  .gd-tile, .gd-row, .gd-chip, .gd-iconbtn, .gd-ribbon i { transition: none; }
+  .gd-tile:active, .gd-chip:active, .gd-iconbtn:active { transform: none; }
+}
