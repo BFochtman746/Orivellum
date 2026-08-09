@@ -48,14 +48,16 @@ export const APPS: AppDef[] = [
     name: "Writing",
     tagline: "Books, drafts & finishing",
     icon: Feather,
-    entry: "/write",
+    entry: "/writing",
     routes: [
+      // Hub supersedes the old /works list for browsing; /works stays owned
+      // (and reachable from the hub) for the create/import dialogs.
+      { name: "Works", href: "/writing" },
       { name: "Write desk", href: "/write" },
-      { name: "Works", href: "/works" },
       { name: "Books", href: "/books" },
       { name: "Finishing", href: "/finishing" },
     ],
-    own: ["/write", "/works", "/books", "/finishing"],
+    own: ["/writing", "/write", "/works", "/books", "/finishing"],
   },
   {
     id: "learning",

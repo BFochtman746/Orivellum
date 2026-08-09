@@ -64,7 +64,8 @@ def books_list():
                       o.updated_at, o.lifecycle,
                       bp.id        AS pipeline_id,
                       bp.status    AS pipeline_status,
-                      bp.chapter_count,
+                      (SELECT COUNT(*) FROM book_chapters bc
+                       WHERE bc.pipeline_id=bp.id)                             AS chapter_count,
                       (SELECT COUNT(*) FROM documents d WHERE d.work_id=w.id) AS doc_count,
                       (SELECT COALESCE(SUM(d.word_count),0) FROM documents d
                        WHERE d.work_id=w.id AND d.readiness='ready')          AS word_count
