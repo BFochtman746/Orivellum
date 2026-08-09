@@ -936,7 +936,15 @@ export default function Library() {
       if (!resp.ok) throw new Error((data as any).detail ?? "Failed");
       const { queued, queued_zips, queued_stuck, skipped, message } = data as any;
       if (queued === 0) {
-        toast.success("All documents are already fully processed.");
+        // Never claim success when candidates were skipped — their source
+        // files are missing from disk and nothing was actually re-extracted.
+        if ((skipped ?? 0) > 0) {
+          toast.warning(
+            `Nothing queued — ${skipped} document${skipped !== 1 ? "s" : ""} skipped because the source file is missing from disk.`
+          );
+        } else {
+          toast.success("All documents are already fully processed.");
+        }
       } else {
         toast.success(message ?? `Queued ${queued} document(s) for re-extraction`);
         if (queued_zips > 0)
