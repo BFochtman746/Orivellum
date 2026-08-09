@@ -307,7 +307,7 @@ export default function ForgeDetail() {
   if (!project) {
     return (
       <div className={`text-center py-20 text-muted-foreground ${darkCls}`}>
-        Project not found. <Link href="/forge" className="text-primary hover:underline">Back to Forge</Link>
+        Project not found. <Link href="/forge" className="text-primary hover:underline">Back to Pressworks</Link>
       </div>
     );
   }
@@ -318,7 +318,7 @@ export default function ForgeDetail() {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3 text-sm font-mono uppercase tracking-widest text-muted-foreground">
           <Link href="/forge" className="hover:text-foreground transition-colors flex items-center gap-1">
-            <ArrowLeft className="w-3 h-3" /> Forge
+            <ArrowLeft className="w-3 h-3" /> Pressworks
           </Link>
           <span>/</span>
           <span className="text-foreground">{project.name}</span>

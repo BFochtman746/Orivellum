@@ -516,7 +516,7 @@ function OutboxSection() {
       </div>
 
       <p className="text-[10px] font-mono text-muted-foreground/50">
-        Nightshift drains the outbox automatically on its next run.
+        The Night Scriptorium drains the outbox automatically on its next run.
       </p>
     </div>
   );

@@ -187,7 +187,7 @@ function InitDialog({
       return body;
     },
     onSuccess: () => {
-      toast.success("GENESIS book initialized");
+      toast.success("Origination started");
       queryClient.invalidateQueries({ queryKey: ["genesis", workId] });
       onClose();
     },
@@ -256,7 +256,7 @@ function InitDialog({
         <DialogFooter>
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
           <Button onClick={() => initMutation.mutate()} disabled={initMutation.isPending}>
-            {initMutation.isPending ? "Starting…" : "Start GENESIS"}
+            {initMutation.isPending ? "Starting…" : "Start Origination"}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -732,7 +732,7 @@ export function GenesisTab({ workId }: { workId: string }) {
         <div>
           <h2 className="text-lg font-serif font-semibold flex items-center gap-2">
             <Scroll className="w-5 h-5 text-muted-foreground" />
-            GENESIS — Book Origination System
+            Origination — Ten-Gate Book Setup
           </h2>
           <p className="text-sm text-muted-foreground mt-1">
             Ten-gate pre-writing workflow: Spark → Premise → Viability → Canon → Character → Structure → Voice → Standard Binding → Blueprint → Seal
@@ -746,7 +746,7 @@ export function GenesisTab({ workId }: { workId: string }) {
               No origination package yet.
             </p>
             <p className="text-xs text-muted-foreground max-w-md mx-auto">
-              GENESIS walks you through ten locked gates — G0 Spark Slate through G9 Ready-to-Write Seal.
+              Origination walks you through ten locked gates — G0 Spark Slate through G9 Ready-to-Write Seal.
               Each gate requires your explicit sign-off before the next opens.
               The tamper-evident ledger records every decision.
             </p>
@@ -782,7 +782,7 @@ export function GenesisTab({ workId }: { workId: string }) {
         <div>
           <h2 className="text-lg font-serif font-semibold flex items-center gap-2">
             <Scroll className="w-5 h-5 text-muted-foreground" />
-            GENESIS — Book Origination
+            Origination
           </h2>
           <div className="flex items-center gap-3 mt-1 text-xs font-mono text-muted-foreground flex-wrap">
             <span className="uppercase">{b.mode}</span>

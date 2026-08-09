@@ -633,7 +633,7 @@ export default function MailPage() {
       <div className="flex items-center justify-between px-4 py-3 border-b border-border/40">
         <div className="flex items-center gap-3">
           <Mail size={16} style={{ color: "var(--gilt)" }} />
-          <span className="font-semibold text-sm">Mail Steward</span>
+          <span className="font-semibold text-sm">Correspondence</span>
           {summary?.high_attention ? (
             <Badge variant="destructive" className="text-[10px] px-1.5 py-0">
               {summary.high_attention} high

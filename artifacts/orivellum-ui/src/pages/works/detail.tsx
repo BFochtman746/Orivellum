@@ -500,7 +500,7 @@ export default function WorkDetail() {
               { value: "learn",        icon: BookOpen,      label: "Learn",        badge: null },
               { value: "brainstorm",   icon: Lightbulb,     label: "Brainstorm",   badge: null },
               { value: "trailer",      icon: Film,          label: "Trailer",       badge: ((stats as any)?.trailer_count > 0 ? (stats as any)?.trailer_count : null) as number | null },
-              { value: "genesis",      icon: Scroll,        label: "Genesis",       badge: null },
+              { value: "genesis",      icon: Scroll,        label: "Origination",       badge: null },
             ].map(({ value, icon: Icon, label, badge }) => (
               <TabsTrigger
                 key={value}

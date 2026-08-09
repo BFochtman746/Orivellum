@@ -471,7 +471,7 @@ function MaintenanceCard() {
           </div>
         ) : (
           <p className="text-sm text-muted-foreground">
-            No runs yet — nightshift fires at 3:00 AM.
+            No runs yet — the Night Scriptorium fires at 3:00 AM.
           </p>
         )}
 
@@ -503,7 +503,7 @@ function MaintenanceCard() {
             <Skeleton className="h-8 w-full mt-3" />
           ) : !report?.report_markdown ? (
             <p className="text-sm text-muted-foreground mt-2">
-              No runs yet — nightshift fires at 3:00 AM.
+              No runs yet — the Night Scriptorium fires at 3:00 AM.
             </p>
           ) : reportOpen ? (
             <pre className="mt-3 text-xs font-mono whitespace-pre-wrap bg-muted/40 rounded-lg p-4 max-h-96 overflow-y-auto border border-border/40">
@@ -2587,7 +2587,7 @@ export default function System() {
               <div className="rounded-lg bg-background/60 border border-border/60 p-4 space-y-2">
                 <p className="text-sm font-semibold">Option A — Lemonade (recommended)</p>
                 <p className="text-xs text-muted-foreground">
-                  Lemonade is a local model server tuned for Orivellum. It listens on port 13305 by default.
+                  Lemonade is the recommended local AI engine for Orivellum. It listens on port 13305 by default.
                 </p>
                 <div className="space-y-1.5">
                   <p className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">macOS / Linux</p>
@@ -2948,7 +2948,7 @@ function LemonadeEngineCard() {
       <div className="flex items-center justify-between border-b border-border/50 pb-2">
         <h2 className="text-xl font-serif font-medium flex items-center gap-2">
           <Server className="w-5 h-5 text-muted-foreground" />
-          Lemonade Engine
+          Local AI Engine (Lemonade)
         </h2>
         <button
           onClick={() => refetch()}

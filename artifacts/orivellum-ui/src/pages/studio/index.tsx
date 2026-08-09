@@ -1221,7 +1221,7 @@ function DocumentWorkshopPanel() {
         <div className="flex items-center justify-between gap-3">
           <CardTitle className="flex items-center gap-2 font-serif text-lg">
             <Wand2 className="w-5 h-5" style={{ color: "var(--gilt)" }} />
-            Document Workshop
+            Scriptorium
             <Badge variant="secondary" className="text-[10px] font-mono">AI</Badge>
           </CardTitle>
           {step !== "request" && (
@@ -1524,9 +1524,9 @@ function DocumentWorkshopPanel() {
 
 const HUB_TOOLS = [
   { key: "voice",    href: "/studio?tool=voice",    icon: Volume2,  title: "Voice & narration", desc: "Read text aloud, preview voices, build audiobooks" },
-  { key: "workshop", href: "/studio?tool=workshop", icon: Wand2,    title: "Document workshop", desc: "Generate Word, PDF, Excel & slide documents" },
+  { key: "workshop", href: "/studio?tool=workshop", icon: Wand2,    title: "Scriptorium",        desc: "Generate Word, PDF, Excel & slide documents" },
   { key: "image",    href: "/studio?tool=image",    icon: ImageIcon, title: "Image generation",  desc: "Create images from text prompts" },
-  { key: "forge",    href: "/forge",                icon: Globe2,   title: "Forge websites",    desc: "Plan, build & release sites under quality gates" },
+  { key: "forge",    href: "/forge",                icon: Globe2,   title: "Pressworks",         desc: "Plan, build & release websites under quality gates" },
   { key: "graph",    href: "/graph",                icon: Network,  title: "Knowledge graph",   desc: "Explore how your knowledge connects" },
   { key: "outputs",  href: "/studio?tool=outputs",  icon: Video,    title: "Outputs",           desc: "Browse, play & download everything you've made" },
 ] as const;
@@ -1667,7 +1667,7 @@ export default function Studio() {
   const MAIN_TABS = [
     { id: "voice",    label: "Voice Studio",       icon: Volume2 },
     { id: "image",    label: "Image Generation",   icon: ImageIcon },
-    { id: "workshop", label: "Document Workshop",  icon: Wand2 },
+    { id: "workshop", label: "Scriptorium",        icon: Wand2 },
     { id: "outputs",  label: "Recent Outputs",     icon: Video },
   ] as const;
 
@@ -1752,7 +1752,7 @@ export default function Studio() {
         {mainTab === "workshop" && (
           <ScrollArea className="h-full">
             <div className="p-6 max-w-3xl mx-auto space-y-6">
-              <ErrorBoundary label="document workshop"><DocumentWorkshopPanel /></ErrorBoundary>
+              <ErrorBoundary label="scriptorium"><DocumentWorkshopPanel /></ErrorBoundary>
             </div>
           </ScrollArea>
         )}

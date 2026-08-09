@@ -487,7 +487,7 @@ export function BrainstormTab({ workId, initialSeed = "", initialContext = "gene
           <div className="space-y-1">
             <p className="text-sm font-medium text-destructive">Session failed</p>
             <p className="text-xs text-muted-foreground">
-              The LLM endpoint was unreachable. Ensure Lemonade or Ollama is running,
+              The local AI engine was unreachable. Ensure it is running,
               then try again.
             </p>
           </div>

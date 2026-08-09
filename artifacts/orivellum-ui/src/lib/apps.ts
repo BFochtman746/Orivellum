@@ -83,12 +83,12 @@ export const APPS: AppDef[] = [
   {
     id: "studio",
     name: "Studio",
-    tagline: "Audio, forge & graph",
+    tagline: "Audio, pressworks & graph",
     icon: Mic,
     entry: "/studio",
     routes: [
       { name: "Studio", href: "/studio" },
-      { name: "Forge", href: "/forge" },
+      { name: "Pressworks", href: "/forge" },
       { name: "Graph", href: "/graph" },
     ],
     own: ["/studio", "/forge", "/graph"],
@@ -113,7 +113,7 @@ export const APPS: AppDef[] = [
   {
     id: "mail",
     name: "Mail",
-    tagline: "Triage & steward",
+    tagline: "Triage & correspondence",
     icon: Mail,
     entry: "/mail",
     routes: [{ name: "Mail", href: "/mail" }],

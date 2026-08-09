@@ -2384,7 +2384,7 @@ export default function Chat() {
                   <div className="text-center py-16">
                     <Bot className="w-10 h-10 mx-auto mb-3" style={{ opacity: 0.2, color: 'var(--green-raw)' }} />
                     <p className="text-[13px] font-serif italic" style={{ color: 'var(--ink-soft)' }}>
-                      {aiOnline ? "Send a message to start the conversation." : "AI is offline — start Lemonade or Ollama to enable responses."}
+                      {aiOnline ? "Send a message to start the conversation." : "AI is offline — start your local AI engine to enable responses."}
                     </p>
                   </div>
                 ) : (
@@ -2898,7 +2898,7 @@ export default function Chat() {
             {!aiOnline && (
               <div className="mt-4 px-4 py-3 rounded-lg bg-muted/50 border border-border/50 max-w-sm text-left text-xs text-muted-foreground space-y-1">
                 <p className="font-mono font-medium text-foreground">AI is offline</p>
-                <p>Start Lemonade (port 13305) or Ollama (<code>ollama serve</code>) to enable AI responses.</p>
+                <p>Start your local AI engine to enable responses — see System → Local AI Engine for setup.</p>
                 <p>Set <code>ORIVELLUM_AI_URL</code> if using a custom endpoint.</p>
               </div>
             )}

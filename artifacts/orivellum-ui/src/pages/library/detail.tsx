@@ -2266,7 +2266,7 @@ export default function DocumentDetail() {
               <Network className="w-9 h-9 text-muted-foreground mx-auto opacity-30" />
               <p className="text-muted-foreground font-serif text-sm">No related documents found yet.</p>
               <p className="text-xs text-muted-foreground/60 max-w-xs mx-auto">
-                Related documents appear after the nightshift clustering pass runs.
+                Related documents appear after the Night Scriptorium clustering pass runs.
                 Make sure this document has been processed and has extracted text.
               </p>
             </div>

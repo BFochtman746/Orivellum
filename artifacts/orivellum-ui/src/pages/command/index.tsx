@@ -114,7 +114,7 @@ const SECTIONS = [
   { href: "/mcos",       icon: Gauge,     title: "Calibration", desc: "Benchmark suites, runs, prompt lab & LLM telemetry" },
   { href: "/actions",    icon: Terminal,  title: "Actions",     desc: "Run catalogued operations against your Works" },
   { href: "/backups",    icon: Archive,   title: "Backups",     desc: "Snapshots of your database — browse & restore" },
-  { href: "/mail",       icon: Mail,      title: "Mail steward", desc: "Inbox triage, drafts & account connection" },
+  { href: "/mail",       icon: Mail,      title: "Correspondence", desc: "Inbox triage, drafts & account connection" },
 ] as const;
 
 // ── Hub ──────────────────────────────────────────────────────────────────────
@@ -177,7 +177,7 @@ export default function CommandHub() {
       {/* Section header */}
       <div className="flex items-end justify-between gap-3 pt-2 pb-4">
         <div>
-          <p className="gd-eyebrow">The bridge</p>
+          <p className="gd-eyebrow">The Chancery</p>
           <h2
             className="mt-1"
             style={{
@@ -223,7 +223,7 @@ export default function CommandHub() {
         <StatusTile
           href="/system"
           icon={Moon}
-          label="Nightshift"
+          label="Night Scriptorium"
           value={night?.running ? "Running now" : night?.last_run ? relTime(night.last_run.ran_at) : "No runs yet"}
           detail={
             night?.running

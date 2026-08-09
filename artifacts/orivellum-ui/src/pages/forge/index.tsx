@@ -84,7 +84,7 @@ export default function ForgePage() {
         <div>
           <div className="flex items-center gap-2 mb-1">
             <Globe2 className="w-5 h-5 text-primary" />
-            <h1 className="vellum-h1">Forge</h1>
+            <h1 className="vellum-h1">Pressworks</h1>
           </div>
           <div className="gilt-rule w-24" />
           <p className="text-sm text-muted-foreground mt-2 max-w-lg">
@@ -163,7 +163,7 @@ export default function ForgePage() {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Globe2 className="w-4 h-4 text-primary" />
-              New Forge project
+              New Pressworks project
             </DialogTitle>
             <DialogDescription>
               Give your website a name and a brief. The AI will plan and build it
