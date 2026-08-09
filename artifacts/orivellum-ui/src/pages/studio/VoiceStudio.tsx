@@ -1290,6 +1290,52 @@ function AudiobookTab({
   const vsAbJobIdRef = useRef<string | null>(null);
   const vsAbPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // ── Per-chapter voice casting ────────────────────────────────────────────────
+  const [castDocs, setCastDocs] = useState<{ id: string; title: string }[]>([]);
+  const [castMap, setCastMap] = useState<Record<string, string>>({});
+  const [castDirty, setCastDirty] = useState(false);
+  const [castSaving, setCastSaving] = useState(false);
+
+  useEffect(() => {
+    if (!workId || mode !== "work") {
+      setCastDocs([]); setCastMap({}); setCastDirty(false);
+      return;
+    }
+    let cancelled = false;
+    apiFetch(`${BASE}/studio/works/${workId}/casting`)
+      .then(async r => {
+        if (cancelled || !r.ok) return;
+        const data = await r.json();
+        if (cancelled) return;
+        setCastDocs(data.documents ?? []);
+        setCastMap(data.sections ?? {});
+        setCastDirty(false);
+      })
+      .catch(() => {/* casting is optional — narrator voice still works */});
+    return () => { cancelled = true; };
+  }, [workId, mode]);
+
+  async function handleSaveCasting() {
+    setCastSaving(true);
+    try {
+      const resp = await apiFetch(`${BASE}/studio/works/${workId}/casting`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sections: castMap }),
+      });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        throw new Error((err as any).detail ?? `HTTP ${resp.status}`);
+      }
+      setCastDirty(false);
+      toast.success("Chapter voices saved");
+    } catch (e: any) {
+      toast.error(`Couldn't save chapter voices: ${e.message}`);
+    } finally {
+      setCastSaving(false);
+    }
+  }
+
   // ── Proactive AI voice suggestion ────────────────────────────────────────────
   // Fires in the background whenever a Work is selected; the card appears
   // only when the result is ready — nothing blocks the form.
@@ -1377,7 +1423,7 @@ function AudiobookTab({
       const resp = await apiFetch(`${BASE}/studio/tts/document`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ doc_id: docId, voice: voiceId, speed }),
+        body: JSON.stringify({ doc_id: docId, voice: voiceId, speed, acx_mastering: acx }),
       });
       if (!resp.ok) {
         const err = await resp.json().catch(() => ({}));
@@ -1592,6 +1638,56 @@ function AudiobookTab({
           )}
         </div>
 
+        {/* Per-chapter voice casting */}
+        {mode === "work" && workId && castDocs.length > 0 && (
+          <div className="space-y-3">
+            <p className="text-xs font-mono uppercase text-muted-foreground">Chapter Voices</p>
+            <div className="rounded-xl border border-border/50 divide-y divide-border/40">
+              {castDocs.map(d => (
+                <div key={d.id} className="flex items-center gap-3 p-2.5">
+                  <span className="text-sm flex-1 min-w-0 truncate" title={d.title}>{d.title}</span>
+                  <Select
+                    value={castMap[d.id] ?? "__default"}
+                    onValueChange={v => {
+                      setCastMap(prev => {
+                        const next = { ...prev };
+                        if (v === "__default") delete next[d.id];
+                        else next[d.id] = v;
+                        return next;
+                      });
+                      setCastDirty(true);
+                    }}
+                  >
+                    <SelectTrigger className="w-44 h-8 text-xs shrink-0">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__default">Narrator (default)</SelectItem>
+                      {voices.map(v => (
+                        <SelectItem key={v.id} value={v.id}>{v.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              ))}
+            </div>
+            <div className="flex items-center justify-between">
+              <p className="text-xs text-muted-foreground">
+                Give chapters their own voice — unset chapters use the narrator above.
+              </p>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 text-xs shrink-0"
+                onClick={handleSaveCasting}
+                disabled={!castDirty || castSaving}
+              >
+                {castSaving ? <Loader2 className="w-3 h-3 animate-spin" /> : castDirty ? "Save voices" : "Saved ✓"}
+              </Button>
+            </div>
+          </div>
+        )}
+
         {/* Speed */}
         <div className="space-y-3">
           <p className="text-xs font-mono uppercase text-muted-foreground">
@@ -1611,7 +1707,7 @@ function AudiobookTab({
             <div className="space-y-2">
               {([
                 { key: "credits", label: "Opening & closing credits", desc: "ACX-style title + narrator announcement", value: credits, set: setCredits },
-                { key: "acx", label: "ACX loudness mastering", desc: "-20 LUFS target, -3 dBTP peak ceiling, 192 kbps", value: acx, set: setAcx },
+                { key: "acx", label: "Loudness mastering", desc: "Two-pass normalization to -23 LUFS, -3 dBTP peak ceiling, 192 kbps", value: acx, set: setAcx },
               ] as const).map(opt => (
                 <label key={opt.key}
                   className="flex items-start gap-3 p-3 rounded-xl border border-border/50 hover:border-border cursor-pointer transition-colors">

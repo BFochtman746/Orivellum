@@ -17,3 +17,10 @@ Evaluation (Aug 2026) of user's "Voice Forge" Java package + research doc vs the
 - Draft-quality requests skip the premium tier so Read Aloud stays instant on Kokoro.
 - Cloned voices (`clone:<id>`) must FAIL CLOSED in EVERY synthesis path — one-off, streaming, document jobs, AND both Work audiobook endpoints. The Kokoro resolver maps unknown ids to a default narrator, so any fallback silently renders the wrong voice. **Why:** identity/consent — a book must never ship in an unrelated narrator.
 - Sidecar is loopback-only; the UI manages clones via proxy routes on the main API; consent is enforced sidecar-side.
+
+## Audiobook mastering & casting (Aug 2026)
+- **Mastering** targets -23 LUFS / -3 dBTP / LRA 7 via TWO-PASS loudnorm (measure with `print_format=json`, then `measured_*` + `linear=true`). The loudnorm JSON is NOT at the end of ffmpeg stderr — parse the LAST `{...}` block, never anchor with `$`.
+- **QA gate rule:** every synthesized segment passes volumedetect checks (clip > -0.1 dB, mean < -55 dB, unreadable) with one retry, then the render FAILS visibly. **Why:** shipping one broken segment ruins an hour-long book; silent fallback was the failure mode reviewers kept catching.
+- **Segment cache is untrusted:** every cache hit must be re-QA-validated on read (evict on failure) and writes must be atomic (temp + os.replace). Key = sha256(version|text|engine|voice|speed); bump the version token after engine/model upgrades. Never cache AI-server output (model-dependent).
+- **Voice casting** lives in `works.meta["voice_casting"]` ({doc_id: voice_id}). Any gate that checks the narrator voice (e.g. clone fail-closed 503) must also check ALL cast voices in BOTH work pipelines.
+- ffmpeg lavfi `sine` peaks at ~-18 dB, not full scale — boost with volume filter when a test needs clipping.

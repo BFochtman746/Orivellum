@@ -540,20 +540,68 @@ def _resolve_kokoro_voice(voice_id: str) -> str:
 
 # ── ACX audio mastering ───────────────────────────────────────────────────────
 
-def _apply_acx_mastering(input_path: str, output_path: str) -> bool:
-    """Apply ACX-compliant loudness normalization via ffmpeg loudnorm.
+# ── Mastering: two-pass loudnorm to the audiobook standard ───────────────────
+_MASTER_I   = -23.0  # integrated loudness target (LUFS, EBU R128 audiobook std)
+_MASTER_TP  = -3.0   # true-peak ceiling (dBTP)
+_MASTER_LRA = 7.0    # loudness range (LU)
 
-    Targets: -20 LUFS integrated loudness (within ACX window -18 to -23 dBRMS),
-    true peak ceiling -3 dBTP, LRA 7 LU.  Outputs 192 kbps joint-stereo MP3
-    at 44.1 kHz — meeting ACX technical requirements.
 
-    Returns True on success, False on failure (caller should use raw file instead).
+def _measure_loudness(input_path: str) -> dict | None:
+    """Pass 1 of two-pass loudnorm: measure the file's loudness stats.
+
+    Returns the parsed loudnorm JSON block (input_i, input_tp, input_lra,
+    input_thresh, target_offset) or None when measurement fails.
     """
+    try:
+        r = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-i", input_path,
+             "-af", f"loudnorm=I={_MASTER_I}:TP={_MASTER_TP}:LRA={_MASTER_LRA}"
+                    ":print_format=json",
+             "-f", "null", "-"],
+            capture_output=True, text=True, timeout=300,
+        )
+        if r.returncode != 0:
+            return None
+        # The loudnorm stats are the last {...} block in stderr (ffmpeg keeps
+        # logging after it, so don't anchor to end-of-output).
+        import json as _jm
+        blocks = re.findall(r"\{[^{}]*\}", r.stderr, re.DOTALL)
+        if not blocks:
+            return None
+        data = _jm.loads(blocks[-1])
+        return data if "input_i" in data else None
+    except Exception:
+        return None
+
+
+def _apply_acx_mastering(input_path: str, output_path: str) -> bool:
+    """Loudness-normalize a finished audiobook via TWO-PASS ffmpeg loudnorm.
+
+    Pass 1 measures the file; pass 2 applies linear normalization using the
+    measured values — far more accurate than single-pass (which works on
+    rolling 3 s windows and can pump). Targets the audiobook standard:
+    -23 LUFS integrated, -3 dBTP ceiling, LRA 7 LU. Outputs 192 kbps MP3 at
+    44.1 kHz stereo (ACX-compliant container settings).
+
+    Falls back to single-pass when measurement fails; returns False only when
+    normalization could not be applied at all (caller keeps the raw file).
+    """
+    filt = f"loudnorm=I={_MASTER_I}:TP={_MASTER_TP}:LRA={_MASTER_LRA}"
+    measured = _measure_loudness(input_path)
+    if measured:
+        filt += (
+            f":measured_I={measured['input_i']}"
+            f":measured_TP={measured['input_tp']}"
+            f":measured_LRA={measured['input_lra']}"
+            f":measured_thresh={measured['input_thresh']}"
+            f":offset={measured.get('target_offset', 0)}"
+            ":linear=true"
+        )
     try:
         result = subprocess.run(
             [
                 "ffmpeg", "-y", "-i", input_path,
-                "-af", "loudnorm=I=-20:TP=-3:LRA=7:print_format=none",
+                "-af", filt + ":print_format=none",
                 "-codec:a", "libmp3lame", "-b:a", "192k",
                 "-ar", "44100", "-ac", "2",
                 output_path,
@@ -562,8 +610,150 @@ def _apply_acx_mastering(input_path: str, output_path: str) -> bool:
         )
         return result.returncode == 0
     except Exception as exc:
-        logger.warning("ACX mastering failed (%s)", exc)
+        logger.warning("Mastering failed (%s)", exc)
         return False
+
+
+# ── QA gate: per-segment audio checks before the merge ───────────────────────
+
+def _qa_check_audio(path: Path) -> "str | None":
+    """Inspect one synthesized segment with ffmpeg volumedetect.
+
+    Returns a human-readable problem description when the segment should NOT
+    be shipped (clipping, near-silence, or unreadable audio), or None when it
+    passes. Thresholds are deliberately conservative so espeak's thin output
+    still passes while genuinely broken segments are caught.
+    """
+    try:
+        r = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-i", str(path),
+             "-af", "volumedetect", "-f", "null", "-"],
+            capture_output=True, text=True, timeout=60,
+        )
+    except Exception as exc:
+        return f"unreadable audio ({exc})"
+    if r.returncode != 0:
+        return "unreadable audio (ffmpeg could not decode the segment)"
+    mean_m = re.search(r"mean_volume:\s*(-?[\d.]+)\s*dB", r.stderr)
+    max_m  = re.search(r"max_volume:\s*(-?[\d.]+)\s*dB", r.stderr)
+    if not mean_m or not max_m:
+        return "unreadable audio (no volume stats)"
+    max_db  = float(max_m.group(1))
+    mean_db = float(mean_m.group(1))
+    if max_db > -0.1:
+        return f"clipping (peak {max_db:.1f} dB)"
+    if mean_db < -55.0:
+        return f"near-silent (mean {mean_db:.1f} dB)"
+    return None
+
+
+# ── Deterministic segment cache ───────────────────────────────────────────────
+# Re-renders of a book only re-synthesize changed chapters: each synthesized
+# segment is cached under a key derived from (text, engine, voice, speed).
+_SEG_CACHE_DIRNAME = "tts-cache"
+_SEG_CACHE_MAX_FILES = 4000
+# Bump to invalidate the whole cache after engine/model upgrades that change
+# how the same (text, voice, speed) sounds.
+_SEG_CACHE_VERSION = "v1"
+
+
+def _seg_cache_dir(cfg) -> Path:
+    d = Path(cfg.data_dir) / _SEG_CACHE_DIRNAME
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _seg_cache_path(cfg, text: str, engine: str, voice: str, speed: float,
+                    suffix: str = ".wav") -> Path:
+    import hashlib
+    key = hashlib.sha256(
+        f"{_SEG_CACHE_VERSION}\x1f{text}\x1f{engine}\x1f{voice}\x1f{speed:.2f}"
+        .encode("utf-8")
+    ).hexdigest()[:40]
+    return _seg_cache_dir(cfg) / f"{key}{suffix}"
+
+
+def _seg_cache_get(cfg, text: str, voice: str, speed: float,
+                   engines: list[str], suffix: str = ".wav") -> "Path | None":
+    """Return the cached segment for the FIRST engine in priority order.
+
+    The cache is treated as UNTRUSTED: every hit is re-validated through the
+    QA gate before use. A corrupt/stale entry is evicted and the caller falls
+    through to fresh synthesis — a bad cache file can never reach the merge.
+    """
+    for engine in engines:
+        p = _seg_cache_path(cfg, text, engine, voice, speed, suffix)
+        if p.exists() and p.stat().st_size > 0:
+            if _qa_check_audio(p) is not None:
+                logger.warning("Evicting cached TTS segment that failed QA: %s", p.name)
+                p.unlink(missing_ok=True)
+                continue
+            try:  # touch so pruning treats it as recently used
+                p.touch()
+            except OSError:
+                pass
+            return p
+    return None
+
+
+def _seg_cache_put(cfg, text: str, engine: str, voice: str, speed: float,
+                   src: Path) -> None:
+    """Store a QA-passing segment in the cache (best-effort, never fatal).
+
+    Written atomically (unique temp file + os.replace) so concurrent renders
+    can never expose a partially written entry.
+    """
+    try:
+        dst = _seg_cache_path(cfg, text, engine, voice, speed, suffix=src.suffix)
+        if dst.exists():
+            return
+        import os
+        import shutil
+        import uuid as _u
+        tmp = dst.with_name(f".{dst.stem}.{_u.uuid4().hex[:8]}.tmp")
+        shutil.copyfile(src, tmp)
+        os.replace(tmp, dst)
+    except Exception as exc:
+        logger.debug("Segment cache write failed (non-fatal): %s", exc)
+
+
+def _prune_seg_cache(cfg) -> None:
+    """Keep the newest _SEG_CACHE_MAX_FILES entries (best-effort)."""
+    try:
+        files = sorted(
+            (f for f in _seg_cache_dir(cfg).iterdir() if f.is_file()),
+            key=lambda f: f.stat().st_mtime, reverse=True,
+        )
+        for old in files[_SEG_CACHE_MAX_FILES:]:
+            old.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
+def _finalize_segment(cfg, text: str, voice: str, speed: float,
+                      attempt_fn, seg_label: str) -> "Path | None":
+    """QA-gate + cache one synthesized segment.
+
+    ``attempt_fn() -> (Path | None, engine_name | None)`` runs the caller's
+    synthesis strategy chain. A flagged segment is re-synthesized ONCE; if it
+    still fails QA the render fails with a clear reason instead of shipping
+    broken audio. Passing segments are written to the deterministic cache.
+    """
+    path, engine = attempt_fn()
+    if path is None:
+        return None
+    reason = _qa_check_audio(path)
+    if reason:
+        logger.warning("QA gate flagged %s (%s) — re-synthesizing once", seg_label, reason)
+        retry_path, retry_engine = attempt_fn()
+        if retry_path is not None:
+            path, engine = retry_path, retry_engine
+            reason = _qa_check_audio(path)
+    if reason:
+        raise RuntimeError(f"Audio QA failed on {seg_label}: {reason}")
+    if engine and engine != "ai":  # AI-server output varies with model config
+        _seg_cache_put(cfg, text, engine, voice, speed, path)
+    return path
 
 
 @router.get("/studio/voices")
@@ -1149,6 +1339,82 @@ Return this JSON structure exactly:
 
 # ── Work-level audiobook generation ──────────────────────────────────────────
 
+# ── Per-Work voice casting ────────────────────────────────────────────────────
+# Stored in works.meta["voice_casting"] as {doc_id: voice_id}. Chapters mapped
+# here are narrated in their cast voice; everything else uses the narrator
+# voice supplied with the render request.
+
+def _get_voice_casting(db, work_id: str) -> dict[str, str]:
+    work = db.get_work(work_id)
+    if not work:
+        return {}
+    casting = (work.get("meta") or {}).get("voice_casting") or {}
+    return {k: v for k, v in casting.items() if isinstance(v, str) and v}
+
+
+class VoiceCastingUpdate(BaseModel):
+    sections: dict[str, str]  # doc_id -> voice_id ("" or missing = narrator default)
+
+
+@router.get("/studio/works/{work_id}/casting")
+def get_work_voice_casting(work_id: str):
+    """Return the Work's chapter→voice casting plus its ready chapters."""
+    db = get_db()
+    work = db.get_work(work_id)
+    if not work:
+        raise HTTPException(404, f"Work {work_id!r} not found")
+    with db._lock:
+        doc_rows = db._conn.execute(
+            """SELECT d.id, d.title, d.source
+               FROM documents d JOIN objects o ON o.id = d.id
+               WHERE d.work_id=? AND d.readiness='ready'
+               ORDER BY o.created_at""",
+            (work_id,),
+        ).fetchall()
+    casting = _get_voice_casting(db, work_id)
+    return {
+        "work_id": work_id,
+        "sections": casting,
+        "documents": [
+            {"id": r["id"],
+             "title": r["title"] or (r["source"].split("/")[-1] if r["source"] else "Chapter"),
+             "voice": casting.get(r["id"])}
+            for r in doc_rows
+        ],
+    }
+
+
+@router.put("/studio/works/{work_id}/casting")
+def put_work_voice_casting(work_id: str, body: VoiceCastingUpdate):
+    """Replace the Work's chapter→voice casting map."""
+    db = get_db()
+    work = db.get_work(work_id)
+    if not work:
+        raise HTTPException(404, f"Work {work_id!r} not found")
+
+    with db._lock:
+        valid_docs = {r["id"] for r in db._conn.execute(
+            "SELECT id FROM documents WHERE work_id=?", (work_id,)).fetchall()}
+
+    cleaned: dict[str, str] = {}
+    for doc_id, voice in body.sections.items():
+        if not voice:  # empty string clears the assignment
+            continue
+        if doc_id not in valid_docs:
+            raise HTTPException(422, f"Document {doc_id!r} is not part of this Work")
+        if voice not in _VOICE_BY_ID and not _is_clone_voice(voice):
+            raise HTTPException(422, f"Unknown voice {voice!r}")
+        cleaned[doc_id] = voice
+
+    meta = dict(work.get("meta") or {})
+    if cleaned:
+        meta["voice_casting"] = cleaned
+    else:
+        meta.pop("voice_casting", None)
+    db.update_work(work_id, meta=meta)
+    return {"ok": True, "work_id": work_id, "sections": cleaned}
+
+
 class WorkAudiobookRequest(BaseModel):
     work_id: str
     voice: str = "bm_george"
@@ -1180,14 +1446,20 @@ def synthesize_work_audiobook(body: WorkAudiobookRequest):
     voice_meta = _VOICE_BY_ID.get(body.voice, {})
     voice_name = voice_meta.get("name", body.voice)
 
+    # Per-Work voice casting: chapters (documents) may be mapped to their own
+    # voice; anything unmapped uses the narrator voice from the request.
+    casting = _get_voice_casting(db, body.work_id)
+
     # Cloned voices exist only on the premium sidecar — reject up front rather
-    # than rendering an entire book in an unrelated local narrator.
+    # than rendering an entire book in an unrelated local narrator. The check
+    # covers the narrator AND every cast chapter voice.
     premium_ok = _is_premium_tts_enabled(cfg)
-    if _is_clone_voice(body.voice) and not premium_ok:
+    all_voices = {body.voice} | set(casting.values())
+    if any(_is_clone_voice(v) for v in all_voices) and not premium_ok:
         raise HTTPException(
             503,
-            "This cloned voice needs the premium voice engine "
-            "(tts_premium_url), which is not enabled.",
+            "A cloned voice is selected (narrator or chapter casting) but the "
+            "premium voice engine (tts_premium_url) is not enabled.",
         )
 
     # ── Fetch all ready documents in work order ────────────────────────────────
@@ -1205,7 +1477,7 @@ def synthesize_work_audiobook(body: WorkAudiobookRequest):
                                  "Process documents in the Library first.")
 
     # ── Fetch text chunks per document ─────────────────────────────────────────
-    doc_texts: list[tuple[str, str]] = []  # (title, full_text)
+    doc_texts: list[tuple[str, str, str]] = []  # (doc_id, title, full_text)
     with db._lock:
         for doc in doc_rows:
             chunks = db._conn.execute(
@@ -1215,7 +1487,7 @@ def synthesize_work_audiobook(body: WorkAudiobookRequest):
             if chunks:
                 text = "\n\n".join(r["text"] for r in chunks)
                 doc_title = doc["title"] or doc["source"].split("/")[-1] if doc["source"] else "Chapter"
-                doc_texts.append((doc_title, text))
+                doc_texts.append((doc["id"], doc_title, text))
 
     if not doc_texts:
         raise HTTPException(422, "No extracted text found in any document of this Work.")
@@ -1224,10 +1496,9 @@ def synthesize_work_audiobook(body: WorkAudiobookRequest):
     out_dir.mkdir(parents=True, exist_ok=True)
     tmp_dir = Path(tempfile.mkdtemp())
 
-    voice_id    = _resolve_kokoro_voice(body.voice)
-    espeak_v    = _ESPEAK_VOICE_MAP.get(body.voice, "en+m3")
     wpm         = max(80, min(400, int(175 * body.speed)))
     kokoro_eng  = _get_kokoro()
+    _prune_seg_cache(cfg)
 
     try:
         import soundfile as _sf
@@ -1236,53 +1507,72 @@ def synthesize_work_audiobook(body: WorkAudiobookRequest):
 
     wav_parts: list[Path] = []
 
-    def _synth_segment(text: str, idx: int) -> Path | None:
-        """Synthesise one text segment to WAV, returning the path or None."""
+    def _synth_segment(text: str, idx: int, seg_voice: "str | None" = None) -> Path | None:
+        """Synthesise one segment to WAV (cache → engines → QA gate)."""
+        seg_voice = seg_voice or body.voice
+        engines = (["premium"] if _is_clone_voice(seg_voice) else
+                   (["premium"] if premium_ok else []) +
+                   (["kokoro"] if (kokoro_eng is not None and _sf is not None) else []) +
+                   ["espeak"])
+
         wav = tmp_dir / f"seg_{idx:06d}.wav"
-        # Strategy 0: Premium sidecar (decoded to WAV so concat inputs stay
-        # homogeneous — the concat demuxer chokes on mixed codecs).
-        if premium_ok:
+        cached = _seg_cache_get(cfg, text, seg_voice, body.speed, engines)
+        if cached is not None:
+            import shutil
+            shutil.copyfile(cached, wav)
+            return wav
+
+        def _attempt() -> "tuple[Path | None, str | None]":
+            # Strategy 0: Premium sidecar (decoded to WAV so concat inputs
+            # stay homogeneous — the concat demuxer chokes on mixed codecs).
+            if premium_ok:
+                try:
+                    audio = _call_premium_tts_sync(text, seg_voice, body.speed, cfg)
+                    if audio:
+                        mp3 = tmp_dir / f"seg_{idx:06d}.mp3"
+                        mp3.write_bytes(audio)
+                        r = subprocess.run(
+                            ["ffmpeg", "-y", "-v", "error", "-i", str(mp3),
+                             "-ar", "22050", "-ac", "1", str(wav)],
+                            capture_output=True, timeout=60,
+                        )
+                        mp3.unlink(missing_ok=True)
+                        if r.returncode == 0 and wav.exists():
+                            return wav, "premium"
+                except Exception as pe:
+                    logger.warning("Premium TTS work seg %d: %s", idx, pe)
+            # Cloned voices have NO local fallback — fail the render clearly
+            # instead of continuing in an unrelated narrator.
+            if _is_clone_voice(seg_voice):
+                raise RuntimeError(
+                    f"Premium engine failed on segment {idx} and cloned voices "
+                    "have no local fallback — is the sidecar still running?"
+                )
+            # Strategy 1: Kokoro
+            if kokoro_eng is not None and _sf is not None:
+                try:
+                    samples, sr = kokoro_eng.create(
+                        text, voice=_resolve_kokoro_voice(seg_voice),
+                        speed=body.speed, lang="en-us")
+                    _sf.write(str(wav), samples, sr)
+                    return wav, "kokoro"
+                except Exception as ke:
+                    logger.debug("Kokoro seg %d: %s", idx, ke)
+            # Strategy 2: espeak-ng
             try:
-                audio = _call_premium_tts_sync(text, body.voice, body.speed, cfg)
-                if audio:
-                    mp3 = tmp_dir / f"seg_{idx:06d}.mp3"
-                    mp3.write_bytes(audio)
-                    r = subprocess.run(
-                        ["ffmpeg", "-y", "-v", "error", "-i", str(mp3),
-                         "-ar", "22050", "-ac", "1", str(wav)],
-                        capture_output=True, timeout=60,
-                    )
-                    mp3.unlink(missing_ok=True)
-                    if r.returncode == 0 and wav.exists():
-                        return wav
-            except Exception as pe:
-                logger.warning("Premium TTS work seg %d: %s", idx, pe)
-        # Cloned voices have NO local fallback — fail the render clearly
-        # instead of continuing in an unrelated narrator.
-        if _is_clone_voice(body.voice):
-            raise RuntimeError(
-                f"Premium engine failed on segment {idx} and cloned voices "
-                "have no local fallback — is the sidecar still running?"
-            )
-        # Strategy 1: Kokoro
-        if kokoro_eng is not None and _sf is not None:
-            try:
-                samples, sr = kokoro_eng.create(text, voice=voice_id, speed=body.speed, lang="en-us")
-                _sf.write(str(wav), samples, sr)
-                return wav
-            except Exception as ke:
-                logger.debug("Kokoro seg %d: %s", idx, ke)
-        # Strategy 2: espeak-ng
-        try:
-            r = subprocess.run(
-                ["espeak-ng", "-v", espeak_v, "-s", str(wpm), "-w", str(wav), text],
-                capture_output=True, timeout=120,
-            )
-            if r.returncode == 0:
-                return wav
-        except Exception as ee:
-            logger.debug("espeak seg %d: %s", idx, ee)
-        return None
+                r = subprocess.run(
+                    ["espeak-ng", "-v", _ESPEAK_VOICE_MAP.get(seg_voice, "en+m3"),
+                     "-s", str(wpm), "-w", str(wav), text],
+                    capture_output=True, timeout=120,
+                )
+                if r.returncode == 0:
+                    return wav, "espeak"
+            except Exception as ee:
+                logger.debug("espeak seg %d: %s", idx, ee)
+            return None, None
+
+        return _finalize_segment(cfg, text, seg_voice, body.speed, _attempt,
+                                 f"segment {idx}")
 
     try:
         seg_idx = 0
@@ -1309,9 +1599,11 @@ def synthesize_work_audiobook(body: WorkAudiobookRequest):
                 seg_idx += 1
 
         # ── Document chapters ──────────────────────────────────────────────────
-        for doc_title, doc_text in doc_texts:
+        for chap_doc_id, doc_title, doc_text in doc_texts:
+            chap_voice = casting.get(chap_doc_id) or body.voice
+
             # Chapter header announcement
-            chapter_intro = _synth_segment(doc_title + ".", seg_idx)
+            chapter_intro = _synth_segment(doc_title + ".", seg_idx, chap_voice)
             if chapter_intro:
                 wav_parts.append(chapter_intro)
                 seg_idx += 1
@@ -1319,7 +1611,7 @@ def synthesize_work_audiobook(body: WorkAudiobookRequest):
             # Segment the document text
             segments = _split_text_into_segments(doc_text)[:60]
             for seg_text in segments:
-                p = _synth_segment(seg_text, seg_idx)
+                p = _synth_segment(seg_text, seg_idx, chap_voice)
                 if p:
                     wav_parts.append(p)
                     seg_idx += 1
@@ -1381,7 +1673,7 @@ def synthesize_work_audiobook(body: WorkAudiobookRequest):
         _ab_rel = _link_output_sync(mp3_path)
         _rotate_outputs(out_dir)
 
-        all_text = "\n\n".join(t for _, t in doc_texts)
+        all_text = "\n\n".join(t for _, _, t in doc_texts)
         from orivellum.api.executor import get_executor as _gex
         _gex().submit(
             _register_output_bg, mp3_path, all_text[:8000], "mp3",
@@ -1422,9 +1714,10 @@ def _run_work_tts_job(
     include_credits: bool,
     acx_mastering: bool,
     work_title: str,
-    doc_texts: list[tuple[str, str]],
+    doc_texts: list[tuple[str, str, str]],  # (doc_id, title, full_text)
     out_dir: Path,
     cfg,
+    casting: "dict[str, str] | None" = None,
 ) -> None:
     """Background worker: synthesise a full work audiobook chapter by chapter."""
     kokoro_eng = _get_kokoro()
@@ -1433,62 +1726,81 @@ def _run_work_tts_job(
     except ImportError:
         _sf2 = None  # type: ignore[assignment]
 
-    voice_id   = _resolve_kokoro_voice(voice)
-    espeak_v   = _ESPEAK_VOICE_MAP.get(voice, "en+m3")
     wpm        = max(80, min(400, int(175 * speed)))
     voice_meta = _VOICE_BY_ID.get(voice, {})
     voice_name = voice_meta.get("name", voice)
+    casting    = casting or {}
 
     tmp_dir = Path(tempfile.mkdtemp())
     wav_parts: list[Path] = []
     seg_idx = 0
 
     premium_ok = _is_premium_tts_enabled(cfg)
+    _prune_seg_cache(cfg)
 
-    def _synth(text: str) -> "Path | None":
+    def _synth(text: str, seg_voice: "str | None" = None) -> "Path | None":
         nonlocal seg_idx
+        seg_voice = seg_voice or voice
         wav = tmp_dir / f"seg_{seg_idx:06d}.wav"
         seg_idx += 1
-        # Strategy 0: Premium sidecar (decoded to WAV for homogeneous concat).
-        if premium_ok:
+
+        engines = (["premium"] if _is_clone_voice(seg_voice) else
+                   (["premium"] if premium_ok else []) +
+                   (["kokoro"] if (kokoro_eng is not None and _sf2 is not None) else []) +
+                   ["espeak"])
+        cached = _seg_cache_get(cfg, text, seg_voice, speed, engines)
+        if cached is not None:
+            import shutil
+            shutil.copyfile(cached, wav)
+            return wav
+
+        def _attempt() -> "tuple[Path | None, str | None]":
+            # Strategy 0: Premium sidecar (decoded to WAV for homogeneous concat).
+            if premium_ok:
+                try:
+                    audio = _call_premium_tts_sync(text, seg_voice, speed, cfg)
+                    if audio:
+                        mp3 = wav.with_suffix(".mp3")
+                        mp3.write_bytes(audio)
+                        r = subprocess.run(
+                            ["ffmpeg", "-y", "-v", "error", "-i", str(mp3),
+                             "-ar", "22050", "-ac", "1", str(wav)],
+                            capture_output=True, timeout=60,
+                        )
+                        mp3.unlink(missing_ok=True)
+                        if r.returncode == 0 and wav.exists():
+                            return wav, "premium"
+                except Exception as pe:
+                    logger.warning("Premium TTS work-job %s seg: %s", job_id, pe)
+            # Cloned voices never fall back to a local narrator — fail the job.
+            if _is_clone_voice(seg_voice):
+                raise RuntimeError(
+                    "Premium engine failed mid-render and cloned voices have no "
+                    "local fallback — is the sidecar still running?"
+                )
+            if kokoro_eng is not None and _sf2 is not None:
+                try:
+                    samples, sr = kokoro_eng.create(
+                        text, voice=_resolve_kokoro_voice(seg_voice),
+                        speed=speed, lang="en-us")
+                    _sf2.write(str(wav), samples, sr)
+                    return wav, "kokoro"
+                except Exception as ke:
+                    logger.debug("Kokoro work-job %s seg: %s", job_id, ke)
             try:
-                audio = _call_premium_tts_sync(text, voice, speed, cfg)
-                if audio:
-                    mp3 = wav.with_suffix(".mp3")
-                    mp3.write_bytes(audio)
-                    r = subprocess.run(
-                        ["ffmpeg", "-y", "-v", "error", "-i", str(mp3),
-                         "-ar", "22050", "-ac", "1", str(wav)],
-                        capture_output=True, timeout=60,
-                    )
-                    mp3.unlink(missing_ok=True)
-                    if r.returncode == 0 and wav.exists():
-                        return wav
-            except Exception as pe:
-                logger.warning("Premium TTS work-job %s seg: %s", job_id, pe)
-        # Cloned voices never fall back to a local narrator — fail the job.
-        if _is_clone_voice(voice):
-            raise RuntimeError(
-                "Premium engine failed mid-render and cloned voices have no "
-                "local fallback — is the sidecar still running?"
-            )
-        if kokoro_eng is not None and _sf2 is not None:
-            try:
-                samples, sr = kokoro_eng.create(text, voice=voice_id, speed=speed, lang="en-us")
-                _sf2.write(str(wav), samples, sr)
-                return wav
-            except Exception as ke:
-                logger.debug("Kokoro work-job %s seg: %s", job_id, ke)
-        try:
-            r = subprocess.run(
-                ["espeak-ng", "-v", espeak_v, "-s", str(wpm), "-w", str(wav), text],
-                capture_output=True, timeout=120,
-            )
-            if r.returncode == 0:
-                return wav
-        except Exception as ee:
-            logger.debug("espeak work-job %s seg: %s", job_id, ee)
-        return None
+                r = subprocess.run(
+                    ["espeak-ng", "-v", _ESPEAK_VOICE_MAP.get(seg_voice, "en+m3"),
+                     "-s", str(wpm), "-w", str(wav), text],
+                    capture_output=True, timeout=120,
+                )
+                if r.returncode == 0:
+                    return wav, "espeak"
+            except Exception as ee:
+                logger.debug("espeak work-job %s seg: %s", job_id, ee)
+            return None, None
+
+        return _finalize_segment(cfg, text, seg_voice, speed, _attempt,
+                                 f"segment {seg_idx - 1}")
 
     def _silence(dur: float) -> None:
         nonlocal seg_idx
@@ -1521,12 +1833,14 @@ def _run_work_tts_job(
                 wav_parts.append(p)
             _silence(1.0)
 
-        # Chapter-by-chapter synthesis
-        for idx, (doc_title, doc_text) in enumerate(doc_texts):
+        # Chapter-by-chapter synthesis (each chapter may have its own cast voice)
+        for idx, (chap_doc_id, doc_title, doc_text) in enumerate(doc_texts):
             if _cancelled():
                 with _work_tts_jobs_lock:
                     _work_tts_jobs[job_id]["state"] = "cancelled"
                 return
+
+            chap_voice = casting.get(chap_doc_id) or voice
 
             with _work_tts_jobs_lock:
                 _work_tts_jobs[job_id].update({
@@ -1534,7 +1848,7 @@ def _run_work_tts_job(
                     "chapter_title": doc_title,
                 })
 
-            intro = _synth(doc_title + ".")
+            intro = _synth(doc_title + ".", chap_voice)
             if intro:
                 wav_parts.append(intro)
 
@@ -1543,7 +1857,7 @@ def _run_work_tts_job(
                     with _work_tts_jobs_lock:
                         _work_tts_jobs[job_id]["state"] = "cancelled"
                     return
-                p = _synth(seg_text)
+                p = _synth(seg_text, chap_voice)
                 if p:
                     wav_parts.append(p)
 
@@ -1610,7 +1924,7 @@ def _run_work_tts_job(
         _ab_rel = _link_output_sync(mp3_path)
         _rotate_outputs(out_dir)
 
-        all_text = "\n\n".join(t for _, t in doc_texts)
+        all_text = "\n\n".join(t for _, _, t in doc_texts)
         from orivellum.api.executor import get_executor as _gex_wj
         _gex_wj().submit(
             _register_output_bg, mp3_path, all_text[:8000], "mp3",
@@ -1674,11 +1988,14 @@ def start_work_audiobook_async(body: WorkAudiobookStartRequest):
 
     # Cloned voices exist only on the premium sidecar — reject before the job
     # is created rather than failing (or worse, mis-narrating) mid-render.
-    if _is_clone_voice(body.voice) and not _is_premium_tts_enabled(cfg):
+    # Covers the narrator AND every per-chapter cast voice.
+    casting = _get_voice_casting(db, body.work_id)
+    all_voices = {body.voice} | set(casting.values())
+    if any(_is_clone_voice(v) for v in all_voices) and not _is_premium_tts_enabled(cfg):
         raise HTTPException(
             503,
-            "This cloned voice needs the premium voice engine "
-            "(tts_premium_url), which is not enabled.",
+            "A cloned voice is selected (narrator or chapter casting) but the "
+            "premium voice engine (tts_premium_url) is not enabled.",
         )
 
     with db._lock:
@@ -1694,7 +2011,7 @@ def start_work_audiobook_async(body: WorkAudiobookStartRequest):
         raise HTTPException(422, "No ready documents found in this Work. "
                                  "Process documents in the Library first.")
 
-    doc_texts: list[tuple[str, str]] = []
+    doc_texts: list[tuple[str, str, str]] = []  # (doc_id, title, full_text)
     with db._lock:
         for doc in doc_rows:
             chunks = db._conn.execute(
@@ -1706,7 +2023,7 @@ def start_work_audiobook_async(body: WorkAudiobookStartRequest):
                 doc_title = doc["title"] or (
                     doc["source"].split("/")[-1] if doc["source"] else "Chapter"
                 )
-                doc_texts.append((doc_title, text))
+                doc_texts.append((doc["id"], doc_title, text))
 
     if not doc_texts:
         raise HTTPException(422, "No extracted text found in any document of this Work.")
@@ -1729,7 +2046,7 @@ def start_work_audiobook_async(body: WorkAudiobookStartRequest):
     _submit_bg_tts(
         _run_work_tts_job,
         job_id, body.voice, body.speed, body.include_credits,
-        body.acx_mastering, work_title, doc_texts, out_dir, cfg,
+        body.acx_mastering, work_title, doc_texts, out_dir, cfg, casting,
         kind="studio", label=f"work_tts:{job_id[:8]}",
     )
 
@@ -2492,60 +2809,82 @@ def _run_doc_tts_job(
                     _doc_tts_jobs[job_id]["state"] = "cancelled"
                 return
 
-            wav_path    = tmp_dir / f"seg_{idx:04d}.wav"
-            synthesised = False
+            wav_path = tmp_dir / f"seg_{idx:04d}.wav"
 
-            # Strategy 0: Premium TTS engine
+            # ── Deterministic cache lookup (premium=mp3, local engines=wav) ──
+            import shutil as _shutil
+            cached_out: "Path | None" = None
             if premium_ok:
-                try:
-                    audio_bytes = _call_premium_tts_sync(seg, body.voice, body.speed, cfg)
-                    if audio_bytes:
-                        # Premium engine returns MP3 — write directly, skip WAV step
-                        mp3_path = tmp_dir / f"seg_{idx:04d}.mp3"
-                        mp3_path.write_bytes(audio_bytes)
-                        wav_paths.append(mp3_path)
-                        synthesised = True
-                except Exception as pe:
-                    logger.warning("Premium TTS failed on segment %d: %s", idx, pe)
+                c = _seg_cache_get(cfg, seg, body.voice, body.speed,
+                                   ["premium"], suffix=".mp3")
+                if c is not None:
+                    mp3_path = tmp_dir / f"seg_{idx:04d}.mp3"
+                    _shutil.copyfile(c, mp3_path)
+                    cached_out = mp3_path
+            elif not ai_ok:  # AI-server output is never cached
+                c = _seg_cache_get(
+                    cfg, seg, body.voice, body.speed,
+                    (["kokoro"] if (kokoro_engine is not None and _sf is not None) else [])
+                    + ["espeak"])
+                if c is not None:
+                    _shutil.copyfile(c, wav_path)
+                    cached_out = wav_path
+            if cached_out is not None:
+                wav_paths.append(cached_out)
+                with _doc_tts_jobs_lock:
+                    _doc_tts_jobs[job_id]["segments_done"] = idx + 1
+                continue
 
-            # Cloned voice + premium failure ⇒ fail closed (no local fallback
-            # exists for a cloned voice — it would speak in the wrong narrator).
-            if _is_clone_voice(body.voice) and not synthesised:
-                raise RuntimeError(
-                    f"Premium engine failed on segment {idx} and cloned voices "
-                    "have no local fallback — is the sidecar still running?"
-                )
+            def _attempt(idx=idx, seg=seg, wav_path=wav_path) -> "tuple[Path | None, str | None]":
+                # Strategy 0: Premium TTS engine
+                if premium_ok:
+                    try:
+                        audio_bytes = _call_premium_tts_sync(seg, body.voice, body.speed, cfg)
+                        if audio_bytes:
+                            # Premium engine returns MP3 — write directly, skip WAV step
+                            mp3_path = tmp_dir / f"seg_{idx:04d}.mp3"
+                            mp3_path.write_bytes(audio_bytes)
+                            return mp3_path, "premium"
+                    except Exception as pe:
+                        logger.warning("Premium TTS failed on segment %d: %s", idx, pe)
 
-            # Strategy 1: AI server TTS
-            if ai_ok and not synthesised:
-                try:
-                    import httpx as _hx
-                    r = _hx.post(
-                        f"{cfg.serving.base_url}/audio/speech",
-                        json={"model": cfg.serving.tts_model,
-                              "input": seg, "voice": body.voice,
-                              "response_format": "wav", "speed": body.speed},
-                        timeout=60,
+                # Cloned voice + premium failure ⇒ fail closed (no local fallback
+                # exists for a cloned voice — it would speak in the wrong narrator).
+                if _is_clone_voice(body.voice):
+                    raise RuntimeError(
+                        f"Premium engine failed on segment {idx} and cloned voices "
+                        "have no local fallback — is the sidecar still running?"
                     )
-                    if r.status_code == 200:
-                        wav_path.write_bytes(r.content)
-                        synthesised = True
-                except Exception:
-                    pass
 
-            # Strategy 2: Kokoro ONNX (human-quality, local)
-            if not synthesised and kokoro_engine is not None and _sf is not None:
-                try:
-                    samples, sample_rate = kokoro_engine.create(
-                        seg, voice=kokoro_voice, speed=body.speed, lang="en-us",
-                    )
-                    _sf.write(str(wav_path), samples, sample_rate)
-                    synthesised = True
-                except Exception as ke:
-                    logger.warning("Kokoro failed on segment %d: %s", idx, ke)
+                # Strategy 1: AI server TTS
+                if ai_ok:
+                    try:
+                        import httpx as _hx
+                        r = _hx.post(
+                            f"{cfg.serving.base_url}/audio/speech",
+                            json={"model": cfg.serving.tts_model,
+                                  "input": seg, "voice": body.voice,
+                                  "response_format": "wav", "speed": body.speed},
+                            timeout=60,
+                        )
+                        if r.status_code == 200:
+                            wav_path.write_bytes(r.content)
+                            return wav_path, "ai"
+                    except Exception:
+                        pass
 
-            # Strategy 3: espeak-ng (always-available robotic fallback)
-            if not synthesised:
+                # Strategy 2: Kokoro ONNX (human-quality, local)
+                if kokoro_engine is not None and _sf is not None:
+                    try:
+                        samples, sample_rate = kokoro_engine.create(
+                            seg, voice=kokoro_voice, speed=body.speed, lang="en-us",
+                        )
+                        _sf.write(str(wav_path), samples, sample_rate)
+                        return wav_path, "kokoro"
+                    except Exception as ke:
+                        logger.warning("Kokoro failed on segment %d: %s", idx, ke)
+
+                # Strategy 3: espeak-ng (always-available robotic fallback)
                 res = subprocess.run(
                     ["espeak-ng", "-v", espeak_voice, "-s", str(wpm),
                      "-w", str(wav_path), seg],
@@ -2555,8 +2894,13 @@ def _run_doc_tts_job(
                     raise RuntimeError(
                         f"espeak-ng failed on segment {idx}: {res.stderr}"
                     )
+                return wav_path, "espeak"
 
-            wav_paths.append(wav_path)
+            out = _finalize_segment(cfg, seg, body.voice, body.speed, _attempt,
+                                    f"segment {idx}")
+            if out is None:
+                raise RuntimeError(f"All TTS engines failed on segment {idx}")
+            wav_paths.append(out)
             with _doc_tts_jobs_lock:
                 _doc_tts_jobs[job_id]["segments_done"] = idx + 1
 
@@ -2585,6 +2929,16 @@ def _run_doc_tts_job(
         )
         if ff.returncode != 0:
             raise RuntimeError(f"ffmpeg concat failed: {ff.stderr.decode()[:300]}")
+
+        # ── Two-pass loudness mastering (-23 LUFS audiobook standard) ────────
+        if getattr(body, "acx_mastering", True):
+            mastered = out_dir / f"{safe_title}_{uuid.uuid4().hex[:6]}_m.mp3"
+            if _apply_acx_mastering(str(mp3_path), str(mastered)):
+                mp3_path.unlink(missing_ok=True)
+                mp3_path = mastered
+                mp3_name = mastered.name
+            else:
+                logger.warning("Mastering failed for doc TTS job %s — keeping raw mix", job_id)
 
         # Hard-link into the library BEFORE rotation so the file survives the
         # rolling 50-output window regardless of rotation timing.
@@ -2645,6 +2999,7 @@ class DocumentTTSRequest(BaseModel):
     speed: float = 1.0
     max_segments: int = 60  # cap at ~90 000 chars / ~1 hour of reading
     return_url: bool = False  # kept for backward-compat; ignored in async flow
+    acx_mastering: bool = True  # two-pass loudnorm to -23 LUFS on the final MP3
 
 
 @router.post("/studio/tts/document")
