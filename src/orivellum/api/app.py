@@ -199,14 +199,12 @@ def create_app() -> FastAPI:
         "http://localhost:5173,http://localhost:3000,http://localhost:80",
     ).split(",")
 
-    # Also allow this repl's exact Replit dev domains (https only) — the web
-    # preview domain and the Expo web preview domain (mobile app in a browser).
-    for _env in ("REPLIT_DEV_DOMAIN", "REPLIT_EXPO_DEV_DOMAIN"):
-        _domain = os.environ.get(_env, "").strip()
-        if _domain:
-            _origin = f"https://{_domain}"
-            if _origin not in allowed_origins:
-                allowed_origins.append(_origin)
+    # Also allow this repl's exact Replit dev domain (https only).
+    _domain = os.environ.get("REPLIT_DEV_DOMAIN", "").strip()
+    if _domain:
+        _origin = f"https://{_domain}"
+        if _origin not in allowed_origins:
+            allowed_origins.append(_origin)
 
     app.add_middleware(
         CORSMiddleware,
@@ -403,13 +401,13 @@ def create_app() -> FastAPI:
         auth, health, works, conversations, library, knowledge,
         projects, backups, studio, files, system, dashboard, learning, write,
         mcos, review, claims, pklos, intake, generate, topics, actions, mcp,
-        users, genesis, finishing, forge, mail, bench,
+        genesis, finishing, forge, mail, bench,
     )
     _route_modules = [
         auth, health, works, conversations, library, knowledge,
         projects, backups, studio, files, system, dashboard, learning, write,
         mcos, review, claims, pklos, intake, generate, topics, actions, mcp,
-        users, genesis, finishing, forge, mail, bench,
+        genesis, finishing, forge, mail, bench,
     ]
     for module in _route_modules:
         app.include_router(module.router)

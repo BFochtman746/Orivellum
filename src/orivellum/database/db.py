@@ -5617,53 +5617,6 @@ class OrivellumDB:
         except Exception as exc:
             return {"status": "error", "error": str(exc)}
 
-    # ── Push notification tokens ──────────────────────────────────────────────
-
-    def save_push_token(
-        self,
-        token: str,
-        platform: str | None = None,
-        key_hash: str | None = None,
-    ) -> None:
-        """Upsert an Expo push token, scoped to the registering identity's key_hash."""
-        from datetime import datetime, timezone
-        now = datetime.now(timezone.utc).isoformat()
-        with self._lock:
-            self._conn.execute(
-                """INSERT INTO push_tokens(id, token, platform, key_hash, created_at, updated_at)
-                   VALUES(?,?,?,?,?,?)
-                   ON CONFLICT(token) DO UPDATE SET
-                       platform=excluded.platform,
-                       key_hash=excluded.key_hash,
-                       updated_at=excluded.updated_at""",
-                (_uuid(), token, platform, key_hash, now, now),
-            )
-            self._conn.commit()
-
-    def get_all_push_tokens(self, key_hash: str | None = None) -> list[str]:
-        """Return registered Expo push token strings.
-
-        Args:
-            key_hash: When provided, return only tokens registered by the identity
-                      whose API key hashes to this value.  Pass ``None`` to return
-                      all tokens (e.g. for single-user deployments where scoping is
-                      trivially satisfied).
-        """
-        with self._lock:
-            if key_hash:
-                rows = self._conn.execute(
-                    "SELECT token FROM push_tokens WHERE key_hash=?", (key_hash,)
-                ).fetchall()
-            else:
-                rows = self._conn.execute("SELECT token FROM push_tokens").fetchall()
-        return [r["token"] for r in rows]
-
-    def delete_push_token(self, token: str) -> None:
-        """Remove a token (called after Expo reports it as invalid)."""
-        with self._lock:
-            self._conn.execute("DELETE FROM push_tokens WHERE token=?", (token,))
-            self._conn.commit()
-
     def search_provenance(
         self,
         query: str = "",

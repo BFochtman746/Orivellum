@@ -626,30 +626,6 @@ def process_document(doc_id: str, file_path: str, kind: str,
         except Exception:
             pass
 
-        # Push notification — document ready (best-effort, non-fatal, daemon thread)
-        try:
-            from orivellum.capabilities.push import notify_push_best_effort as _push_notify
-            import threading as _push_thr
-            _kn_count = 0
-            with db._lock:
-                _kn_count = db._conn.execute(
-                    "SELECT COUNT(*) FROM knowledge WHERE source_doc_id=?", (doc_id,)
-                ).fetchone()[0]
-            _doc_label = (title or doc_id)[:50]
-            _push_body = (
-                f"{_doc_label} — {_kn_count} knowledge item"
-                f"{'s' if _kn_count != 1 else ''} extracted"
-                if _kn_count
-                else _doc_label
-            )
-            _push_thr.Thread(
-                target=_push_notify,
-                args=(db, "📄 Document ready", _push_body, {"screen": f"library/{doc_id}"}),
-                daemon=True,
-            ).start()
-        except Exception:
-            pass
-
         # Step 5 (optional): LLM-powered harvest — runs after readiness is set so
         # latency here never blocks the document from appearing as ready.
         # Chapter-structured documents (novels, books with ≥2 extracted chapters)

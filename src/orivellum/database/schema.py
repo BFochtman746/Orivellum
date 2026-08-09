@@ -1957,4 +1957,11 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         CREATE INDEX IF NOT EXISTS doc_quarantined ON documents(quarantined)
             WHERE quarantined > 0;
     """),
+
+    # v111 — Mobile app retired (Aug 2026): drop the Expo push-token table.
+    # Nothing can register a push token anymore, so the subsystem was removed
+    # (routes/users.py, capabilities/push.py, db methods, call sites).
+    (111, "Drop push_tokens table (mobile push retired)", """
+        DROP TABLE IF EXISTS push_tokens;
+    """),
 ]

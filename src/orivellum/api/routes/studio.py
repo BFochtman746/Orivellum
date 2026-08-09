@@ -1353,22 +1353,6 @@ def synthesize_work_audiobook(body: WorkAudiobookRequest):
             f"Audiobook: {work_title}", prelinked_rel=_ab_rel,
         )
 
-        # Push notification — work audiobook ready (best-effort, executor)
-        try:
-            from orivellum.capabilities.push import notify_push_best_effort as _push_ab
-            from orivellum.api.executor import submit_bg as _submit_bg_push_ab
-            _push_label = work_title[:50] if work_title else "Your Work"
-            _submit_bg_push_ab(
-                _push_ab,
-                get_db(),
-                "🎙️ Audiobook ready",
-                f'"{_push_label}" audiobook is ready to play',
-                {"screen": "studio"},
-                kind="background", label="push:audiobook_ready",
-            )
-        except Exception:
-            pass
-
         if body.return_url:
             rel = str(mp3_path.relative_to(out_dir))
             return {"ok": True, "path": rel, "filename": mp3_path.name, "work_title": work_title}
@@ -1572,22 +1556,6 @@ def _run_work_tts_job(
             _register_output_bg, mp3_path, all_text[:8000], "mp3",
             f"Audiobook: {work_title}", prelinked_rel=_ab_rel,
         )
-
-        # Push notification (best-effort)
-        try:
-            from orivellum.capabilities.push import notify_push_best_effort as _push_wj
-            threading.Thread(
-                target=_push_wj,
-                args=(
-                    get_db(),
-                    "🎙️ Audiobook ready",
-                    f'"{work_title[:50]}" audiobook is ready to play',
-                    {"screen": "studio"},
-                ),
-                daemon=True,
-            ).start()
-        except Exception:
-            pass
 
         rel = str(mp3_path.relative_to(out_dir))
         with _work_tts_jobs_lock:
@@ -2517,21 +2485,6 @@ def _run_doc_tts_job(
             f"Audiobook: {doc_title}", prelinked_rel=_ab_rel,
             origin_id=body.doc_id,
         )
-
-        # Push notification — best-effort via executor.
-        try:
-            from orivellum.capabilities.push import notify_push_best_effort as _push
-            from orivellum.api.executor import submit_bg as _submit_bg_push_doc
-            _doc_label = (doc.get("title") or body.doc_id)[:50]
-            _submit_bg_push_doc(
-                _push,
-                db, "🎙️ Audiobook ready",
-                f'"{_doc_label}" audiobook is ready to play',
-                {"screen": f"library/{body.doc_id}"},
-                kind="background", label="push:doc_tts_ready",
-            )
-        except Exception:
-            pass
 
         # ── Mark job done ─────────────────────────────────────────────────────
         rel_path = str(mp3_path.relative_to(out_dir))
