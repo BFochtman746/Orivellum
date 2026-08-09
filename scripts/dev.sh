@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
-# Start Orivellum with one command — API server + web UI (+ mobile if wanted)
+# Start Orivellum with one command — API server + web UI
 #
 # Usage:
 #   bash scripts/dev.sh            # API + web
-#   bash scripts/dev.sh --mobile   # API + web + Expo
 #
 # Environment overrides (all optional):
 #   API_PORT          API server port (default 8080)
@@ -11,12 +10,6 @@
 #   BASE_PATH         URL base path for the web UI (default /)
 
 set -euo pipefail
-
-# ── option parsing ──────────────────────────────────────────────────────────
-MOBILE=0
-for arg in "$@"; do
-  case $arg in --mobile) MOBILE=1 ;; esac
-done
 
 # ── port config ─────────────────────────────────────────────────────────────
 API_PORT="${API_PORT:-8080}"
@@ -67,16 +60,9 @@ PORT="${WEB_PORT}" \
   pnpm --filter @workspace/orivellum-ui run dev &
 WEB_PID=$!
 
-# ── mobile (optional) ────────────────────────────────────────────────────────
-if [[ $MOBILE -eq 1 ]]; then
-  echo "[mob]  Starting Expo…"
-  pnpm --filter @workspace/mobile run dev &
-fi
-
 echo ""
 echo "  API  → http://localhost:${API_PORT}"
 echo "  Web  → http://localhost:${WEB_PORT}"
-[[ $MOBILE -eq 1 ]] && echo "  Expo → http://localhost:${EXPO_PORT:-19000}"
 echo ""
 echo "  Press Ctrl+C to stop all services."
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

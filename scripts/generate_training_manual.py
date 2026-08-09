@@ -375,7 +375,6 @@ def build_story():
         ["Document pipeline", "pypdf / pdfplumber · Tesseract OCR · python-docx · openpyxl · markitdown", "Extract, chunk, embed, harvest knowledge from every file type"],
         ["AI gateway", "Local OpenAI-compatible server (Lemonade or Ollama)", "Chat, extraction, embeddings, TTS, ASR — all local"],
         ["Web frontend", "React 19 · Vite 7 · TanStack Query · Tailwind CSS 4 · Wouter", "Full workspace UI — every page in this manual"],
-        ["Mobile app", "Expo / React Native", "Read-aloud, chat, library, learning — on iOS &amp; Android"],
         ["Search", "SQLite FTS5 (lexical) + local embeddings (semantic) + BM25 hybrid", "Retrieval-augmented generation for chat context"],
         ["Web research", "Tavily API · YouTube Transcript API · RRF + BM25 pipeline", "Multi-mode internet research with citation assembly"],
     ]
@@ -433,7 +432,7 @@ def build_story():
     req_data = [
         ["Component", "Minimum Version", "Notes"],
         ["Python", "3.12+", "3.13 works; 3.12 is the pinned version in .python-version"],
-        ["Node.js", "20+", "Required for the web frontend and mobile app"],
+        ["Node.js", "20+", "Required for the web frontend"],
         ["pnpm", "9+", "Workspace package manager — do not substitute npm or yarn"],
         ["uv", "0.4+", "Python package manager and virtual-environment tool"],
     ]
@@ -501,7 +500,6 @@ def build_story():
         ("Run full setup", ".\\scripts\\setup-windows.ps1"),
         ("Start the application", ".\\scripts\\start.ps1"),
         ("Open in browser", "http://localhost:8080/orivellum-ui/"),
-        ("Start with mobile app", ".\\scripts\\start.ps1 -Mobile"),
         ("Skip UI rebuild (faster)", ".\\scripts\\start.ps1 -SkipBuild"),
     ]
     for label, cmd in win_steps:
@@ -875,17 +873,22 @@ uv run python scripts/run_diagnostics.py --vacuum"""))
     story.append(hr())
     story.append(p(
         "This chapter covers every page in the Orivellum web application. "
-        "The navigation sidebar is always visible on the left. Pages are grouped "
-        "by workflow: Knowledge → Creation → Learning → Administration."
+        "Navigation starts at the Home Screen (/) — a launcher with one large tile "
+        "per app: Writing, Learning, Chat, Studio, Command, Mail, and Library. "
+        "Tapping a tile opens that app full-screen with its own top navigation; "
+        "the Home control in each app's header returns to the launcher. "
+        "Press Ctrl+K (Cmd+K on Mac) anywhere to open the command palette and "
+        "jump directly to any page."
     ))
     story.append(sp(8))
 
-    # ── PAGE: Dashboard ────────────────────────────────────────────────────
-    story.append(h2("Dashboard  (/)")  )
+    # ── PAGE: Home Screen ──────────────────────────────────────────────────
+    story.append(h2("Home Screen  (/)"))
     story.append(p(
-        "The Dashboard is the command centre of your Orivellum workspace. It gives you a "
-        "complete picture of your active projects, recent activity, and what needs attention — "
-        "all on one screen."
+        "The Home Screen is the front door of your Orivellum workspace: an app "
+        "launcher with an ambient status ribbon and one large tile per app. It "
+        "replaces the old dashboard-and-sidebar layout — each area of the "
+        "product now lives inside its own full-screen app."
     ))
     story.append(h3("Sections"))
     story.append(bullet("<b>Custodian Header</b> — time-of-day greeting, pending task count, and quick-action buttons"))
@@ -1244,7 +1247,7 @@ uv run python scripts/run_diagnostics.py --vacuum"""))
     story.append(bullet("<b>Nightshift</b> — last run time and result, Run Now button, next scheduled time"))
     story.append(bullet("<b>Audio Enhancement</b> — enable/disable DeepFilterNet3 noise reduction for audio files"))
     story.append(bullet("<b>Settings</b> — enable/disable AI extraction, nightshift, deep-mode defaults, and other system-wide toggles"))
-    story.append(bullet("<b>API Key</b> — view or regenerate the bearer token used by external API clients and the mobile app"))
+    story.append(bullet("<b>API Key</b> — view or regenerate the bearer token used by external API clients and scripts"))
     story.append(h3("When to Visit"))
     story.append(bullet("After installing: verify LLM connectivity and embeddings are green"))
     story.append(bullet("After changing models: run Diagnostics and Probe Embeddings"))
@@ -1268,51 +1271,10 @@ uv run python scripts/run_diagnostics.py --vacuum"""))
     story.append(sp(8))
 
     # ══════════════════════════════════════════════════════════════════════
-    #  CHAPTER 6 — MOBILE APP
+    #  CHAPTER 6 — WORKFLOWS AND BEST PRACTICES
     # ══════════════════════════════════════════════════════════════════════
     story.append(PageBreak())
     story.append(p("Chapter 6", "chapter_label"))
-    story.append(h1("Mobile App"))
-    story.append(hr())
-    story.append(p(
-        "The Orivellum mobile app (iOS and Android) is an Expo/React Native companion to "
-        "the web platform. It focuses on the most portable workflows: reading documents "
-        "aloud, chatting with your AI, reviewing knowledge, and learning on the go. "
-        "It connects to the same local API server as the web app."
-    ))
-    story.append(sp(4))
-
-    story.append(h2("Connecting the Mobile App"))
-    story.append(bullet("Open the mobile app → Settings → API URL → enter your server's URL"))
-    story.append(bullet("On the same Wi-Fi: use your machine's local IP address (e.g. http://192.168.1.100:8080)"))
-    story.append(bullet("Remotely: use Tailscale or a similar VPN — the API supports CORS for the 100.64–127.x.x Tailscale range"))
-    story.append(bullet("The API key is shown on the System page — enter it in the mobile app's Settings → API Key field"))
-    story.append(sp(6))
-
-    story.append(h2("Mobile Pages"))
-    mobile_pages = [
-        ("Library", "Browse, search, and upload documents. Tap a document to open the detail view with knowledge review and Work linking."),
-        ("Read Aloud", "Listen to any document in chunked TTS. Full playback controls, silence mode support. Downloads the audio file to device storage."),
-        ("Chat", "Full AI conversation with streaming responses. Linked to any Work — same context injection as the web app."),
-        ("Works Detail", "Overview, Documents, Knowledge, and Brainstorm tabs for a Work — same content as the web but optimised for touch."),
-        ("Learn", "Socratic learning sessions on the go. Same question-answer-feedback loop as the web."),
-        ("Knowledge Graph", "Touch-interactive entity graph with the same filter chips and entity colours as the web."),
-    ]
-    for page, desc in mobile_pages:
-        story.append(p(f"<b>{page}</b> — {desc}", "bullet"))
-        story.append(sp(2))
-
-    story.append(sp(6))
-    story.append(warning_box(
-        "The 'Save to Files' button for downloaded audiobooks is only shown on iOS, "
-        "not on Android — Android saves to a system-accessible location automatically."
-    ))
-
-    # ══════════════════════════════════════════════════════════════════════
-    #  CHAPTER 7 — WORKFLOWS AND BEST PRACTICES
-    # ══════════════════════════════════════════════════════════════════════
-    story.append(PageBreak())
-    story.append(p("Chapter 7", "chapter_label"))
     story.append(h1("Workflows &amp; Best Practices"))
     story.append(hr())
 
@@ -1347,7 +1309,7 @@ uv run python scripts/run_diagnostics.py --vacuum"""))
     story.append(sp(6))
 
     story.append(h2("Daily Maintenance Checklist"))
-    story.append(bullet("Dashboard → check gap analysis for new gaps detected overnight"))
+    story.append(bullet("Writing → Book tab → check gap analysis for new gaps detected overnight"))
     story.append(bullet("Governance → review any new AI-extracted items in the queue"))
     story.append(bullet("Library → check for any documents stuck in 'error' or 'no_text' state"))
     story.append(bullet("System → confirm LLM status is green"))
@@ -1377,10 +1339,10 @@ uv run python scripts/run_diagnostics.py --vacuum"""))
     story.append(bullet("<b>ACADEMIC</b> — restricts to arxiv, PubMed, JSTOR, Semantic Scholar, and similar scholarly sources"))
 
     # ══════════════════════════════════════════════════════════════════════
-    #  CHAPTER 8 — QUICK REFERENCE
+    #  CHAPTER 7 — QUICK REFERENCE
     # ══════════════════════════════════════════════════════════════════════
     story.append(PageBreak())
-    story.append(p("Chapter 8", "chapter_label"))
+    story.append(p("Chapter 7", "chapter_label"))
     story.append(h1("Quick Reference"))
     story.append(hr())
 
@@ -1438,7 +1400,6 @@ uv run python scripts/run_diagnostics.py --vacuum"""))
         ("uv run python scripts/import_excel_vault.py", "Re-import the Excel Training Vault"),
         ("uv run python -m orivellum.api.main", "Start the API server manually"),
         ("pnpm --filter @workspace/orivellum-ui run dev", "Start the web frontend (dev mode)"),
-        ("pnpm --filter @workspace/mobile run dev", "Start the mobile app (Expo)"),
         ("uv run pytest tests/", "Run all Python tests"),
     ]
     for cmd, desc in scripts:

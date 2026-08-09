@@ -3,8 +3,7 @@
  *
  * Wordmark, ambient status ribbon, and large launch tiles (one per app).
  * Tapping a tile enters that app full-screen (AppFrame); everything else is
- * eliminated to stay focused. The old sidebar console remains reachable
- * behind the "Legacy console" row during the transition.
+ * eliminated to stay focused.
  *
  * Layout laws honored here: one scroll container (.gd-scroll), tile/row
  * primitives only, 4 tiles above the fold on a phone (2×2 grid), 48px
@@ -12,8 +11,7 @@
  */
 import { useEffect } from "react";
 import { useLocation } from "wouter";
-import { PanelLeft, ChevronRight } from "lucide-react";
-import { APPS, setLegacyShell } from "@/lib/apps";
+import { APPS } from "@/lib/apps";
 import { connState } from "@/components/app-frame";
 import { useConnectivity } from "@/lib/useConnectivity";
 
@@ -28,13 +26,7 @@ export default function HomeScreen() {
   }, []);
 
   const launch = (entry: string) => {
-    setLegacyShell(false);
     setLocation(entry);
-  };
-
-  const openLegacy = () => {
-    setLegacyShell(true);
-    setLocation("/dashboard");
   };
 
   return (
@@ -104,25 +96,6 @@ export default function HomeScreen() {
             );
           })}
         </div>
-
-        {/* Transition escape hatch — the old sidebar console */}
-        <p className="gd-eyebrow" style={{ padding: "24px 4px 10px" }}>
-          Transition
-        </p>
-        <button
-          className="gd-row w-full"
-          onClick={openLegacy}
-          data-testid="row-legacy"
-        >
-          <PanelLeft className="w-5 h-5" style={{ color: "var(--gd-dim)" }} aria-hidden />
-          <span className="flex-1 text-left">
-            <span className="block text-[14px] font-medium">Legacy console</span>
-            <span className="block text-[12px]" style={{ color: "var(--gd-muted)" }}>
-              The old sidebar with every page, while apps are being moved in
-            </span>
-          </span>
-          <ChevronRight className="w-4 h-4" style={{ color: "var(--gd-dim)" }} aria-hidden />
-        </button>
       </main>
     </div>
   );

@@ -164,7 +164,7 @@ Update System Settings → Image Generation Backend with the new IP.
 Set the vision model in **System Settings → Vision Model** to your local model name
 (e.g. `llava`, `qwen2-vl`, `llama3.2-vision`), then click **Test Vision** to confirm.
 
-Attach images in mobile chat via the 📷 button in the message bar.
+Attach images in chat via the 📷 button in the message bar.
 
 ---
 
@@ -177,7 +177,7 @@ Orivellum has three TTS engines in fallback order:
 3. **Your AI server** — if it supports OpenAI TTS API
 
 Use the **Read Aloud** button on any Library document to hear it read back.
-Use the 🔊 button in chat (coming soon on mobile) for voice replies.
+Use the 🔊 button in chat for voice replies.
 
 ### Making TTS work on Windows
 

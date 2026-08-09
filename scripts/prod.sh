@@ -7,7 +7,6 @@
 # Usage:
 #   bash scripts/prod.sh               # build UI + start API
 #   bash scripts/prod.sh --skip-build  # reuse existing dist/public + start API
-#   bash scripts/prod.sh --mobile      # also start Expo
 #
 # Environment overrides (all optional):
 #   API_PORT   API server port (default 8080)
@@ -15,11 +14,9 @@
 set -euo pipefail
 
 # ── option parsing ────────────────────────────────────────────────────────────
-MOBILE=0
 SKIP_BUILD=0
 for arg in "$@"; do
   case $arg in
-    --mobile)      MOBILE=1      ;;
     --skip-build)  SKIP_BUILD=1  ;;
   esac
 done
@@ -88,19 +85,11 @@ echo "[api]  Waiting for API to be ready…"
 wait_for_port "$API_PORT" 30
 echo "[api]  Ready [OK]"
 
-# ── 4. Mobile (optional) ──────────────────────────────────────────────────────
-if [[ $MOBILE -eq 1 ]]; then
-  echo "[mob]  Starting Expo…"
-  pnpm --filter @workspace/mobile run dev &
-  CHILDREN+=($!)
-fi
-
 # ── summary ───────────────────────────────────────────────────────────────────
 echo ""
 echo "  App  → http://localhost:${API_PORT}/orivellum-ui/"
 echo "         (Open in Safari on your iPhone → Share → Add to Home Screen)"
 echo "  API  → http://localhost:${API_PORT}/api/"
-[[ $MOBILE -eq 1 ]] && echo "  Expo → http://localhost:19000"
 echo ""
 echo "  Use --skip-build to restart without rebuilding the UI."
 echo "  Press Ctrl+C to stop all services."

@@ -1,12 +1,8 @@
-.PHONY: dev dev-mobile install
+.PHONY: dev install
 
 ## Start API + web UI (one command)
 dev:
 	@bash scripts/dev.sh
-
-## Start API + web UI + Expo mobile
-dev-mobile:
-	@bash scripts/dev.sh --mobile
 
 ## Install all dependencies (Python + Node)
 install:

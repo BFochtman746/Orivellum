@@ -15,22 +15,17 @@
   Skip the UI build step (use existing dist/public). Useful for fast restarts
   when the UI source hasn't changed.
 
-.PARAMETER Mobile
-  Also start the Expo React Native dev server (still needs pnpm).
-
 .PARAMETER ApiPort
   API server port (default 8080).
 
 .EXAMPLE
   .\scripts\start.ps1
   .\scripts\start.ps1 -SkipBuild
-  .\scripts\start.ps1 -Mobile
   .\scripts\start.ps1 -ApiPort 9000
 #>
 
 param(
   [switch]$SkipBuild,
-  [switch]$Mobile,
   [int]$ApiPort = $(if ($env:API_PORT) { [int]$env:API_PORT } else { 8080 })
 )
 
@@ -197,50 +192,10 @@ if (-not $healthy) {
 }
 Write-Host "[api]  Ready [OK]" -ForegroundColor $Green
 
-# ---- Step 4: Mobile (optional) ---------------------------------------------
-$mobileHost = $null
-if ($Mobile) {
-  Write-Host "[mob]  Starting Expo ..." -ForegroundColor $Cyan
-  $mobDir = Join-Path $root "artifacts\mobile"
-
-  # Pick the address the phone should connect to: prefer the Tailscale IP
-  # (reachable from anywhere), else the LAN IP (same-WiFi only).
-  try {
-    $mobileHost = (& tailscale ip -4 2>$null | Select-Object -First 1)
-    if ($mobileHost) { $mobileHost = $mobileHost.Trim() }
-  } catch { $mobileHost = $null }
-  if (-not $mobileHost) {
-    $lanIp = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
-      Where-Object { $_.IPAddress -notlike "127.*" -and $_.IPAddress -notlike "169.254.*" } |
-      Select-Object -First 1 -ExpandProperty IPAddress
-    $mobileHost = $lanIp
-  }
-
-  # Expo advertises this hostname to the phone (inherited by the child window).
-  if ($mobileHost) { $env:REACT_NATIVE_PACKAGER_HOSTNAME = $mobileHost }
-
-  # dev:win avoids the POSIX-style env prefixes in the default dev script,
-  # which do not work on Windows, and binds to the LAN instead of localhost.
-  $mobProc = Start-Process -FilePath "powershell.exe" `
-    -ArgumentList "-NoProfile", "-Command", "& '$pnpmExe' run dev:win" `
-    -WorkingDirectory $mobDir `
-    -PassThru
-  $children.Add($mobProc)
-}
-
 Write-Host ""
 Write-Host "  App  -> http://localhost:$ApiPort/orivellum-ui/" -ForegroundColor White
 Write-Host "         Open in Safari on your iPhone and tap Share -> Add to Home Screen" -ForegroundColor $Gray
 Write-Host "  API  -> http://localhost:$ApiPort/api/" -ForegroundColor White
-if ($Mobile) {
-  if ($mobileHost) {
-    Write-Host "  Expo -> exp://${mobileHost}:19000" -ForegroundColor White
-    Write-Host "         On your phone: install 'Expo Go', open it, and enter the exp:// address above." -ForegroundColor $Gray
-    Write-Host "         In the app, set Server address to http://${mobileHost}:$ApiPort and enter your API key." -ForegroundColor $Gray
-  } else {
-    Write-Host "  Expo -> http://localhost:19000 (no LAN/Tailscale IP found - phone may not reach it)" -ForegroundColor White
-  }
-}
 Write-Host ""
 Write-Host "  Use -SkipBuild to restart without rebuilding the UI." -ForegroundColor $Gray
 Write-Host "  Press Ctrl+C to stop all services." -ForegroundColor $Gray

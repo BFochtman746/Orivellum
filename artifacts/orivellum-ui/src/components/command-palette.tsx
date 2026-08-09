@@ -15,45 +15,34 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Command } from "cmdk";
 import { useLocation } from "wouter";
+import type { LucideIcon } from "lucide-react";
 import {
-  Activity, Library, Workflow, Mic, Feather, Package, Globe2, BookOpen,
-  BookMarked, FolderOpen, GraduationCap, MessageSquare, Network, Zap, Mail,
-  Target, Inbox, CheckCircle2, HardDrive, Gauge, Search, Plus, RefreshCcw,
-  ArrowRight, Sparkles, X,
+  Workflow, Search, Plus, RefreshCcw, ArrowRight, Sparkles, X, LayoutGrid,
 } from "lucide-react";
+import { APPS } from "@/lib/apps";
 
-// ── Navigation items (mirrors layout.tsx PHASES) ───────────────────────────
+// ── Navigation items (derived from the app registry) ───────────────────────
 
-const NAV_ITEMS = [
-  // Import
-  { href: "/library",    label: "Library",       icon: Library,        group: "Import" },
-  { href: "/intake",     label: "Intake",         icon: Workflow,       group: "Import" },
-  // Create
-  { href: "/studio",     label: "Studio",         icon: Mic,            group: "Create" },
-  { href: "/write",      label: "Write",          icon: Feather,        group: "Create" },
-  { href: "/finishing",  label: "Finishing",      icon: Package,        group: "Create" },
-  { href: "/forge",      label: "Forge",          icon: Globe2,         group: "Create" },
-  // Understand
-  { href: "/works",      label: "Works",          icon: BookOpen,       group: "Understand" },
-  { href: "/chat",       label: "Chat",           icon: MessageSquare,  group: "Understand" },
-  { href: "/books",      label: "Books",          icon: BookMarked,     group: "Understand" },
-  { href: "/learn",      label: "Learn",          icon: GraduationCap,  group: "Understand" },
-  { href: "/topics",     label: "Topics",         icon: FolderOpen,     group: "Understand" },
-  { href: "/graph",      label: "Graph",          icon: Network,        group: "Understand" },
-  // Act
-  { href: "/actions",    label: "Actions",        icon: Zap,            group: "Act" },
-  { href: "/mail",       label: "Mail",           icon: Mail,           group: "Act" },
-  // Review
-  { href: "/projects",   label: "Projects",       icon: Target,         group: "Review" },
-  { href: "/review",     label: "Review Queue",   icon: Inbox,          group: "Review" },
-  { href: "/governance", label: "Governance",     icon: CheckCircle2,   group: "Review" },
-  // Settings
-  { href: "/system",     label: "System",         icon: Activity,       group: "Settings" },
-  { href: "/backups",    label: "Backups",        icon: HardDrive,      group: "Settings" },
-  { href: "/mcos",       label: "Calibration",    icon: Gauge,          group: "Settings" },
-] as const;
+interface NavItem {
+  href: string;
+  label: string;
+  icon: LucideIcon;
+  group: string;
+}
 
-const NAV_GROUPS = ["Import", "Create", "Understand", "Act", "Review", "Settings"] as const;
+const NAV_ITEMS: NavItem[] = [
+  { href: "/", label: "Home Screen", icon: LayoutGrid, group: "Home" },
+  ...APPS.flatMap((app) =>
+    app.routes.map((r) => ({
+      href: r.href,
+      label: r.name,
+      icon: app.icon,
+      group: app.name,
+    })),
+  ),
+];
+
+const NAV_GROUPS = ["Home", ...APPS.map((a) => a.name)];
 
 // ── Quick actions ─────────────────────────────────────────────────────────────
 

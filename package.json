@@ -5,7 +5,6 @@
   "scripts": {
     "preinstall": "node -e \"['package-lock.json','yarn.lock'].forEach(f=>{try{require('fs').unlinkSync(f)}catch(e){}});if(process.env.npm_config_user_agent&&!/^pnpm\\//.test(process.env.npm_config_user_agent)){console.error('Use pnpm instead');process.exit(1)}\"",
     "dev": "bash scripts/dev.sh",
-    "dev:mobile": "bash scripts/dev.sh --mobile",
     "build": "pnpm run typecheck && pnpm -r --if-present run build",
     "typecheck:libs": "tsc --build",
     "typecheck": "pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck",

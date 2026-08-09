@@ -13,7 +13,6 @@
 
 param(
     [string]$OrivellumPath  = "C:\Orivellum-main",
-    [switch]$NoMobile,
     [string]$WslDistro      = "Ubuntu-24.04",
     [string]$WslUser        = "bfoch",
     [string]$ContainerName  = "orivellum-comfyui",
@@ -133,9 +132,7 @@ if (Test-Path (Join-Path $OrivellumPath ".git")) {
 # -- Step 6: Start Orivellum ---------------------------------------------------
 Log "Starting Orivellum..."
 if (Test-Path (Join-Path $OrivellumPath "start.ps1")) {
-    # Start the mobile (Expo) server too unless -NoMobile was passed.
-    $mobileArg = if ($NoMobile) { "" } else { " -Mobile" }
-    $startCmd = "Set-Location '$OrivellumPath'; .\start.ps1$mobileArg"
+    $startCmd = "Set-Location '$OrivellumPath'; .\start.ps1"
 } else {
     # Fallback: invoke uv directly
     $startCmd = "Set-Location '$OrivellumPath'; uv run python -m orivellum.api.main"

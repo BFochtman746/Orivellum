@@ -12,7 +12,6 @@ import React, { useEffect } from "react";
 import { useLocation, Link } from "wouter";
 import { LayoutGrid } from "lucide-react";
 import type { AppDef } from "@/lib/apps";
-import { setLegacyShell } from "@/lib/apps";
 import { useConnectivity } from "@/lib/useConnectivity";
 
 export function connState(apiReachable: boolean, aiReachable: boolean): {
@@ -39,7 +38,6 @@ export function AppFrame({ app, children }: { app: AppDef; children: React.React
   }, [app.id]);
 
   const goHome = () => {
-    setLegacyShell(false);
     setLocation("/");
   };
 

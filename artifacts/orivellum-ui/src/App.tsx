@@ -3,13 +3,12 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Toaster } from '@/components/ui/toaster';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { Route, Switch, Router as WouterRouter, Redirect } from 'wouter';
-import { AppLayout } from '@/components/layout';
+import { CommandPalette } from '@/components/command-palette';
 import { ErrorBoundary, RouteErrorFallback } from '@/components/error-boundary';
 import { checkAuth, login } from '@/lib/auth';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 
-import Dashboard from '@/pages/dashboard';
 import WorksList from '@/pages/works/index';
 import WorkDetail from '@/pages/works/detail';
 import WorkIntelligence from '@/pages/works/intelligence';
@@ -47,7 +46,7 @@ import MailSettingsPage from '@/pages/mail/settings';
 import NotFound from '@/pages/not-found';
 import HomeScreen from '@/pages/home/index';
 import { AppFrame } from '@/components/app-frame';
-import { getAppForPath, isLegacyShell } from '@/lib/apps';
+import { getAppForPath } from '@/lib/apps';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -82,15 +81,14 @@ function RouteWithBoundary({ component: Page }: { component: React.ComponentType
 /**
  * Shell — picks the frame that wraps a routed page:
  *   - path owned by an app → GD-industrial AppFrame (full-screen, app nav only)
- *   - legacy flag set (Home Screen "Legacy console") → old sidebar AppLayout
- *   - unknown/legacy-only paths (/dashboard, /library/:id …) → old AppLayout
+ *   - unknown paths (NotFound) → rendered bare, no frame
  */
 function Shell({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
   const path = location.split('?')[0];
-  const app = isLegacyShell() ? null : getAppForPath(path);
+  const app = getAppForPath(path);
   if (app) return <AppFrame app={app}>{children}</AppFrame>;
-  return <AppLayout>{children}</AppLayout>;
+  return <>{children}</>;
 }
 
 function Router() {
@@ -112,7 +110,6 @@ function Router() {
 function RoutedPages() {
   return (
       <Switch>
-        <Route path="/dashboard">{() => <RouteWithBoundary component={Dashboard} />}</Route>
         <Route path="/works">{() => <RouteWithBoundary component={WorksList} />}</Route>
         <Route path="/works/:workId">{() => <RouteWithBoundary component={WorkDetail} />}</Route>
         <Route path="/works/:workId/intelligence">{() => <RouteWithBoundary component={WorkIntelligence} />}</Route>
@@ -279,6 +276,7 @@ function App() {
       <TooltipProvider>
         <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}>
           <Router />
+          <CommandPalette />
         </WouterRouter>
         <Toaster />
       </TooltipProvider>

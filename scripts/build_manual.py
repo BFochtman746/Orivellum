@@ -171,9 +171,8 @@ toc = [
     ("5.", "Lemonade AI Server Setup"),
     ("6.", "Recommended LLM Models for Lemonade"),
     ("7.", "First Launch & Configuration"),
-    ("8.", "Mobile App (Expo Go)"),
-    ("9.", "Environment Variables Reference"),
-    ("10.", "Troubleshooting"),
+    ("8.", "Environment Variables Reference"),
+    ("9.", "Troubleshooting"),
 ]
 for num, title in toc:
     p = doc.add_paragraph()
@@ -201,7 +200,6 @@ for item in [
     "☐  uv  (pip install uv  OR  winget install astral-sh.uv)",
     "☐  8 GB RAM minimum  (16 GB recommended for local LLM)",
     "☐  AMD or NVIDIA GPU  (optional — for Lemonade GPU acceleration)",
-    "☐  Expo Go app on your phone  (optional — for mobile access)",
 ]:
     bullet(item)
 
@@ -213,7 +211,6 @@ for item in [
     "☐  Copy and edit .env  (optional)",
     "☐  Start with  bash scripts/dev.sh",
     "☐  (Optional) Install Lemonade and load a model",
-    "☐  (Optional) Scan the QR code with Expo Go",
 ]:
     bullet(item)
 doc.add_page_break()
@@ -252,7 +249,7 @@ code("git clone https://github.com/BFo/orivellum-main.git\ncd orivellum-main")
 
 h(2, "Step 2 — Install JavaScript / TypeScript dependencies")
 code("pnpm install")
-body("Installs all workspace packages (web UI, mobile app, shared libraries, API client). "
+body("Installs all workspace packages (web UI, shared libraries, API client). "
      "Expect 2–5 minutes on first run.")
 
 h(2, "Step 3 — Set up the Python virtual environment")
@@ -267,7 +264,7 @@ tip("The app works without any .env file. "
     "AI model URLs and keys can also be set through the web Settings page.")
 
 h(2, "Step 5 — Start the application")
-code("# API server + Web UI\nbash scripts/dev.sh\n\n# API server + Web UI + Expo mobile\nbash scripts/dev.sh --mobile")
+code("# API server + Web UI\nbash scripts/dev.sh")
 body("The script starts FastAPI on port 8080, waits for a healthy response, then starts Vite on port 5173.")
 body("Open your browser to:")
 code("http://localhost:5173")
@@ -300,7 +297,7 @@ tip("Git for Windows includes Git Bash. If bash is not found, install Git for Wi
 
 h(2, "Step 4 — Production / Appliance mode  (no dev server)")
 body("Builds the UI bundle once, then serves everything from a single FastAPI process:")
-code(".\\scripts\\start.ps1\n\n# Skip rebuilding the UI (fast restart):\n.\\scripts\\start.ps1 -SkipBuild\n\n# With Expo mobile server:\n.\\scripts\\start.ps1 -Mobile")
+code(".\\scripts\\start.ps1\n\n# Skip rebuilding the UI (fast restart):\n.\\scripts\\start.ps1 -SkipBuild")
 body("Then open:")
 code("http://localhost:8080/orivellum-ui/")
 tip("Bookmark this URL and use Add to Home Screen in your browser for a near-native app experience.")
@@ -453,69 +450,33 @@ h(1, "7.  First Launch & Configuration")
 
 h(2, "What you see on first launch")
 numbered("The web UI opens at  http://localhost:5173")
-numbered("Dashboard shows a time-of-day greeting and empty sections")
-numbered("Library (sidebar → Import) is where you upload your first documents")
+numbered("The Home Screen shows a launch tile for each app: Writing, Learning, Chat, Studio, Command, Mail, and Library")
+numbered("The Library app is where you upload your first documents")
 numbered("Chat works immediately — try asking anything even without a local model")
 
 h(2, "Connect a local AI model")
 numbered("Start Lemonade and load a model  (see Section 5)")
-numbered("Open Orivellum → System page → Settings card")
+numbered("Open Orivellum → Command app → System page → Settings card")
 numbered('Under "Local AI (Lemonade)" enter:  http://127.0.0.1:13305/api/v1')
 numbered("Click Save — the status indicator turns green")
 
 h(2, "Import your first document")
-numbered("Click Import in the sidebar")
+numbered("Open the Library app from the Home Screen")
 numbered("Drag and drop a PDF, DOCX, EPUB, or image — or click to browse")
 numbered("Orivellum extracts knowledge, auto-assigns it to a Work, and makes it searchable in Chat")
 tip("Works are like projects or books — they group related documents. "
     "Orivellum automatically suggests the right Work when you import.")
 
 h(2, "Start your first chat")
-body("Click Chat in the sidebar. "
+body("Open the Chat app from the Home Screen. "
      "Scope a conversation to a specific Work using the Work selector at the top — "
      "the AI will draw exclusively from that Work's documents for precise, cited answers.")
 doc.add_page_break()
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 8. MOBILE APP (EXPO GO)
+# 8. ENVIRONMENT VARIABLES REFERENCE
 # ─────────────────────────────────────────────────────────────────────────────
-h(1, "8.  Mobile App (Expo Go)")
-
-add_image("docs/manual/mobile-preview.jpg", 3.5, "Orivellum mobile — chat and library views")
-
-h(2, "Requirements")
-bullet("iPhone (iOS 16+) or Android (10+)")
-bullet("Expo Go installed from App Store or Play Store")
-bullet("Same WiFi network as the computer running Orivellum")
-
-h(2, "Start with mobile support")
-code("# Mac / Linux\nbash scripts/dev.sh --mobile\n\n"
-     "# Windows PowerShell\n.\\scripts\\start.ps1 -Mobile")
-body("Expo prints a QR code in the terminal. "
-     "Scan it with your phone camera (iOS) or the Expo Go app (Android).")
-
-h(2, "Configure the API address")
-body("The mobile app reads the server address from EXPO_PUBLIC_DOMAIN. Set it in the mobile .env file:")
-code("# artifacts/mobile/.env\nEXPO_PUBLIC_DOMAIN=192.168.1.100:8080\n\n"
-     "# Replace 192.168.1.100 with your computer LAN IP")
-tip("Find your LAN IP:  ipconfig (Windows)  or  ifconfig | grep 192.168 (Mac/Linux)")
-
-h(2, "Features on mobile")
-for feat in [
-    "Chat with all your Works and documents — full AI context",
-    "Upload files from your photo library or the Files app",
-    "Listen to generated audiobooks with in-app player",
-    "Browse and manage your knowledge library",
-    "Mail steward — view and action AI-assessed Outlook emails",
-    "Works, Books, Learn, Projects, and Write desk",
-]:
-    bullet(feat)
-doc.add_page_break()
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 9. ENVIRONMENT VARIABLES REFERENCE
-# ─────────────────────────────────────────────────────────────────────────────
-h(1, "9.  Environment Variables Reference")
+h(1, "8.  Environment Variables Reference")
 body("Create  artifacts/api-server/.env  (copy from .env.example). All variables are optional — sensible defaults apply.")
 
 env_headers = ["Variable", "Default", "Description"]
@@ -526,7 +487,6 @@ env_rows = [
     ("LEMONADE_MODEL",        "(blank = server default)",      "Model ID to request from Lemonade"),
     ("AI_EXTRACTION_ENABLED", "false",                         "Enable LLM-powered knowledge extraction on import"),
     ("TAVILY_API_KEY",        "(blank)",                       "Tavily search key for online research feature"),
-    ("EXPO_PUBLIC_DOMAIN",    "localhost:8080",                "API host:port used by the mobile app"),
     ("DATA_DIR",              "./data",                        "Directory where Orivellum stores its database and files"),
     ("DEBUG",                 "0",                             "Set to 1 for verbose API logging"),
 ]
@@ -534,9 +494,9 @@ add_table(env_headers, env_rows, [Inches(1.9), Inches(1.6), Inches(2.5)])
 doc.add_page_break()
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 10. TROUBLESHOOTING
+# 9. TROUBLESHOOTING
 # ─────────────────────────────────────────────────────────────────────────────
-h(1, "10.  Troubleshooting")
+h(1, "9.  Troubleshooting")
 
 h(2, "API server does not start")
 bullet("Check Python version:  python --version  — must be 3.12 or newer")
@@ -555,13 +515,6 @@ bullet("Check the URL exactly matches the Settings field — no trailing slash")
 bullet("Ensure a model is loaded before sending messages")
 code("# Test Lemonade from the terminal\ncurl http://127.0.0.1:13305/api/v1/models\n\n"
      "# Expected response:\n# {\"object\":\"list\",\"data\":[{\"id\":\"...\"}]}")
-
-h(2, "Mobile app cannot connect to server")
-bullet("Both phone and computer must be on the same WiFi network")
-bullet("Set EXPO_PUBLIC_DOMAIN to your computer LAN IP (not localhost)")
-bullet("Windows: allow inbound connections on port 8080 in Windows Firewall")
-code("# Windows PowerShell — open firewall port\nNew-NetFirewallRule -DisplayName 'Orivellum' "
-     "-Direction Inbound -Port 8080 -Protocol TCP -Action Allow")
 
 h(2, "Slow AI responses with local model")
 bullet("Switch to a smaller quantization: Q4_K_M instead of Q8_0")

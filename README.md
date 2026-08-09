@@ -70,19 +70,6 @@ That's it. The script starts the API server, waits until it passes its health ch
 
 Open **http://localhost:5173** once you see the `Ready ✓` line.
 
-#### With Expo mobile
-
-**macOS / Linux**
-```bash
-./start.sh --mobile
-# or: make dev-mobile
-```
-
-**Windows**
-```powershell
-.\scripts\start.ps1 -Mobile
-```
-
 #### Port overrides
 
 **macOS / Linux**

@@ -10,7 +10,6 @@ A sovereign, local-first knowledge management and AI assistant platform. All dat
 |---------|-------------|
 | `uv run python -m orivellum.api.main` | Start the Python API server (default port 8080) |
 | `PORT=5173 BASE_PATH=/ ORIVELLUM_API_URL=http://127.0.0.1:8080 pnpm --filter @workspace/orivellum-ui run dev` | Start the web frontend |
-| `pnpm --filter @workspace/mobile run dev` | Start the Expo mobile dev server |
 | `pnpm --filter @workspace/api-spec run codegen` | Regenerate React Query hooks + Zod schemas from OpenAPI spec |
 | `pnpm --filter @workspace/api-spec run sync-client` | Regenerate hooks/schemas **and** rebuild `api-client-react` declarations — run this after any OpenAPI change |
 | `pnpm run typecheck` | Full typecheck across all packages |
@@ -22,7 +21,6 @@ A sovereign, local-first knowledge management and AI assistant platform. All dat
 
 - **Backend**: Python 3.13, FastAPI, SQLite (via uv), schema v106
 - **Frontend**: React + Vite, Tailwind CSS, shadcn/ui, TanStack Query, wouter routing
-- **Mobile**: Expo (React Native) with Expo Router
 - **AI**: OpenAI-compatible local model server (Lemonade port 13305 by default; configurable)
 - **Codegen**: Orval 8.23 → React Query hooks + Zod v4 schemas from `lib/api-spec/openapi.yaml`
 - **pnpm workspace**: `artifacts/*`, `lib/*`, `lib/integrations/*`, `scripts`
@@ -40,7 +38,6 @@ A sovereign, local-first knowledge management and AI assistant platform. All dat
 | Web pages | `artifacts/orivellum-ui/src/pages/` |
 | OpenAPI spec | `lib/api-spec/openapi.yaml` |
 | Generated API client | `lib/api-client-react/` |
-| Mobile screens | `artifacts/mobile/app/` |
 | Data + SQLite DB | `data/` (created on first run) |
 | Forge build output | `data/forge-builds/{project_id}/{job_id}/` |
 
@@ -50,7 +47,7 @@ A sovereign, local-first knowledge management and AI assistant platform. All dat
 
 | Route | Page |
 |-------|------|
-| `/` | Dashboard |
+| `/` | Home Screen (app launcher) |
 | `/works` | Works index |
 | `/works/:workId` | Work detail (docs, knowledge, tasks, conversations, pipeline) |
 | `/works/:workId/intelligence` | MONARCH book intelligence view |

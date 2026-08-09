@@ -4,7 +4,6 @@
 # Usage:
 #   ./start.sh               # Dev mode: API + Vite dev server (hot reload)
 #   ./start.sh --prod        # Production mode: build UI → serve from API only
-#   ./start.sh --mobile      # Dev mode + Expo
 #   ./start.sh --prod --skip-build  # Production mode reusing existing dist/
 #
 # In production mode the built PWA is reachable at:

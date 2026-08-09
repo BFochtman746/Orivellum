@@ -15,10 +15,6 @@
 - [Projects detail page](orivellum-projects-detail.md) — /projects/:projectId route added; ProjectDetail component at pages/projects/detail.tsx; fetches GET /api/projects/:id and /concepts; shows mastery progress bar + concept list with masteryLabel/masteryColor helpers.
 - [Library reprocess polling](orivellum-library-reprocess.md) — handleReprocess uses setInterval (2s, max 15 attempts) to poll refetch() until readiness leaves "imported"; shows toast.success/error based on final readiness.
 - [Briefing endpoint](orivellum-briefing.md) — GET /api/system/briefing returns time-of-day greeting; uses pending_task_count from dashboard_summary; Good morning/afternoon/evening based on UTC hour.
-- [Mobile app improvements](mobile-improvements.md) — URL pattern, missing hooks, navigation, component patterns, styles, and pitfalls for the Expo mobile app.
-- [Mobile parity & quality pass](mobile-parity-pass.md) — new pages (projects, project/[id], forge, forge/[id], mcos); fixed graph/memory/not-found; governance deep-link routing; themed login screen; SyncOverlay component.
-- [Mobile Works Detail tabs](mobile-works-detail-tabs.md) — Tab order, BrainstormTab API, book health card pattern in OverviewTab.
-- [Mobile Learn Tab](mobile-learn-tab.md) — SESSION_LIMIT=5 correct triggers session_done; /learning/concepts is in learning.py not works.py.
 - [Library page improvements](library-improvements.md) — Work filter chip added; import dialog uses Select for work picker; duplicate upload navigates to existing doc; backup download; file download hover button.
 - [Orivellum polling patterns](orivellum-polling-patterns.md) — Conditional refetchInterval throughout; docs poll at 4s while "imported"; health polls 10-15s always; dashboard/lists poll 30s always.
 - [Orivellum hardening decisions](orivellum-hardening.md) — Rate limiting, output rotation, streaming timeout, error barriers, connection indicators, model attribution, single-command startup.
@@ -31,7 +27,6 @@
 - [Safari HTTP compatibility](safari-http-compat.md) — crypto.randomUUID/clipboard blocked over HTTP; polyfills in lib/uuid.ts; CORS regex covers Tailscale 100.64–127.x.x range.
 - [Chat global knowledge search](orivellum-chat-knowledge.md) — _build_system_prompt now accepts user_query; uses search_knowledge+search_chunks globally, grouped by Work/topic; recency fallback when no query.
 - [Websearch pipeline design](orivellum-websearch-pipeline.md) — Tavily provider; multi-query RRF; BM25 passage ranking; planner overlaps first search wave (never re-serialize); transcripts fetched concurrently.
-- [Mobile library detail](mobile-library-detail.md) — knowledge review (thumbs up/down via PATCH /api/knowledge/{id}/review) and work linking (bottom-sheet modal picker via PATCH /api/library/{id}) both live in artifacts/mobile/app/library/[id].tsx; uses mobileFetch + useListWorks.
 - [Chat send failure UX](orivellum-chat-failure.md) — on thrown stream errors, message stays as a red "failed" bubble (failed:true); finally block filters to keep m.incomplete||m.failed; web only; mobile still needs this (task #140).
 - [Library upload path](orivellum-upload-progress.md) — web uses streaming multipart POST /library/upload (XHR progress); body-limit middleware must exempt streaming routes; dedup race handled via sha UNIQUE catch.
 - [Duplicate send guard](orivellum-dup-send.md) — conversations.py checks db._conn directly for a matching user message within 5s before storing; uses db._lock; should be moved to a public db method (task #139).
@@ -55,7 +50,6 @@
 - [Data-tier classifier](orivellum-data-tier.md) — classify.py at capabilities/classify.py; documents.tier column (schema v62); ARTIFACT/SYSTEM zip children skip harvest; only CANON archives propose Works; create_document has tier= param; ServingConfig.model back-compat alias added.
 - [Book pipeline slice](book-pipeline-slice.md) — create_book_pipeline/get_book_pipeline_for_work in db.py; 3 routes on works.py (POST/GET/advance); BOOK_SM.apply_transition; PipelinePanel UI in book-tab.tsx; Body must be imported from fastapi.
 - [Embeddings probe endpoints](orivellum-embeddings-probe.md) — GET /system/embeddings/status (circuit breaker state, no network call); POST /system/embeddings/probe (live test, resets breaker on success); SemanticSearchCard in system/index.tsx.
-- [Document TTS mobile](orivellum-doc-tts-mobile.md) — DocumentTTSRequest.return_url=True returns JSON {ok,path,filename} instead of FileResponse; mobile plays via GET /studio/outputs/serve?path=; createAudioPlayer needs authSource pattern with getApiToken(); playbackStatusUpdate event (not playToEnd) for end detection; setAudioModeAsync key is playsInSilentMode not playsInSilentModeIOS.
 - [Nightshift version suggestions](orivellum-nightshift-maint.md) — pass 14 added: _pass_version_suggestions cross-checks doc pairs in each Work by filename stem; same _stems_similar logic as library.py upload path; idempotent (skips existing suggestions).
 - [Memory + recall system](orivellum-memory-recall.md) — inference-based capture after every reply; single-row-per-key versioning; conv_chunk vectors; recall intent handler; GET /api/memory; MemoryPanel UI.
 - [System diagnostic tool](orivellum-diagnostics.md) — full health check CLI + API endpoint + web UI card; run with `uv run python scripts/run_diagnostics.py [--vacuum]`.
@@ -75,6 +69,5 @@
 - [Lemonade multi-model & NPU/GPU split](lemonade-multimodel.md) — max_loaded_models is per model type; chat(DB override)→NPU vs harvest(config workhorse)→iGPU divergence is intentional.
 - [Lemonade model lineup](lemonade-model-lineup.md) — MoE-only lineup for Strix Halo; catalog-exact IDs; 5 sync points incl. config.yaml (wins over defaults); gmail slug is google-mail.
 - [Cross-encoder reranker](orivellum-cross-reranker.md) — Lemonade /rerank stage needs breaker + single-flight probe; malformed responses open cooldown; normalize boolean settings.
-- [Mobile configurable server origin](mobile-server-origin.md) — apiOrigin() only, lazy module consts, dev:win for Windows Expo, native fetch skips CORS; never use EXPO_PUBLIC_DOMAIN in app code.
 - [GD app-hub pattern](gd-app-hub-pattern.md) — gd-tile hubs + dark-token interior flip via useGdDark(); wouter useSearch (not useLocation) for ?param-only navigation.
-- [Weather hourly forecast](mobile-weather-hourly.md) — Open-Meteo hourly param (temperature_2m,weathercode,precipitation_probability); HourlyPoint type in useWeather.ts; WeatherCard tap → native Modal bottom sheet showing next 24h; uses TtsSettingsSheet Modal pattern.
+- [Mobile app retirement](mobile-retirement.md) — Expo app deleted Aug 2026; PWA is the only client; features to rebuild on web + leftover backend push plumbing.
