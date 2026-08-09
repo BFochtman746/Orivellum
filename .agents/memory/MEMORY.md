@@ -76,4 +76,5 @@
 - [Lemonade model lineup](lemonade-model-lineup.md) — MoE-only lineup for Strix Halo; catalog-exact IDs; 5 sync points incl. config.yaml (wins over defaults); gmail slug is google-mail.
 - [Cross-encoder reranker](orivellum-cross-reranker.md) — Lemonade /rerank stage needs breaker + single-flight probe; malformed responses open cooldown; normalize boolean settings.
 - [Mobile configurable server origin](mobile-server-origin.md) — apiOrigin() only, lazy module consts, dev:win for Windows Expo, native fetch skips CORS; never use EXPO_PUBLIC_DOMAIN in app code.
+- [GD app-hub pattern](gd-app-hub-pattern.md) — gd-tile hubs + dark-token interior flip via useGdDark(); wouter useSearch (not useLocation) for ?param-only navigation.
 - [Weather hourly forecast](mobile-weather-hourly.md) — Open-Meteo hourly param (temperature_2m,weathercode,precipitation_probability); HourlyPoint type in useWeather.ts; WeatherCard tap → native Modal bottom sheet showing next 24h; uses TtsSettingsSheet Modal pattern.
