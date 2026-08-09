@@ -8,8 +8,8 @@
  */
 import { useState } from "react";
 import { Link, useLocation } from "wouter";
-import { useQuery } from "@tanstack/react-query";
-import { useListWorks } from "@workspace/api-client-react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useListWorks, getListWorksQueryKey } from "@workspace/api-client-react";
 import { apiFetch } from "@/lib/auth";
 import { format } from "date-fns";
 import {
@@ -21,8 +21,10 @@ import {
   Loader2,
   ChevronRight,
   CircleDashed,
+  Play,
 } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
+import { toast } from "sonner";
 
 const BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
 
@@ -114,6 +116,49 @@ function HealthChip({ w }: { w: WorkRow }) {
   );
 }
 
+/** "Start pipeline" chip — shown on tiles with documents but no book pipeline.
+ *  Same endpoint as the Books page Promote button; sits inside the tile Link,
+ *  so the click must not navigate. */
+function StartPipelineChip({ workId, workTitle }: { workId: string; workTitle: string }) {
+  const queryClient = useQueryClient();
+  const { mutate, isPending } = useMutation({
+    mutationFn: () =>
+      apiFetch(`${BASE}/works/${workId}/pipeline`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: workTitle }),
+      }).then((r) => {
+        if (!r.ok) throw new Error("start pipeline failed");
+        return r.json();
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["books"] });
+      queryClient.invalidateQueries({ queryKey: getListWorksQueryKey({}) });
+      toast.success(`Book pipeline started for "${workTitle}"`);
+    },
+    onError: () => toast.error("Could not start the book pipeline"),
+  });
+
+  return (
+    <button
+      type="button"
+      className="gd-chip mt-2 relative z-10 self-start"
+      style={{ minHeight: 48 }}
+      disabled={isPending}
+      onClick={() => mutate()}
+      aria-label={`Start book pipeline for ${workTitle}`}
+      data-testid={`button-start-pipeline-${workId}`}
+    >
+      {isPending ? (
+        <Loader2 className="w-3.5 h-3.5 animate-spin" aria-hidden />
+      ) : (
+        <Play className="w-3.5 h-3.5" aria-hidden />
+      )}
+      {isPending ? "Starting…" : "Start pipeline"}
+    </button>
+  );
+}
+
 export default function WritingHub() {
   const [, setLocation] = useLocation();
   const [showArchived, setShowArchived] = useState(false);
@@ -180,12 +225,19 @@ export default function WritingHub() {
           {works.map((w) => {
             const book = w.id ? bookByWork.get(w.id) : undefined;
             return (
-            <Link
+            <div
               key={w.id}
-              href={`/works/${w.id}`}
-              className="gd-tile"
+              className="gd-tile relative"
               data-testid={`tile-work-${w.id}`}
             >
+              {/* Stretched link — whole tile body navigates, without nesting
+                  the Start-pipeline button inside an anchor (invalid HTML). */}
+              <Link
+                href={`/works/${w.id}`}
+                className="absolute inset-0 rounded-[10px]"
+                aria-label={`Open ${w.title || "Untitled"}`}
+                data-testid={`link-work-${w.id}`}
+              />
               <div className="flex items-start gap-2">
                 <div className="min-w-0 flex-1">
                   <div
@@ -236,6 +288,9 @@ export default function WritingHub() {
                   </div>
                 </div>
               )}
+              {!book && (w.doc_count ?? 0) > 0 && w.id && (
+                <StartPipelineChip workId={w.id} workTitle={w.title ?? "Untitled"} />
+              )}
               <div
                 className="flex items-center gap-4 pt-2 mt-auto"
                 style={{ borderTop: "1px solid var(--gd-line)" }}
@@ -256,7 +311,7 @@ export default function WritingHub() {
                   </span>
                 )}
               </div>
-            </Link>
+            </div>
             );
           })}
         </div>

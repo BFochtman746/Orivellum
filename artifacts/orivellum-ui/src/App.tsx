@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Toaster } from '@/components/ui/toaster';
+import { Toaster as SonnerToaster } from 'sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { Route, Switch, Router as WouterRouter, Redirect } from 'wouter';
 import { CommandPalette } from '@/components/command-palette';
@@ -285,6 +286,9 @@ function App() {
           <CommandPalette />
         </WouterRouter>
         <Toaster />
+        {/* Many pages emit toasts via sonner's toast() — without this mounted
+            Toaster those calls silently render nothing. */}
+        <SonnerToaster position="top-center" richColors closeButton />
       </TooltipProvider>
     </QueryClientProvider>
   );
