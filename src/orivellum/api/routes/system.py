@@ -1027,13 +1027,23 @@ def probe_embeddings():
     """
     from orivellum.capabilities.embeddings import embed_texts, _reset_circuit_breaker
     try:
-        vecs = embed_texts(["semantic search health probe"], timeout=8)
+        # bypass_cooldown forces a real network attempt even while the failure
+        # cooldown is open — previously a probe during cooldown short-circuited
+        # to None and reported "no vectors" even after the endpoint recovered.
+        # Generous timeout: the AI server may need to load the embedding model
+        # from disk on the first call after startup/eviction.
+        vecs = embed_texts(["semantic search health probe"], timeout=30,
+                           bypass_cooldown=True)
         if vecs and len(vecs) > 0:
+            # Success closes the cooldown inside embed_texts, but reset
+            # explicitly for clarity/back-compat.
             _reset_circuit_breaker()
             return {"ok": True, "dims": len(vecs[0]),
                     "detail": f"Embedding returned {len(vecs[0])}-dimensional vector — semantic search is active."}
         return {"ok": False, "status": "empty",
-                "detail": "Embedding call returned no vectors. Semantic search falls back to keyword-only."}
+                "detail": ("Embedding call returned no vectors. Check that the embedding model "
+                           "is pulled and loadable on the AI server (it may still be loading — "
+                           "try again in a minute). Semantic search falls back to keyword-only.")}
     except Exception as exc:
         return {"ok": False, "status": "error", "detail": str(exc)}
 
@@ -1093,6 +1103,8 @@ def reindex_status():
         "live_dim":       live_dim,
         "mismatch":       mismatch,
         "embedder_model": getattr(cfg.serving, "embedder_model", ""),
+        # Non-empty when the last reindex stopped early (endpoint died mid-run).
+        "error":          db.get_setting("reindex_error", "") or None,
     }
 
 
@@ -1141,6 +1153,7 @@ def trigger_reindex():
         db.set_setting("reindex_running", "true")
         db.set_setting("reindex_done",    "0")
         db.set_setting("reindex_total",   "0")
+        db.set_setting("reindex_error",   "")
     finally:
         # Always release before spawning the thread so other calls are not
         # permanently blocked even if setup fails.

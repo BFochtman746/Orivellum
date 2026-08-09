@@ -1663,6 +1663,7 @@ type ReindexStatus = {
   live_dim: number | null;
   mismatch: boolean;
   embedder_model: string;
+  error?: string | null;
   counts: {
     chunk_total: number; chunk_done: number;
     knowledge_total: number; knowledge_done: number;
@@ -1809,6 +1810,15 @@ function SemanticSearchCard() {
                   only use keyword matching until you click <span className="font-medium">Re-index All</span> to
                   rebuild the vector index with the new model.
                 </span>
+              </div>
+            )}
+
+            {/* Last re-index stopped early (endpoint died mid-run) */}
+            {rx?.error && !rx.running && (
+              <div className="flex items-start gap-2 rounded-lg px-3 py-2 border"
+                   style={{ background: 'var(--rust-soft)', borderColor: 'color-mix(in srgb, var(--rust) 28%, transparent)', color: 'var(--rust)' }}>
+                <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                <span className="text-xs">{rx.error}</span>
               </div>
             )}
 

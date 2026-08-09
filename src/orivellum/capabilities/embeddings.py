@@ -234,11 +234,18 @@ def count_embeddable_items(db: "OrivellumDB") -> dict[str, int]:
     try:
         with db._lock:
             c = db._conn
+            # done counts are eligibility-matched DISTINCT joins — a raw
+            # COUNT(*) over vectors would count orphaned/duplicate rows or
+            # vectors for since-rejected knowledge, letting "done" drift from
+            # the population "total" describes (and masking incomplete
+            # reindexes).
             chunk_total = c.execute(
                 "SELECT COUNT(*) FROM chunks WHERE length(text) > 40"
             ).fetchone()[0]
             chunk_done = c.execute(
-                "SELECT COUNT(*) FROM vectors WHERE object_type='chunk'"
+                "SELECT COUNT(DISTINCT v.object_id) FROM vectors v"
+                " JOIN chunks ch ON ch.id = v.object_id"
+                " WHERE v.object_type='chunk' AND length(ch.text) > 40"
             ).fetchone()[0]
             know_total = c.execute(
                 "SELECT COUNT(*) FROM knowledge"
@@ -246,13 +253,19 @@ def count_embeddable_items(db: "OrivellumDB") -> dict[str, int]:
                 "  AND length(text) > 20"
             ).fetchone()[0]
             know_done = c.execute(
-                "SELECT COUNT(*) FROM vectors WHERE object_type='knowledge'"
+                "SELECT COUNT(DISTINCT v.object_id) FROM vectors v"
+                " JOIN knowledge k ON k.id = v.object_id"
+                " WHERE v.object_type='knowledge'"
+                "  AND k.review_status NOT IN ('rejected','superseded_duplicate')"
+                "  AND length(k.text) > 20"
             ).fetchone()[0]
             cc_total = c.execute(
                 "SELECT COUNT(*) FROM conversation_chunks WHERE length(text) > 30"
             ).fetchone()[0]
             cc_done = c.execute(
-                "SELECT COUNT(*) FROM vectors WHERE object_type='conv_chunk'"
+                "SELECT COUNT(DISTINCT v.object_id) FROM vectors v"
+                " JOIN conversation_chunks cc ON cc.id = v.object_id"
+                " WHERE v.object_type='conv_chunk' AND length(cc.text) > 30"
             ).fetchone()[0]
         return {
             "chunk_total": chunk_total, "chunk_done": chunk_done,
@@ -299,8 +312,37 @@ def run_full_reindex(db: "OrivellumDB", *, batch_size: int = 64) -> int:
             db.set_setting("reindex_done", str(embedded_total))
             logger.debug("Reindex progress: %d / %d", embedded_total, total)
 
-        logger.info("Reindex complete: %d vectors written", embedded_total)
+        # Distinguish "finished" from "endpoint died mid-run". A silent early
+        # stop after DELETE FROM vectors would otherwise look like success
+        # while leaving the library with zero (or partial) vectors.
+        remaining = count_embeddable_items(db)
+        missing = remaining["total"] - remaining["done"]
+        if missing > 0:
+            msg = (f"Re-index stopped early — {missing} of {remaining['total']} items "
+                   "could not be embedded because the embeddings endpoint stopped "
+                   "returning vectors. Check the AI server, then run Re-index All again "
+                   "(already-embedded items are kept).")
+            db.set_setting("reindex_error", msg)
+            logger.warning("Reindex incomplete: %d vectors written, %d missing",
+                           embedded_total, missing)
+        else:
+            db.set_setting("reindex_error", "")
+            logger.info("Reindex complete: %d vectors written", embedded_total)
         return embedded_total
+    except Exception as exc:
+        # The vectors table was already cleared — never fail silently after
+        # destructive work. Persist a durable error the status endpoint/UI
+        # can surface with a recovery instruction.
+        try:
+            db.set_setting(
+                "reindex_error",
+                f"Re-index failed mid-run ({exc}). The vector index is incomplete — "
+                "run Re-index All again once the problem is resolved "
+                "(already-embedded items are kept).",
+            )
+        except Exception:
+            pass
+        raise
     finally:
         db.set_setting("reindex_running", "false")
 
@@ -313,17 +355,22 @@ def _serving():
 
 
 def embed_texts(texts: list[str],
-                timeout: float = _EMBED_TIMEOUT) -> list[list[float]] | None:
+                timeout: float = _EMBED_TIMEOUT,
+                bypass_cooldown: bool = False) -> list[list[float]] | None:
     """Embed a batch of texts. Returns None when the endpoint is unavailable.
 
     A failed call opens a short cooldown during which subsequent calls return
     None immediately (no network attempt), so interactive paths keep BM25-level
     latency while the endpoint is down. Any success closes the cooldown.
+
+    ``bypass_cooldown=True`` forces a real network attempt even while the
+    cooldown is open — used by the health probe so a user-initiated "test"
+    cannot be short-circuited by a concurrent failure reopening the breaker.
     """
     global _unavailable_until
     if not texts:
         return []
-    if time.monotonic() < _unavailable_until:
+    if not bypass_cooldown and time.monotonic() < _unavailable_until:
         return None
     base_url, model = _serving()
     payload = json.dumps({
