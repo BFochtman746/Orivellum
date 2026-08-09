@@ -30,7 +30,8 @@ import { useColors } from '@/hooks/useColors';
 import { useVellumTokens } from '@/lib/tokens';
 import { font, fontSerif } from '@/lib/typography';
 import { SkeletonItem } from '@/components/SkeletonItem';
-import { mobileFetch } from '@/lib/api';
+import { mobileFetch, mobileStreamFetch } from '@/lib/api';
+import { createPlayerSafe } from '@/lib/audioPlayer';
 import { useSheetAnimation } from '@/lib/useSheetAnimation';
 import { getApiToken } from '@/lib/token';
 import * as Haptics from 'expo-haptics';
@@ -842,7 +843,7 @@ function useSharedAudio() {
         if (st?.didJustFinish || (st?.isLoaded && !st.playing && st.currentTime > 0 && st.duration > 0 && st.currentTime >= st.duration - 0.25)) {
           stop();
         }
-        if (st?.error) {
+        if ((st as any)?.error) {
           Alert.alert(
             'Voice not ready',
             'Could not load the voice sample. It may still be generating — please try again in a moment.',
@@ -1671,6 +1672,10 @@ function useStreamingTTS() {
   const pollRef         = useRef<ReturnType<typeof setInterval> | null>(null);
   const abortRef        = useRef<AbortController | null>(null);
   const mountedRef      = useRef(true);
+  // Monotonic playback-run token: bumped on every startStream/stop/unmount so
+  // async player creation (createPlayerSafe may await a download) can detect
+  // that its result is stale and must be discarded instead of played.
+  const runIdRef        = useRef(0);
   // Tracks whether the server sent a 'concat' event (full merged audio) so the
   // done handler knows whether fullAudioUri is the complete file or a fallback.
   const concatReceivedRef = useRef(false);
@@ -1679,6 +1684,7 @@ function useStreamingTTS() {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
+      runIdRef.current += 1;
       _cleanupPlayer();
       abortRef.current?.abort();
     };
@@ -1690,7 +1696,7 @@ function useStreamingTTS() {
     playerRef.current = null;
   }
 
-  function _playNext() {
+  async function _playNext() {
     _cleanupPlayer();
 
     const uri = queueRef.current.shift();
@@ -1700,16 +1706,19 @@ function useStreamingTTS() {
       return;
     }
 
-    const token = getApiToken();
+    // Capture the current run so a Stop / new synthesis / unmount that occurs
+    // while createPlayerSafe awaits (download fallback) cannot start stale audio.
+    const runId = runIdRef.current;
     try {
-      const player = createAudioPlayer({
-        uri,
-        headers: token ? { authorization: `Bearer ${token}` } : undefined,
-      });
+      const player = await createPlayerSafe(uri);
+      if (!mountedRef.current || runIdRef.current !== runId) {
+        try { player.remove(); } catch {}
+        return;
+      }
       playerRef.current = player;
       player.play();
       playedRef.current += 1;
-      if (mountedRef.current) setSegCurrent(playedRef.current);
+      setSegCurrent(playedRef.current);
 
       pollRef.current = setInterval(() => {
         if (!mountedRef.current) return;
@@ -1722,7 +1731,7 @@ function useStreamingTTS() {
         if (ended) {
           clearInterval(pollRef.current!); pollRef.current = null;
           _playNext();
-        } else if (st?.error) {
+        } else if ((st as any)?.error) {
           clearInterval(pollRef.current!); pollRef.current = null;
           _playNext(); // skip errored segment
         }
@@ -1743,7 +1752,40 @@ function useStreamingTTS() {
     }
   }
 
+  /**
+   * Standard (non-streaming) synthesis fallback: one POST with
+   * `return_url: true` → JSON `{ path }` → play the single full file through
+   * the normal segment queue.  Used when SSE streaming is unavailable.
+   */
+  async function _fallbackStandard(
+    text: string, voice: string, speed: number, signal?: AbortSignal,
+  ) {
+    const resp = await mobileFetch(`${API()}/studio/tts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, voice, speed, return_url: true }),
+      signal,
+    });
+    if (!resp.ok) {
+      const errData = await resp.json().catch(() => ({})) as any;
+      throw new Error(errData.detail ?? `HTTP ${resp.status}`);
+    }
+    const json = await resp.json() as { path?: string };
+    if (!json.path) throw new Error('Synthesis returned no audio path');
+
+    const uri = serveUrl(json.path);
+    serverDoneRef.current = true;
+    streamDoneRef.current = true;
+    segTotalRef.current = 1;
+    if (mountedRef.current) {
+      setFullAudioUri(uri);
+      setConcatOk(true);
+    }
+    _enqueueSegment(uri, 1);
+  }
+
   async function startStream(text: string, voice: string, speed: number) {
+    runIdRef.current += 1;
     abortRef.current?.abort();
     _cleanupPlayer();
     queueRef.current    = [];
@@ -1770,7 +1812,10 @@ function useStreamingTTS() {
     abortRef.current = controller;
 
     try {
-      const resp = await mobileFetch(`${API()}/studio/tts`, {
+      // Use the streaming-capable fetch: React Native's built-in fetch never
+      // exposes response.body on device, which previously made this check
+      // fail with "Streaming not available" on every phone.
+      const resp = await mobileStreamFetch(`${API()}/studio/tts`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text, voice, speed, stream: true }),
@@ -1783,18 +1828,12 @@ function useStreamingTTS() {
       }
 
       // Streaming TTS requires SSE (text/event-stream).  If the server returns
-      // anything else (e.g. an older deployment that ignores the stream field),
-      // we surface an explicit error rather than playing an unrelated cached
-      // audio file — callers should toggle stream:false or upgrade the server.
+      // anything else (e.g. an older deployment that ignores the stream field)
+      // or the platform still cannot stream the body, fall back automatically
+      // to standard one-shot synthesis instead of dead-ending with an error.
       const ct = resp.headers.get('content-type') ?? '';
       if (!ct.includes('text/event-stream') || !resp.body) {
-        if (mountedRef.current) {
-          setErrorMsg(
-            'Streaming not available — the server returned an unexpected response type. ' +
-            'Please try again; if the problem persists, use the standard synthesis path.'
-          );
-          setPhase('error');
-        }
+        await _fallbackStandard(text, voice, speed, controller.signal);
         return;
       }
 
@@ -1940,6 +1979,7 @@ function useStreamingTTS() {
   }
 
   function stop() {
+    runIdRef.current += 1;
     abortRef.current?.abort();
     abortRef.current = null;
     _cleanupPlayer();

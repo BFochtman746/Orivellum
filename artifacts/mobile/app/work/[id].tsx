@@ -2,7 +2,8 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { mobileFetch } from '@/lib/api';
 import { getApiToken } from '@/lib/token';
 import { useSheetAnimation } from '@/lib/useSheetAnimation';
-import { createAudioPlayer, setAudioModeAsync, type AudioPlayer } from 'expo-audio';
+import { setAudioModeAsync, type AudioPlayer, type AudioStatus } from 'expo-audio';
+import { createPlayerSafe } from '@/lib/audioPlayer';
 import * as Clipboard from 'expo-clipboard';
 import {
   ActivityIndicator,
@@ -1825,10 +1826,16 @@ function TrailerPackageViewMobile({ pkg, colors }: { pkg: TrailerPkgMobile; colo
   type NarrState = 'idle' | 'loading' | 'playing';
   const [narrState, setNarrState] = useState<NarrState>('idle');
   const narrPlayerRef = useRef<AudioPlayer | null>(null);
+  // Monotonic run token: async synthesis + player creation must discard their
+  // results when a stop/replacement/unmount happened during the awaits.
+  const narrRunRef = useRef(0);
   const narrDomain = apiOrigin();
 
   useEffect(() => {
-    return () => { narrPlayerRef.current?.remove(); };
+    return () => {
+      narrRunRef.current += 1;
+      narrPlayerRef.current?.remove();
+    };
   }, []);
 
   const handlePlayNarration = async () => {
@@ -1837,6 +1844,7 @@ function TrailerPackageViewMobile({ pkg, colors }: { pkg: TrailerPkgMobile; colo
 
     // Stop — tap while playing
     if (narrState === 'playing') {
+      narrRunRef.current += 1;
       narrPlayerRef.current?.remove();
       narrPlayerRef.current = null;
       setNarrState('idle');
@@ -1844,9 +1852,9 @@ function TrailerPackageViewMobile({ pkg, colors }: { pkg: TrailerPkgMobile; colo
     }
 
     setNarrState('loading');
+    const runId = ++narrRunRef.current;
     try {
       await setAudioModeAsync({ playsInSilentMode: true });
-      const token = getApiToken();
 
       // Synthesise via the same endpoint TtsContext uses (return_url → JSON path)
       const ttsRes = await mobileFetch(`${narrDomain}/api/studio/tts`, {
@@ -1859,19 +1867,21 @@ function TrailerPackageViewMobile({ pkg, colors }: { pkg: TrailerPkgMobile; colo
         throw new Error((err as any).detail ?? `TTS error (${ttsRes.status})`);
       }
       const { path } = await ttsRes.json() as { path: string };
+      if (narrRunRef.current !== runId) return;
 
       const serveUri =
         `${narrDomain}/api/studio/outputs/serve?path=${encodeURIComponent(path)}`;
 
-      const player = createAudioPlayer({
-        uri: serveUri,
-        headers: token ? { authorization: `Bearer ${token}` } : undefined,
-      });
+      const player = await createPlayerSafe(serveUri);
+      if (narrRunRef.current !== runId) {
+        try { player.remove(); } catch {}
+        return;
+      }
       narrPlayerRef.current = player;
       player.play();
       setNarrState('playing');
 
-      player.addListener('playbackStatusUpdate', (status) => {
+      player.addListener('playbackStatusUpdate', (status: AudioStatus) => {
         // Guard against stale callbacks from a replaced player
         if (narrPlayerRef.current !== player) return;
         if (!status.playing && status.currentTime > 0 && status.duration > 0

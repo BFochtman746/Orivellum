@@ -32,7 +32,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { useColors } from '@/hooks/useColors';
-import { mobileFetch } from '@/lib/api';
+import { mobileFetch, mobileStreamFetch } from '@/lib/api';
 import { font } from '@/lib/typography';
 import { useSheetAnimation } from '@/lib/useSheetAnimation';
 import { apiOrigin } from '@/lib/server';
@@ -694,7 +694,9 @@ export default function WriteEditorScreen() {
       aiAbortRef.current = ctrl;
 
       try {
-        const resp = await mobileFetch(`${API()}/write/documents/${id}/ai`, {
+        // Streaming-capable fetch: RN's built-in fetch has no readable body
+        // on device, which made this AI stream fail with "AI request failed".
+        const resp = await mobileStreamFetch(`${API()}/write/documents/${id}/ai`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -703,7 +705,7 @@ export default function WriteEditorScreen() {
             document_text: content.slice(0, 4000),
           }),
           signal: ctrl.signal,
-        } as any);
+        });
 
         if (!resp.ok || !resp.body) throw new Error('AI request failed');
 

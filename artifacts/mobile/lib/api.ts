@@ -37,6 +37,36 @@ export async function mobileFetch(
  * @example
  *   const data = await mobileFetchJson<{ items: Item[] }>('/api/items');
  */
+/**
+ * Authenticated fetch with a READABLE STREAMING BODY.
+ *
+ * React Native's built-in `fetch` does not expose `response.body` as a
+ * ReadableStream on device, so any SSE / chunked-streaming consumer that
+ * calls `response.body.getReader()` silently breaks on iOS/Android (body is
+ * null → "unexpected response type" style errors).  Expo ships a
+ * WinterCG-compliant fetch (`expo/fetch`) whose responses DO support
+ * streaming on native.  Use this wrapper for every streaming endpoint.
+ *
+ * Note: `expo/fetch` accepts a URL string (not a Request object).
+ */
+export async function mobileStreamFetch(
+  url: string,
+  init?: {
+    method?: string;
+    headers?: Record<string, string>;
+    body?: string;
+    signal?: AbortSignal;
+  },
+): Promise<Response> {
+  const { fetch: expoFetch } = await import('expo/fetch');
+  const token = getApiToken();
+  const headers: Record<string, string> = { ...(init?.headers ?? {}) };
+  if (token && !Object.keys(headers).some(k => k.toLowerCase() === 'authorization')) {
+    headers['authorization'] = `Bearer ${token}`;
+  }
+  return expoFetch(url, { ...init, headers }) as unknown as Response;
+}
+
 export async function mobileFetchJson<T = unknown>(
   input: RequestInfo | URL,
   init?: RequestInit,

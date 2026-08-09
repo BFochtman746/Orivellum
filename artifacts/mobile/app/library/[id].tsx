@@ -4,7 +4,8 @@ import React, { useEffect, useRef, useState } from 'react';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as MediaLibrary from 'expo-media-library';
 import * as Sharing from 'expo-sharing';
-import { mobileFetch } from '@/lib/api';
+import { mobileFetch, mobileStreamFetch } from '@/lib/api';
+import { createPlayerSafe } from '@/lib/audioPlayer';
 import { getApiToken } from '@/lib/token';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { VOICES } from '@/lib/voices';
@@ -565,8 +566,10 @@ export default function LibraryDocDetail() {
       return;
     }
 
-    // Stop original-document audio if it is playing
+    // Stop original-document audio if it is playing (also invalidate any
+    // in-flight original-audio player creation)
     if (audioState === 'playing' || audioState === 'paused') {
+      audioRunRef.current += 1;
       audioPlayerRef.current?.remove();
       audioPlayerRef.current = null;
       setAudioState('idle');
@@ -625,9 +628,13 @@ export default function LibraryDocDetail() {
   type AudioState = 'idle' | 'loading' | 'playing' | 'paused' | 'error';
   const [audioState, setAudioState] = useState<AudioState>('idle');
   const audioPlayerRef = useRef<AudioPlayer | null>(null);
+  // Monotonic run token: async player creation (createPlayerSafe may await a
+  // download fallback) must discard its result if a stop/replacement happened.
+  const audioRunRef = useRef(0);
 
   useEffect(() => {
     return () => {
+      audioRunRef.current += 1;
       audioPlayerRef.current?.remove();
       audiobookPlayerRef.current?.remove();
     };
@@ -652,14 +659,15 @@ export default function LibraryDocDetail() {
       setAbPosition(0);
     }
     setAudioState('loading');
+    const runId = ++audioRunRef.current;
     try {
       await setAudioModeAsync({ playsInSilentMode: true });
-      const token = getApiToken();
       const uri = `${domain}/api/library/${id}/download`;
-      const player = createAudioPlayer({
-        uri,
-        headers: token ? { authorization: `Bearer ${token}` } : undefined,
-      });
+      const player = await createPlayerSafe(uri);
+      if (audioRunRef.current !== runId) {
+        try { player.remove(); } catch {}
+        return;
+      }
       audioPlayerRef.current = player;
       player.play();
       setAudioState('playing');
@@ -829,13 +837,12 @@ export default function LibraryDocDetail() {
 
     (async () => {
       try {
-        const token = getApiToken();
-        const headers: Record<string, string> = {};
-        if (token) headers['Authorization'] = `Bearer ${token}`;
-
-        const response = await fetch(
+        // mobileStreamFetch (expo/fetch) exposes a readable body on device;
+        // React Native's built-in fetch does not, which forced the polling
+        // fallback on every phone.
+        const response = await mobileStreamFetch(
           `${domain}/api/library/${id}/progress`,
-          { signal: controller.signal, headers },
+          { signal: controller.signal },
         );
 
         if (!response.ok || !response.body) {

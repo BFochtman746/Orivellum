@@ -15,7 +15,8 @@ import React, {
   type ReactNode,
 } from 'react';
 import { Alert } from 'react-native';
-import { createAudioPlayer, setAudioModeAsync, type AudioPlayer } from 'expo-audio';
+import { setAudioModeAsync, type AudioPlayer, type AudioStatus } from 'expo-audio';
+import { createPlayerSafe } from '@/lib/audioPlayer';
 import { mobileFetch } from '@/lib/api';
 import { getApiToken } from '@/lib/token';
 import { apiOrigin } from '@/lib/server';
@@ -156,7 +157,6 @@ export function TtsProvider({ children }: { children: ReactNode }) {
         const servePath = await synthesizePart(parts, i, voice, speed, sessionId);
         if (sessionCounterRef.current !== sessionId) return;
 
-        const token = getApiToken();
         const uri = `${_DOMAIN()}/api/studio/outputs/serve?path=${encodeURIComponent(servePath)}`;
 
         // Tear down the previous player before creating a new one
@@ -168,10 +168,12 @@ export function TtsProvider({ children }: { children: ReactNode }) {
         // that arrived during that await must not be overwritten.
         if (sessionCounterRef.current !== sessionId) return;
 
-        const player = createAudioPlayer({
-          uri,
-          headers: token ? { authorization: `Bearer ${token}` } : undefined,
-        });
+        const player = await createPlayerSafe(uri);
+        // Guarded creation may await (download fallback) — re-check the session
+        if (sessionCounterRef.current !== sessionId) {
+          try { player.remove(); } catch {}
+          return;
+        }
         // Guard again after player creation: if stale, discard the player
         // rather than assigning it so it cannot leak or overwrite the active ref.
         if (sessionCounterRef.current !== sessionId) {
@@ -190,7 +192,7 @@ export function TtsProvider({ children }: { children: ReactNode }) {
         }
 
         // Auto-advance on natural end of part
-        player.addListener('playbackStatusUpdate', (status) => {
+        player.addListener('playbackStatusUpdate', (status: AudioStatus) => {
           if (
             !status.playing &&
             status.currentTime > 0 &&
