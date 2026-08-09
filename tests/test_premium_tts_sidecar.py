@@ -183,3 +183,88 @@ def test_clone_voice_detection():
     assert _is_clone_voice("clone:abc123")
     assert not _is_clone_voice("af_heart")
     assert not _is_clone_voice("")
+
+
+# ── Work-audiobook clone fail-closed regression tests ────────────────────────
+# A clone:<id> voice must NEVER render in a local fallback narrator: both
+# work endpoints reject it up front when premium is off, and the sync render
+# fails clearly when the premium engine dies mid-run.
+
+import os  # noqa: E402
+os.environ.setdefault("SESSION_SECRET", "test-orivellum-api-key-1234567890abcdef")
+
+
+@pytest.fixture()
+def work_client(tmp_path):
+    from fastapi.testclient import TestClient
+    from orivellum.api.app import create_app
+    from orivellum.api import _deps
+    from orivellum.configuration.config import OrivellumConfig, ServingConfig
+    from orivellum.database.db import OrivellumDB
+    from tests.conftest import AUTH_HEADERS
+
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    db = OrivellumDB(str(data_dir / "test.db"))
+    cfg = OrivellumConfig(
+        data_dir=str(data_dir),
+        serving=ServingConfig(base_url="http://localhost:1/api/v1"),
+    )
+    _deps.init(db=db, cfg=cfg)
+
+    work = db.create_work(title="Clone Regression", work_type="writing")
+    doc = db.create_document(title="ch1", work_id=work["id"], kind="text")
+    with db._lock:
+        db._conn.execute("UPDATE documents SET readiness='ready' WHERE id=?", (doc["id"],))
+        db._conn.commit()
+    db.add_chunk(doc["id"], "Once upon a time there was a cloned narrator.", page=0)
+
+    client = TestClient(create_app(), raise_server_exceptions=False, headers=AUTH_HEADERS)
+    return client, cfg, work["id"]
+
+
+def test_work_sync_rejects_clone_without_premium(work_client):
+    client, _cfg, wid = work_client
+    r = client.post("/api/studio/tts/work",
+                    json={"work_id": wid, "voice": "clone:abc"})
+    assert r.status_code == 503
+    assert "premium" in r.json()["detail"].lower()
+
+
+def test_work_async_rejects_clone_without_premium(work_client):
+    client, _cfg, wid = work_client
+    r = client.post("/api/studio/tts/work/start",
+                    json={"work_id": wid, "voice": "clone:abc"})
+    assert r.status_code == 503
+    assert "premium" in r.json()["detail"].lower()
+
+
+def test_work_sync_clone_fails_closed_when_premium_dies(work_client, monkeypatch):
+    """Premium enabled but the engine returns nothing mid-render: the render
+    must FAIL, never fall back to Kokoro/espeak in an unrelated voice."""
+    from orivellum.api.routes import studio
+    client, cfg, wid = work_client
+    cfg.serving.tts_premium_url = "http://127.0.0.1:9"
+    cfg.serving.tts_premium_ack_license = True
+    monkeypatch.setattr(studio, "_call_premium_tts_sync", lambda *a, **k: None)
+    try:
+        r = client.post("/api/studio/tts/work",
+                        json={"work_id": wid, "voice": "clone:abc",
+                              "include_credits": False, "acx_mastering": False})
+        assert r.status_code == 500
+        assert "fallback" in r.json()["detail"].lower()
+    finally:
+        cfg.serving.tts_premium_url = ""
+        cfg.serving.tts_premium_ack_license = False
+
+
+def test_work_sync_catalog_voice_still_renders_without_premium(work_client):
+    """Regression guard: normal catalog voices keep working via the local
+    cascade (espeak at minimum) — the clone gate must not affect them."""
+    client, _cfg, wid = work_client
+    r = client.post("/api/studio/tts/work",
+                    json={"work_id": wid, "voice": "af_heart", "speed": 1.0,
+                          "include_credits": False, "acx_mastering": False,
+                          "return_url": True})
+    assert r.status_code == 200, r.text[:300]
+    assert r.json()["ok"] is True

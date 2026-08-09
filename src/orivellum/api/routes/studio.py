@@ -1180,6 +1180,16 @@ def synthesize_work_audiobook(body: WorkAudiobookRequest):
     voice_meta = _VOICE_BY_ID.get(body.voice, {})
     voice_name = voice_meta.get("name", body.voice)
 
+    # Cloned voices exist only on the premium sidecar — reject up front rather
+    # than rendering an entire book in an unrelated local narrator.
+    premium_ok = _is_premium_tts_enabled(cfg)
+    if _is_clone_voice(body.voice) and not premium_ok:
+        raise HTTPException(
+            503,
+            "This cloned voice needs the premium voice engine "
+            "(tts_premium_url), which is not enabled.",
+        )
+
     # ── Fetch all ready documents in work order ────────────────────────────────
     with db._lock:
         doc_rows = db._conn.execute(
@@ -1229,6 +1239,31 @@ def synthesize_work_audiobook(body: WorkAudiobookRequest):
     def _synth_segment(text: str, idx: int) -> Path | None:
         """Synthesise one text segment to WAV, returning the path or None."""
         wav = tmp_dir / f"seg_{idx:06d}.wav"
+        # Strategy 0: Premium sidecar (decoded to WAV so concat inputs stay
+        # homogeneous — the concat demuxer chokes on mixed codecs).
+        if premium_ok:
+            try:
+                audio = _call_premium_tts_sync(text, body.voice, body.speed, cfg)
+                if audio:
+                    mp3 = tmp_dir / f"seg_{idx:06d}.mp3"
+                    mp3.write_bytes(audio)
+                    r = subprocess.run(
+                        ["ffmpeg", "-y", "-v", "error", "-i", str(mp3),
+                         "-ar", "22050", "-ac", "1", str(wav)],
+                        capture_output=True, timeout=60,
+                    )
+                    mp3.unlink(missing_ok=True)
+                    if r.returncode == 0 and wav.exists():
+                        return wav
+            except Exception as pe:
+                logger.warning("Premium TTS work seg %d: %s", idx, pe)
+        # Cloned voices have NO local fallback — fail the render clearly
+        # instead of continuing in an unrelated narrator.
+        if _is_clone_voice(body.voice):
+            raise RuntimeError(
+                f"Premium engine failed on segment {idx} and cloned voices "
+                "have no local fallback — is the sidecar still running?"
+            )
         # Strategy 1: Kokoro
         if kokoro_eng is not None and _sf is not None:
             try:
@@ -1408,10 +1443,35 @@ def _run_work_tts_job(
     wav_parts: list[Path] = []
     seg_idx = 0
 
+    premium_ok = _is_premium_tts_enabled(cfg)
+
     def _synth(text: str) -> "Path | None":
         nonlocal seg_idx
         wav = tmp_dir / f"seg_{seg_idx:06d}.wav"
         seg_idx += 1
+        # Strategy 0: Premium sidecar (decoded to WAV for homogeneous concat).
+        if premium_ok:
+            try:
+                audio = _call_premium_tts_sync(text, voice, speed, cfg)
+                if audio:
+                    mp3 = wav.with_suffix(".mp3")
+                    mp3.write_bytes(audio)
+                    r = subprocess.run(
+                        ["ffmpeg", "-y", "-v", "error", "-i", str(mp3),
+                         "-ar", "22050", "-ac", "1", str(wav)],
+                        capture_output=True, timeout=60,
+                    )
+                    mp3.unlink(missing_ok=True)
+                    if r.returncode == 0 and wav.exists():
+                        return wav
+            except Exception as pe:
+                logger.warning("Premium TTS work-job %s seg: %s", job_id, pe)
+        # Cloned voices never fall back to a local narrator — fail the job.
+        if _is_clone_voice(voice):
+            raise RuntimeError(
+                "Premium engine failed mid-render and cloned voices have no "
+                "local fallback — is the sidecar still running?"
+            )
         if kokoro_eng is not None and _sf2 is not None:
             try:
                 samples, sr = kokoro_eng.create(text, voice=voice_id, speed=speed, lang="en-us")
@@ -1611,6 +1671,15 @@ def start_work_audiobook_async(body: WorkAudiobookStartRequest):
         raise HTTPException(404, f"Work {body.work_id!r} not found")
 
     work_title = work_row["title"] or "Untitled Work"
+
+    # Cloned voices exist only on the premium sidecar — reject before the job
+    # is created rather than failing (or worse, mis-narrating) mid-render.
+    if _is_clone_voice(body.voice) and not _is_premium_tts_enabled(cfg):
+        raise HTTPException(
+            503,
+            "This cloned voice needs the premium voice engine "
+            "(tts_premium_url), which is not enabled.",
+        )
 
     with db._lock:
         doc_rows = db._conn.execute(
