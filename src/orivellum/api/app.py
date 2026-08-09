@@ -464,16 +464,42 @@ def create_app() -> FastAPI:
         from starlette.exceptions import HTTPException as _HTTPException
 
         class _SPAStaticFiles(_StaticFiles):
-            """Static file handler that falls back to index.html for SPA routing."""
+            """Static file handler that falls back to index.html for SPA routing.
+
+            Cache policy (critical for PWA update correctness):
+            - Hashed assets (/assets/*) are immutable — cache for a year.
+            - index.html and sw.js must NEVER be cached, or browsers keep a
+              stale shell referencing asset hashes that no longer exist after
+              an update, which renders a blank page.
+            - A missing /assets/* file returns a real 404, NOT the SPA shell.
+              Serving index.html in place of a dead .js file makes the browser
+              execute HTML as a module script — a silent blank-page failure.
+            """
             async def get_response(self, path: str, scope):
                 try:
-                    return await super().get_response(path, scope)
+                    response = await super().get_response(path, scope)
                 except _HTTPException as exc:
-                    if exc.status_code == 404:
-                        # Any path that isn't a real asset gets the SPA shell,
-                        # then the client-side router (wouter) takes over.
-                        return await super().get_response("index.html", scope)
+                    if exc.status_code == 404 and not path.startswith("assets/"):
+                        # Non-asset path (a client-side route): serve the SPA
+                        # shell and let the client router (wouter) take over.
+                        response = await super().get_response("index.html", scope)
+                        response.headers["Cache-Control"] = "no-cache"
+                        return response
                     raise
+                if response.status_code == 404:
+                    # html=True can return a 404.html page instead of raising.
+                    # Never cache a 404, and keep SPA routing working for
+                    # non-asset paths even if a 404.html ships in the build.
+                    if not path.startswith("assets/"):
+                        response = await super().get_response("index.html", scope)
+                    response.headers["Cache-Control"] = "no-cache"
+                elif path.startswith("assets/"):
+                    # Content-hashed filenames: safe to cache forever.
+                    response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+                else:
+                    # index.html, sw.js, manifest, icons: always revalidate.
+                    response.headers["Cache-Control"] = "no-cache"
+                return response
 
         app.mount("/orivellum-ui", _SPAStaticFiles(directory=str(_ui_dist), html=True), name="ui")
         logger.info("Serving built UI from %s", _ui_dist)
