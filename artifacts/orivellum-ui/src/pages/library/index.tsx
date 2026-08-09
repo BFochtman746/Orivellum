@@ -924,10 +924,14 @@ export default function Library() {
     }
   };
 
-  const handleReprocessAll = async () => {
+  const handleReprocessAll = async (force = false) => {
+    if (force && !window.confirm(
+      "Deep reprocess re-extracts EVERY document — including ones that already processed fine. " +
+      "Nothing is deleted, but a large library can take a long time to churn through. Continue?"
+    )) return;
     setReprocessingAll(true);
     try {
-      const resp = await apiFetch(`${BASE}/library/reprocess-all`, { method: "POST" });
+      const resp = await apiFetch(`${BASE}/library/reprocess-all${force ? "?force=true" : ""}`, { method: "POST" });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) throw new Error((data as any).detail ?? "Failed");
       const { queued, queued_zips, queued_stuck, skipped, message } = data as any;
@@ -1007,12 +1011,23 @@ export default function Library() {
                 variant="outline"
                 size="sm"
                 className="gap-1.5 text-xs border-primary/40 text-primary hover:bg-primary/5"
-                onClick={handleReprocessAll}
+                onClick={() => handleReprocessAll(false)}
                 disabled={reprocessingAll}
                 title="Re-extract all stuck, errored, or ZIP documents"
               >
                 <RefreshCw className={`w-3.5 h-3.5 ${reprocessingAll ? "animate-spin" : ""}`} />
                 {reprocessingAll ? "Processing…" : "Reprocess All"}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1.5 text-xs border-destructive/40 text-destructive hover:bg-destructive/5"
+                onClick={() => handleReprocessAll(true)}
+                disabled={reprocessingAll}
+                title="Re-extract EVERY document from scratch, including ones already marked ready"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${reprocessingAll ? "animate-spin" : ""}`} />
+                Deep Reprocess
               </Button>
               {zipCount > 0 && (
                 <Button
