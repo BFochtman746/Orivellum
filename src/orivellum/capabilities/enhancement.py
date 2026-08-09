@@ -74,9 +74,14 @@ _ENHANCE_TIMEOUT_S = 900    # generous — DFN3 runs ~0.2× realtime on one core
 
 # None = untested, True/False = last result. The marker file lets a passing
 # probe survive server restarts without re-spawning uv on every settings GET.
+# _sidecar_lock guards only state reads/writes — it is NEVER held across the
+# subprocess call, so a settings GET can't block behind a 20-minute setup.
+# _setup_running is True while a forced setup subprocess is in flight.
 _sidecar_lock = threading.Lock()
 _sidecar_ok: bool | None = None
 _sidecar_error: str | None = None
+_setup_running: bool = False   # forced setup subprocess in flight
+_setup_pending: bool = False   # setup submitted to the executor, not started yet
 
 INSTALL_HINT = (
     "No install needed — click \"Check again\" and DeepFilterNet3 is set up "
@@ -142,19 +147,34 @@ def _runner_script() -> Path | None:
     return candidate if candidate.exists() else None
 
 
+def setup_in_progress() -> bool:
+    """True while a forced sidecar setup is queued or running."""
+    with _sidecar_lock:
+        return _setup_running or _setup_pending
+
+
 def _sidecar_probe(force: bool) -> bool:
     """Check (and on first use, set up) the uv sidecar environment.
 
     Passive calls (``force=False``) never spawn a subprocess — they trust the
     in-memory result or the on-disk marker, so a routine settings GET can't
     trigger a multi-minute download.  ``force=True`` runs the real check.
+
+    Never holds ``_sidecar_lock`` across the subprocess call; a concurrent
+    forced probe returns False immediately (the running setup will publish
+    its result when it finishes — poll ``probe()`` to observe it).
     """
-    global _sidecar_ok, _sidecar_error
+    global _sidecar_ok, _sidecar_error, _setup_running, _setup_pending
+    marker = _marker_path()
+
     with _sidecar_lock:
+        if _setup_running:
+            return False  # setup already in flight; poll for the result
+        if force:
+            _setup_pending = False  # this call is the pending setup starting
         if _sidecar_ok is not None and not (force and _sidecar_ok is False):
             return _sidecar_ok
 
-        marker = _marker_path()
         if not force:
             try:
                 if marker.read_text(encoding="utf-8").strip() == _marker_spec():
@@ -183,42 +203,49 @@ def _sidecar_probe(force: bool) -> bool:
                 "automatic setup (the server itself is normally started with uv)."
             )
             return False
-        logger.info(
-            "Probing DeepFilterNet3 sidecar (Python %s via uv — first run may "
-            "download ~300 MB)…", _SIDECAR_PYTHON,
-        )
+        _setup_running = True
+
+    # ── subprocess runs WITHOUT the lock ────────────────────────────────────
+    logger.info(
+        "Probing DeepFilterNet3 sidecar (Python %s via uv — first run may "
+        "download ~300 MB)…", _SIDECAR_PYTHON,
+    )
+    ok = False
+    error: str | None = None
+    try:
         try:
             proc = subprocess.run(
                 cmd, env=_sidecar_env(), capture_output=True, text=True,
                 timeout=_PROBE_TIMEOUT_S, creationflags=_CREATIONFLAGS,
             )
         except subprocess.TimeoutExpired:
-            _sidecar_ok = False
-            _sidecar_error = f"sidecar setup timed out after {_PROBE_TIMEOUT_S}s"
-            return False
+            error = f"sidecar setup timed out after {_PROBE_TIMEOUT_S}s"
         except OSError as exc:
-            _sidecar_ok = False
-            _sidecar_error = f"could not launch uv: {exc}"
-            return False
-        if proc.returncode == 0:
-            _sidecar_ok = True
-            _sidecar_error = None
+            error = f"could not launch uv: {exc}"
+        else:
+            if proc.returncode == 0:
+                ok = True
+            else:
+                tail = (proc.stderr or proc.stdout or "").strip().splitlines()
+                error = "sidecar setup failed: " + (tail[-1] if tail else "unknown error")
+    finally:
+        with _sidecar_lock:
+            _setup_running = False
+            _sidecar_ok = ok
+            _sidecar_error = error
             try:
-                marker.parent.mkdir(parents=True, exist_ok=True)
-                marker.write_text(_marker_spec(), encoding="utf-8")
+                if ok:
+                    marker.parent.mkdir(parents=True, exist_ok=True)
+                    marker.write_text(_marker_spec(), encoding="utf-8")
+                else:
+                    marker.unlink()
             except OSError:
                 pass
-            logger.info("DeepFilterNet3 sidecar ready (uv / Python %s).", _SIDECAR_PYTHON)
-            return True
-        tail = (proc.stderr or proc.stdout or "").strip().splitlines()
-        _sidecar_ok = False
-        _sidecar_error = "sidecar setup failed: " + (tail[-1] if tail else "unknown error")
-        try:
-            marker.unlink()
-        except OSError:
-            pass
-        logger.warning("DeepFilterNet3 sidecar probe failed: %s", _sidecar_error)
-        return False
+    if ok:
+        logger.info("DeepFilterNet3 sidecar ready (uv / Python %s).", _SIDECAR_PYTHON)
+    else:
+        logger.warning("DeepFilterNet3 sidecar probe failed: %s", error)
+    return ok
 
 
 def _get_df_model():
@@ -279,14 +306,20 @@ def probe(force: bool = False) -> dict:
 
     if _get_df_model() is not None:
         mode: str | None = "in-process"
+        if force:
+            # Sidecar setup is moot — clear any queued-setup flag.
+            global _setup_pending
+            with _sidecar_lock:
+                _setup_pending = False
     elif _sidecar_probe(force=force):
         mode = "sidecar"
     else:
         mode = None
 
     available = mode is not None
+    setting_up = setup_in_progress()
     error = None
-    if not available:
+    if not available and not setting_up:
         # Sidecar diagnosis is the actionable one; the in-process import error
         # is expected on Python >= 3.12 (no wheels exist), so it goes second.
         parts = [p for p in (_sidecar_error, _last_error) if p]
@@ -294,10 +327,36 @@ def probe(force: bool = False) -> dict:
     return {
         "available": available,
         "mode": mode,
+        "setting_up": setting_up,
         "error": error,
         "python": sys.executable,
-        "install_hint": None if available else INSTALL_HINT,
+        "install_hint": None if available or setting_up else INSTALL_HINT,
     }
+
+
+def start_setup() -> dict:
+    """Kick off the one-time sidecar setup in the background (non-blocking).
+
+    The first setup downloads ~300 MB and can run far longer than the server's
+    HTTP request timeout, so the probe endpoint must never run it inline.
+    Returns the current ``probe()`` snapshot; when a setup was started (or is
+    already running) it reports ``setting_up=True`` and callers poll ``probe()``
+    until it settles.
+    """
+    global _setup_pending
+    snapshot = probe(force=False)
+    if snapshot["available"] or snapshot["setting_up"]:
+        return snapshot
+
+    from orivellum.api import executor
+
+    # Mark pending BEFORE submitting so a poll arriving between submit and
+    # worker start still sees setting_up=True.
+    with _sidecar_lock:
+        _setup_pending = True
+    executor.submit_bg(probe, True, kind="dfn3-setup",
+                       label="DeepFilterNet3 sidecar setup")
+    return probe(force=False)
 
 
 def _enhance_via_sidecar(path: Path, out_path: Path) -> Path:

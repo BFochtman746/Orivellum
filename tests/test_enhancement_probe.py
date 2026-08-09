@@ -43,6 +43,8 @@ def _reset_state():
     enhancement._last_error = None
     enhancement._sidecar_ok = None
     enhancement._sidecar_error = None
+    enhancement._setup_running = False
+    enhancement._setup_pending = False
 
 
 class _SidecarIsolatedTest(unittest.TestCase):
@@ -174,6 +176,80 @@ class TestSidecar(unittest.TestCase):
         self.assertFalse(self._marker.exists())
         self.assertIn("helper run failed", enhancement._sidecar_error or "")
 
+    def test_start_setup_returns_immediately_and_finishes_in_background(self):
+        """The one-time setup must never run inline: start_setup() returns at
+        once with setting_up=True while a background worker completes it —
+        this is what keeps the probe endpoint inside the server's request
+        timeout on a multi-minute first-run download."""
+        import time
+
+        def _slow_ok(*args, **kwargs):
+            time.sleep(0.3)  # simulate the download taking a while
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        started = time.monotonic()
+        with mock.patch.object(subprocess, "run", side_effect=_slow_ok):
+            snapshot = enhancement.start_setup()
+            elapsed = time.monotonic() - started
+            # Immediate response, well under the simulated setup duration
+            self.assertLess(elapsed, 0.25)
+            self.assertFalse(snapshot["available"])
+            self.assertTrue(snapshot["setting_up"])
+            self.assertIsNone(snapshot["install_hint"])
+            # Poll passively (as the UI does) until the background setup lands
+            deadline = time.monotonic() + 5
+            result = snapshot
+            while time.monotonic() < deadline:
+                result = enhancement.probe(force=False)
+                if result["available"] or (not result["setting_up"]):
+                    break
+                time.sleep(0.05)
+        self.assertTrue(result["available"], f"setup never settled: {result}")
+        self.assertEqual(result["mode"], "sidecar")
+        self.assertFalse(result["setting_up"])
+        self.assertTrue(self._marker.exists())
+
+    def test_start_setup_reports_failure_after_polling(self):
+        import time
+
+        def _slow_fail(*args, **kwargs):
+            time.sleep(0.1)
+            return SimpleNamespace(returncode=1, stdout="", stderr="no wheels here")
+
+        with mock.patch.object(subprocess, "run", side_effect=_slow_fail):
+            snapshot = enhancement.start_setup()
+            self.assertTrue(snapshot["setting_up"])
+            deadline = time.monotonic() + 5
+            result = snapshot
+            while time.monotonic() < deadline:
+                result = enhancement.probe(force=False)
+                if not result["setting_up"]:
+                    break
+                time.sleep(0.05)
+        self.assertFalse(result["available"])
+        self.assertFalse(result["setting_up"])
+        self.assertIn("no wheels here", result["error"] or "")
+        self.assertFalse(self._marker.exists())
+
+    def test_start_setup_is_idempotent_while_running(self):
+        import time
+
+        def _slow_ok(*args, **kwargs):
+            time.sleep(0.4)
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        with mock.patch.object(subprocess, "run", side_effect=_slow_ok) as run:
+            first = enhancement.start_setup()
+            second = enhancement.start_setup()  # while the first still runs
+            self.assertTrue(first["setting_up"])
+            self.assertTrue(second["setting_up"])
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                if enhancement.probe(force=False)["available"]:
+                    break
+                time.sleep(0.05)
+            self.assertEqual(run.call_count, 1, "second call must not spawn another setup")
+
     def test_enhance_audio_timeout_does_not_invalidate(self):
         enhancement._sidecar_ok = True
         self._marker.write_text(enhancement._marker_spec(), encoding="utf-8")
@@ -191,7 +267,9 @@ class TestSidecar(unittest.TestCase):
 
 class TestProbeEndpoints(_SidecarIsolatedTest):
 
-    def test_probe_endpoint_returns_diagnostics(self):
+    def test_probe_endpoint_starts_background_setup(self):
+        """The probe endpoint must return immediately with setting_up=True —
+        never running the multi-minute setup inline (request timeout)."""
         with tempfile.TemporaryDirectory() as tmp:
             app, _db, _cfg = _make_app(tmp)
             client = TestClient(app, headers=AUTH_HEADERS)
@@ -199,9 +277,8 @@ class TestProbeEndpoints(_SidecarIsolatedTest):
             self.assertEqual(resp.status_code, 200)
             body = resp.json()
             self.assertFalse(body["installed"])
-            self.assertIn("ImportError", body["error"])
+            self.assertTrue(body["setting_up"])
             self.assertEqual(body["python"], sys.executable)
-            self.assertIn("Check again", body["install_hint"])
             self.assertIsNone(body["mode"])
 
     def test_settings_get_includes_diagnostics(self):

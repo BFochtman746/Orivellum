@@ -695,11 +695,12 @@ def get_audio_enhance_setting():
         pr = _dfn_probe(force=False)
     except Exception as exc:
         pr = {"available": False, "error": str(exc), "python": None,
-              "install_hint": None, "mode": None}
+              "install_hint": None, "mode": None, "setting_up": False}
     return {
         "enabled": enabled,
         "installed": pr["available"],
         "mode": pr.get("mode"),
+        "setting_up": pr.get("setting_up", False),
         "model": "DeepFilterNet3",
         "install_hint": pr["install_hint"],
         "error": pr["error"],
@@ -709,18 +710,20 @@ def get_audio_enhance_setting():
 
 @router.post("/system/audio-enhance/probe")
 def probe_audio_enhance():
-    """Re-probe DeepFilterNet3 availability live — no server restart needed.
+    """Re-probe DeepFilterNet3 availability — no server restart needed.
 
-    Clears a cached failed probe and retries the import fresh, so a package
-    installed after server start is picked up immediately.  Returns the exact
-    import error and the interpreter path when detection fails, making an
-    environment mismatch obvious.
+    When already available this returns immediately.  Otherwise the one-time
+    sidecar setup is kicked off in the BACKGROUND (the first run downloads
+    ~300 MB and would blow past the server's request timeout if run inline)
+    and ``setting_up=True`` is returned — the client polls the settings GET
+    until it settles to installed or an error.
     """
-    from orivellum.capabilities.enhancement import probe as _dfn_probe
-    result = _dfn_probe(force=True)
+    from orivellum.capabilities.enhancement import start_setup
+    result = start_setup()
     return {
         "installed": result["available"],
         "mode": result.get("mode"),
+        "setting_up": result.get("setting_up", False),
         "error": result["error"],
         "python": result["python"],
         "install_hint": result["install_hint"],
@@ -744,8 +747,10 @@ def set_audio_enhance_setting(body: AudioEnhanceUpdate):
     installed = None
     if body.enabled:
         try:
+            # Passive check only — never run the multi-minute setup inline
+            # (the "Check again" button / probe endpoint handles setup).
             from orivellum.capabilities.enhancement import probe as _dfn_probe
-            installed = _dfn_probe(force=True)["available"]
+            installed = _dfn_probe(force=False)["available"]
         except Exception:
             installed = False
     return {"enabled": body.enabled, "ok": True, "installed": installed}

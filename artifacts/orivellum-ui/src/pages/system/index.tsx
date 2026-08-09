@@ -1358,6 +1358,7 @@ type AudioEnhanceStatus = {
   enabled: boolean;
   installed: boolean;
   mode: "in-process" | "sidecar" | null;
+  setting_up: boolean;
   model: string;
   install_hint: string | null;
   error: string | null;
@@ -1372,6 +1373,8 @@ function useAudioEnhanceSetting() {
       if (!r.ok) throw new Error("Failed to fetch audio enhancement setting");
       return r.json() as Promise<AudioEnhanceStatus>;
     },
+    // While the one-time background setup runs, poll until it settles.
+    refetchInterval: (query) => (query.state.data?.setting_up ? 3000 : false),
     staleTime: 30_000,
   });
 }
@@ -1404,12 +1407,19 @@ function useReprobeAudioEnhance() {
         method: "POST",
       });
       if (!r.ok) throw new Error("Probe request failed");
-      return r.json() as Promise<{ installed: boolean; error: string | null; python: string | null }>;
+      return r.json() as Promise<{
+        installed: boolean;
+        setting_up: boolean;
+        error: string | null;
+        python: string | null;
+      }>;
     },
     onSuccess: (res) => {
       qc.invalidateQueries({ queryKey: ["system", "audio-enhance"] });
       if (res.installed) {
         toast.success("DeepFilterNet3 ready — enhancement can now be enabled");
+      } else if (res.setting_up) {
+        toast.info("Setting up in the background — this takes a few minutes the first time");
       } else {
         toast.error("Setup did not succeed — see the details below the card title");
       }
@@ -1422,6 +1432,24 @@ function AudioEnhancementCard() {
   const { data, isLoading } = useAudioEnhanceSetting();
   const setEnhance = useSetAudioEnhanceSetting();
   const reprobe = useReprobeAudioEnhance();
+
+  // Toast when the background setup finishes (polling flips setting_up off).
+  const wasSettingUp = useRef(false);
+  useEffect(() => {
+    if (!data) return;
+    if (data.setting_up) {
+      wasSettingUp.current = true;
+    } else if (wasSettingUp.current) {
+      wasSettingUp.current = false;
+      if (data.installed) {
+        toast.success("DeepFilterNet3 ready — enhancement can now be enabled");
+      } else {
+        toast.error("Setup did not succeed — see the details on the card");
+      }
+    }
+  }, [data]);
+
+  const settingUp = data?.setting_up ?? false;
 
   return (
     <Card className="vellum-card">
@@ -1437,7 +1465,9 @@ function AudioEnhancementCard() {
                     variant={data.installed ? "default" : "secondary"}
                     className="text-[10px] h-4 px-1.5"
                   >
-                    {data.installed ? "installed" : "not installed"}
+                    {data.installed
+                      ? "installed"
+                      : data.setting_up ? "setting up…" : "not installed"}
                   </Badge>
                 )}
               </div>
@@ -1448,14 +1478,20 @@ function AudioEnhancementCard() {
                 Dramatically improves transcription accuracy on phone recordings and voice memos.
                 Runs on CPU at ~0.2× real-time with no GPU required.
               </p>
-              {data && !data.installed && (
+              {data && !data.installed && settingUp && (
+                <p className="text-xs mt-1 flex items-center gap-1.5" style={{ color: 'var(--gilt)' }}>
+                  <Loader2 className="w-3 h-3 animate-spin shrink-0" />
+                  Setting up in the background — the first time downloads
+                  ~300 MB and can take a few minutes. You can leave this page;
+                  the card updates itself when it's done.
+                </p>
+              )}
+              {data && !data.installed && !settingUp && (
                 <div className="space-y-1.5 mt-1">
                   <p className="text-xs" style={{ color: 'var(--gilt)' }}>
                     Not set up yet. Click{" "}
                     <span className="font-medium">Check again</span> and it is
-                    installed automatically — the first time downloads ~300 MB
-                    and can take a few minutes, so leave the page open. No
-                    server restart needed.
+                    installed automatically — no server restart needed.
                   </p>
                   {data.error && (
                     <p className="text-[11px] font-mono text-muted-foreground break-all">
@@ -1477,7 +1513,7 @@ function AudioEnhancementCard() {
                     disabled={reprobe.isPending}
                   >
                     {reprobe.isPending
-                      ? <><Loader2 className="w-3 h-3 animate-spin" /> Setting up… (first time takes minutes)</>
+                      ? <><Loader2 className="w-3 h-3 animate-spin" /> Starting…</>
                       : <><RotateCcw className="w-3 h-3" /> Check again</>}
                   </Button>
                 </div>

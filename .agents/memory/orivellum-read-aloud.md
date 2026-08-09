@@ -16,6 +16,6 @@ description: Durable lifecycle principles for chunked text-to-speech playback in
 - Cover the entire document lazily (synthesize on demand, evict far-behind blobs); a fixed part cap is not "full-document" playback.
 
 # Persistent dock player
-- A player that survives navigation must live in a global context/provider rendered once in the app shell, not in a page component.
-- Uncontrolled `<audio>` src swaps need a `desiredSrcRef` gate: only assign src when it matches the ref captured before the async chain, or a late synthesis result overwrites the track the user just picked.
-- The docked bar must reserve layout space via a shell CSS variable (`--ra-dock-h`) so page content is never hidden behind it, and sit BELOW modal/sheet z-layers so dialogs stay usable while listening.
+- A player that survives navigation must live in a global provider rendered once in the app shell, not in a page component.
+- Uncontrolled `<audio>` src swaps need a desired-src ref gate: only assign src when it matches the ref captured before the async chain, or a late synthesis result overwrites the track the user just picked.
+- The docked bar must reserve layout space via a shell-level CSS variable so page content is never hidden behind it, and sit below modal/sheet z-layers so dialogs stay usable while listening.
