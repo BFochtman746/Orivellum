@@ -25,6 +25,7 @@ import { Badge } from "@/components/ui/badge";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { apiFetch } from "@/lib/auth";
+import { WeatherCard } from "@/components/weather-card";
 
 const BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
 
@@ -476,6 +477,9 @@ export default function Dashboard() {
           <FolderPlus className="w-3.5 h-3.5" /> Create Work
         </Button>
       </div>
+
+      {/* Weather briefing — location-aware ambient context */}
+      <WeatherCard />
 
       {/* ── Scorecard ─────────────────────────────────────────────────────────── */}
       <div className="space-y-3">
