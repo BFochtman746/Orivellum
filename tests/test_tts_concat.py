@@ -77,7 +77,8 @@ def _make_client(tmp_path: Path) -> "TestClient":
 
 
 async def _fake_synth_stub(text: str, voice: str, speed: float,
-                           out_dir: "Path", cfg) -> "Path":
+                           out_dir: "Path", cfg,
+                           quality: str = "final") -> "Path":
     """Minimal synthesis mock: writes a small stub file (no ffmpeg needed).
 
     The concat step in _stream_tts_events only needs these files to exist in

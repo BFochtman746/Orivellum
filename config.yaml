@@ -88,11 +88,12 @@ serving:
   # Synthesis priority chain when premium is enabled:
   #   (1) Premium engine  →  (2) AI server  →  (3) Kokoro ONNX  →  (4) espeak-ng
   #
-  # Setup:
-  #   1. Install / run your premium engine locally (e.g. Fish Audio S2 on port 9880)
-  #   2. Set tts_premium_url to its base URL
-  #   3. Confirm the engine's license covers your use case
-  #   4. Set tts_premium_ack_license to true
+  # Setup (bundled Chatterbox sidecar — see sidecars/premium_tts/README.md):
+  #   1. Run scripts\start-voice-sidecar.ps1 -Setup   (once)
+  #   2. Run scripts\start-voice-sidecar.ps1          (starts 127.0.0.1:9883)
+  #   3. Set tts_premium_url: "http://127.0.0.1:9883"
+  #   4. Set tts_premium_ack_license: true (Chatterbox is MIT-licensed)
+  # Any other engine speaking the same POST /v1/tts contract also works.
   #
   # Leave both at defaults (empty / false) for zero regression.
   tts_premium_url: ""

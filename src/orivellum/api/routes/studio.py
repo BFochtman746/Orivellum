@@ -1699,6 +1699,10 @@ class TTSRequest(BaseModel):
     speed: float = 1.0   # 0.5 – 2.0
     stream: bool = False  # True → SSE per-segment streaming; False → full-file (legacy)
     return_url: bool = False  # mobile: return JSON {ok,path,filename} instead of FileResponse
+    # "final" (default) tries the premium sidecar first for studio-grade audio.
+    # "draft" skips the premium tier for instant starts (Read Aloud parts) —
+    # Kokoro answers in ~1 s while the sidecar may take tens of seconds.
+    quality: str = "final"
 
 
 @router.post("/studio/tts")
@@ -1741,9 +1745,15 @@ async def synthesize_speech(body: TTSRequest):
     # ── Non-streaming path (original — returns full MP3 file) ─────────────────
     cfg = get_config()
 
-    # --- Strategy 0: Premium TTS engine (Fish Audio S2 / Hume TADA / etc.) ---
+    # --- Strategy 0: Premium TTS engine (Chatterbox sidecar / Fish Audio / etc.) ---
+    # Skipped for draft-quality requests: instant previews come from Kokoro.
+    # Exception: cloned voices ALWAYS go premium (they exist nowhere else) and
+    # fail closed rather than falling through to an unrelated local narrator.
+    _clone = _is_clone_voice(body.voice)
+    premium_audio = None
     try:
-        premium_audio = await _call_premium_tts(body.text, body.voice, body.speed, cfg)
+        premium_audio = (None if (body.quality == "draft" and not _clone)
+                         else await _call_premium_tts(body.text, body.voice, body.speed, cfg))
         if premium_audio is not None:
             out_dir = Path(cfg.data_dir) / "outputs"
             out_dir.mkdir(parents=True, exist_ok=True)
@@ -1764,6 +1774,15 @@ async def synthesize_speech(body: TTSRequest):
                                 headers={"X-TTS-Engine": "premium"})
     except Exception as exc:
         logger.info("Premium TTS failed (%s) — trying AI server", exc)
+
+    # Cloned voice + no premium audio ⇒ fail closed here, OUTSIDE the guard
+    # above so the 503 is never swallowed by the fall-through handler.
+    if _clone and premium_audio is None:
+        raise HTTPException(
+            503,
+            "This cloned voice needs the premium voice engine, which isn't "
+            "reachable right now — start the sidecar or pick a catalog voice.",
+        )
 
     # --- Strategy 1: AI server /audio/speech ---
     try:
@@ -2058,6 +2077,7 @@ async def _synthesize_text_to_mp3(
     speed: float,
     out_dir: Path,
     cfg: object,
+    quality: str = "final",
 ) -> "Path | None":
     """Synthesize *text* → MP3 using the same 3-strategy cascade as
     ``synthesize_speech``.  Returns the saved ``Path`` on success or ``None``
@@ -2069,9 +2089,14 @@ async def _synthesize_text_to_mp3(
     espeak_v     = _ESPEAK_VOICE_MAP.get(voice, "en+f4")
     wpm          = max(80, min(400, int(175 * speed)))
 
-    # Strategy 0: Premium TTS engine ---------------------------------------
+    # Strategy 0: Premium TTS engine (skipped for draft quality; cloned
+    # voices always try premium and fail closed — see _is_clone_voice) ------
+    _clone = _is_clone_voice(voice)
     try:
-        premium_audio = await _call_premium_tts(text, voice, speed, cfg)
+        premium_audio = (None if (quality == "draft" and not _clone)
+                         else await _call_premium_tts(text, voice, speed, cfg))
+        if _clone and premium_audio is None:
+            return None  # fail closed: segment reported as error, no fallback
         if premium_audio is not None:
             tmp = tempfile.NamedTemporaryFile(delete=False, dir=out_dir, suffix=".mp3")
             tmp.write(premium_audio)
@@ -2213,7 +2238,8 @@ async def _stream_tts_events(body: "TTSRequest"):
     for idx, seg_text in enumerate(segments):
         try:
             mp3_path = await _synthesize_text_to_mp3(
-                seg_text, body.voice, body.speed, out_dir, cfg
+                seg_text, body.voice, body.speed, out_dir, cfg,
+                quality=body.quality,
             )
             if mp3_path:
                 # Hard-link BEFORE rotation so the library inode is durable
@@ -2359,6 +2385,17 @@ def _run_doc_tts_job(
     # Determine best available TTS engine once (Premium > AI > Kokoro > espeak-ng).
     premium_ok = _is_premium_tts_enabled(cfg)
 
+    # Cloned voices exist only on the premium sidecar — fail the job clearly
+    # instead of rendering the whole book in an unrelated local narrator.
+    if _is_clone_voice(body.voice) and not premium_ok:
+        with _doc_tts_jobs_lock:
+            _doc_tts_jobs[job_id]["state"] = "error"
+            _doc_tts_jobs[job_id]["error"] = (
+                "This cloned voice needs the premium voice engine "
+                "(tts_premium_url), which is not enabled."
+            )
+        return
+
     ai_ok = False
     if not premium_ok:
         try:
@@ -2401,6 +2438,14 @@ def _run_doc_tts_job(
                         synthesised = True
                 except Exception as pe:
                     logger.warning("Premium TTS failed on segment %d: %s", idx, pe)
+
+            # Cloned voice + premium failure ⇒ fail closed (no local fallback
+            # exists for a cloned voice — it would speak in the wrong narrator).
+            if _is_clone_voice(body.voice) and not synthesised:
+                raise RuntimeError(
+                    f"Premium engine failed on segment {idx} and cloned voices "
+                    "have no local fallback — is the sidecar still running?"
+                )
 
             # Strategy 1: AI server TTS
             if ai_ok and not synthesised:
@@ -3299,11 +3344,79 @@ def _url_probe(url: str) -> tuple[bool, int | None]:
 
 # ── Premium TTS helpers ───────────────────────────────────────────────────────
 
+# Circuit breaker (same pattern as the cross-encoder reranker): a connection
+# failure opens a cooldown during which no network attempt is made, so a
+# stopped sidecar costs one timeout — not one per segment of an audiobook.
+# Any HTTP response (even an error status) proves the engine is alive and
+# closes the breaker; only transport-level failures open it.
+_PREMIUM_FAIL_COOLDOWN = 120.0
+_premium_unavailable_until = 0.0
+_premium_breaker_lock = threading.Lock()
+# Single-flight probe (same design as the cross-encoder): until the sidecar
+# has proven healthy at least once, only ONE request may attempt the network
+# call — concurrent callers fall through to the next strategy immediately.
+# Prevents a thundering herd of 60 s timeouts when the sidecar is down but
+# the breaker hasn't opened yet.
+_premium_healthy = False
+_premium_inflight = False
+
+
+def _premium_breaker_open() -> bool:
+    return time.monotonic() < _premium_unavailable_until
+
+
+def _premium_try_acquire() -> bool:
+    """Return True if this caller may attempt a premium network call."""
+    global _premium_inflight
+    with _premium_breaker_lock:
+        if time.monotonic() < _premium_unavailable_until:
+            return False
+        if not _premium_healthy and _premium_inflight:
+            return False  # someone else is already probing
+        _premium_inflight = True
+        return True
+
+
+def _premium_note_failure() -> None:
+    global _premium_unavailable_until, _premium_healthy, _premium_inflight
+    with _premium_breaker_lock:
+        _premium_inflight = False
+        _premium_healthy = False
+        _premium_unavailable_until = time.monotonic() + _PREMIUM_FAIL_COOLDOWN
+
+
+def _premium_note_success() -> None:
+    global _premium_unavailable_until, _premium_healthy, _premium_inflight
+    with _premium_breaker_lock:
+        _premium_inflight = False
+        _premium_healthy = True
+        _premium_unavailable_until = 0.0
+
+
+def _premium_breaker_status() -> dict:
+    now = time.monotonic()
+    open_ = now < _premium_unavailable_until
+    return {
+        "circuit_open": open_,
+        "retry_in_sec": max(0, round(_premium_unavailable_until - now)) if open_ else 0,
+    }
+
+
 def _is_premium_tts_enabled(cfg) -> bool:
     """Return True when the premium TTS path is configured AND licensed."""
     url = getattr(cfg.serving, "tts_premium_url", "").strip()
     ack = getattr(cfg.serving, "tts_premium_ack_license", False)
     return bool(url and ack)
+
+
+def _is_clone_voice(voice: str) -> bool:
+    """Cloned voices (``clone:<id>``) exist ONLY on the premium sidecar.
+
+    They must never silently fall through to Kokoro/espeak — the local
+    engines would map the unknown id to a default narrator and the user
+    would get an unrelated voice with no error.  Callers fail closed.
+    """
+    return voice.startswith("clone:")
 
 
 async def _call_premium_tts(text: str, voice: str, speed: float, cfg) -> bytes | None:
@@ -3319,7 +3432,7 @@ async def _call_premium_tts(text: str, voice: str, speed: float, cfg) -> bytes |
     be ``True``.  Returns ``None`` (silently) on any failure so the caller falls
     through to the next strategy.
     """
-    if not _is_premium_tts_enabled(cfg):
+    if not _is_premium_tts_enabled(cfg) or not _premium_try_acquire():
         return None
     premium_url = cfg.serving.tts_premium_url.rstrip("/")
     try:
@@ -3338,6 +3451,7 @@ async def _call_premium_tts(text: str, voice: str, speed: float, cfg) -> bytes |
                 },
                 headers={"Accept": "audio/mpeg, audio/mp3, audio/*, */*"},
             )
+            _premium_note_success()  # any response = engine alive
             if resp.status_code == 200 and resp.content:
                 ct = resp.headers.get("content-type", "")
                 # Accept if content-type is audio, or if the body looks like audio
@@ -3345,13 +3459,14 @@ async def _call_premium_tts(text: str, voice: str, speed: float, cfg) -> bytes |
                 if "audio" in ct or len(resp.content) > 1024:
                     return resp.content
     except Exception as exc:
-        logger.debug("Premium TTS unavailable (%s) — falling through", exc)
+        _premium_note_failure()
+        logger.debug("Premium TTS unavailable (%s) — cooling down", exc)
     return None
 
 
 def _call_premium_tts_sync(text: str, voice: str, speed: float, cfg) -> bytes | None:
     """Synchronous version of ``_call_premium_tts`` for background worker threads."""
-    if not _is_premium_tts_enabled(cfg):
+    if not _is_premium_tts_enabled(cfg) or not _premium_try_acquire():
         return None
     premium_url = cfg.serving.tts_premium_url.rstrip("/")
     try:
@@ -3370,13 +3485,113 @@ def _call_premium_tts_sync(text: str, voice: str, speed: float, cfg) -> bytes | 
             headers={"Accept": "audio/mpeg, audio/mp3, audio/*, */*"},
             timeout=60,
         )
+        _premium_note_success()  # any response = engine alive
         if resp.status_code == 200 and resp.content:
             ct = resp.headers.get("content-type", "")
             if "audio" in ct or len(resp.content) > 1024:
                 return resp.content
     except Exception as exc:
-        logger.debug("Premium TTS (sync) unavailable (%s) — falling through", exc)
+        _premium_note_failure()
+        logger.debug("Premium TTS (sync) unavailable (%s) — cooling down", exc)
     return None
+
+
+# ── Cloned-voice management (proxied to the premium sidecar) ────────────────
+# The sidecar is loopback-only on the host machine, so the browser can never
+# reach it directly — these routes proxy through the main API.  Consent is
+# ENFORCED sidecar-side (synthesis returns 403 until acknowledged); these
+# routes only manage the records.
+
+def _premium_base_url() -> str | None:
+    cfg = get_config()
+    url = getattr(cfg.serving, "tts_premium_url", "").strip()
+    return url.rstrip("/") or None
+
+
+@router.get("/studio/voice-clones")
+def list_voice_clones():
+    """List cloned voices from the premium sidecar (empty when unconfigured)."""
+    base = _premium_base_url()
+    if not base:
+        return {"configured": False, "reachable": False, "voices": [],
+                "consent_statement": None}
+    try:
+        import httpx
+        resp = httpx.get(f"{base}/v1/voices", timeout=5)
+        resp.raise_for_status()
+        data = resp.json()
+        return {"configured": True, "reachable": True,
+                "voices": data.get("voices", []),
+                "consent_statement": data.get("consent_statement")}
+    except Exception as exc:
+        logger.debug("voice-clones list failed: %s", exc)
+        return {"configured": True, "reachable": False, "voices": [],
+                "consent_statement": None}
+
+
+@router.post("/studio/voice-clones")
+async def create_voice_clone(
+    file: UploadFile = File(...),
+    name: str = Form(...),
+    consent_ack: bool = Form(False),
+):
+    """Upload a reference clip to the sidecar's consent-gated voice store."""
+    base = _premium_base_url()
+    if not base:
+        raise HTTPException(503, "Premium voice engine is not configured (tts_premium_url)")
+    # Bound the read BEFORE buffering: the sidecar caps reference clips at
+    # 25 MB, so anything larger is rejected here without full buffering.
+    _CLONE_MAX = 25 * 1024 * 1024
+    audio = await file.read(_CLONE_MAX + 1)
+    if len(audio) > _CLONE_MAX:
+        raise HTTPException(413, "Reference clip too large (max 25 MB)")
+    try:
+        import httpx
+        resp = httpx.post(
+            f"{base}/v1/voices",
+            files={"file": (file.filename or "reference.wav", audio,
+                            file.content_type or "application/octet-stream")},
+            data={"name": name, "consent_ack": str(bool(consent_ack)).lower()},
+            timeout=30,
+        )
+    except Exception:
+        raise HTTPException(503, "Premium voice engine is not reachable — start the sidecar first")
+    if resp.status_code >= 400:
+        detail = resp.json().get("detail", resp.text[:200]) if resp.content else "upload failed"
+        raise HTTPException(resp.status_code, detail)
+    return resp.json()
+
+
+@router.post("/studio/voice-clones/{vid}/consent")
+def acknowledge_voice_clone_consent(vid: str):
+    base = _premium_base_url()
+    if not base:
+        raise HTTPException(503, "Premium voice engine is not configured")
+    try:
+        import httpx
+        resp = httpx.post(f"{base}/v1/voices/{vid}/consent", timeout=10)
+    except Exception:
+        raise HTTPException(503, "Premium voice engine is not reachable")
+    if resp.status_code >= 400:
+        detail = resp.json().get("detail", "consent update failed") if resp.content else "consent update failed"
+        raise HTTPException(resp.status_code, detail)
+    return resp.json()
+
+
+@router.delete("/studio/voice-clones/{vid}")
+def delete_voice_clone(vid: str):
+    base = _premium_base_url()
+    if not base:
+        raise HTTPException(503, "Premium voice engine is not configured")
+    try:
+        import httpx
+        resp = httpx.delete(f"{base}/v1/voices/{vid}", timeout=10)
+    except Exception:
+        raise HTTPException(503, "Premium voice engine is not reachable")
+    if resp.status_code >= 400:
+        detail = resp.json().get("detail", "delete failed") if resp.content else "delete failed"
+        raise HTTPException(resp.status_code, detail)
+    return resp.json()
 
 
 @router.get("/studio/status")
@@ -3434,7 +3649,10 @@ def studio_status():
         }
         # Premium TTS probe — only fire if URL is configured
         if _premium_tts_url:
-            futs["premium_tts"] = pool.submit(_url_probe, _premium_tts_url)
+            # The sidecar's canonical liveness route is /health (its root may
+            # 404, which _url_probe would misread as unreachable).
+            futs["premium_tts"] = pool.submit(
+                _url_probe, f"{_premium_tts_url.rstrip('/')}/health")
         if custom_url:
             futs["custom"] = pool.submit(_url_probe, custom_url)
             if _is_comfyui_url(custom_url):
@@ -3471,12 +3689,25 @@ def studio_status():
                                       else (bool(_prem_probe), None))
     premium_tts_active = bool(_premium_tts_url and _premium_ack and premium_tts_reachable)
 
+    # Engine identity from the sidecar's /health (e.g. "chatterbox") so the
+    # UI badge can name the engine.  Loopback call — cheap when reachable.
+    premium_engine: "str | None" = None
+    if premium_tts_reachable:
+        try:
+            import httpx as _hx_prem
+            _h = _hx_prem.get(f"{_premium_tts_url.rstrip('/')}/health", timeout=2)
+            if _h.status_code == 200:
+                premium_engine = (_h.json() or {}).get("engine")
+        except Exception:
+            premium_engine = None
+
     tts_strategies = [
         {
             "name": "Premium TTS", "key": "premium_tts",
             "available": premium_tts_active, "latency_ms": prem_ms,
             "url": _premium_tts_url or None,
             "license_ack": _premium_ack,
+            "engine": premium_engine,
         },
         {"name": "AI Server",   "key": "ai_server",   "available": ai_tts_ok, "latency_ms": ai_ms},
         {"name": "Kokoro ONNX", "key": "kokoro_onnx",  "available": kokoro_ok, "latency_ms": None},
@@ -3582,6 +3813,8 @@ def studio_status():
             "premium_tts_reachable": premium_tts_reachable,
             "premium_tts_active": premium_tts_active,
             "premium_tts_url": _premium_tts_url or None,
+            "premium_tts_engine": premium_engine,
+            "premium_tts_breaker": _premium_breaker_status(),
             "strategies": tts_strategies,
             # Voice-sample quality — distinct from general TTS availability.
             # Samples use ONLY local engines; AI Server is NOT a sample fallback.

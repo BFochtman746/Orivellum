@@ -105,6 +105,7 @@ async def _fast_synth(
     speed: float,
     out_dir: "Path",
     cfg: Any,
+    quality: str = "final",
 ) -> "Path | None":
     """Fast mock synthesis: 50 ms silent MP3 via ffmpeg anullsrc.
 
@@ -132,7 +133,7 @@ async def _fast_synth(
     return None
 
 
-async def _always_fail_synth(text, voice, speed, out_dir, cfg) -> None:
+async def _always_fail_synth(text, voice, speed, out_dir, cfg, quality="final") -> None:
     """Mock synthesis that always returns None (all backends down)."""
     return None
 
@@ -841,7 +842,7 @@ class TestLiveSSEDelivery(unittest.TestCase):
         gate            = threading.Event()
         call_count      = [0]        # mutable cell; safe — single asyncio loop
 
-        async def _gated_synth(text, voice, speed, out_dir, cfg):
+        async def _gated_synth(text, voice, speed, out_dir, cfg, quality="final"):
             idx = call_count[0]
             call_count[0] += 1
             if idx > 0:

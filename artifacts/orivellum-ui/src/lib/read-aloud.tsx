@@ -299,7 +299,9 @@ export function ReadAloudProvider({
       const resp = await apiFetch(`${BASE}/studio/tts`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: parts[i], voice: v, speed: s }),
+        // quality:"draft" → server skips the premium sidecar so parts start
+        // instantly from Kokoro; studio-grade renders are for audiobook builds.
+        body: JSON.stringify({ text: parts[i], voice: v, speed: s, quality: "draft" }),
       });
       if (sessionRef.current !== session) throw new Error(TTS_STALE);
       if (!resp.ok) {

@@ -456,6 +456,7 @@ function VoiceDetailPanel({
 function _AudiobookEngineBadge() {
   const [engine, setEngine] = useState<string | null>(null);
   const [isPremium, setIsPremium] = useState(false);
+  const [premiumEngine, setPremiumEngine] = useState<string | null>(null);
 
   useEffect(() => {
     apiFetch(`${BASE}/studio/status`)
@@ -464,6 +465,7 @@ function _AudiobookEngineBadge() {
         if (!data?.tts) return;
         const best: string | null = data.tts.best_strategy ?? null;
         setIsPremium(data.tts.premium_tts_active === true);
+        setPremiumEngine(data.tts.premium_tts_engine ?? null);
         setEngine(best);
       })
       .catch(() => {});
@@ -472,11 +474,16 @@ function _AudiobookEngineBadge() {
   if (!engine) return null;
 
   if (isPremium) {
+    const engineName = premiumEngine
+      ? premiumEngine.charAt(0).toUpperCase() + premiumEngine.slice(1)
+      : null;
     return (
       <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border" style={{ background: "var(--gilt-soft)", borderColor: "var(--gilt-line)" }}>
         <Sparkles className="w-3 h-3 shrink-0" style={{ color: "var(--gilt)" }} />
         <span className="text-[10px] font-mono" style={{ color: "var(--gilt)" }}>
-          Premium TTS active — hero narration quality
+          {engineName
+            ? `Studio engine active — ${engineName} on your GPU`
+            : "Premium TTS active — hero narration quality"}
         </span>
       </div>
     );
@@ -500,6 +507,226 @@ function _AudiobookEngineBadge() {
         </span>
       )}
     </div>
+  );
+}
+
+// ── Clone Tab ─────────────────────────────────────────────────────────────────
+// Consent-gated voice cloning managed by the loopback premium sidecar.
+// A cloned voice cannot speak until its consent statement is acknowledged.
+
+interface CloneEntry {
+  id: string;
+  name: string;
+  sha256: string;
+  size_bytes: number;
+  created_at: number;
+  consent_acknowledged: boolean;
+  usable: boolean;
+}
+
+interface CloneListResp {
+  configured: boolean;
+  reachable: boolean;
+  voices: CloneEntry[];
+  consent_statement: string | null;
+}
+
+function CloneTab({ onUseVoice }: { onUseVoice: (v: VoiceEntry) => void }) {
+  const [data, setData] = useState<CloneListResp | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [name, setName] = useState("");
+  const [file, setFile] = useState<File | null>(null);
+  const [consent, setConsent] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const refresh = useCallback(async () => {
+    try {
+      const r = await apiFetch(`${BASE}/studio/voice-clones`);
+      if (r.ok) setData(await r.json());
+    } catch { /* leave previous state */ }
+    finally { setLoading(false); }
+  }, []);
+
+  useEffect(() => { refresh(); }, [refresh]);
+
+  async function handleUpload() {
+    if (!file || !name.trim()) {
+      toast.error("Pick a reference clip and give the voice a name");
+      return;
+    }
+    if (!consent) {
+      toast.error("You must confirm the consent statement before cloning");
+      return;
+    }
+    setBusy(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("name", name.trim());
+      fd.append("consent_ack", "true");
+      const r = await apiFetch(`${BASE}/studio/voice-clones`, { method: "POST", body: fd });
+      if (!r.ok) {
+        const err = await r.json().catch(() => null);
+        throw new Error(err?.detail || `Upload failed (${r.status})`);
+      }
+      toast.success(`Voice "${name.trim()}" cloned`);
+      setName(""); setFile(null); setConsent(false);
+      if (fileRef.current) fileRef.current.value = "";
+      await refresh();
+    } catch (e: any) {
+      toast.error(e?.message || "Upload failed");
+    } finally { setBusy(false); }
+  }
+
+  async function handleConsent(v: CloneEntry) {
+    try {
+      const r = await apiFetch(`${BASE}/studio/voice-clones/${v.id}/consent`, { method: "POST" });
+      if (!r.ok) throw new Error();
+      toast.success(`Consent recorded for "${v.name}"`);
+      await refresh();
+    } catch { toast.error("Could not record consent"); }
+  }
+
+  async function handleDelete(v: CloneEntry) {
+    try {
+      const r = await apiFetch(`${BASE}/studio/voice-clones/${v.id}`, { method: "DELETE" });
+      if (!r.ok) throw new Error();
+      toast.success(`Deleted "${v.name}"`);
+      await refresh();
+    } catch { toast.error("Could not delete voice"); }
+  }
+
+  if (loading) {
+    return <div className="p-4"><Skeleton className="h-40 w-full rounded-xl" /></div>;
+  }
+
+  if (!data?.configured) {
+    return (
+      <ScrollArea className="h-full">
+        <div className="p-4 max-w-2xl">
+          <Card>
+            <CardHeader><CardTitle className="text-base flex items-center gap-2"><Mic className="w-4 h-4" /> Voice cloning is not set up yet</CardTitle></CardHeader>
+            <CardContent className="text-sm text-muted-foreground space-y-2">
+              <p>Cloning runs on a private engine on this computer's GPU — your voice recordings never leave the machine.</p>
+              <p>To turn it on:</p>
+              <ol className="list-decimal list-inside space-y-1">
+                <li>Run <code className="font-mono text-xs bg-muted px-1 py-0.5 rounded">scripts\start-voice-sidecar.ps1 -Setup</code> once, then <code className="font-mono text-xs bg-muted px-1 py-0.5 rounded">scripts\start-voice-sidecar.ps1</code></li>
+                <li>In <code className="font-mono text-xs bg-muted px-1 py-0.5 rounded">config.yaml</code>, set <code className="font-mono text-xs bg-muted px-1 py-0.5 rounded">tts_premium_url: "http://127.0.0.1:9883"</code> and <code className="font-mono text-xs bg-muted px-1 py-0.5 rounded">tts_premium_ack_license: true</code></li>
+                <li>Restart Orivellum</li>
+              </ol>
+            </CardContent>
+          </Card>
+        </div>
+      </ScrollArea>
+    );
+  }
+
+  if (!data.reachable) {
+    return (
+      <div className="p-4 max-w-2xl">
+        <Card>
+          <CardContent className="pt-6 text-sm text-muted-foreground flex items-start gap-2">
+            <AlertCircle className="w-4 h-4 mt-0.5 shrink-0 text-destructive/70" />
+            <div>
+              <p className="text-foreground font-medium mb-1">The voice engine isn't running</p>
+              <p>Start it on this computer with <code className="font-mono text-xs bg-muted px-1 py-0.5 rounded">scripts\start-voice-sidecar.ps1</code>, then reopen this tab.</p>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  return (
+    <ScrollArea className="h-full">
+      <div className="p-4 space-y-4 max-w-3xl">
+        {/* Upload form */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base flex items-center gap-2"><Mic className="w-4 h-4" /> Clone a voice</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <p className="text-xs text-muted-foreground">
+              Upload 5–30 seconds of clean, single-speaker audio. The recording stays on this computer.
+            </p>
+            <div className="grid sm:grid-cols-2 gap-3">
+              <Input
+                placeholder="Voice name (e.g. Brian — narrator)"
+                value={name}
+                onChange={e => setName(e.target.value)}
+                maxLength={80}
+              />
+              <Input
+                ref={fileRef}
+                type="file"
+                accept="audio/*,.wav,.mp3,.m4a,.flac,.ogg"
+                onChange={e => setFile(e.target.files?.[0] ?? null)}
+              />
+            </div>
+            <label className="flex items-start gap-2 text-xs text-muted-foreground cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={consent}
+                onChange={e => setConsent(e.target.checked)}
+                className="mt-0.5 accent-[var(--gilt)]"
+              />
+              <span>{data.consent_statement || "I confirm I am the speaker, or have the speaker's explicit permission to clone this voice."}</span>
+            </label>
+            <Button onClick={handleUpload} disabled={busy || !file || !name.trim() || !consent} size="sm">
+              {busy ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 mr-1.5" />}
+              Clone voice
+            </Button>
+          </CardContent>
+        </Card>
+
+        {/* Cloned voices list */}
+        <div className="space-y-2">
+          <h3 className="text-sm font-medium">Your cloned voices</h3>
+          {data.voices.length === 0 && (
+            <p className="text-xs text-muted-foreground">No cloned voices yet.</p>
+          )}
+          {data.voices.map(v => (
+            <Card key={v.id}>
+              <CardContent className="py-3 flex items-center gap-3 flex-wrap">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium truncate">{v.name}</span>
+                    {v.usable ? (
+                      <Badge variant="outline" className="text-[10px] gap-1"><CheckCircle2 className="w-3 h-3" /> Consented</Badge>
+                    ) : (
+                      <Badge variant="outline" className="text-[10px] gap-1 border-destructive/40 text-destructive"><AlertCircle className="w-3 h-3" /> Consent needed</Badge>
+                    )}
+                  </div>
+                  <p className="text-[10px] font-mono text-muted-foreground truncate">
+                    fingerprint {v.sha256.slice(0, 16)} · {(v.size_bytes / 1024 / 1024).toFixed(1)} MB
+                  </p>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  {!v.usable && (
+                    <Button size="sm" variant="outline" onClick={() => handleConsent(v)}>
+                      Acknowledge consent
+                    </Button>
+                  )}
+                  {v.usable && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => onUseVoice({ id: `clone:${v.id}`, name: v.name, custom: true, engine: "premium" })}
+                    >
+                      <BookHeadphones className="w-3.5 h-3.5 mr-1.5" /> Use for audiobook
+                    </Button>
+                  )}
+                  <Button size="sm" variant="ghost" onClick={() => handleDelete(v)}>
+                    <X className="w-3.5 h-3.5" />
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      </div>
+    </ScrollArea>
   );
 }
 
@@ -1509,7 +1736,7 @@ export function VoiceStudio() {
   const { data: voicesResp, isLoading, isError } = useListVoices();
   const voices: VoiceEntry[] = (voicesResp as any)?.voices ?? [];
 
-  const [activeTab, setActiveTab] = useState<"browse" | "recommend" | "design" | "audiobook">("browse");
+  const [activeTab, setActiveTab] = useState<"browse" | "recommend" | "design" | "clone" | "audiobook">("browse");
   const [selectedVoice, setSelectedVoice] = useState<VoiceEntry | null>(null);
   const [audiobookVoice, setAudiobookVoice] = useState<VoiceEntry | null>(null);
 
@@ -1529,6 +1756,7 @@ export function VoiceStudio() {
     { id: "browse",    label: "Browse Voices", icon: Volume2 },
     { id: "recommend", label: "AI Recommend",  icon: Sparkles },
     { id: "design",    label: "Voice Designer",icon: Wand2 },
+    { id: "clone",     label: "Clone Voice",   icon: Mic },
     { id: "audiobook", label: "Build Audiobook",icon: BookHeadphones },
   ] as const;
 
@@ -1598,6 +1826,9 @@ export function VoiceStudio() {
             onUseVoice={handleUseVoice}
             globalAudio={globalAudio}
           />
+        )}
+        {activeTab === "clone" && (
+          <CloneTab onUseVoice={handleUseVoice} />
         )}
         {activeTab === "audiobook" && (
           <AudiobookTab
