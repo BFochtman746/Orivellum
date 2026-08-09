@@ -49,6 +49,10 @@ export default defineConfig({
         navigateFallbackDenylist: [/^\/api\//],
         // Cache all assets produced by the build
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
+        // Safety margin: if the vendor chunk ever creeps past Workbox's
+        // 2 MiB default, precache it anyway instead of silently skipping
+        // it (which would break offline mode for the biggest file).
+        maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
       },
     }),
     ...(process.env.NODE_ENV !== 'production' &&
@@ -83,28 +87,18 @@ export default defineConfig({
     emptyOutDir: true,
     rollupOptions: {
       output: {
-        // Split the monolithic bundle so no single chunk exceeds Workbox's
-        // 2 MiB precache limit (~2.11 MB before splitting).
+        // Split app code from dependencies so no single chunk exceeds
+        // Workbox's default 2 MiB precache limit (~2.11 MB unsplit).
+        //
+        // IMPORTANT: keep ALL of node_modules in ONE vendor chunk. Splitting
+        // react / @radix-ui / misc into separate chunks created circular
+        // inter-chunk imports whose evaluation order broke in production:
+        // "can't access property 'forwardRef' of undefined" — a blank page
+        // on every browser. A single vendor chunk has a strictly one-way
+        // dependency (index → vendor) and cannot hit that ordering bug.
         manualChunks: (id) => {
-          // React core + react-dom — hot path, cached long-term
-          if (id.includes('node_modules/react/') || id.includes('node_modules/react-dom/')) {
-            return 'vendor-react';
-          }
-          // Radix UI primitives (bulk of the UI library weight)
-          if (id.includes('@radix-ui')) {
-            return 'vendor-radix';
-          }
-          // TanStack Query + Wouter routing
-          if (id.includes('@tanstack') || id.includes('wouter')) {
-            return 'vendor-query';
-          }
-          // Lucide icons are large — isolate them
-          if (id.includes('lucide-react')) {
-            return 'vendor-icons';
-          }
-          // date-fns, sonner, and other utilities
           if (id.includes('node_modules/')) {
-            return 'vendor-misc';
+            return 'vendor';
           }
         },
       },
