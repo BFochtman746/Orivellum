@@ -27,6 +27,7 @@ import LearningSession from '@/pages/learning/session';
 import KnowledgeReview from '@/pages/learning/review';
 import Backups from '@/pages/backups/index';
 import System from '@/pages/system/index';
+import CommandHub from '@/pages/command/index';
 import GovernancePage from '@/pages/governance/index';
 import ReviewPage from '@/pages/review/index';
 import Mcos from '@/pages/mcos/index';
@@ -128,6 +129,7 @@ function RoutedPages() {
         <Route path="/learning/review">{() => <RouteWithBoundary component={KnowledgeReview} />}</Route>
         <Route path="/learning">{() => <RouteWithBoundary component={LearningHub} />}</Route>
         <Route path="/backups">{() => <RouteWithBoundary component={Backups} />}</Route>
+        <Route path="/command">{() => <RouteWithBoundary component={CommandHub} />}</Route>
         <Route path="/system">{() => <RouteWithBoundary component={System} />}</Route>
         <Route path="/mcos">{() => <RouteWithBoundary component={Mcos} />}</Route>
         <Route path="/governance">{() => <RouteWithBoundary component={GovernancePage} />}</Route>

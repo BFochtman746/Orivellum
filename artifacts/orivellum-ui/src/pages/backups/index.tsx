@@ -9,8 +9,10 @@ import { HardDrive, ShieldCheck, Clock, Download, RefreshCw } from "lucide-react
 import { toast } from "sonner";
 import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
+import { useGdDark } from "@/lib/useGdDark";
 
 export default function Backups() {
+  const gdDark = useGdDark();
   const queryClient = useQueryClient();
   const { data: backupsResp, isLoading } = useListBackups();
   const createBackup = useCreateBackup();
@@ -46,7 +48,7 @@ export default function Backups() {
   };
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-500 max-w-4xl mx-auto">
+    <div className={`space-y-6 animate-in fade-in duration-500 max-w-4xl mx-auto ${gdDark ? "dark text-foreground" : ""}`}>
       <div className="flex items-center justify-between border-b border-border/50 pb-4">
         <div>
           <h1 className="text-3xl font-serif font-semibold tracking-tight">System Backups</h1>

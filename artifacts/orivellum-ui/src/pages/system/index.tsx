@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { useGdDark } from "@/lib/useGdDark";
 
 const API_BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") || "";
 
@@ -1329,7 +1330,11 @@ function ExtractionTemplatesCard() {
                       Edit
                     </Button>
                     <button
-                      onClick={() => deleteMutation.mutate(t.id)}
+                      onClick={() => {
+                        if (confirm(`Delete template "${t.name ?? t.id}"? This cannot be undone.`)) {
+                          deleteMutation.mutate(t.id);
+                        }
+                      }}
                       disabled={deleteMutation.isPending}
                       className="p-1.5 rounded text-muted-foreground hover:text-destructive hover:bg-destructive/5 transition-colors"
                       title="Delete template"
@@ -2366,6 +2371,7 @@ function ImageGenUrlCard() {
 }
 
 export default function System() {
+  const gdDark = useGdDark();
   const { data: health, isLoading: loadingHealth } = useGetSystemHealth({ query: { queryKey: getGetSystemHealthQueryKey(), refetchInterval: 10_000, staleTime: 8_000 } });
   const { data: capsResp, isLoading: loadingCaps } = useListCapabilities();
   const { data: aiExtraction, isLoading: loadingAiExt } = useAiExtractionSetting();
@@ -2379,7 +2385,7 @@ export default function System() {
   const aiOnline = aiStatus === "ok";
 
   return (
-    <div className="space-y-8 animate-in fade-in duration-500 max-w-5xl mx-auto">
+    <div className={`space-y-8 animate-in fade-in duration-500 max-w-5xl mx-auto ${gdDark ? "dark text-foreground" : ""}`}>
       <div className="pb-4" style={{ borderBottom: '1px solid var(--line)' }}>
         <span className="eyebrow mb-1">Under the Hood</span>
         <h1 className="vellum-h1">The Engine</h1>

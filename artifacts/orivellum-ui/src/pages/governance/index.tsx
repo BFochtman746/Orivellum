@@ -24,6 +24,7 @@ import {
   TrendingDown, Loader2, Link2, Inbox, ShieldCheck, ShieldAlert,
 } from "lucide-react";
 import { useLocation } from "wouter";
+import { useGdDark } from "@/lib/useGdDark";
 
 const BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
 
@@ -657,6 +658,7 @@ function FindingsSection() {
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function GovernancePage() {
+  const gdDark = useGdDark();
   const [, navigate] = useLocation();
   const qc = useQueryClient();
 
@@ -786,7 +788,7 @@ export default function GovernancePage() {
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-300 max-w-4xl">
+    <div className={`space-y-6 animate-in fade-in duration-300 max-w-4xl ${gdDark ? "dark text-foreground" : ""}`}>
 
       {/* Header */}
       <div className="pb-4" style={{ borderBottom: '1px solid var(--line)' }}>

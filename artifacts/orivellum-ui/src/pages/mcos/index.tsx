@@ -36,6 +36,7 @@ import {
   FlaskConical, Trash2, Plus, CheckCircle2, SlidersHorizontal,
 } from "lucide-react";
 import { toast } from "sonner";
+import { useGdDark } from "@/lib/useGdDark";
 
 const BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
 
@@ -1221,6 +1222,7 @@ function RagCalibrationCard() {
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function Mcos() {
+  const gdDark = useGdDark();
   const qc = useQueryClient();
 
   // Recent runs — used to determine polling and per-benchmark "running" state.
@@ -1326,7 +1328,7 @@ export default function Mcos() {
   const isEmpty = !benchLoading && !benchError && benchmarks.length === 0;
 
   return (
-    <div className="space-y-8 animate-in fade-in duration-500 max-w-6xl mx-auto">
+    <div className={`space-y-8 animate-in fade-in duration-500 max-w-6xl mx-auto ${gdDark ? "dark text-foreground" : ""}`}>
       {/* Header */}
       <div className="border-b border-border/50 pb-4 flex items-start justify-between gap-4">
         <div>

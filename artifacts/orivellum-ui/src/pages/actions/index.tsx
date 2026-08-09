@@ -8,6 +8,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useListWorks, getListWorksQueryKey } from "@workspace/api-client-react";
+import { useGdDark } from "@/lib/useGdDark";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
@@ -287,6 +288,7 @@ function RunRow({ run, onDownload }: { run: ActionRun; onDownload: (run: ActionR
 // ── Main page ──────────────────────────────────────────────────────────────────
 
 export default function ActionsPage() {
+  const gdDark = useGdDark();
   const { data: actionsData, isLoading: actionsLoading } = useQuery<{ actions: ActionDef[] }>({
     queryKey: ["actions", "list"],
     queryFn: async () => {
@@ -350,7 +352,7 @@ export default function ActionsPage() {
   const categories = Array.from(new Set(actions.map((a) => a.category)));
 
   return (
-    <div className="max-w-4xl mx-auto p-6 space-y-8">
+    <div className={`max-w-4xl mx-auto p-6 space-y-8 ${gdDark ? "dark text-foreground" : ""}`}>
       {/* Header */}
       <div>
         <h1 className="text-2xl font-serif font-medium flex items-center gap-2">

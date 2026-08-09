@@ -102,8 +102,9 @@ export const APPS: AppDef[] = [
     name: "Command",
     tagline: "System, review & governance",
     icon: Gauge,
-    entry: "/system",
+    entry: "/command",
     routes: [
+      { name: "Command", href: "/command" },
       { name: "System", href: "/system" },
       { name: "Actions", href: "/actions" },
       { name: "Review", href: "/review" },
@@ -111,7 +112,7 @@ export const APPS: AppDef[] = [
       { name: "Calibration", href: "/mcos" },
       { name: "Backups", href: "/backups" },
     ],
-    own: ["/system", "/actions", "/review", "/governance", "/mcos", "/backups"],
+    own: ["/command", "/system", "/actions", "/review", "/governance", "/mcos", "/backups"],
   },
   {
     id: "mail",
