@@ -516,6 +516,94 @@ export function ReadAloudProvider({
     return () => clearInterval(id);
   }, [playing, saveProgress]);
 
+  // ── Media Session — lock-screen / control-center controls ──────────────────
+  // navigator.mediaSession is often UNDEFINED here (the app regularly runs
+  // over plain HTTP via Tailscale, where isSecureContext is false), so every
+  // touch is feature-guarded and wrapped: unavailable API = zero effect.
+
+  /** navigator.mediaSession, or null when unavailable (HTTP / old browser). */
+  const getMediaSession = (): MediaSession | null => {
+    try {
+      return typeof navigator !== "undefined" && "mediaSession" in navigator
+        ? navigator.mediaSession
+        : null;
+    } catch { return null; }
+  };
+
+  // Metadata: title + part progress, refreshed on part change.
+  useEffect(() => {
+    const ms = getMediaSession();
+    if (!ms) return;
+    try {
+      if (!nowPlaying || typeof MediaMetadata === "undefined") {
+        ms.metadata = null;
+        return;
+      }
+      ms.metadata = new MediaMetadata({
+        title: nowPlaying.title,
+        artist: "Orivellum",
+        album: chunks.length > 1 ? `Part ${index + 1} of ${chunks.length}` : "",
+      });
+    } catch { /* unsupported — ignore */ }
+  }, [nowPlaying, index, chunks.length]);
+
+  // Playback state so the lock screen shows the correct play/pause glyph.
+  useEffect(() => {
+    const ms = getMediaSession();
+    if (!ms) return;
+    try {
+      ms.playbackState = !nowPlaying ? "none" : playing ? "playing" : "paused";
+    } catch { /* ignore */ }
+  }, [nowPlaying, playing]);
+
+  // Action handlers. play/pause act directly on the shared <audio> element
+  // (its onPlay/onPause events keep React state in sync); next/previous route
+  // through goToPart for multi-part TTS sessions. OS-initiated actions count
+  // as user gestures, so play() from these handlers is allowed on iOS.
+  useEffect(() => {
+    const ms = getMediaSession();
+    if (!ms?.setActionHandler) return;
+    const set = (action: MediaSessionAction, handler: MediaSessionActionHandler | null) => {
+      try { ms.setActionHandler(action, handler); } catch { /* unsupported action */ }
+    };
+    if (!nowPlaying) {
+      // No session — leave no stale handlers behind.
+      for (const a of ["play", "pause", "nexttrack", "previoustrack",
+                       "seekforward", "seekbackward"] as MediaSessionAction[]) {
+        set(a, null);
+      }
+      return;
+    }
+    set("play", () => {
+      const el = audioRef.current;
+      if (el?.paused) el.play().catch(() => {});
+    });
+    set("pause", () => { audioRef.current?.pause(); });
+    set("seekforward", () => {
+      const el = audioRef.current;
+      if (el && isFinite(el.duration)) el.currentTime = Math.min(el.duration, el.currentTime + 10);
+    });
+    set("seekbackward", () => {
+      const el = audioRef.current;
+      if (el) el.currentTime = Math.max(0, el.currentTime - 10);
+    });
+    const multiPart = nowPlaying.kind === "tts" && chunks.length > 1;
+    set("nexttrack", multiPart ? () => {
+      if (indexRef.current + 1 < chunksRef.current.length) {
+        void goToPart(indexRef.current + 1, true);
+      }
+    } : null);
+    set("previoustrack", multiPart ? () => {
+      if (indexRef.current > 0) void goToPart(indexRef.current - 1, true);
+    } : null);
+    return () => {
+      for (const a of ["play", "pause", "nexttrack", "previoustrack",
+                       "seekforward", "seekbackward"] as MediaSessionAction[]) {
+        set(a, null);
+      }
+    };
+  }, [nowPlaying, chunks.length, goToPart]);
+
   /** Change voice and/or speed; clears the part cache so stale audio never
    *  replays. If a TTS session is open, re-synthesizes the current part. */
   const applySettings = useCallback(async (newVoice: string, newSpeed: number) => {
