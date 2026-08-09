@@ -695,10 +695,11 @@ def get_audio_enhance_setting():
         pr = _dfn_probe(force=False)
     except Exception as exc:
         pr = {"available": False, "error": str(exc), "python": None,
-              "install_hint": None}
+              "install_hint": None, "mode": None}
     return {
         "enabled": enabled,
         "installed": pr["available"],
+        "mode": pr.get("mode"),
         "model": "DeepFilterNet3",
         "install_hint": pr["install_hint"],
         "error": pr["error"],
@@ -719,6 +720,7 @@ def probe_audio_enhance():
     result = _dfn_probe(force=True)
     return {
         "installed": result["available"],
+        "mode": result.get("mode"),
         "error": result["error"],
         "python": result["python"],
         "install_hint": result["install_hint"],

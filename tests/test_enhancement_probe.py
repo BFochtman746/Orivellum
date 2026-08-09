@@ -1,16 +1,23 @@
 """Tests for the DeepFilterNet3 live re-probe (no-restart registration).
 
-deepfilternet is not installed in the test environment, so probes fail —
-which is exactly the surface being tested: the failure must be described
-(error text + interpreter path), the failed result must be cached, and a
-forced re-probe must clear that cache and retry the import fresh.
+deepfilternet is not installed in the test environment's server interpreter,
+so in-process probes fail — which is part of the surface being tested: the
+failure must be described (error text + interpreter path), the failed result
+must be cached, and a forced re-probe must clear that cache and retry fresh.
+
+The uv sidecar (the automatic-setup path) is mocked throughout: a passive
+probe must NEVER spawn a subprocess, and the forced probe's setup/success/
+failure handling is tested against fake subprocess results.
 """
 from __future__ import annotations
 
+import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
 
 from fastapi.testclient import TestClient
 
@@ -31,22 +38,36 @@ def _make_app(tmp: str):
     return app, db, cfg
 
 
-class TestProbeCapability(unittest.TestCase):
+def _reset_state():
+    enhancement._df_model = None
+    enhancement._last_error = None
+    enhancement._sidecar_ok = None
+    enhancement._sidecar_error = None
+
+
+class _SidecarIsolatedTest(unittest.TestCase):
+    """Base: reset caches and force the sidecar to report unavailable."""
 
     def setUp(self):
-        enhancement._df_model = None
-        enhancement._last_error = None
+        _reset_state()
+        self._sidecar_patch = mock.patch.object(
+            enhancement, "_sidecar_probe", lambda force=False: False)
+        self._sidecar_patch.start()
 
     def tearDown(self):
-        enhancement._df_model = None
-        enhancement._last_error = None
+        self._sidecar_patch.stop()
+        _reset_state()
+
+
+class TestProbeCapability(_SidecarIsolatedTest):
 
     def test_probe_reports_error_and_interpreter(self):
         result = enhancement.probe()
         self.assertFalse(result["available"])
+        self.assertIsNone(result["mode"])
         self.assertIn("ImportError", result["error"] or "")
         self.assertEqual(result["python"], sys.executable)
-        self.assertIn("uv add deepfilternet", result["install_hint"])
+        self.assertIn("Check again", result["install_hint"])
 
     def test_failed_probe_is_cached_until_forced(self):
         enhancement.probe()
@@ -75,18 +96,100 @@ class TestProbeCapability(unittest.TestCase):
         enhancement._df_model = sentinel
         result = enhancement.probe(force=True)
         self.assertTrue(result["available"])
+        self.assertEqual(result["mode"], "in-process")
         self.assertIs(enhancement._df_model, sentinel)
 
 
-class TestProbeEndpoints(unittest.TestCase):
+class TestSidecar(unittest.TestCase):
+    """The uv sidecar path, with subprocess + marker file mocked/redirected."""
 
     def setUp(self):
-        enhancement._df_model = None
-        enhancement._last_error = None
+        _reset_state()
+        self._tmp = tempfile.TemporaryDirectory()
+        self._marker = Path(self._tmp.name) / "dfn3-sidecar-ok"
+        self._marker_patch = mock.patch.object(
+            enhancement, "_marker_path", lambda: self._marker)
+        self._marker_patch.start()
 
     def tearDown(self):
-        enhancement._df_model = None
-        enhancement._last_error = None
+        self._marker_patch.stop()
+        self._tmp.cleanup()
+        _reset_state()
+
+    def test_passive_probe_never_spawns_a_subprocess(self):
+        with mock.patch.object(subprocess, "run",
+                               side_effect=AssertionError("passive probe spawned uv")):
+            result = enhancement.probe(force=False)
+        self.assertFalse(result["available"])
+        self.assertIn("Check again", result["error"] or "")
+
+    def test_forced_probe_success_writes_marker(self):
+        fake = SimpleNamespace(returncode=0, stdout="", stderr="")
+        with mock.patch.object(subprocess, "run", return_value=fake) as run:
+            result = enhancement.probe(force=True)
+        self.assertTrue(result["available"])
+        self.assertEqual(result["mode"], "sidecar")
+        self.assertIsNone(result["error"])
+        run.assert_called_once()
+        self.assertEqual(self._marker.read_text(encoding="utf-8"),
+                         enhancement._marker_spec())
+
+    def test_marker_lets_passive_probe_trust_a_prior_success(self):
+        self._marker.write_text(enhancement._marker_spec(), encoding="utf-8")
+        with mock.patch.object(subprocess, "run",
+                               side_effect=AssertionError("marker should be trusted")):
+            result = enhancement.probe(force=False)
+        self.assertTrue(result["available"])
+        self.assertEqual(result["mode"], "sidecar")
+
+    def test_stale_marker_spec_is_ignored(self):
+        self._marker.write_text("old-pins", encoding="utf-8")
+        with mock.patch.object(subprocess, "run",
+                               side_effect=AssertionError("stale marker must not probe")):
+            result = enhancement.probe(force=False)
+        self.assertFalse(result["available"])
+
+    def test_forced_probe_failure_reports_stderr_tail(self):
+        fake = SimpleNamespace(returncode=1, stdout="",
+                               stderr="boom\nModuleNotFoundError: no wheels")
+        with mock.patch.object(subprocess, "run", return_value=fake):
+            result = enhancement.probe(force=True)
+        self.assertFalse(result["available"])
+        self.assertIn("no wheels", result["error"])
+        self.assertFalse(self._marker.exists())
+
+    def test_enhance_audio_returns_original_when_sidecar_run_fails(self):
+        # Pretend setup succeeded earlier (memory + marker)
+        enhancement._sidecar_ok = True
+        self._marker.write_text(enhancement._marker_spec(), encoding="utf-8")
+        src = Path(self._tmp.name) / "a.wav"
+        src.write_bytes(b"RIFF")
+        fake = SimpleNamespace(returncode=1, stdout="", stderr="crash")
+        with mock.patch.object(subprocess, "run", return_value=fake):
+            out = enhancement.enhance_audio(src, output_dir=Path(self._tmp.name))
+        self.assertEqual(out, src)
+        # A failed run proves the helper is broken: ready state + marker must
+        # be invalidated so the UI stops claiming "Active".
+        self.assertIs(enhancement._sidecar_ok, False)
+        self.assertFalse(self._marker.exists())
+        self.assertIn("helper run failed", enhancement._sidecar_error or "")
+
+    def test_enhance_audio_timeout_does_not_invalidate(self):
+        enhancement._sidecar_ok = True
+        self._marker.write_text(enhancement._marker_spec(), encoding="utf-8")
+        src = Path(self._tmp.name) / "b.wav"
+        src.write_bytes(b"RIFF")
+        with mock.patch.object(
+                subprocess, "run",
+                side_effect=subprocess.TimeoutExpired(cmd="uv", timeout=1)):
+            out = enhancement.enhance_audio(src, output_dir=Path(self._tmp.name))
+        self.assertEqual(out, src)
+        # A long file timing out doesn't prove the helper is broken.
+        self.assertIs(enhancement._sidecar_ok, True)
+        self.assertTrue(self._marker.exists())
+
+
+class TestProbeEndpoints(_SidecarIsolatedTest):
 
     def test_probe_endpoint_returns_diagnostics(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -98,7 +201,8 @@ class TestProbeEndpoints(unittest.TestCase):
             self.assertFalse(body["installed"])
             self.assertIn("ImportError", body["error"])
             self.assertEqual(body["python"], sys.executable)
-            self.assertIn("uv add deepfilternet", body["install_hint"])
+            self.assertIn("Check again", body["install_hint"])
+            self.assertIsNone(body["mode"])
 
     def test_settings_get_includes_diagnostics(self):
         with tempfile.TemporaryDirectory() as tmp:

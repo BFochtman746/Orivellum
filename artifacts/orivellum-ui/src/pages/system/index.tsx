@@ -1357,6 +1357,7 @@ function ExtractionTemplatesCard() {
 type AudioEnhanceStatus = {
   enabled: boolean;
   installed: boolean;
+  mode: "in-process" | "sidecar" | null;
   model: string;
   install_hint: string | null;
   error: string | null;
@@ -1408,9 +1409,9 @@ function useReprobeAudioEnhance() {
     onSuccess: (res) => {
       qc.invalidateQueries({ queryKey: ["system", "audio-enhance"] });
       if (res.installed) {
-        toast.success("DeepFilterNet3 detected — enhancement is ready to enable");
+        toast.success("DeepFilterNet3 ready — enhancement can now be enabled");
       } else {
-        toast.error("Still not detected — see the details below the card title");
+        toast.error("Setup did not succeed — see the details below the card title");
       }
     },
     onError: () => toast.error("Could not re-check availability"),
@@ -1450,12 +1451,11 @@ function AudioEnhancementCard() {
               {data && !data.installed && (
                 <div className="space-y-1.5 mt-1">
                   <p className="text-xs" style={{ color: 'var(--gilt)' }}>
-                    Not detected. Install it, then click{" "}
-                    <span className="font-medium">Check again</span> — no server
-                    restart needed:{" "}
-                    <code className="font-mono bg-muted px-1 rounded text-[11px]">
-                      {data.install_hint}
-                    </code>
+                    Not set up yet. Click{" "}
+                    <span className="font-medium">Check again</span> and it is
+                    installed automatically — the first time downloads ~300 MB
+                    and can take a few minutes, so leave the page open. No
+                    server restart needed.
                   </p>
                   {data.error && (
                     <p className="text-[11px] font-mono text-muted-foreground break-all">
@@ -1477,15 +1477,15 @@ function AudioEnhancementCard() {
                     disabled={reprobe.isPending}
                   >
                     {reprobe.isPending
-                      ? <Loader2 className="w-3 h-3 animate-spin" />
-                      : <RotateCcw className="w-3 h-3" />}
-                    Check again
+                      ? <><Loader2 className="w-3 h-3 animate-spin" /> Setting up… (first time takes minutes)</>
+                      : <><RotateCcw className="w-3 h-3" /> Check again</>}
                   </Button>
                 </div>
               )}
               {data?.installed && data.enabled && (
                 <p className="text-xs mt-1" style={{ color: 'var(--green-2)' }}>
-                  Active — audio files will be enhanced before transcription.
+                  Active — audio files will be enhanced before transcription
+                  {data.mode === "sidecar" ? " (runs in a helper environment)" : ""}.
                 </p>
               )}
             </div>

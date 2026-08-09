@@ -8,11 +8,22 @@ DeepFilterNet3 (MIT/Apache-2.0) is the highest-quality open-source neural speech
 enhancer.  It runs on CPU at ~0.19× RTF — a single modern core handles it
 comfortably while Lemonade/Whisper runs in parallel on the NPU/GPU.
 
-Required packages (install once):
-    uv add torch torchaudio --extra-index-url https://download.pytorch.org/whl/cpu
-    uv add deepfilternet
+Two execution modes, tried in order:
 
-Without these packages the module is a safe no-op: ``enhance_audio()`` returns
+1. **In-process** — ``import df`` inside the server interpreter.  Only possible
+   when a DeepFilterNet build exists for the server's Python.  As of 2026 no
+   prebuilt ``DeepFilterLib`` wheels exist for Python >= 3.12 (they stop at
+   cp311), so on this project (requires-python >= 3.12) this mode only works
+   if someone builds the Rust extension from source.
+
+2. **Sidecar** — a pinned Python 3.11 environment managed transparently by
+   ``uv run`` (prebuilt wheels exist for 3.11 on Windows/Linux/macOS).  The
+   first probe downloads ~300 MB of packages into uv's cache (one-time, a few
+   minutes); afterwards it starts in ~1 s.  Enhancement runs
+   ``scripts/dfn3_enhance.py`` as a subprocess per file (~3-6 s overhead,
+   negligible next to transcription itself).
+
+Without either mode the module is a safe no-op: ``enhance_audio()`` returns
 the original path unchanged and ``is_available()`` returns False.
 
 Typical integration::
@@ -24,12 +35,16 @@ Typical integration::
 from __future__ import annotations
 
 import logging
+import os
+import shutil
+import subprocess
+import sys
 import threading
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-# ── Lazy singleton ────────────────────────────────────────────────────────────
+# ── Lazy singleton (in-process mode) ─────────────────────────────────────────
 # Same double-checked-locking pattern as faster-whisper in extraction.py.
 # _df_model is:
 #   None  — not yet attempted
@@ -38,18 +53,176 @@ logger = logging.getLogger(__name__)
 
 _df_lock:  threading.Lock = threading.Lock()
 _df_model: object          = None
-_last_error: str | None    = None   # why the last probe failed (for diagnostics)
+_last_error: str | None    = None   # why the last in-process probe failed
 
 _NATIVE_SR = 48_000   # DeepFilterNet3 native sample rate (full-band)
 
+# ── Sidecar mode (uv-managed Python 3.11 helper environment) ─────────────────
+# Pinned versions verified working together:
+#   deepfilternet 0.5.6 — last release with prebuilt cp311 wheels (all OSes)
+#   torch/torchaudio 2.6.0 — newest torchaudio that still exports AudioMetaData
+#   soundfile — torchaudio 2.x load/save backend
+_SIDECAR_PYTHON = "3.11"
+_SIDECAR_WITH = (
+    "deepfilternet==0.5.6",
+    "torch==2.6.0",
+    "torchaudio==2.6.0",
+    "soundfile",
+)
+_PROBE_TIMEOUT_S   = 1200   # first probe downloads ~300 MB
+_ENHANCE_TIMEOUT_S = 900    # generous — DFN3 runs ~0.2× realtime on one core
+
+# None = untested, True/False = last result. The marker file lets a passing
+# probe survive server restarts without re-spawning uv on every settings GET.
+_sidecar_lock = threading.Lock()
+_sidecar_ok: bool | None = None
+_sidecar_error: str | None = None
+
 INSTALL_HINT = (
-    "uv add deepfilternet torch torchaudio "
-    "--extra-index-url https://download.pytorch.org/whl/cpu"
+    "No install needed — click \"Check again\" and DeepFilterNet3 is set up "
+    "automatically (first time downloads ~300 MB, may take a few minutes)."
 )
 
 
+def _marker_path() -> Path:
+    cache_root = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
+    return cache_root / "orivellum" / "dfn3-sidecar-ok"
+
+
+def _marker_spec() -> str:
+    return f"{_SIDECAR_PYTHON}|{'|'.join(_SIDECAR_WITH)}"
+
+
+def _sidecar_cmd(*args: str) -> list[str] | None:
+    """Build the uv sidecar command, or None when uv is not on PATH."""
+    uv = shutil.which("uv")
+    if uv is None:
+        return None
+    cmd = [uv, "run", "--no-project", "--python", _SIDECAR_PYTHON]
+    for spec in _SIDECAR_WITH:
+        cmd += ["--with", spec]
+    cmd += ["python", *args]
+    return cmd
+
+
+def _sidecar_env() -> dict:
+    env = dict(os.environ)
+    # torch wheels: the CPU index keeps Linux from pulling multi-GB CUDA
+    # builds; harmless on Windows/macOS where PyPI wheels are CPU-only anyway.
+    env["UV_EXTRA_INDEX_URL"] = "https://download.pytorch.org/whl/cpu"
+    env["UV_INDEX_STRATEGY"] = "unsafe-best-match"
+    return env
+
+
+# On Windows, prevent each helper invocation from flashing a console window
+# when the server runs without an inherited console.
+_CREATIONFLAGS = getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0
+
+
+def _invalidate_sidecar(reason: str) -> None:
+    """Mark the sidecar unavailable and drop the marker file.
+
+    Called when an actual sidecar run proves the helper environment is broken
+    (uv missing, environment corrupted) so the UI stops claiming "Active" —
+    the "Check again" button is the recovery path.
+    """
+    global _sidecar_ok, _sidecar_error
+    with _sidecar_lock:
+        _sidecar_ok = False
+        _sidecar_error = reason
+        try:
+            _marker_path().unlink()
+        except OSError:
+            pass
+
+
+def _runner_script() -> Path | None:
+    """Locate scripts/dfn3_enhance.py relative to the repo root."""
+    candidate = Path(__file__).resolve().parents[3] / "scripts" / "dfn3_enhance.py"
+    return candidate if candidate.exists() else None
+
+
+def _sidecar_probe(force: bool) -> bool:
+    """Check (and on first use, set up) the uv sidecar environment.
+
+    Passive calls (``force=False``) never spawn a subprocess — they trust the
+    in-memory result or the on-disk marker, so a routine settings GET can't
+    trigger a multi-minute download.  ``force=True`` runs the real check.
+    """
+    global _sidecar_ok, _sidecar_error
+    with _sidecar_lock:
+        if _sidecar_ok is not None and not (force and _sidecar_ok is False):
+            return _sidecar_ok
+
+        marker = _marker_path()
+        if not force:
+            try:
+                if marker.read_text(encoding="utf-8").strip() == _marker_spec():
+                    _sidecar_ok = True
+                    _sidecar_error = None
+                    return True
+            except OSError:
+                pass
+            # Untested and not forced: leave as unknown-unavailable.
+            if _sidecar_ok is None:
+                _sidecar_error = (
+                    "Not checked yet — click \"Check again\" to set up "
+                    "automatically (first time downloads ~300 MB)."
+                )
+            return False
+
+        if _runner_script() is None:
+            _sidecar_ok = False
+            _sidecar_error = "scripts/dfn3_enhance.py not found next to the project"
+            return False
+        cmd = _sidecar_cmd("-c", "import df, libdf")
+        if cmd is None:
+            _sidecar_ok = False
+            _sidecar_error = (
+                "The 'uv' tool was not found on PATH — it is required for "
+                "automatic setup (the server itself is normally started with uv)."
+            )
+            return False
+        logger.info(
+            "Probing DeepFilterNet3 sidecar (Python %s via uv — first run may "
+            "download ~300 MB)…", _SIDECAR_PYTHON,
+        )
+        try:
+            proc = subprocess.run(
+                cmd, env=_sidecar_env(), capture_output=True, text=True,
+                timeout=_PROBE_TIMEOUT_S, creationflags=_CREATIONFLAGS,
+            )
+        except subprocess.TimeoutExpired:
+            _sidecar_ok = False
+            _sidecar_error = f"sidecar setup timed out after {_PROBE_TIMEOUT_S}s"
+            return False
+        except OSError as exc:
+            _sidecar_ok = False
+            _sidecar_error = f"could not launch uv: {exc}"
+            return False
+        if proc.returncode == 0:
+            _sidecar_ok = True
+            _sidecar_error = None
+            try:
+                marker.parent.mkdir(parents=True, exist_ok=True)
+                marker.write_text(_marker_spec(), encoding="utf-8")
+            except OSError:
+                pass
+            logger.info("DeepFilterNet3 sidecar ready (uv / Python %s).", _SIDECAR_PYTHON)
+            return True
+        tail = (proc.stderr or proc.stdout or "").strip().splitlines()
+        _sidecar_ok = False
+        _sidecar_error = "sidecar setup failed: " + (tail[-1] if tail else "unknown error")
+        try:
+            marker.unlink()
+        except OSError:
+            pass
+        logger.warning("DeepFilterNet3 sidecar probe failed: %s", _sidecar_error)
+        return False
+
+
 def _get_df_model():
-    """Return (model, df_state) or None when unavailable."""
+    """Return (model, df_state) or None when unavailable (in-process mode)."""
     global _df_model, _last_error
     if _df_model is not None:
         return None if _df_model is False else _df_model
@@ -59,42 +232,43 @@ def _get_df_model():
         try:
             from df import init_df  # type: ignore[import]
             logger.info("Loading DeepFilterNet3 model (first call — may download ~7 MB)…")
-            model, df_state, _ = init_df()
+            # init_df() returns 3 values on 0.5.6 and 4 on 0.5.7+ — take the
+            # first two (model, df_state) and ignore the rest.
+            result = init_df()
+            model, df_state = result[0], result[1]
             _df_model = (model, df_state)
             _last_error = None
-            logger.info("DeepFilterNet3 ready.")
+            logger.info("DeepFilterNet3 ready (in-process).")
         except ImportError as exc:
             _last_error = f"ImportError: {exc}"
-            logger.info(
-                "deepfilternet not installed — audio enhancement unavailable. "
-                "Install with: %s", INSTALL_HINT,
-            )
+            logger.debug("deepfilternet not importable in-process: %s", exc)
             _df_model = False
         except Exception as exc:
             _last_error = f"{exc.__class__.__name__}: {exc}"
-            logger.warning("DeepFilterNet3 failed to load: %s", exc)
+            logger.warning("DeepFilterNet3 failed to load in-process: %s", exc)
             _df_model = False
     return None if _df_model is False else _df_model
 
 
 def is_available() -> bool:
-    """Return True when DeepFilterNet3 can be loaded and is ready to use."""
-    return _get_df_model() is not None
+    """Return True when DeepFilterNet3 can run (in-process or via sidecar)."""
+    return _get_df_model() is not None or _sidecar_probe(force=False)
 
 
 def probe(force: bool = False) -> dict:
     """Report DeepFilterNet3 availability with diagnostics.
 
-    With ``force=True`` a previously-cached FAILED probe is discarded and the
-    import is attempted fresh (a loaded model is never thrown away), so a
-    package installed after server start registers WITHOUT a restart.
+    With ``force=True`` a previously-cached FAILED result is discarded and the
+    check is attempted fresh (a working setup is never thrown away).  For the
+    sidecar this is also what triggers the one-time automatic setup, so the
+    "Check again" button doubles as the installer — no manual command needed.
 
-    Returns ``{available, error, python, install_hint}`` — ``python`` is the
-    interpreter this server runs from, so an environment mismatch (package
-    installed into a different Python) is immediately visible.
+    Returns ``{available, mode, error, python, install_hint}`` — ``python`` is
+    the interpreter this server runs from, so an environment mismatch is
+    immediately visible; ``mode`` is ``"in-process"`` or ``"sidecar"`` when
+    available.
     """
     global _df_model
-    import sys
     if force:
         with _df_lock:
             if _df_model is False:
@@ -102,13 +276,69 @@ def probe(force: bool = False) -> dict:
         # Pick up packages installed after interpreter start
         import importlib
         importlib.invalidate_caches()
-    available = _get_df_model() is not None
+
+    if _get_df_model() is not None:
+        mode: str | None = "in-process"
+    elif _sidecar_probe(force=force):
+        mode = "sidecar"
+    else:
+        mode = None
+
+    available = mode is not None
+    error = None
+    if not available:
+        # Sidecar diagnosis is the actionable one; the in-process import error
+        # is expected on Python >= 3.12 (no wheels exist), so it goes second.
+        parts = [p for p in (_sidecar_error, _last_error) if p]
+        error = " | ".join(parts) or None
     return {
         "available": available,
-        "error": None if available else _last_error,
+        "mode": mode,
+        "error": error,
         "python": sys.executable,
         "install_hint": None if available else INSTALL_HINT,
     }
+
+
+def _enhance_via_sidecar(path: Path, out_path: Path) -> Path:
+    """Run the sidecar runner script on *path*; return out_path or *path*."""
+    script = _runner_script()
+    cmd = _sidecar_cmd(str(script), str(path), str(out_path)) if script else None
+    if cmd is None:
+        return path
+    try:
+        proc = subprocess.run(
+            cmd, env=_sidecar_env(), capture_output=True, text=True,
+            timeout=_ENHANCE_TIMEOUT_S, creationflags=_CREATIONFLAGS,
+        )
+    except subprocess.TimeoutExpired:
+        # A timeout doesn't prove the helper is broken (could be a very long
+        # recording) — keep availability, skip enhancement for this file.
+        logger.warning(
+            "DeepFilterNet3 sidecar timed out for %s after %ss — using original audio",
+            path.name, _ENHANCE_TIMEOUT_S,
+        )
+        return path
+    except OSError as exc:
+        _invalidate_sidecar(f"helper could not be launched: {exc}")
+        logger.warning(
+            "DeepFilterNet3 sidecar failed for %s: %s — using original audio "
+            "(marked unavailable; use \"Check again\" to re-set-up)",
+            path.name, exc,
+        )
+        return path
+    if proc.returncode != 0 or not out_path.exists():
+        tail = (proc.stderr or proc.stdout or "").strip().splitlines()
+        reason = tail[-1] if tail else f"exit {proc.returncode}"
+        _invalidate_sidecar(f"helper run failed: {reason}")
+        logger.warning(
+            "DeepFilterNet3 sidecar failed for %s: %s — using original audio "
+            "(marked unavailable; use \"Check again\" to re-set-up)",
+            path.name, reason,
+        )
+        return path
+    logger.info("DeepFilterNet3 enhanced %s → %s (sidecar)", path.name, out_path.name)
+    return out_path
 
 
 def enhance_audio(path: Path, output_dir: Path | None = None) -> Path:
@@ -129,9 +359,14 @@ def enhance_audio(path: Path, output_dir: Path | None = None) -> Path:
     Note: Whisper / faster-whisper happily resamples from 48 kHz to 16 kHz
     internally, so no additional resampling step is needed after enhancement.
     """
+    out_dir  = output_dir if output_dir is not None else path.parent
+    out_path = Path(out_dir) / f"{path.stem}_dfn3.wav"
+
     pair = _get_df_model()
     if pair is None:
-        return path  # package absent — skip silently
+        if _sidecar_probe(force=False):
+            return _enhance_via_sidecar(path, out_path)
+        return path  # unavailable in both modes — skip silently
 
     try:
         import torch          # type: ignore[import]
@@ -153,8 +388,6 @@ def enhance_audio(path: Path, output_dir: Path | None = None) -> Path:
 
         enhanced = enhance(model, df_state, audio)
 
-        out_dir  = output_dir if output_dir is not None else path.parent
-        out_path = Path(out_dir) / f"{path.stem}_dfn3.wav"
         torchaudio.save(str(out_path), enhanced, _NATIVE_SR)
 
         logger.info(
