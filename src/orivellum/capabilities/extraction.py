@@ -802,36 +802,150 @@ def _extract_zip(path: Path) -> ExtractionResult:
 import threading as _threading
 
 _fw_lock = _threading.Lock()
-_fw_instance: object = None   # WhisperModel | False | None
-_fw_loaded_size: str = ""     # model size string for the loaded singleton
+_fw_instance: object = None    # WhisperModel | False | None
+_fw_loaded_size: str = ""      # model size string for the loaded singleton
+_fw_requested_size: str = ""   # the REQUEST that produced the current state
+_fw_fallback_reason: str | None = None  # why a smaller model was substituted
+
+# Model sizes that need substantial RAM (weights + CTranslate2 workspace).
+# Anything here falls back to "base" when the machine can't hold it —
+# a wrong-but-working transcription beats an OOM-killed server.
+_FW_HEAVY_SIZES = {"medium", "large-v2", "large-v3", "large-v3-turbo", "distil-large-v3"}
+_FW_HEAVY_MIN_AVAILABLE_BYTES = 6 * 1024**3  # 6 GB free RAM required for heavy tiers
+_FW_FALLBACK_SIZE = "base"
+
+# Valid sizes for the runtime setting (UI/API validation).
+FW_ALLOWED_SIZES = (
+    "tiny", "base", "small", "medium",
+    "large-v3", "large-v3-turbo", "distil-large-v3",
+)
 
 
-def _get_faster_whisper(model_size: str = "base"):
-    """Return a cached WhisperModel, loading it on first call.
+def _resolve_asr_local_model(db=None, cfg_default: str = "large-v3-turbo") -> str:
+    """Effective local ASR model size: DB setting overrides config.yaml."""
+    if db is not None:
+        try:
+            override = (db.get_setting("asr_local_model", "") or "").strip()
+            if override in FW_ALLOWED_SIZES:
+                return override
+        except Exception:
+            pass
+    return cfg_default or "large-v3-turbo"
 
-    Returns None when the package is not installed or the model fails to load
-    so callers can fall through to the metadata-only result without raising.
+
+def _fw_effective_size(model_size: str) -> "tuple[str, str | None]":
+    """Apply the low-memory guard; returns (size_to_load, fallback_reason)."""
+    if model_size not in _FW_HEAVY_SIZES:
+        return model_size, None
+    try:
+        import psutil  # type: ignore[import]
+        available = psutil.virtual_memory().available
+        if available < _FW_HEAVY_MIN_AVAILABLE_BYTES:
+            reason = (
+                f"only {available / 1024**3:.1f} GB RAM available "
+                f"(< {_FW_HEAVY_MIN_AVAILABLE_BYTES / 1024**3:.0f} GB needed for "
+                f"'{model_size}') — using '{_FW_FALLBACK_SIZE}'"
+            )
+            return _FW_FALLBACK_SIZE, reason
+    except Exception:
+        pass  # psutil missing / probe failed: trust the requested size
+    return model_size, None
+
+
+def _fw_snapshot_for(model_size: str) -> "tuple[object, str, str | None] | None":
+    """Return (model, loaded_size, fallback_reason) when the current singleton
+    state satisfies *model_size*, or None when a (re)load is needed.
+
+    A request is satisfied when it is the SAME request that produced the
+    current state (even if a fallback model was substituted — never re-attempt
+    the heavy load on every call) or when the loaded model is exactly the
+    requested size.
     """
-    global _fw_instance, _fw_loaded_size
-    if _fw_instance is not None:
-        return None if _fw_instance is False else _fw_instance
+    inst, loaded, requested, reason = (
+        _fw_instance, _fw_loaded_size, _fw_requested_size, _fw_fallback_reason)
+    if inst is False and requested == model_size:
+        return (False, "", None)  # this exact request already failed
+    if inst is not None and inst is not False:
+        if loaded == model_size:
+            # Exact match — no fallback happened *for this request*.
+            return (inst, loaded, None)
+        if requested == model_size:
+            # Same request as before — reuse the fallback that was chosen.
+            return (inst, loaded, reason)
+    return None
+
+
+def _get_faster_whisper_snapshot(model_size: str = "large-v3-turbo") -> "tuple[object | None, str, str | None]":
+    """Return (model | None, loaded_size, fallback_reason) atomically.
+
+    The singleton reloads when a DIFFERENT size is requested (settings change),
+    substitutes "base" on low-memory machines, and retries with "base" when a
+    heavy model fails to load. Both fallbacks are cached per request, so a
+    failing heavy model is never re-downloaded/re-loaded on every call.
+    Model is None when the package is not installed or no model could load.
+
+    Note: during a rare settings-driven reload, an in-flight transcription may
+    keep the OLD model alive via its local reference until it finishes — a
+    transient double-residency we accept because reloads are user-initiated.
+    """
+    global _fw_instance, _fw_loaded_size, _fw_requested_size, _fw_fallback_reason
+
+    snap = _fw_snapshot_for(model_size)
+    if snap is not None:
+        model, loaded, reason = snap
+        return (None if model is False else model, loaded, reason)
+
     with _fw_lock:
-        if _fw_instance is not None:
-            return None if _fw_instance is False else _fw_instance
+        snap = _fw_snapshot_for(model_size)
+        if snap is not None:
+            model, loaded, reason = snap
+            return (None if model is False else model, loaded, reason)
         try:
             from faster_whisper import WhisperModel  # type: ignore[import]
-            logger.info("Loading faster-whisper model '%s' (first-run download may take a moment)…", model_size)
-            model = WhisperModel(model_size, device="auto", compute_type="int8")
-            _fw_instance = model
-            _fw_loaded_size = model_size
-            logger.info("faster-whisper model '%s' ready.", model_size)
         except ImportError:
             logger.info("faster-whisper not installed — local ASR fallback unavailable")
+            _fw_requested_size = model_size
             _fw_instance = False
-        except Exception as exc:
-            logger.warning("faster-whisper failed to load model '%s': %s", model_size, exc)
-            _fw_instance = False
-    return None if _fw_instance is False else _fw_instance
+            return (None, "", None)
+
+        target, mem_reason = _fw_effective_size(model_size)
+        if mem_reason:
+            logger.warning("faster-whisper low-memory fallback: %s", mem_reason)
+
+        _fw_instance = None  # drop any previously loaded model before reloading
+        for attempt_size in dict.fromkeys([target, _FW_FALLBACK_SIZE]):
+            try:
+                logger.info(
+                    "Loading faster-whisper model '%s' (int8 — first-run "
+                    "download may take a moment)…", attempt_size)
+                model = WhisperModel(attempt_size, device="auto", compute_type="int8")
+                if attempt_size == model_size:
+                    reason = None
+                elif attempt_size == target and mem_reason:
+                    reason = mem_reason
+                else:
+                    reason = f"'{target}' failed to load — using '{attempt_size}'"
+                # Order matters for the lock-free fast path: set metadata
+                # first, the instance last.
+                _fw_loaded_size = attempt_size
+                _fw_requested_size = model_size
+                _fw_fallback_reason = reason
+                _fw_instance = model
+                logger.info("faster-whisper model '%s' ready.", attempt_size)
+                return (model, attempt_size, reason)
+            except Exception as exc:
+                logger.warning("faster-whisper failed to load model '%s': %s",
+                               attempt_size, exc)
+        _fw_loaded_size = ""
+        _fw_requested_size = model_size  # remember which REQUEST failed
+        _fw_fallback_reason = None
+        _fw_instance = False
+    return (None, "", None)
+
+
+def _get_faster_whisper(model_size: str = "large-v3-turbo"):
+    """Back-compat wrapper: return just the cached WhisperModel (or None)."""
+    return _get_faster_whisper_snapshot(model_size)[0]
 
 
 def _is_faster_whisper_loaded() -> bool:
@@ -839,33 +953,84 @@ def _is_faster_whisper_loaded() -> bool:
     return _fw_instance is not None and _fw_instance is not False
 
 
-def _transcribe_faster_whisper(path: Path, model_size: str = "base") -> "ExtractionResult | None":
+def faster_whisper_status() -> dict:
+    """Snapshot for status endpoints: loaded size + any fallback reason."""
+    loaded = _is_faster_whisper_loaded()
+    return {
+        "loaded": loaded,
+        "loaded_size": _fw_loaded_size if loaded else None,
+        "fallback_reason": _fw_fallback_reason,
+    }
+
+
+# Caps keep document meta a reasonable size even for hours-long recordings.
+_FW_MAX_SEGMENTS_META = 2000
+_FW_MAX_WORDS_META = 6000
+
+
+def _transcribe_faster_whisper(path: Path, model_size: str = "large-v3-turbo") -> "ExtractionResult | None":
     """Transcribe *path* locally using faster-whisper.
 
-    Returns None when the package is absent or transcription fails so the
-    caller can fall through to the metadata-only result.
+    Captures per-segment AND per-word timestamps into the result meta
+    (enables read-along highlighting later). Returns None when the package
+    is absent or transcription fails so the caller can fall through to the
+    metadata-only result.
     """
-    model = _get_faster_whisper(model_size)
+    model, loaded_size, fallback_reason = _get_faster_whisper_snapshot(model_size)
     if model is None:
         return None
     try:
-        segments, _info = model.transcribe(str(path))
-        text = " ".join(seg.text for seg in segments).strip()
+        segments, info = model.transcribe(str(path), word_timestamps=True)
+        seg_meta: list[dict] = []
+        word_meta: list[dict] = []
+        texts: list[str] = []
+        words_truncated = False
+        for seg in segments:  # generator — consumed once
+            seg_text = seg.text.strip()
+            if seg_text:
+                texts.append(seg_text)
+            if len(seg_meta) < _FW_MAX_SEGMENTS_META:
+                seg_meta.append({
+                    "start": round(float(seg.start), 2),
+                    "end": round(float(seg.end), 2),
+                    "text": seg_text,
+                })
+            for w in (seg.words or []):
+                if len(word_meta) >= _FW_MAX_WORDS_META:
+                    words_truncated = True
+                    break
+                word_meta.append({
+                    "start": round(float(w.start), 2),
+                    "end": round(float(w.end), 2),
+                    "word": w.word.strip(),
+                })
+        text = " ".join(texts).strip()
         if not text:
             logger.info("faster-whisper returned no text for %s", path.name)
             return None
         full = f"[Audio transcript: {path.name}]\n\n{text}"
-        logger.info("faster-whisper transcription OK: %d words from %s", len(text.split()), path.name)
+        logger.info("faster-whisper transcription OK: %d words from %s (model=%s)",
+                    len(text.split()), path.name, loaded_size or model_size)
+        meta: dict = {
+            "transcription": "faster_whisper",
+            "model_size": loaded_size or model_size,   # what actually ran
+            "model_requested": model_size,
+            "source": str(path.name),
+            "language": getattr(info, "language", None),
+            "duration": round(float(getattr(info, "duration", 0.0)), 2),
+            "segments": seg_meta,
+            "words": word_meta,
+        }
+        if words_truncated:
+            meta["words_truncated"] = True
+        if fallback_reason:
+            meta["model_fallback_reason"] = fallback_reason
         return ExtractionResult(
             kind="audio",
             full_text=full,
             word_count=len(text.split()),
             pages=[PageSegment(page=1, text=text)],
-            meta={
-                "transcription": "faster_whisper",
-                "model_size": model_size,
-                "source": str(path.name),
-            },
+            meta=meta,
         )
     except Exception as exc:
         logger.warning("faster-whisper transcription failed for %s: %s", path.name, exc)
@@ -892,7 +1057,7 @@ def _extract_audio(path: Path, db=None) -> ExtractionResult:
 
     base_url: str = ""
     asr_model: str = "whisper-1"
-    asr_local_model: str = "base"
+    asr_local_model: str = "large-v3-turbo"
     try:
         # Prefer the request-scoped config when running inside the FastAPI server.
         # Fall back to load_config() when called from a standalone script or test.
@@ -901,15 +1066,17 @@ def _extract_audio(path: Path, db=None) -> ExtractionResult:
             _cfg_obj = _get_cfg()
             base_url        = _cfg_obj.serving.base_url.rstrip("/")
             asr_model       = _cfg_obj.serving.asr_model
-            asr_local_model = getattr(_cfg_obj.serving, "asr_local_model", "base")
+            asr_local_model = getattr(_cfg_obj.serving, "asr_local_model", "large-v3-turbo")
         except Exception:
             from orivellum.configuration.config import load_config as _load_cfg
             _cfg_obj        = _load_cfg()
             base_url        = _cfg_obj.serving.base_url.rstrip("/")
             asr_model       = getattr(_cfg_obj.serving, "asr_model", "whisper-1")
-            asr_local_model = getattr(_cfg_obj.serving, "asr_local_model", "base")
+            asr_local_model = getattr(_cfg_obj.serving, "asr_local_model", "large-v3-turbo")
     except Exception:
         pass
+    # DB setting overrides config.yaml (same precedence as chat model overrides).
+    asr_local_model = _resolve_asr_local_model(db, asr_local_model)
 
     def _metadata_only(msg: str) -> ExtractionResult:
         text = (
@@ -978,29 +1145,91 @@ def _extract_audio(path: Path, db=None) -> ExtractionResult:
                     f"{asr_model}\r\n"
                     .encode("utf-8")
                 )
-                body_parts.append(f"--{boundary}--\r\n".encode("utf-8"))
-                body = b"".join(body_parts)
+                file_and_model = b"".join(body_parts)
 
-                req = _urlr.Request(
-                    f"{base_url}/audio/transcriptions",
-                    data=body,
-                    headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
-                    method="POST",
-                )
-                with _urlr.urlopen(req, timeout=120) as resp:
-                    data = _json.loads(resp.read().decode("utf-8"))
-                transcript = data.get("text", "").strip()
+                def _ai_request(verbose: bool) -> dict:
+                    extra = b""
+                    if verbose:
+                        # verbose_json returns timestamps; OpenAI-compatible
+                        # servers need BOTH granularities requested explicitly
+                        # or word-level timing is omitted.
+                        extra = (
+                            f"--{boundary}\r\n"
+                            'Content-Disposition: form-data; name="response_format"\r\n\r\n'
+                            "verbose_json\r\n"
+                            f"--{boundary}\r\n"
+                            'Content-Disposition: form-data; name="timestamp_granularities[]"\r\n\r\n'
+                            "segment\r\n"
+                            f"--{boundary}\r\n"
+                            'Content-Disposition: form-data; name="timestamp_granularities[]"\r\n\r\n'
+                            "word\r\n"
+                            .encode("utf-8")
+                        )
+                    body = file_and_model + extra + f"--{boundary}--\r\n".encode("utf-8")
+                    req = _urlr.Request(
+                        f"{base_url}/audio/transcriptions",
+                        data=body,
+                        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+                        method="POST",
+                    )
+                    with _urlr.urlopen(req, timeout=120) as resp:
+                        return _json.loads(resp.read().decode("utf-8"))
+
+                # Try with timestamps first; some servers reject unknown form
+                # fields, so retry once in plain mode before giving up on the
+                # AI server entirely.
+                try:
+                    data = _ai_request(verbose=True)
+                except Exception:
+                    data = _ai_request(verbose=False)
+                transcript = (data.get("text") or "").strip()
                 if transcript:
                     logger.info("AI server transcription OK: %d words from %s",
                                 len(transcript.split()), path.name)
+                    meta: dict = {"transcription": "ai_server", "asr_model": asr_model,
+                                  "source": str(path.name),
+                                  "enhanced": transcribe_path != path}
+                    raw_segs = data.get("segments")
+                    if isinstance(raw_segs, list) and raw_segs:
+                        segs = []
+                        for s in raw_segs[:_FW_MAX_SEGMENTS_META]:
+                            try:
+                                segs.append({
+                                    "start": round(float(s.get("start", 0.0)), 2),
+                                    "end": round(float(s.get("end", 0.0)), 2),
+                                    "text": str(s.get("text", "")).strip(),
+                                })
+                            except Exception:
+                                continue
+                        if segs:
+                            meta["segments"] = segs
+                    raw_words = data.get("words")
+                    if isinstance(raw_words, list) and raw_words:
+                        words = []
+                        for w in raw_words[:_FW_MAX_WORDS_META]:
+                            try:
+                                words.append({
+                                    "start": round(float(w.get("start", 0.0)), 2),
+                                    "end": round(float(w.get("end", 0.0)), 2),
+                                    "word": str(w.get("word", "")).strip(),
+                                })
+                            except Exception:
+                                continue
+                        if words:
+                            meta["words"] = words
+                    if data.get("language"):
+                        meta["language"] = data.get("language")
+                    if data.get("duration") is not None:
+                        try:
+                            meta["duration"] = round(float(data["duration"]), 2)
+                        except Exception:
+                            pass
                     return ExtractionResult(
                         kind="audio",
                         full_text=f"[Audio transcript: {path.name}]\n\n{transcript}",
                         word_count=len(transcript.split()),
                         pages=[PageSegment(page=1, text=transcript)],
-                        meta={"transcription": "ai_server", "asr_model": asr_model,
-                              "source": str(path.name),
-                              "enhanced": transcribe_path != path},
+                        meta=meta,
                     )
                 ai_server_exc = "AI server returned an empty transcription"
                 logger.warning("AI server transcription: empty response for %s", path.name)

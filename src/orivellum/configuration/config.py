@@ -61,11 +61,15 @@ class ServingConfig:
     # Alternatives: "faster-whisper", "whisper-large-v3", "parakeet-tdt-1.1b".
     # faster-whisper (CTranslate2) is ~4× faster than vanilla whisper.
     asr_model: str = "whisper-1"
-    # Local ASR fallback model size for faster-whisper (used when AI server is absent).
-    # Options (accuracy ↑ / speed ↓): "tiny", "base", "small", "medium", "large-v3".
-    # "base" (~150 MB) is a good default; "large-v3" (~3 GB) gives Whisper-large accuracy.
+    # Local ASR model size for faster-whisper (used when AI server is absent).
+    # Options (accuracy ↑ / speed ↓): "tiny", "base", "small", "medium",
+    # "large-v3", "large-v3-turbo", "distil-large-v3".
+    # "large-v3-turbo" (int8, ~1.6 GB) is dramatically more accurate than "base"
+    # at similar speed on capable hardware — the default for machines like Nimo.
+    # Low-memory machines fall back to "base" automatically (see extraction.py),
+    # and a DB setting ("asr_local_model") overrides this value at runtime.
     # Models are downloaded automatically on first transcription to the HF cache.
-    asr_local_model: str = "base"
+    asr_local_model: str = "large-v3-turbo"
 
     # ── Premium TTS ───────────────────────────────────────────────────────────
     # Base URL for a premium TTS engine (Fish Audio S2 / Hume TADA / IndexTTS-2 / etc.).

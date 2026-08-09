@@ -581,7 +581,9 @@ def _pass_audio_reextract(db: "OrivellumDB", cfg: "OrivellumConfig",
 
         threading.Thread(target=_worker, args=(queue,),
                          name="nightshift-audio-reextract", daemon=True).start()
-        asr_size = getattr(cfg.serving, "asr_local_model", "base")
+        from orivellum.capabilities.extraction import _resolve_asr_local_model
+        asr_size = _resolve_asr_local_model(
+            db, getattr(cfg.serving, "asr_local_model", "large-v3-turbo"))
         report.append(
             f"Audio re-transcription: queued {len(queue)} metadata-only audio doc(s) "
             f"(faster-whisper {asr_size})"

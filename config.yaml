@@ -73,11 +73,14 @@ serving:
   # faster-whisper (CTranslate2) is ~4× faster when self-hosted.
   # Alternatives: "faster-whisper", "whisper-large-v3", "parakeet-tdt-1.1b"
   asr_model: "Whisper-Base"
-  # Local STT fallback model size (faster-whisper — used when AI server is absent).
-  # Options (accuracy ↑ / speed ↓): "tiny", "base", "small", "medium", "large-v3"
-  # "base" (~150 MB, auto-downloaded) is a good default; "large-v3" matches cloud Whisper accuracy.
+  # Local STT model size (faster-whisper — used when AI server is absent).
+  # Options (accuracy ↑ / speed ↓): "tiny", "base", "small", "medium",
+  # "large-v3", "large-v3-turbo", "distil-large-v3"
+  # "large-v3-turbo" (int8, ~1.6 GB, auto-downloaded) is far more accurate than
+  # "base" and Nimo handles it easily. Low-memory machines fall back to "base"
+  # automatically, and Settings → System can override this without a restart.
   # Install the package first: uv add faster-whisper
-  asr_local_model: "base"
+  asr_local_model: "large-v3-turbo"
 
   # ── Premium TTS ───────────────────────────────────────────────────────────────
   # Best-in-class narration quality for long-form audiobooks.  Blind evaluations

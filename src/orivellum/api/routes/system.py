@@ -988,6 +988,50 @@ def set_model_settings(body: ModelOverrideUpdate):
     }
 
 
+# ── Local transcription (ASR) model-size setting ──────────────────────────────
+
+@router.get("/system/settings/asr")
+def get_asr_settings():
+    """Return the local faster-whisper model-size setting.
+
+    effective = valid DB override → config.yaml default. Also reports which
+    model is actually loaded in memory and any low-memory fallback reason.
+    """
+    from orivellum.capabilities.extraction import (
+        FW_ALLOWED_SIZES, _resolve_asr_local_model, faster_whisper_status,
+    )
+    db  = get_db()
+    cfg = get_config()
+    config_default = getattr(cfg.serving, "asr_local_model", "large-v3-turbo")
+    stored = (db.get_setting("asr_local_model", "") or "").strip()
+    return {
+        "stored": stored if stored in FW_ALLOWED_SIZES else "",
+        "config_default": config_default,
+        "effective": _resolve_asr_local_model(db, config_default),
+        "allowed": list(FW_ALLOWED_SIZES),
+        "runtime": faster_whisper_status(),
+    }
+
+
+class AsrSettingUpdate(BaseModel):
+    model_size: str = ""  # one of FW_ALLOWED_SIZES; empty removes the override
+
+
+@router.patch("/system/settings/asr")
+def set_asr_settings(body: AsrSettingUpdate):
+    """Persist the local ASR model-size override. Empty string removes it."""
+    from orivellum.capabilities.extraction import FW_ALLOWED_SIZES
+    size = body.model_size.strip()
+    if size and size not in FW_ALLOWED_SIZES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"model_size must be one of {list(FW_ALLOWED_SIZES)} or empty",
+        )
+    db = get_db()
+    db.set_setting("asr_local_model", size, actor="user")
+    return {"model_size": size, "ok": True}
+
+
 # ── Context-window settings ────────────────────────────────────────────────────
 
 @router.get("/system/settings/context-window")

@@ -4202,11 +4202,17 @@ def studio_status():
     # because users may have Whisper loaded or not, even with the server up.
     from orivellum.capabilities.extraction import (
         _is_faster_whisper_loaded as _fw_loaded_check,
+        _resolve_asr_local_model as _fw_resolve_size,
+        faster_whisper_status as _fw_status,
     )
     ai_asr_server_ok = bool(ai_tts_ok)   # same server; proxy from TTS probe
     fw_installed = importlib.util.find_spec("faster_whisper") is not None
     fw_loaded = _fw_loaded_check()
-    asr_local_model_sz = getattr(cfg.serving, "asr_local_model", "base")
+    _fw_stat = _fw_status()
+    # Effective size = DB override → config default; when a model is actually
+    # loaded, report THAT size (it may differ after a low-memory fallback).
+    asr_local_model_sz = _fw_stat["loaded_size"] or _fw_resolve_size(
+        db, getattr(cfg.serving, "asr_local_model", "large-v3-turbo"))
 
     # Active ASR engine: AI server first, then faster-whisper, then none.
     if ai_asr_server_ok:
