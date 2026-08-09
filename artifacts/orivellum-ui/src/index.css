@@ -352,6 +352,12 @@ body {
     touch-action: manipulation;
   }
 
+  /* Conversation-row action cluster: hover doesn't exist on touch, so the
+     hover-reveal (opacity-40 → 100) buttons must be fully visible instead. */
+  .chat-row-actions {
+    opacity: 1 !important;
+  }
+
   .touch-target-sm {
     position: relative;
     touch-action: manipulation;

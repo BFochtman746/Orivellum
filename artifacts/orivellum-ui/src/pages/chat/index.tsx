@@ -2270,12 +2270,13 @@ export default function Chat() {
                         )}
                       </div>
                     </div>
-                    <div className="flex items-center gap-0.5 opacity-40 group-hover:opacity-100 transition-opacity shrink-0 mt-0.5">
+                    <div className="chat-row-actions flex items-center gap-0.5 opacity-40 group-hover:opacity-100 transition-opacity shrink-0 mt-0.5">
                       {!c.archived && (
                         <button
                           onClick={(e) => { e.stopPropagation(); updateConvMeta.mutate({ convId: c.id!, data: { archived: true } }, { onSuccess: () => { queryClient.invalidateQueries({ queryKey: getListConversationsQueryKey() }); toast.success("Archived"); }, onError: () => toast.error("Could not archive") }); }}
                           title="Archive"
-                          className="p-0.5 rounded hover:text-amber-600 text-muted-foreground"
+                          data-testid={`button-archive-${c.id}`}
+                          className="chat-icon-btn p-0.5 rounded hover:text-amber-600 text-muted-foreground"
                         >
                           <Archive className="w-3 h-3" />
                         </button>
@@ -2284,7 +2285,8 @@ export default function Chat() {
                         <button
                           onClick={(e) => { e.stopPropagation(); updateConvMeta.mutate({ convId: c.id!, data: { archived: false } }, { onSuccess: () => { queryClient.invalidateQueries({ queryKey: getListConversationsQueryKey() }); toast.success("Restored"); }, onError: () => toast.error("Could not restore") }); }}
                           title="Restore"
-                          className="p-0.5 rounded hover:text-emerald-600 text-muted-foreground"
+                          data-testid={`button-restore-${c.id}`}
+                          className="chat-icon-btn p-0.5 rounded hover:text-emerald-600 text-muted-foreground"
                         >
                           <ArchiveRestore className="w-3 h-3" />
                         </button>
@@ -2292,12 +2294,14 @@ export default function Chat() {
                       {!c.archived && (
                         <button
                           onClick={(e) => startRename(e, c.id!, c.title ?? "")}
-                          className="p-0.5 rounded hover:text-foreground text-muted-foreground"
+                          title="Rename"
+                          data-testid={`button-rename-${c.id}`}
+                          className="chat-icon-btn p-0.5 rounded hover:text-foreground text-muted-foreground"
                         >
                           <Pencil className="w-3 h-3" />
                         </button>
                       )}
-                      <button onClick={(e) => handleDelete(c.id!, e)} className="p-0.5 rounded hover:text-destructive">
+                      <button onClick={(e) => handleDelete(c.id!, e)} title="Delete" data-testid={`button-delete-${c.id}`} className="chat-icon-btn p-0.5 rounded hover:text-destructive">
                         <Trash2 className="w-3 h-3" />
                       </button>
                     </div>
