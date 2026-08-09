@@ -9,7 +9,7 @@
 import { useParams, useLocation } from "wouter";
 import { useGetWork } from "@workspace/api-client-react";
 import { X } from "lucide-react";
-import { LearnTab } from "@/pages/works/detail";
+import { LearnTab } from "@/pages/learning/learn-tab";
 
 export default function LearningSession() {
   const { workId } = useParams<{ workId: string }>();
