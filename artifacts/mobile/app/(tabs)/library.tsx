@@ -1,5 +1,11 @@
 import React, { useMemo, useRef, useState, useEffect } from 'react';
-import { mobileFetch } from '@/lib/api';
+import { mobileFetch, mobileFetchJson } from '@/lib/api';
+import {
+  DEEP_REPROCESS_WARNING,
+  deepReprocessUrl,
+  summarizeReprocess,
+  type ReprocessSummary,
+} from '@/lib/deepReprocess';
 import { getApiToken } from '@/lib/token';
 import { readCache, writeCache } from '@/lib/cache';
 import {
@@ -224,6 +230,41 @@ export default function LibraryScreen() {
   // progress bar label). Stored in state so the button text updates reactively.
   const [uploadIndex, setUploadIndex] = useState(0);
   const [uploadTotal, setUploadTotal]  = useState(0);
+
+  // Deep Reprocess — force re-extraction of every document (mirrors web Library).
+  const [deepReprocessing, setDeepReprocessing] = useState(false);
+
+  const runDeepReprocess = async () => {
+    setDeepReprocessing(true);
+    try {
+      const data = await mobileFetchJson<ReprocessSummary>(
+        deepReprocessUrl(apiOrigin()),
+        { method: 'POST' },
+      );
+      const summary = summarizeReprocess(data ?? {});
+      if (isWeb) window.alert(summary);
+      else Alert.alert('Reprocess queued', summary);
+      refetchList();
+    } catch (err: any) {
+      const msg = err?.message ?? 'Could not start deep reprocess';
+      if (isWeb) window.alert(msg);
+      else Alert.alert('Error', msg);
+    } finally {
+      setDeepReprocessing(false);
+    }
+  };
+
+  const handleDeepReprocess = () => {
+    // Alert.alert buttons are a no-op on react-native-web, so use window.confirm there.
+    if (isWeb) {
+      if (window.confirm(DEEP_REPROCESS_WARNING)) void runDeepReprocess();
+      return;
+    }
+    Alert.alert('Deep Reprocess', DEEP_REPROCESS_WARNING, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Reprocess All', style: 'destructive', onPress: () => void runDeepReprocess() },
+    ]);
+  };
 
   const handleUpload = async () => {
     try {
@@ -459,6 +500,29 @@ export default function LibraryScreen() {
               {isLoading ? '…' : `${listData?.count ?? docs.length} documents`}
             </Text>
           </View>
+          <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8 }}>
+          <Pressable
+            onPress={handleDeepReprocess}
+            disabled={deepReprocessing}
+            accessibilityRole="button"
+            accessibilityLabel="Deep Reprocess — re-extract every document"
+            style={({ pressed }) => ({
+              borderWidth: 1,
+              borderColor: T.rust + '55',
+              backgroundColor: pressed ? T.rustSoft : 'transparent',
+              borderRadius: 10,
+              paddingHorizontal: 11,
+              paddingVertical: 9,
+              alignItems: 'center',
+              justifyContent: 'center',
+              opacity: deepReprocessing ? 0.38 : 1,
+              marginTop: 4,
+              minHeight: 44,
+              minWidth: 44,
+            })}
+          >
+            <Feather name={deepReprocessing ? 'loader' : 'refresh-cw'} size={15} color={T.rust} />
+          </Pressable>
           <Pressable
             onPress={handleUpload}
             disabled={uploading}
@@ -484,6 +548,7 @@ export default function LibraryScreen() {
                 : 'Import'}
             </Text>
           </Pressable>
+          </View>
         </View>
         {/* Upload progress bar — shown while uploading a file */}
         {uploading && (
