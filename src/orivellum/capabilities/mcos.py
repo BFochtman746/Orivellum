@@ -169,7 +169,12 @@ def _get_benchmark(db: Any, benchmark_id: str) -> dict | None:
 
 def _insert_static_benchmark(db: Any, bid: str, name: str, description: str,
                              category: str, kind: str, cases: list[dict]) -> int:
-    """Insert a static suite once (INSERT OR IGNORE style). Returns cases added."""
+    """Insert a static suite once (INSERT OR IGNORE style). Returns cases added.
+
+    Repair path: when the benchmark row exists but has ZERO cases (e.g. the
+    benchmark_cases table was lost and recreated by the schema self-heal),
+    the cases are re-inserted instead of being skipped forever.
+    """
     now = _now()
     added = 0
     with db._lock:
@@ -177,12 +182,19 @@ def _insert_static_benchmark(db: Any, bid: str, name: str, description: str,
             "SELECT id FROM benchmarks WHERE id=?", (bid,)
         ).fetchone()
         if existing:
-            return 0
-        db._conn.execute(
-            "INSERT INTO benchmarks(id,name,description,category,kind,version,enabled,"
-            "created_at) VALUES(?,?,?,?,?,1,1,?)",
-            (bid, name, description, category, kind, now),
-        )
+            n_cases = db._conn.execute(
+                "SELECT COUNT(*) FROM benchmark_cases WHERE benchmark_id=?",
+                (bid,),
+            ).fetchone()[0]
+            if n_cases > 0:
+                return 0
+            # fall through: benchmark exists but cases are gone — re-insert them
+        else:
+            db._conn.execute(
+                "INSERT INTO benchmarks(id,name,description,category,kind,version,"
+                "enabled,created_at) VALUES(?,?,?,?,?,1,1,?)",
+                (bid, name, description, category, kind, now),
+            )
         for case in cases:
             db._conn.execute(
                 "INSERT INTO benchmark_cases(id,benchmark_id,question,context,"

@@ -209,6 +209,74 @@ class TestApiEndpoints(unittest.TestCase):
             self.assertTrue(len(body["results"]) >= 1)
             self.assertIn("question", body["results"][0])
 
+    def test_benchmarks_self_heal_after_dropped_table(self):
+        """A DB missing the v52 tables must self-heal and return 200."""
+        with tempfile.TemporaryDirectory() as tmp:
+            app, db, _cfg = _make_app(tmp)
+            client = TestClient(app, raise_server_exceptions=False, headers=AUTH_HEADERS)
+
+            with db._lock:
+                db._conn.execute("DROP TABLE IF EXISTS benchmark_cases")
+                db._conn.execute("DROP TABLE IF EXISTS benchmarks")
+                db._conn.commit()
+
+            resp = client.get("/api/mcos/benchmarks")
+            self.assertEqual(resp.status_code, 200)
+            self.assertEqual(resp.json()["benchmarks"], [])
+
+            # Tables must exist again so seeding works right away
+            resp = client.post("/api/mcos/seed")
+            self.assertEqual(resp.status_code, 200)
+            resp = client.get("/api/mcos/benchmarks")
+            self.assertEqual(resp.status_code, 200)
+            self.assertGreaterEqual(len(resp.json()["benchmarks"]), 4)
+
+    def test_benchmarks_self_heal_when_only_subtables_missing(self):
+        """Missing benchmark_cases/eval_runs (benchmarks intact) must also
+        trigger the self-heal — never a silent 200 with zeroed counts."""
+        for missing in ("benchmark_cases", "eval_runs"):
+            with tempfile.TemporaryDirectory() as tmp:
+                app, db, _cfg = _make_app(tmp)
+                client = TestClient(app, raise_server_exceptions=False,
+                                    headers=AUTH_HEADERS)
+                # Seed real suites first so benchmarks rows exist
+                resp = client.post("/api/mcos/seed")
+                self.assertEqual(resp.status_code, 200)
+
+                with db._lock:
+                    db._conn.execute(f"DROP TABLE IF EXISTS {missing}")
+                    db._conn.commit()
+
+                resp = client.get("/api/mcos/benchmarks")
+                self.assertEqual(resp.status_code, 200, missing)
+                benches = resp.json()["benchmarks"]
+                self.assertGreaterEqual(len(benches), 4, missing)
+
+                # The dropped table was recreated by the self-heal
+                with db._lock:
+                    db._conn.execute(f"SELECT COUNT(*) FROM {missing}")
+
+                # After re-seeding, real case counts come back
+                resp = client.post("/api/mcos/seed")
+                self.assertEqual(resp.status_code, 200)
+                resp = client.get("/api/mcos/benchmarks")
+                if missing == "benchmark_cases":
+                    self.assertTrue(
+                        any(b["case_count"] > 0
+                            for b in resp.json()["benchmarks"]))
+
+    def test_benchmarks_error_detail_is_structured(self):
+        """Non-table failures must return a descriptive detail, not a 500 blob."""
+        with tempfile.TemporaryDirectory() as tmp:
+            app, db, _cfg = _make_app(tmp)
+            client = TestClient(app, raise_server_exceptions=False, headers=AUTH_HEADERS)
+
+            with patch("orivellum.api.routes.mcos._list_benchmarks_rows",
+                       side_effect=RuntimeError("boom")):
+                resp = client.get("/api/mcos/benchmarks")
+            self.assertEqual(resp.status_code, 500)
+            self.assertIn("boom", resp.json()["detail"])
+
     def test_run_endpoint_and_409(self):
         with tempfile.TemporaryDirectory() as tmp:
             app, db, _cfg = _make_app(tmp)

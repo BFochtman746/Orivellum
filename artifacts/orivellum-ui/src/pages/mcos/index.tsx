@@ -1240,10 +1240,28 @@ export default function Mcos() {
 
   const benchmarksQuery = useQuery<{ benchmarks: Benchmark[] }>({
     queryKey: ["mcos", "benchmarks"],
-    queryFn: () => apiFetch(`${BASE}/mcos/benchmarks`).then((r) => {
-      if (!r.ok) throw new Error("Failed to load benchmarks");
+    queryFn: async () => {
+      let r: Response;
+      try {
+        r = await apiFetch(`${BASE}/mcos/benchmarks`);
+      } catch {
+        // fetch itself rejected — the server is unreachable, not erroring
+        throw new Error(
+          "Server unreachable — check that Orivellum is running, then retry.",
+        );
+      }
+      if (!r.ok) {
+        let detail = `The server returned HTTP ${r.status}.`;
+        try {
+          const body = await r.json();
+          if (body?.detail) detail = String(body.detail);
+        } catch {
+          // non-JSON error body — keep the status-only message
+        }
+        throw new Error(detail);
+      }
       return r.json();
-    }),
+    },
     staleTime: 5_000,
     // Poll while any run is in progress so scores/last-run refresh live.
     refetchInterval: () => (anyRunning ? 3_000 : false),
@@ -1345,7 +1363,14 @@ export default function Mcos() {
       ) : benchError ? (
         <Card>
           <CardContent className="p-6">
-            <ErrorState message="Could not load benchmarks. The calibration service may still be starting." onRetry={() => benchmarksQuery.refetch()} />
+            <ErrorState
+              message={`Could not load benchmarks. ${
+                benchmarksQuery.error instanceof Error && benchmarksQuery.error.message
+                  ? benchmarksQuery.error.message
+                  : "The calibration service may still be starting."
+              }`}
+              onRetry={() => benchmarksQuery.refetch()}
+            />
           </CardContent>
         </Card>
       ) : isEmpty ? (

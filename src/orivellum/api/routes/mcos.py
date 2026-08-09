@@ -83,24 +83,70 @@ def _run_row_to_dict(db, row) -> dict:
     }
 
 
-@router.get("/benchmarks")
-def list_benchmarks():
-    db = get_db()
+def _schema_version(db) -> int:
+    """Best-effort current schema version (0 when unreadable)."""
+    try:
+        with db._lock:
+            return int(db._get_setting("schema_version", "0"))
+    except Exception:
+        return 0
+
+
+def _heal_mcos_tables(db) -> bool:
+    """Re-apply the v52 MCOS DDL when its tables are missing.
+
+    The v52 migration uses CREATE TABLE IF NOT EXISTS throughout, so
+    re-running it is idempotent and safe.  This self-heals databases where
+    the migration was interrupted (schema_version advanced but a table is
+    absent, or vice versa).  Returns True when the DDL applied cleanly.
+    """
+    try:
+        from orivellum.database.schema import MIGRATIONS
+        sql = next(s for v, _d, s in MIGRATIONS if v == 52)
+        with db._lock:
+            for stmt in sql.split(";"):
+                stmt = stmt.strip()
+                if stmt:
+                    db._conn.execute(stmt)
+            db._conn.commit()
+        logger.warning("MCOS tables were missing — re-applied v52 DDL successfully")
+        return True
+    except Exception as exc:
+        logger.error("MCOS self-heal (v52 DDL) failed: %s", exc)
+        return False
+
+
+def _list_benchmarks_rows(db) -> list[dict]:
     with db._lock:
         benches = [dict(r) for r in db._conn.execute(
             "SELECT * FROM benchmarks ORDER BY category, name"
         ).fetchall()]
+    import sqlite3
     out = []
     for b in benches:
-        with db._lock:
-            case_count = db._conn.execute(
-                "SELECT COUNT(*) FROM benchmark_cases WHERE benchmark_id=?", (b["id"],)
-            ).fetchone()[0]
-            last = db._conn.execute(
-                "SELECT id, avg_score, status, finished_at FROM eval_runs "
-                "WHERE benchmark_id=? ORDER BY started_at DESC LIMIT 1",
-                (b["id"],),
-            ).fetchone()
+        # Per-suite fault tolerance: one broken suite must not hide the rest.
+        # Schema errors ("no such table") MUST propagate so the caller can run
+        # the one-time v52 self-heal instead of masking a broken migration as
+        # an empty-but-healthy suite.
+        case_count = 0
+        last = None
+        try:
+            with db._lock:
+                case_count = db._conn.execute(
+                    "SELECT COUNT(*) FROM benchmark_cases WHERE benchmark_id=?",
+                    (b["id"],),
+                ).fetchone()[0]
+                last = db._conn.execute(
+                    "SELECT id, avg_score, status, finished_at FROM eval_runs "
+                    "WHERE benchmark_id=? ORDER BY started_at DESC LIMIT 1",
+                    (b["id"],),
+                ).fetchone()
+        except sqlite3.OperationalError as exc:
+            if "no such table" in str(exc).lower():
+                raise
+            logger.warning("Benchmark %s sub-queries failed: %s", b.get("id"), exc)
+        except Exception as exc:
+            logger.warning("Benchmark %s sub-queries failed: %s", b.get("id"), exc)
         out.append({
             "id": b["id"],
             "name": b["name"],
@@ -117,7 +163,48 @@ def list_benchmarks():
                 "finished_at": last["finished_at"],
             } if last else None),
         })
-    return {"benchmarks": out}
+    return out
+
+
+@router.get("/benchmarks")
+def list_benchmarks():
+    import sqlite3
+    db = get_db()
+    try:
+        return {"benchmarks": _list_benchmarks_rows(db)}
+    except sqlite3.OperationalError as exc:
+        msg = str(exc)
+        logger.error("GET /mcos/benchmarks failed: %s (schema v%d)",
+                     msg, _schema_version(db))
+        if "no such table" in msg.lower():
+            # Missing v52 tables — try to self-heal once, then retry.
+            if _heal_mcos_tables(db):
+                try:
+                    return {"benchmarks": _list_benchmarks_rows(db)}
+                except Exception as retry_exc:  # pragma: no cover - defensive
+                    logger.error("Benchmarks retry after self-heal failed: %s",
+                                 retry_exc)
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    f"MCOS tables are missing ({msg}; database schema "
+                    f"v{_schema_version(db)}, MCOS needs v52+) and automatic "
+                    "repair failed. Restart the server to re-run migrations; "
+                    "if this persists, check the server log for the failing "
+                    "migration."
+                ),
+            )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Benchmark query failed: {msg} "
+                   f"(schema v{_schema_version(db)})",
+        )
+    except Exception as exc:
+        logger.exception("GET /mcos/benchmarks failed unexpectedly")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Benchmark listing failed: {exc.__class__.__name__}: {exc}",
+        )
 
 
 @router.post("/seed")
