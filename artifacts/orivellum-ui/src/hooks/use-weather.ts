@@ -1,20 +1,25 @@
 /**
  * useWeather — browser version of the mobile weather hook.
  *
- * Uses the browser Geolocation API (permission prompt on first use),
- * reverse-geocodes via BigDataCloud's free client endpoint (no key, CORS
- * enabled), and calls Open-Meteo for current conditions + 4-day forecast +
- * next-24h hourly. Results cached in module memory for 15 minutes so
- * navigating away and back doesn't refetch.
+ * Resolves a location in this order:
+ *   1. A manually saved location (localStorage) — survives HTTP-only origins
+ *      (Tailscale/LAN) where the browser Geolocation API is blocked.
+ *   2. The browser Geolocation API (permission prompt on first use), with
+ *      reverse-geocoding via BigDataCloud's free client endpoint.
  *
- * No API keys required — both services are free and anonymous.
+ * Weather comes from Open-Meteo: current conditions + 4-day forecast +
+ * next-24h hourly (temperature_2m, weathercode, precipitation_probability).
+ * Results cached in module memory for 15 minutes so navigating away and
+ * back doesn't refetch.
+ *
+ * No API keys required — all services are free and anonymous.
  */
 
 import { useEffect, useRef, useState } from "react";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-export type WeatherStatus = "idle" | "loading" | "ok" | "denied" | "error" | "unsupported";
+export type WeatherStatus = "idle" | "loading" | "ok" | "no_location" | "error";
 
 export interface DayForecast {
   label: string; // "Today" | "Tomorrow" | "Mon" …
@@ -44,6 +49,13 @@ export interface WeatherData {
   forecast: DayForecast[];
   hourly: HourlyPoint[];
   fetchedAt: number;
+}
+
+export interface SavedLocation {
+  lat: number;
+  lon: number;
+  city: string;
+  region: string;
 }
 
 // ── WMO weather code helpers (mirrors the mobile app) ────────────────────────
@@ -111,6 +123,62 @@ export function buildHourlyPoints(
   return result;
 }
 
+// ── Saved manual location (localStorage) ──────────────────────────────────────
+
+const LOC_KEY = "orivellum.weather.location";
+
+export function getSavedLocation(): SavedLocation | null {
+  try {
+    const raw = localStorage.getItem(LOC_KEY);
+    if (!raw) return null;
+    const j = JSON.parse(raw);
+    if (typeof j?.lat === "number" && typeof j?.lon === "number") return j as SavedLocation;
+  } catch {
+    /* corrupt entry — ignore */
+  }
+  return null;
+}
+
+function saveLocation(loc: SavedLocation) {
+  try {
+    localStorage.setItem(LOC_KEY, JSON.stringify(loc));
+  } catch {
+    /* storage full/blocked — weather still works this session */
+  }
+}
+
+export function clearSavedLocation() {
+  try {
+    localStorage.removeItem(LOC_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
+// ── City search (Open-Meteo geocoding, CORS-enabled, no key) ─────────────────
+
+export interface CityResult {
+  name: string;
+  region: string;
+  country: string;
+  lat: number;
+  lon: number;
+}
+
+export async function searchCity(query: string): Promise<CityResult[]> {
+  const params = new URLSearchParams({ name: query, count: "5", language: "en", format: "json" });
+  const r = await fetch(`https://geocoding-api.open-meteo.com/v1/search?${params}`);
+  if (!r.ok) throw new Error(`geocoding HTTP ${r.status}`);
+  const j = await r.json();
+  return ((j.results ?? []) as any[]).map((c) => ({
+    name: c.name,
+    region: c.admin1 ?? "",
+    country: c.country ?? "",
+    lat: c.latitude,
+    lon: c.longitude,
+  }));
+}
+
 // ── Fetch helpers ─────────────────────────────────────────────────────────────
 
 const OPEN_METEO = "https://api.open-meteo.com/v1/forecast";
@@ -170,12 +238,73 @@ function getPosition(): Promise<GeolocationPosition> {
   });
 }
 
+/** Whether asking the browser for a GPS fix can possibly work here. */
+export function geolocationAvailable(): boolean {
+  // Chrome/Safari refuse geolocation on insecure origins (plain-HTTP LAN /
+  // Tailscale access); don't offer a button that can never succeed.
+  return "geolocation" in navigator && (window.isSecureContext || location.hostname === "localhost");
+}
+
 // ── Cache (module-level so it survives route changes) ────────────────────────
 
 const CACHE_MS = 15 * 60 * 1_000;
 let _cache: WeatherData | null = null;
 
 const DAY_ABBR = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
+
+function toWeatherData(wx: any, city: string, region: string): WeatherData {
+  const cur = wx.current;
+  const daily = wx.daily;
+
+  const forecast: DayForecast[] = (daily.time as string[]).slice(0, 4).map((dateStr, i) => {
+    const d = new Date(dateStr + "T12:00:00");
+    const label = i === 0 ? "Today" : i === 1 ? "Tomorrow" : DAY_ABBR[d.getDay()];
+    return {
+      label,
+      tempMaxF: Math.round(daily.temperature_2m_max[i]),
+      tempMinF: Math.round(daily.temperature_2m_min[i]),
+      code: daily.weathercode[i],
+    };
+  });
+
+  let hourly: HourlyPoint[] = [];
+  if (wx.hourly) {
+    // The API is called with timezone=auto, so hourly timestamps are in the
+    // SELECTED CITY's local time — which may differ from the browser's zone
+    // for a manually chosen city. Shift "now" by the response's UTC offset
+    // and read it with UTC getters to get the city-local hour and date.
+    const offsetSec: number = typeof wx.utc_offset_seconds === "number" ? wx.utc_offset_seconds : 0;
+    const cityNow = new Date(Date.now() + offsetSec * 1_000);
+    const cityDateStr = [
+      cityNow.getUTCFullYear(),
+      String(cityNow.getUTCMonth() + 1).padStart(2, "0"),
+      String(cityNow.getUTCDate()).padStart(2, "0"),
+    ].join("-");
+    hourly = buildHourlyPoints(
+      wx.hourly.time,
+      wx.hourly.temperature_2m,
+      wx.hourly.weathercode,
+      wx.hourly.precipitation_probability,
+      cityNow.getUTCHours(),
+      cityDateStr,
+    );
+  }
+
+  return {
+    city,
+    region,
+    tempF: Math.round(cur.temperature_2m),
+    feelsLikeF: Math.round(cur.apparent_temperature),
+    conditionCode: cur.weathercode,
+    conditionLabel: wmoLabel(cur.weathercode),
+    humidity: Math.round(cur.relative_humidity_2m),
+    windMph: Math.round(cur.windspeed_10m),
+    isDay: cur.is_day === 1,
+    forecast,
+    hourly,
+    fetchedAt: Date.now(),
+  };
+}
 
 // ── Hook ──────────────────────────────────────────────────────────────────────
 
@@ -185,10 +314,6 @@ export function useWeather() {
   const loading = useRef(false);
 
   const load = async (force = false) => {
-    if (!("geolocation" in navigator)) {
-      setStatus("unsupported");
-      return;
-    }
     if (!force && _cache && Date.now() - _cache.fetchedAt < CACHE_MS) {
       setData(_cache);
       setStatus("ok");
@@ -199,66 +324,32 @@ export function useWeather() {
     setStatus("loading");
 
     try {
-      const pos = await getPosition();
-      const { latitude: lat, longitude: lon } = pos.coords;
+      const saved = getSavedLocation();
+      let result: WeatherData;
 
-      const [place, wx] = await Promise.all([reverseGeocode(lat, lon), fetchWeather(lat, lon)]);
-
-      const cur = wx.current;
-      const daily = wx.daily;
-
-      const forecast: DayForecast[] = (daily.time as string[]).slice(0, 4).map((dateStr, i) => {
-        const d = new Date(dateStr + "T12:00:00");
-        const label = i === 0 ? "Today" : i === 1 ? "Tomorrow" : DAY_ABBR[d.getDay()];
-        return {
-          label,
-          tempMaxF: Math.round(daily.temperature_2m_max[i]),
-          tempMinF: Math.round(daily.temperature_2m_min[i]),
-          code: daily.weathercode[i],
-        };
-      });
-
-      let hourly: HourlyPoint[] = [];
-      if (wx.hourly) {
-        const now = new Date();
-        // Local date components — toISOString() would give the UTC date.
-        const localDateStr = [
-          now.getFullYear(),
-          String(now.getMonth() + 1).padStart(2, "0"),
-          String(now.getDate()).padStart(2, "0"),
-        ].join("-");
-        hourly = buildHourlyPoints(
-          wx.hourly.time,
-          wx.hourly.temperature_2m,
-          wx.hourly.weathercode,
-          wx.hourly.precipitation_probability,
-          now.getHours(),
-          localDateStr,
-        );
+      if (saved) {
+        const wx = await fetchWeather(saved.lat, saved.lon);
+        result = toWeatherData(wx, saved.city, saved.region);
+      } else if (geolocationAvailable()) {
+        const pos = await getPosition();
+        const { latitude: lat, longitude: lon } = pos.coords;
+        const [place, wx] = await Promise.all([reverseGeocode(lat, lon), fetchWeather(lat, lon)]);
+        result = toWeatherData(wx, place.city, place.region);
+      } else {
+        // Insecure origin or no geolocation API, and nothing saved yet:
+        // the card offers a manual city picker instead.
+        setStatus("no_location");
+        return;
       }
-
-      const result: WeatherData = {
-        city: place.city,
-        region: place.region,
-        tempF: Math.round(cur.temperature_2m),
-        feelsLikeF: Math.round(cur.apparent_temperature),
-        conditionCode: cur.weathercode,
-        conditionLabel: wmoLabel(cur.weathercode),
-        humidity: Math.round(cur.relative_humidity_2m),
-        windMph: Math.round(cur.windspeed_10m),
-        isDay: cur.is_day === 1,
-        forecast,
-        hourly,
-        fetchedAt: Date.now(),
-      };
 
       _cache = result;
       setData(result);
       setStatus("ok");
     } catch (e: any) {
-      // GeolocationPositionError code 1 = permission denied
-      if (e && typeof e.code === "number" && e.code === 1) {
-        setStatus("denied");
+      // Any GeolocationPositionError (denied / unavailable / timeout) with no
+      // saved city → fall back to the manual picker rather than a dead error.
+      if (e && typeof e.code === "number" && !getSavedLocation()) {
+        setStatus("no_location");
       } else if (_cache) {
         setData(_cache);
         setStatus("ok");
@@ -271,10 +362,24 @@ export function useWeather() {
     }
   };
 
+  /** Save a manually chosen city and refetch for it. */
+  const setLocation = (loc: SavedLocation) => {
+    saveLocation(loc);
+    _cache = null;
+    void load(true);
+  };
+
+  /** Forget the manual city and try the browser's location again. */
+  const useMyLocation = () => {
+    clearSavedLocation();
+    _cache = null;
+    void load(true);
+  };
+
   useEffect(() => {
-    load();
+    void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  return { status, data, reload: () => load(true) };
+  return { status, data, reload: () => load(true), setLocation, useMyLocation };
 }

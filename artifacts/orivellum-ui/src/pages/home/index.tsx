@@ -14,6 +14,7 @@ import { useLocation } from "wouter";
 import { APPS } from "@/lib/apps";
 import { connState } from "@/components/app-frame";
 import { useConnectivity } from "@/lib/useConnectivity";
+import { WeatherCard } from "@/components/weather-card";
 
 export default function HomeScreen() {
   const [, setLocation] = useLocation();
@@ -47,6 +48,10 @@ export default function HomeScreen() {
       </header>
 
       <main className="gd-scroll">
+        <div style={{ paddingTop: 16 }}>
+          <WeatherCard />
+        </div>
+
         <p className="gd-eyebrow" style={{ padding: "20px 4px 10px" }}>
           Workspaces
         </p>
