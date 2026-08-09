@@ -47,6 +47,9 @@ import NotFound from '@/pages/not-found';
 import HomeScreen from '@/pages/home/index';
 import { AppFrame } from '@/components/app-frame';
 import { getAppForPath } from '@/lib/apps';
+import { ReadAloudProvider } from '@/lib/read-aloud';
+import { ReadAloudDock } from '@/components/read-aloud-dock';
+import { toast } from 'sonner';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -275,7 +278,10 @@ function App() {
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
         <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}>
-          <Router />
+          <ReadAloudProvider onFail={(msg) => toast.error(msg, { duration: 8000 })}>
+            <Router />
+            <ReadAloudDock />
+          </ReadAloudProvider>
           <CommandPalette />
         </WouterRouter>
         <Toaster />

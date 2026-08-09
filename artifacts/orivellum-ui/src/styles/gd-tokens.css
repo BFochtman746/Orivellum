@@ -255,7 +255,8 @@ html[data-theme='daylight'][data-app='library']  { --gd-accent: #5F6E2A; --gd-ac
   -webkit-overflow-scrolling: touch;
   overscroll-behavior-y: contain;
   padding: 0 var(--gd-pad);
-  padding-bottom: calc(var(--sai-bottom, 0px) + var(--gd-s7));
+  /* --ra-dock-h reserves space for the persistent Read Aloud player */
+  padding-bottom: calc(var(--sai-bottom, 0px) + var(--gd-s7) + var(--ra-dock-h, 0px));
 }
 
 /* content host for legacy pages inside the app frame — pages manage their
@@ -266,6 +267,8 @@ html[data-theme='daylight'][data-app='library']  { --gd-accent: #5F6E2A; --gd-ac
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  /* reserve space for the persistent Read Aloud player when it is open */
+  padding-bottom: var(--ra-dock-h, 0px);
 }
 
 /* ── PRIMITIVE 1 — .gd-tile ───────────────────────────────────────────── */

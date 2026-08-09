@@ -4,6 +4,7 @@ import { ErrorBoundary } from "@/components/error-boundary";
 import { toast } from "sonner";
 import { apiFetch, buildAuthHeaders } from "@/lib/auth";
 import { randomUUID, copyToClipboard } from "@/lib/uuid";
+import { useReadAloud, stripForSpeech } from "@/lib/read-aloud";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
@@ -45,7 +46,7 @@ import {
   Trash2, Wifi, WifiOff, Loader2, Cpu, Pencil, BookOpen, Archive, ArchiveRestore,
   AlertTriangle, FolderOpen, FileText, ChevronRight, ChevronLeft, X as XIcon, Zap, Brain,
   Globe, Paperclip, Download, Layers, HelpCircle, Compass, ChevronDown, ImageIcon, Square,
-  Sparkles, History, RefreshCw, ExternalLink, Mail,
+  Sparkles, History, RefreshCw, ExternalLink, Mail, Volume2,
 } from "lucide-react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -2151,6 +2152,7 @@ export default function Chat() {
   // keeps the light parchment look untouched.  The wrapper class below
   // covers the first paint before the hook's effect runs.
   const gdDark = useGdDark();
+  const readAloud = useReadAloud();
 
   return (
     <div className={`flex-1 min-h-0 flex gap-0 md:gap-6 animate-in fade-in duration-500 ${gdDark ? "dark text-foreground" : ""}`}>
@@ -2556,6 +2558,24 @@ export default function Chat() {
                             >
                               <Copy className="w-3 h-3" />
                             </button>
+                            {!msg.streaming && !!(msg.text ?? "").trim() && (
+                              <button
+                                onClick={() => {
+                                  const speech = stripForSpeech(msg.text ?? "");
+                                  if (!speech) { toast.error("Nothing to read aloud"); return; }
+                                  void readAloud.startText({
+                                    title: conv?.title ? `Reply — ${conv.title}` : "Chat reply",
+                                    href: "/chat",
+                                    text: speech,
+                                  });
+                                }}
+                                className="chat-icon-btn text-muted-foreground/30 hover:text-muted-foreground/70 transition-colors"
+                                title="Read aloud"
+                                data-testid={`button-read-aloud-${msg.id}`}
+                              >
+                                <Volume2 className="w-3 h-3" />
+                              </button>
+                            )}
                           </div>
                           {/* Action confirmation card — shown when the AI detected an action intent */}
                           {!msg.streaming && msg.meta?.intent === "action" && msg.meta?.needs_confirm && msg.meta?.action_name && (

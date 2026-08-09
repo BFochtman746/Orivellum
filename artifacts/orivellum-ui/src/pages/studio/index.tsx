@@ -26,6 +26,7 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { apiFetch } from "@/lib/auth";
+import { useReadAloud } from "@/lib/read-aloud";
 import { VoiceStudio } from "./VoiceStudio";
 
 const BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
@@ -844,28 +845,23 @@ function OutputsGallery() {
 
   const [lightbox, setLightbox] = useState<string | null>(null);
   const [lightboxName, setLightboxName] = useState("");
-  const [playing, setPlaying] = useState<string | null>(null);
   const [clearing, setClearing] = useState(false);
-  // Real DOM audio element — required for iOS Safari autoplay policy
-  const audioElRef = useRef<HTMLAudioElement | null>(null);
+  // Playback happens in the global docked player, which persists across pages.
+  const readAloud = useReadAloud();
 
   function serveUrl(path: string) {
     return `${BASE}/studio/outputs/serve?path=${encodeURIComponent(path)}`;
   }
 
+  const isCurrent = (out: any) => readAloud.mediaUrl === serveUrl(out.path);
+  const isPlaying = (out: any) => isCurrent(out) && readAloud.playing;
+
   function handlePlay(out: any) {
-    const el = audioElRef.current;
-    if (!el) return;
-    if (playing === out.path) {
-      el.pause();
-      setPlaying(null);
+    if (isCurrent(out)) {
+      readAloud.toggle();
       return;
     }
-    el.pause();
-    el.src = serveUrl(out.path);
-    el.load();
-    el.play().catch(() => toast.error("Could not play — tap again or download"));
-    setPlaying(out.path);
+    readAloud.startUrl({ title: out.name, href: "/studio", url: serveUrl(out.path) });
   }
 
   function handleDownload(out: any) {
@@ -880,7 +876,7 @@ function OutputsGallery() {
 
   async function handleArchive(out: any, e: React.MouseEvent) {
     e.stopPropagation();
-    if (playing === out.path) { audioElRef.current?.pause(); setPlaying(null); }
+    if (isCurrent(out)) readAloud.close();
     try {
       const r = await apiFetch(`${BASE}/studio/outputs/archive?path=${encodeURIComponent(out.path)}`, { method: "DELETE" });
       if (!r.ok) throw new Error();
@@ -893,8 +889,7 @@ function OutputsGallery() {
   async function handleClearAll() {
     if (!confirm(`Delete all ${outputs.length} outputs? This cannot be undone.`)) return;
     setClearing(true);
-    audioElRef.current?.pause();
-    setPlaying(null);
+    if (outputs.some((o) => readAloud.mediaUrl === serveUrl(o.path))) readAloud.close();
     try {
       await Promise.all(
         outputs.map(o =>
@@ -925,14 +920,6 @@ function OutputsGallery() {
 
   return (
     <>
-      {/* Hidden DOM audio element — iOS Safari requires a real element, not new Audio() */}
-      <audio
-        ref={audioElRef}
-        onEnded={() => setPlaying(null)}
-        onError={() => { toast.error("Playback error"); setPlaying(null); }}
-        className="hidden"
-      />
-
       {/* Image lightbox */}
       {lightbox && (
         <div
@@ -1032,7 +1019,7 @@ function OutputsGallery() {
                       className="w-10 h-10 rounded-full bg-primary/10 active:bg-primary/30 flex items-center justify-center transition-colors shrink-0 touch-manipulation"
                       onClick={() => handlePlay(out)}
                     >
-                      {playing === out.path
+                      {isPlaying(out)
                         ? <Pause className="w-4 h-4 text-primary" />
                         : <Play className="w-4 h-4 text-primary ml-0.5" />}
                     </button>
@@ -1054,7 +1041,7 @@ function OutputsGallery() {
                         </span>
                       )}
                       <span className="text-[10px] font-mono text-muted-foreground">{fmtSize(out.size_bytes)}</span>
-                      {playing === out.path && (
+                      {isPlaying(out) && (
                         <span className="text-[10px] font-mono text-primary animate-pulse">▶ playing</span>
                       )}
                     </div>
