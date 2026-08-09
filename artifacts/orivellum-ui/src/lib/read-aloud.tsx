@@ -68,6 +68,44 @@ export const TTS_SPEED_OPTIONS = [
 const TTS_LS_VOICE = "orivellum:tts_voice";
 const TTS_LS_SPEED = "orivellum:tts_speed";
 
+// ── Resume positions (per document) ──────────────────────────────────────────
+// Saved under `orivellum:ra_pos:<resumeKey>` so a long document can be picked
+// up at the part (and rough time) where the user stopped listening.
+
+const RA_POS_PREFIX = "orivellum:ra_pos:";
+const RA_SAVE_EVERY_MS = 10_000;
+// Don't offer resume for trivial progress (a few seconds into part 1).
+const RA_MIN_RESUME_SECS = 20;
+
+interface SavedPos {
+  part: number;
+  time: number;       // seconds into the part (approximate)
+  partCount: number;  // for validation — text may have changed since saving
+  savedAt: number;
+}
+
+function loadSavedPos(key: string): SavedPos | null {
+  try {
+    const raw = localStorage.getItem(RA_POS_PREFIX + key);
+    if (!raw) return null;
+    const p = JSON.parse(raw);
+    const valid =
+      Number.isInteger(p?.part) && p.part >= 0 &&
+      Number.isFinite(p?.time) && p.time >= 0 &&
+      Number.isInteger(p?.partCount) && p.partCount > 0;
+    if (!valid) { clearSavedPos(key); return null; } // corrupt — drop it
+    return p as SavedPos;
+  } catch { return null; }
+}
+
+function storeSavedPos(key: string, pos: SavedPos) {
+  try { localStorage.setItem(RA_POS_PREFIX + key, JSON.stringify(pos)); } catch { /* quota */ }
+}
+
+function clearSavedPos(key: string) {
+  try { localStorage.removeItem(RA_POS_PREFIX + key); } catch { /* ignore */ }
+}
+
 // The TTS endpoint caps requests at 10 000 chars; stay well under it and
 // split at paragraph/sentence boundaries so parts sound natural.
 const TTS_PART_CHARS = 4500;
@@ -135,8 +173,14 @@ interface ReadAloudCtx {
   voice: string;
   speed: number;
   audioRef: React.RefObject<HTMLAudioElement | null>;
-  /** Start reading text aloud (chunked TTS). Resolves when part 1 is ready. */
-  startText: (opts: { title: string; href?: string; text: string }) => Promise<void>;
+  /** Start reading text aloud (chunked TTS). Resolves when part 1 is ready.
+   *  Pass `resumeKey` (e.g. the document id) to remember the listening
+   *  position and offer to resume next time. */
+  startText: (opts: { title: string; href?: string; text: string; resumeKey?: string }) => Promise<void>;
+  /** A saved position exists for this session — the dock offers to resume. */
+  resumeOffer: { part: number; time: number } | null;
+  acceptResume: () => void;
+  declineResume: () => void;
   /** Play a ready audio file URL in the dock (starts immediately). */
   startUrl: (opts: { title: string; href?: string; url: string }) => void;
   toggle: () => void;
@@ -176,6 +220,7 @@ export function ReadAloudProvider({
   const [mediaUrl, setMediaUrl] = useState<string | null>(null);
   const [voice, setVoice] = useState<string>(() => localStorage.getItem(TTS_LS_VOICE) ?? "af_heart");
   const [speed, setSpeed] = useState<number>(() => parseFloat(localStorage.getItem(TTS_LS_SPEED) ?? "1"));
+  const [resumeOffer, setResumeOffer] = useState<{ part: number; time: number } | null>(null);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const urlCacheRef = useRef<Map<number, string>>(new Map());       // part index → blob URL
@@ -190,6 +235,12 @@ export function ReadAloudProvider({
   const chunksRef = useRef<string[]>([]);
   const indexRef = useRef(0);
   const lastSrcRef = useRef<string | null>(null);
+  // Resume support: key of the current TTS session (null = don't remember),
+  // and a one-shot seek applied when the target part's audio metadata loads.
+  // The seek is bound to the session AND part that requested it, so a stale
+  // loadedmetadata listener can never seek a newer, unrelated source.
+  const resumeKeyRef = useRef<string | null>(null);
+  const pendingSeekRef = useRef<{ session: number; part: number; time: number } | null>(null);
   // The source we currently WANT loaded. The effect below ignores any state
   // commit that doesn't match this, so a stale `mediaUrl=null` commit from
   // reset() can never pause/clear a source that startUrl() just set
@@ -213,6 +264,21 @@ export function ReadAloudProvider({
     if (lastSrcRef.current !== mediaUrl) {
       el.src = mediaUrl;
       lastSrcRef.current = mediaUrl;
+      const seek = pendingSeekRef.current;
+      if (seek && seek.session === sessionRef.current && seek.part === indexRef.current) {
+        pendingSeekRef.current = null;
+        el.addEventListener("loadedmetadata", () => {
+          // Re-verify identity at fire time: the listener may outlive the
+          // session (reset/new source) — never seek an unrelated source.
+          if (sessionRef.current !== seek.session) return;
+          if (lastSrcRef.current !== mediaUrl || indexRef.current !== seek.part) return;
+          if (isFinite(el.duration) && el.duration > 0) {
+            el.currentTime = Math.min(seek.time, Math.max(0, el.duration - 1));
+          }
+        }, { once: true });
+      } else if (seek && seek.session !== sessionRef.current) {
+        pendingSeekRef.current = null; // stale request from a dead session
+      }
     }
     if (autoPlayRef.current) {
       autoPlayRef.current = false;
@@ -270,6 +336,20 @@ export function ReadAloudProvider({
     }
   }, []);
 
+  /** Persist the current listening position for the active TTS session.
+   *  `partOverride`/`timeOverride` let part changes record the NEW part at
+   *  t=0 before the audio element has actually switched. */
+  const saveProgress = useCallback((partOverride?: number, timeOverride?: number) => {
+    const key = resumeKeyRef.current;
+    const partCount = chunksRef.current.length;
+    if (!key || partCount === 0) return;
+    const part = partOverride ?? indexRef.current;
+    const time = timeOverride ?? (audioRef.current?.currentTime ?? 0);
+    // Skip trivial progress so a brief tap of part 1 doesn't nag to resume.
+    if (part === 0 && time < RA_MIN_RESUME_SECS) return;
+    storeSavedPos(key, { part, time, partCount, savedAt: Date.now() });
+  }, []);
+
   const reset = useCallback(() => {
     sessionRef.current++;
     autoPlayRef.current = false;
@@ -285,9 +365,13 @@ export function ReadAloudProvider({
     for (const url of urlCacheRef.current.values()) URL.revokeObjectURL(url);
     urlCacheRef.current.clear();
     promisesRef.current.clear();
+    resumeKeyRef.current = null;
+    pendingSeekRef.current = null;
+    setResumeOffer(null);
   }, []);
 
-  const startText = useCallback(async ({ title, href, text }: { title: string; href?: string; text: string }) => {
+  const startText = useCallback(async ({ title, href, text, resumeKey }: { title: string; href?: string; text: string; resumeKey?: string }) => {
+    saveProgress(); // remember the outgoing session's place before replacing it
     reset();
     setLoading(true);
     // Capture the session BEFORE any await — if the player is closed or a
@@ -303,6 +387,19 @@ export function ReadAloudProvider({
       setIndex(0);
       indexRef.current = 0;
       setNowPlaying({ title, href, kind: "tts" });
+      resumeKeyRef.current = resumeKey ?? null;
+      if (resumeKey) {
+        const saved = loadSavedPos(resumeKey);
+        // Only offer when the split still matches (text unchanged) and the
+        // saved spot is meaningfully past the start.
+        if (saved && saved.partCount === parts.length
+            && saved.part >= 0 && saved.part < parts.length
+            && (saved.part > 0 || saved.time >= RA_MIN_RESUME_SECS)) {
+          setResumeOffer({ part: saved.part, time: Math.max(0, saved.time) });
+        } else if (saved) {
+          clearSavedPos(resumeKey); // stale (document text changed) — drop it
+        }
+      }
       const url = await synthesizePart(parts, 0, voiceRef.current, speedRef.current);
       if (sessionRef.current !== session) return; // closed/superseded meanwhile
       desiredSrcRef.current = url;
@@ -321,6 +418,7 @@ export function ReadAloudProvider({
   }, [reset, synthesizePart, prefetchPart, fail]);
 
   const startUrl = useCallback(({ title, href, url }: { title: string; href?: string; url: string }) => {
+    saveProgress(); // remember the outgoing TTS session's place, if any
     reset();
     setNowPlaying({ title, href, kind: "url" });
     desiredSrcRef.current = url;
@@ -352,6 +450,10 @@ export function ReadAloudProvider({
       setMediaUrl(url);
       prefetchPart(parts, i + 1, voiceRef.current, speedRef.current);
       evictOldParts(i);
+      // Record the new part immediately (t≈0, or the pending resume seek) so
+      // a reload right after a part change still resumes at the right part.
+      const seek = pendingSeekRef.current;
+      saveProgress(i, seek && seek.session === session && seek.part === i ? seek.time : 0);
     } catch (e: any) {
       if (e?.message !== TTS_STALE && sessionRef.current === session) {
         setPlaying(false);
@@ -366,6 +468,9 @@ export function ReadAloudProvider({
     setPlaying(false);
     if (indexRef.current + 1 < chunksRef.current.length) {
       void goToPart(indexRef.current + 1, true);
+    } else if (resumeKeyRef.current) {
+      // Finished the last part — the document is done; forget the position.
+      clearSavedPos(resumeKeyRef.current);
     }
   }, [goToPart]);
 
@@ -382,9 +487,34 @@ export function ReadAloudProvider({
   }, []);
 
   const close = useCallback(() => {
+    saveProgress(); // keep the place — closing the player isn't finishing
     reset();
     setLoading(false);
-  }, [reset]);
+  }, [saveProgress, reset]);
+
+  const acceptResume = useCallback(() => {
+    if (!resumeOffer) return;
+    setResumeOffer(null);
+    pendingSeekRef.current = resumeOffer.time > 3
+      ? { session: sessionRef.current, part: resumeOffer.part, time: resumeOffer.time }
+      : null;
+    // No autoplay: synthesis is async and the engine's rule is that a session's
+    // first audible part is never play()ed from async code (iOS Safari blocks
+    // it). Resume positions the player; the user taps play.
+    void goToPart(resumeOffer.part, false);
+  }, [resumeOffer, goToPart]);
+
+  const declineResume = useCallback(() => {
+    setResumeOffer(null);
+    if (resumeKeyRef.current) clearSavedPos(resumeKeyRef.current);
+  }, []);
+
+  // Periodic position save while listening (every ~10 s).
+  useEffect(() => {
+    if (!playing) return;
+    const id = setInterval(() => saveProgress(), RA_SAVE_EVERY_MS);
+    return () => clearInterval(id);
+  }, [playing, saveProgress]);
 
   /** Change voice and/or speed; clears the part cache so stale audio never
    *  replays. If a TTS session is open, re-synthesizes the current part. */
@@ -433,12 +563,14 @@ export function ReadAloudProvider({
     nowPlaying, loading, playing, chunkCount: chunks.length, index, mediaUrl,
     voice, speed, audioRef,
     startText, startUrl, toggle, goToPart, close, applySettings,
+    resumeOffer, acceptResume, declineResume,
     onEnded,
     onPlay: () => setPlaying(true),
     onPause: () => setPlaying(false),
     onError: fail,
   }), [nowPlaying, loading, playing, chunks.length, index, mediaUrl, voice, speed,
-       startText, startUrl, toggle, goToPart, close, applySettings, onEnded, fail]);
+       startText, startUrl, toggle, goToPart, close, applySettings,
+       resumeOffer, acceptResume, declineResume, onEnded, fail]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

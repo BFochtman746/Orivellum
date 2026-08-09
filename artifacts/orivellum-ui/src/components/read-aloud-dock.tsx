@@ -80,6 +80,36 @@ export function ReadAloudDock() {
           }}
         >
           <div className="max-w-[1400px] mx-auto px-3 py-2">
+            {/* Resume offer — saved position from an earlier listen */}
+            {ra.resumeOffer && (
+              <div
+                className="flex items-center gap-2 flex-wrap mb-2 pb-2 text-xs"
+                style={{ borderBottom: `1px solid ${CHROME.line}` }}
+                data-testid="row-dock-resume"
+              >
+                <span className="min-w-0 truncate" style={{ color: CHROME.muted }}>
+                  Pick up where you left off — Part {ra.resumeOffer.part + 1} of {ra.chunkCount}
+                  {ra.resumeOffer.time > 3 ? ` at ${fmt(ra.resumeOffer.time)}` : ""}?
+                </span>
+                <button
+                  onClick={ra.acceptResume}
+                  disabled={ra.loading}
+                  data-testid="button-dock-resume"
+                  className="px-2.5 rounded font-mono font-semibold disabled:opacity-50 shrink-0"
+                  style={{ height: 26, background: CHROME.accent, color: "#1A1508" }}
+                >
+                  Resume
+                </button>
+                <button
+                  onClick={ra.declineResume}
+                  data-testid="button-dock-start-over"
+                  className="px-2.5 rounded font-mono shrink-0"
+                  style={{ height: 26, background: CHROME.bgHi, color: CHROME.muted }}
+                >
+                  Start from beginning
+                </button>
+              </div>
+            )}
             <div className="flex items-center gap-2">
               {/* Play / pause */}
               <button

@@ -1106,6 +1106,7 @@ export default function DocumentDetail() {
         title: doc?.title || doc?.source || "Document",
         href: `/library/${docId}`,
         text,
+        resumeKey: docId, // remember the listening position per document
       });
     } finally {
       setTtsLoading(false);
