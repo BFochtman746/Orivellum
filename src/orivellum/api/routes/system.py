@@ -691,19 +691,38 @@ def get_audio_enhance_setting():
     db = get_db()
     enabled = db.get_setting("audio_enhance_enabled", "false").lower() == "true"
     try:
-        from orivellum.capabilities.enhancement import is_available as _dfn_ok
-        installed = _dfn_ok()
-    except Exception:
-        installed = False
+        from orivellum.capabilities.enhancement import probe as _dfn_probe
+        pr = _dfn_probe(force=False)
+    except Exception as exc:
+        pr = {"available": False, "error": str(exc), "python": None,
+              "install_hint": None}
     return {
         "enabled": enabled,
-        "installed": installed,
+        "installed": pr["available"],
         "model": "DeepFilterNet3",
-        "install_hint": (
-            None if installed else
-            "uv add deepfilternet torch torchaudio "
-            "--extra-index-url https://download.pytorch.org/whl/cpu"
-        ),
+        "install_hint": pr["install_hint"],
+        "error": pr["error"],
+        "python": pr["python"],
+    }
+
+
+@router.post("/system/audio-enhance/probe")
+def probe_audio_enhance():
+    """Re-probe DeepFilterNet3 availability live — no server restart needed.
+
+    Clears a cached failed probe and retries the import fresh, so a package
+    installed after server start is picked up immediately.  Returns the exact
+    import error and the interpreter path when detection fails, making an
+    environment mismatch obvious.
+    """
+    from orivellum.capabilities.enhancement import probe as _dfn_probe
+    result = _dfn_probe(force=True)
+    return {
+        "installed": result["available"],
+        "error": result["error"],
+        "python": result["python"],
+        "install_hint": result["install_hint"],
+        "model": "DeepFilterNet3",
     }
 
 
@@ -713,10 +732,21 @@ class AudioEnhanceUpdate(BaseModel):
 
 @router.put("/system/settings/audio-enhance")
 def set_audio_enhance_setting(body: AudioEnhanceUpdate):
-    """Enable or disable DeepFilterNet3 audio enhancement for transcription."""
+    """Enable or disable DeepFilterNet3 audio enhancement for transcription.
+
+    Enabling also re-probes availability live so a just-installed package
+    registers without a restart.
+    """
     db = get_db()
     db.set_setting("audio_enhance_enabled", "true" if body.enabled else "false", actor="user")
-    return {"enabled": body.enabled, "ok": True}
+    installed = None
+    if body.enabled:
+        try:
+            from orivellum.capabilities.enhancement import probe as _dfn_probe
+            installed = _dfn_probe(force=True)["available"]
+        except Exception:
+            installed = False
+    return {"enabled": body.enabled, "ok": True, "installed": installed}
 
 
 @router.get("/system/settings/ai-extraction")

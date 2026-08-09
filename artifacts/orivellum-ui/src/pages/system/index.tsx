@@ -1354,6 +1354,8 @@ type AudioEnhanceStatus = {
   installed: boolean;
   model: string;
   install_hint: string | null;
+  error: string | null;
+  python: string | null;
 };
 
 function useAudioEnhanceSetting() {
@@ -1388,9 +1390,32 @@ function useSetAudioEnhanceSetting() {
   });
 }
 
+function useReprobeAudioEnhance() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async () => {
+      const r = await apiFetch(`${API_BASE}/api/system/audio-enhance/probe`, {
+        method: "POST",
+      });
+      if (!r.ok) throw new Error("Probe request failed");
+      return r.json() as Promise<{ installed: boolean; error: string | null; python: string | null }>;
+    },
+    onSuccess: (res) => {
+      qc.invalidateQueries({ queryKey: ["system", "audio-enhance"] });
+      if (res.installed) {
+        toast.success("DeepFilterNet3 detected — enhancement is ready to enable");
+      } else {
+        toast.error("Still not detected — see the details below the card title");
+      }
+    },
+    onError: () => toast.error("Could not re-check availability"),
+  });
+}
+
 function AudioEnhancementCard() {
   const { data, isLoading } = useAudioEnhanceSetting();
   const setEnhance = useSetAudioEnhanceSetting();
+  const reprobe = useReprobeAudioEnhance();
 
   return (
     <Card className="vellum-card">
@@ -1418,12 +1443,40 @@ function AudioEnhancementCard() {
                 Runs on CPU at ~0.2× real-time with no GPU required.
               </p>
               {data && !data.installed && (
-                <p className="text-xs mt-1" style={{ color: 'var(--gilt)' }}>
-                  Package not installed. Run:{" "}
-                  <code className="font-mono bg-muted px-1 rounded text-[11px]">
-                    {data.install_hint}
-                  </code>
-                </p>
+                <div className="space-y-1.5 mt-1">
+                  <p className="text-xs" style={{ color: 'var(--gilt)' }}>
+                    Not detected. Install it, then click{" "}
+                    <span className="font-medium">Check again</span> — no server
+                    restart needed:{" "}
+                    <code className="font-mono bg-muted px-1 rounded text-[11px]">
+                      {data.install_hint}
+                    </code>
+                  </p>
+                  {data.error && (
+                    <p className="text-[11px] font-mono text-muted-foreground break-all">
+                      Why: {data.error}
+                    </p>
+                  )}
+                  {data.python && (
+                    <p className="text-[11px] font-mono text-muted-foreground break-all">
+                      Server Python: {data.python}
+                      <span className="font-sans"> — run the install from this
+                      environment (the project folder) or it won't be found.</span>
+                    </p>
+                  )}
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="gap-1.5 h-7 text-xs"
+                    onClick={() => reprobe.mutate()}
+                    disabled={reprobe.isPending}
+                  >
+                    {reprobe.isPending
+                      ? <Loader2 className="w-3 h-3 animate-spin" />
+                      : <RotateCcw className="w-3 h-3" />}
+                    Check again
+                  </Button>
+                </div>
               )}
               {data?.installed && data.enabled && (
                 <p className="text-xs mt-1" style={{ color: 'var(--green-2)' }}>

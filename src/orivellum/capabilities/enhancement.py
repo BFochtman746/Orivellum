@@ -38,13 +38,19 @@ logger = logging.getLogger(__name__)
 
 _df_lock:  threading.Lock = threading.Lock()
 _df_model: object          = None
+_last_error: str | None    = None   # why the last probe failed (for diagnostics)
 
 _NATIVE_SR = 48_000   # DeepFilterNet3 native sample rate (full-band)
+
+INSTALL_HINT = (
+    "uv add deepfilternet torch torchaudio "
+    "--extra-index-url https://download.pytorch.org/whl/cpu"
+)
 
 
 def _get_df_model():
     """Return (model, df_state) or None when unavailable."""
-    global _df_model
+    global _df_model, _last_error
     if _df_model is not None:
         return None if _df_model is False else _df_model
     with _df_lock:
@@ -55,14 +61,17 @@ def _get_df_model():
             logger.info("Loading DeepFilterNet3 model (first call — may download ~7 MB)…")
             model, df_state, _ = init_df()
             _df_model = (model, df_state)
+            _last_error = None
             logger.info("DeepFilterNet3 ready.")
-        except ImportError:
+        except ImportError as exc:
+            _last_error = f"ImportError: {exc}"
             logger.info(
                 "deepfilternet not installed — audio enhancement unavailable. "
-                "Install with: uv add deepfilternet torch torchaudio"
+                "Install with: %s", INSTALL_HINT,
             )
             _df_model = False
         except Exception as exc:
+            _last_error = f"{exc.__class__.__name__}: {exc}"
             logger.warning("DeepFilterNet3 failed to load: %s", exc)
             _df_model = False
     return None if _df_model is False else _df_model
@@ -71,6 +80,35 @@ def _get_df_model():
 def is_available() -> bool:
     """Return True when DeepFilterNet3 can be loaded and is ready to use."""
     return _get_df_model() is not None
+
+
+def probe(force: bool = False) -> dict:
+    """Report DeepFilterNet3 availability with diagnostics.
+
+    With ``force=True`` a previously-cached FAILED probe is discarded and the
+    import is attempted fresh (a loaded model is never thrown away), so a
+    package installed after server start registers WITHOUT a restart.
+
+    Returns ``{available, error, python, install_hint}`` — ``python`` is the
+    interpreter this server runs from, so an environment mismatch (package
+    installed into a different Python) is immediately visible.
+    """
+    global _df_model
+    import sys
+    if force:
+        with _df_lock:
+            if _df_model is False:
+                _df_model = None
+        # Pick up packages installed after interpreter start
+        import importlib
+        importlib.invalidate_caches()
+    available = _get_df_model() is not None
+    return {
+        "available": available,
+        "error": None if available else _last_error,
+        "python": sys.executable,
+        "install_hint": None if available else INSTALL_HINT,
+    }
 
 
 def enhance_audio(path: Path, output_dir: Path | None = None) -> Path:
