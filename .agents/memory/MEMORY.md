@@ -76,3 +76,4 @@
 - [Weather card design](orivellum-weather.md) — Open-Meteo minutely_15 nowcast + AQI; city-local timestamp rules; SWR cache locKey; forced-load generation guard.
 - [Voice platform roadmap](orivellum-voice-roadmap.md) — premium TTS slot is empty by design; fill with ROCm sidecar (Chatterbox first); steal Voice Forge gates/caching, never port the Java app.
 - [Test suite stability](orivellum-test-suite-stability.md) — never get_event_loop() in tests; drain shared executor before temp-dir cleanup; full suite OOMs in this container — run ~10-file chunks.
+- [Measurement layer](orivellum-measurement-layer.md) — TTFT/tok-s telemetry, benches, golden-set eval; decode rate = (n-1)/window; NULL = not measured; one bench at a time (409 guard).
