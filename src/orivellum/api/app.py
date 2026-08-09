@@ -513,7 +513,7 @@ def create_app() -> FastAPI:
         SessionMiddleware,
         secret_key=_init_session_secret(),
         session_cookie="orivellum_session",
-        max_age=86400 * 30,   # 30 days
+        max_age=86400 * 365,  # 365 days — single-user private deployment
         https_only=False,     # Allow HTTP in local development
         same_site="lax",
     )
@@ -533,16 +533,17 @@ def _init_session_secret() -> str:
        - Must be **at least 32 characters** — shorter values are rejected with
          a clear ``RuntimeError`` so the process refuses to start.
     2. Absent ``SESSION_SECRET``:
-       - A cryptographically random 48-char hex secret is generated with
-         ``secrets.token_hex(24)``.
-       - The generated value is printed as a **WARNING** (with the secret itself
-         so the operator can copy it into their environment) and is **NOT**
-         persisted to disk — it changes on every restart by design.
-       - This is acceptable for a local-first workspace.  For stable sessions
-         across restarts, set ``SESSION_SECRET`` to the value shown in the log.
+       - The secret is read from ``<data_dir>/session_secret.txt`` if present.
+       - Otherwise a cryptographically random 48-char hex secret is generated
+         with ``secrets.token_hex(24)`` and **persisted** to that file (mode
+         0600 where the OS supports it) so sessions survive restarts.
+       - Only if the file cannot be read *and* cannot be written does it fall
+         back to an ephemeral per-process secret (sessions then reset on
+         restart), with a WARNING explaining why.
 
     This function runs at ``create_app()`` time — before the lifespan starts
-    the DB — so it MUST NOT touch any database connection.
+    the DB — so it MUST NOT touch any database connection.  It may read the
+    config (pure file/env access) to locate the data directory.
     """
     env_secret = os.environ.get("SESSION_SECRET")
     if env_secret is not None:
@@ -557,17 +558,55 @@ def _init_session_secret() -> str:
             )
         return env_secret
 
-    # SESSION_SECRET is not set — generate a random secret for this process run.
-    # It is NOT written to disk; sessions become invalid on every restart, which
-    # is acceptable for a single-user local workspace.  To make sessions persist
-    # across restarts, copy the value below into SESSION_SECRET.
+    # SESSION_SECRET is not set — use a secret persisted in the data directory
+    # so sessions survive backend restarts (login once, stay logged in).
+    secret_file: Path | None = None
+    try:
+        cfg = load_config()
+        secret_file = Path(cfg.data_dir) / "session_secret.txt"
+    except Exception as e:  # pragma: no cover — config must normally load
+        logger.warning("Could not load config to locate session secret file: %s", e)
+
+    if secret_file is not None:
+        try:
+            existing = secret_file.read_text(encoding="utf-8").strip()
+            if len(existing) >= _MIN_SECRET_LEN:
+                logger.info("Session secret loaded from %s", secret_file)
+                return existing
+            if existing:
+                logger.warning(
+                    "Session secret in %s is too short (%d chars; minimum %d) — "
+                    "generating a new one.",
+                    secret_file, len(existing), _MIN_SECRET_LEN,
+                )
+        except FileNotFoundError:
+            pass
+        except OSError as e:
+            logger.warning("Could not read session secret file %s: %s", secret_file, e)
+
     generated = secrets.token_hex(24)  # 48 hex chars — well above the 32-char minimum
+
+    if secret_file is not None:
+        try:
+            secret_file.parent.mkdir(parents=True, exist_ok=True)
+            secret_file.write_text(generated, encoding="utf-8")
+            try:
+                os.chmod(secret_file, 0o600)
+            except OSError:
+                pass  # Windows: chmod is best-effort
+            logger.info(
+                "Session secret generated and persisted to %s — sessions will "
+                "survive restarts.", secret_file,
+            )
+            return generated
+        except OSError as e:
+            logger.warning("Could not persist session secret to %s: %s", secret_file, e)
+
     logger.warning(
-        "SESSION_SECRET is not set. A random secret has been generated for this "
-        "session: %s — sessions will be invalidated on restart. To persist "
-        "sessions, set SESSION_SECRET to this value in your environment or "
-        "Replit Secrets.",
-        generated,
+        "SESSION_SECRET is not set and no persistent secret file could be used. "
+        "An ephemeral secret was generated — sessions will be invalidated on "
+        "restart. Set SESSION_SECRET or fix data-dir permissions to persist "
+        "sessions.",
     )
     return generated
 

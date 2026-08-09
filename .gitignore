@@ -73,10 +73,12 @@ data/*.db-wal
 attached_assets/
 
 # Generated API credentials — NEVER commit these files
-# data/api_key.txt    — bearer token written by the API server on first startup
-# data/.session_secret — session-signing secret written by the API server
+# data/api_key.txt          — bearer token written by the API server on first startup
+# data/.session_secret      — legacy session-secret filename (kept ignored)
+# data/session_secret.txt   — session-signing secret persisted by the API server
 data/api_key.txt
 data/.session_secret
+data/session_secret.txt
 data/outputs/
 data/nightshift/
 data/backups/

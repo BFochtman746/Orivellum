@@ -14,6 +14,7 @@
 import React, {
   useCallback, useEffect, useRef, useState,
 } from 'react';
+import { apiFetch } from '@/lib/auth';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Typography from '@tiptap/extension-typography';
@@ -63,12 +64,12 @@ const BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, '/').replace(/\/$/
 // ── API helpers ──────────────────────────────────────────────────────────────
 
 async function apiGet(path: string) {
-  const r = await fetch(`${BASE}${path}`, { credentials: 'include' });
+  const r = await apiFetch(`${BASE}${path}`, { credentials: 'include' });
   if (!r.ok) throw new Error(await r.text());
   return r.json();
 }
 async function apiPost(path: string, body: unknown) {
-  const r = await fetch(`${BASE}${path}`, {
+  const r = await apiFetch(`${BASE}${path}`, {
     method: 'POST', credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -77,7 +78,7 @@ async function apiPost(path: string, body: unknown) {
   return r.json();
 }
 async function apiPatch(path: string, body: unknown) {
-  const r = await fetch(`${BASE}${path}`, {
+  const r = await apiFetch(`${BASE}${path}`, {
     method: 'PATCH', credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -86,7 +87,7 @@ async function apiPatch(path: string, body: unknown) {
   return r.json();
 }
 async function apiDelete(path: string) {
-  const r = await fetch(`${BASE}${path}`, { method: 'DELETE', credentials: 'include' });
+  const r = await apiFetch(`${BASE}${path}`, { method: 'DELETE', credentials: 'include' });
   if (!r.ok) throw new Error(await r.text());
   return r.json();
 }
@@ -295,7 +296,7 @@ function AIPanel({
     abortRef.current = ctrl;
 
     try {
-      const resp = await fetch(`${BASE}/write/documents/${docId}/ai`, {
+      const resp = await apiFetch(`${BASE}/write/documents/${docId}/ai`, {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
@@ -788,7 +789,7 @@ export default function WriteDeskPage() {
   const handleExport = useCallback(async () => {
     if (!activeDoc) return;
     try {
-      const r = await fetch(`${BASE}/write/documents/${activeDoc.id}/export/txt`, { credentials: 'include' });
+      const r = await apiFetch(`${BASE}/write/documents/${activeDoc.id}/export/txt`, { credentials: 'include' });
       const blob = await r.blob();
       const url  = URL.createObjectURL(blob);
       const a    = document.createElement('a');

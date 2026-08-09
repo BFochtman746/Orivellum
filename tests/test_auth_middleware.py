@@ -287,9 +287,10 @@ class TestSessionSecretInit(unittest.TestCase):
             if saved_data_dir is not None:
                 os.environ["ORIVELLUM_DATA_DIR"] = saved_data_dir
 
-    def test_ephemeral_secret_is_not_persisted_to_disk(self):
-        """When SESSION_SECRET is absent, each call returns a fresh random secret
-        that is NOT written to disk — sessions are intentionally ephemeral."""
+    def test_generated_secret_is_persisted_and_stable(self):
+        """When SESSION_SECRET is absent, the generated secret is persisted to
+        <data_dir>/session_secret.txt and reused on subsequent calls, so
+        sessions survive backend restarts (login once, stay logged in)."""
         import os
         import tempfile
         from orivellum.api.app import _init_session_secret
@@ -302,20 +303,69 @@ class TestSessionSecretInit(unittest.TestCase):
                 first = _init_session_secret()
                 second = _init_session_secret()
 
-                # Both are at least 32 chars and random hex strings
+                # Both are at least 32 chars
                 self.assertGreaterEqual(len(first), 32)
                 self.assertGreaterEqual(len(second), 32)
 
-                # Each call generates a DIFFERENT secret (not persisted)
-                self.assertNotEqual(first, second,
-                                    "Ephemeral secrets must not be reused across calls")
+                # The same secret is returned across calls (persistence works)
+                self.assertEqual(first, second,
+                                 "Persisted secret must be stable across restarts")
 
-                # The secret file must NOT have been written to disk
-                secret_file = os.path.join(tmp, ".session_secret")
-                self.assertFalse(
+                # The secret file WAS written to disk with the same value
+                secret_file = os.path.join(tmp, "session_secret.txt")
+                self.assertTrue(
                     os.path.exists(secret_file),
-                    "Session secret must NOT be persisted to disk — it is ephemeral by design",
+                    "Session secret must be persisted to <data_dir>/session_secret.txt",
                 )
+                with open(secret_file, encoding="utf-8") as fh:
+                    self.assertEqual(fh.read().strip(), first)
+        finally:
+            if saved is not None:
+                os.environ["SESSION_SECRET"] = saved
+            if saved_data_dir is not None:
+                os.environ["ORIVELLUM_DATA_DIR"] = saved_data_dir
+
+    def test_existing_secret_file_is_reused(self):
+        """A pre-existing session_secret.txt (>= 32 chars) is used verbatim."""
+        import os
+        import tempfile
+        from orivellum.api.app import _init_session_secret
+
+        saved = os.environ.pop("SESSION_SECRET", None)
+        saved_data_dir = os.environ.pop("ORIVELLUM_DATA_DIR", None)
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                os.environ["ORIVELLUM_DATA_DIR"] = tmp
+                existing = "z" * 48
+                with open(os.path.join(tmp, "session_secret.txt"), "w",
+                          encoding="utf-8") as fh:
+                    fh.write(existing + "\n")
+                self.assertEqual(_init_session_secret(), existing)
+        finally:
+            if saved is not None:
+                os.environ["SESSION_SECRET"] = saved
+            if saved_data_dir is not None:
+                os.environ["ORIVELLUM_DATA_DIR"] = saved_data_dir
+
+    def test_short_secret_file_is_replaced(self):
+        """A too-short persisted secret is rejected and replaced with a strong one."""
+        import os
+        import tempfile
+        from orivellum.api.app import _init_session_secret
+
+        saved = os.environ.pop("SESSION_SECRET", None)
+        saved_data_dir = os.environ.pop("ORIVELLUM_DATA_DIR", None)
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                os.environ["ORIVELLUM_DATA_DIR"] = tmp
+                path = os.path.join(tmp, "session_secret.txt")
+                with open(path, "w", encoding="utf-8") as fh:
+                    fh.write("weak")
+                secret = _init_session_secret()
+                self.assertGreaterEqual(len(secret), 32)
+                self.assertNotEqual(secret, "weak")
+                with open(path, encoding="utf-8") as fh:
+                    self.assertEqual(fh.read().strip(), secret)
         finally:
             if saved is not None:
                 os.environ["SESSION_SECRET"] = saved
@@ -387,12 +437,11 @@ class TestSessionSecretInit(unittest.TestCase):
             else:
                 os.environ["SESSION_SECRET"] = TEST_API_KEY
 
-    def test_absent_secret_logged_as_warning(self):
-        """When SESSION_SECRET is absent, a WARNING is emitted with the generated value."""
+    def test_absent_secret_is_not_logged(self):
+        """When SESSION_SECRET is absent, the generated secret value must NOT
+        appear in log output (it is persisted to disk, not printed)."""
         import os
-        import logging
         import tempfile
-        from unittest.mock import patch
         from orivellum.api.app import _init_session_secret
 
         saved = os.environ.pop("SESSION_SECRET", None)
@@ -400,14 +449,12 @@ class TestSessionSecretInit(unittest.TestCase):
         try:
             with tempfile.TemporaryDirectory() as tmp:
                 os.environ["ORIVELLUM_DATA_DIR"] = tmp
-                with self.assertLogs("orivellum", level="WARNING") as cm:
+                with self.assertLogs("orivellum", level="INFO") as cm:
                     secret = _init_session_secret()
 
-                # The WARNING must mention the generated secret so the user can copy it
-                warning_text = "\n".join(cm.output)
-                self.assertIn(secret, warning_text,
-                               "WARNING must include the generated secret so the user can copy it")
-                self.assertIn("SESSION_SECRET", warning_text)
+                log_text = "\n".join(cm.output)
+                self.assertNotIn(secret, log_text,
+                                 "The secret value must never be printed to logs")
         finally:
             if saved is not None:
                 os.environ["SESSION_SECRET"] = saved
@@ -431,16 +478,17 @@ class TestSecretFilesIgnored(unittest.TestCase):
                       "data/api_key.txt must be listed in .gitignore")
 
     def test_session_secret_file_is_gitignored(self):
-        """data/.session_secret must be in .gitignore to prevent session forgery."""
+        """The persisted session secret must be in .gitignore to prevent session forgery."""
         content = self._read_gitignore()
-        self.assertIn("data/.session_secret", content,
-                      "data/.session_secret must be listed in .gitignore")
+        self.assertIn("data/session_secret.txt", content,
+                      "data/session_secret.txt must be listed in .gitignore")
 
     def test_generated_files_not_tracked(self):
         """Confirm the generated secret files are not tracked in git."""
         import subprocess
         result = subprocess.run(
-            ["git", "ls-files", "data/api_key.txt", "data/.session_secret"],
+            ["git", "ls-files", "data/api_key.txt", "data/.session_secret",
+             "data/session_secret.txt"],
             capture_output=True, text=True,
             cwd=str(Path(__file__).parent.parent),
         )
