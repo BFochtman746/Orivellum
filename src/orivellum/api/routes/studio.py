@@ -7,10 +7,11 @@ import re
 import subprocess
 import tempfile
 import threading
+import time
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
@@ -2666,6 +2667,241 @@ def cancel_doc_tts(job_id: str):
     job["cancel"].set()
     with _doc_tts_jobs_lock:
         _doc_tts_jobs[job_id]["state"] = "cancelling"
+    return {"ok": True, "state": "cancelling"}
+
+
+# ── Transcription (audio → text) ─────────────────────────────────────────────
+# Reuses the existing audio extraction capability (AI server Whisper →
+# faster-whisper → metadata-only).  Async job pattern mirrors the document-TTS
+# jobs above: POST starts the job, GET polls status, DELETE cancels (best
+# effort — a transcription already in flight cannot be interrupted).
+
+_AUDIO_EXTS = frozenset({".mp3", ".wav", ".m4a", ".ogg", ".flac"})
+
+# Disk-based ceiling for a single upload.  The route is exempt from the in-RAM
+# body limit (it streams to disk), so this is the actual size control.
+_MAX_TRANSCRIBE_BYTES = 500 * 1024 * 1024  # 500 MB ≈ 8+ hours of MP3 audio
+
+_transcribe_jobs: dict[str, dict] = {}
+_transcribe_jobs_lock = threading.Lock()
+_MAX_TRANSCRIBE_JOBS = 20  # keep the newest N finished jobs in memory
+
+# Terminal states only — "running" and "cancelling" jobs must never be pruned:
+# a worker may still be about to write its result into the registry entry.
+_TRANSCRIBE_TERMINAL = frozenset({"done", "error", "cancelled"})
+
+
+def _prune_transcribe_jobs() -> None:
+    """Drop the oldest *terminal* jobs beyond _MAX_TRANSCRIBE_JOBS (lock held by caller)."""
+    finished = sorted(
+        (jid for jid, j in _transcribe_jobs.items() if j["state"] in _TRANSCRIBE_TERMINAL),
+        key=lambda jid: _transcribe_jobs[jid].get("finished_at") or 0.0,
+    )
+    if len(finished) > _MAX_TRANSCRIBE_JOBS:
+        for jid in finished[: len(finished) - _MAX_TRANSCRIBE_JOBS]:
+            _transcribe_jobs.pop(jid, None)
+
+
+def _run_transcribe_job(
+    job_id: str,
+    tmp_path: Path,
+    orig_name: str,
+    save_to_library: bool,
+    db,
+    cfg,
+) -> None:
+    """Background worker: transcribe *tmp_path* and (optionally) register the
+    transcript as a library document."""
+    try:
+        with _transcribe_jobs_lock:
+            job = _transcribe_jobs.get(job_id)
+            if job is None or job["cancel"].is_set():
+                if job is not None:
+                    job.update({"state": "cancelled", "finished_at": time.time()})
+                return
+            job["stage"] = "transcribing"
+
+        from orivellum.capabilities.extraction import extract
+        result = extract(tmp_path, "audio", db=db)
+
+        engine = (result.meta or {}).get("transcription")
+        if not engine:
+            reason = (result.meta or {}).get("reason") or "No transcription engine available"
+            with _transcribe_jobs_lock:
+                if job_id in _transcribe_jobs:
+                    _transcribe_jobs[job_id].update(
+                        {"state": "error", "error": str(reason)[:300], "finished_at": time.time()})
+            return
+
+        # Clean transcript text — pages carry the raw transcript without the
+        # "[Audio transcript: …]" header that full_text prepends.
+        text = (result.pages[0].text if result.pages else result.full_text or "").strip()
+
+        with _transcribe_jobs_lock:
+            job = _transcribe_jobs.get(job_id)
+            if job is None:
+                return
+            if job["cancel"].is_set():
+                job.update({"state": "cancelled", "finished_at": time.time()})
+                return
+            job.update({"text": text, "engine": engine, "word_count": result.word_count})
+
+        doc_id: str | None = None
+        if save_to_library and text:
+            with _transcribe_jobs_lock:
+                if job_id in _transcribe_jobs:
+                    _transcribe_jobs[job_id]["stage"] = "saving"
+            stem = Path(orig_name).stem or "recording"
+            out_dir = Path(cfg.data_dir) / "outputs"
+            out_dir.mkdir(parents=True, exist_ok=True)
+            safe_stem = re.sub(r"[^\w\-. ]+", "_", stem)[:60] or "recording"
+            out_path = out_dir / f"transcript-{safe_stem}-{job_id[:8]}.txt"
+            out_path.write_text(f"Transcript of {orig_name}\n\n{text}", encoding="utf-8")
+            prelinked = _link_output_sync(out_path)
+            _rotate_outputs(out_dir)
+            from orivellum.capabilities.persist import register_and_index
+            doc_id = register_and_index(
+                doc_path=out_path,
+                text_content=text,
+                kind="txt",
+                db=db,
+                cfg=cfg,
+                title=f"Transcript — {stem}",
+                provenance_source="studio",
+                origin_id=job_id,
+                _prelinked_rel=prelinked or None,
+            )
+
+        with _transcribe_jobs_lock:
+            if job_id in _transcribe_jobs:
+                _transcribe_jobs[job_id].update(
+                    {"state": "done", "doc_id": doc_id, "stage": "done", "finished_at": time.time()})
+    except Exception as exc:
+        logger.warning("Transcription job %s failed: %s", job_id, exc)
+        with _transcribe_jobs_lock:
+            if job_id in _transcribe_jobs:
+                _transcribe_jobs[job_id].update(
+                    {"state": "error", "error": str(exc)[:300], "finished_at": time.time()})
+    finally:
+        tmp_path.unlink(missing_ok=True)
+        try:
+            tmp_path.parent.rmdir()
+        except OSError:
+            pass
+
+
+@router.post("/studio/transcribe")
+async def start_transcription(
+    file: UploadFile = File(...),
+    save_to_library: bool = Form(False),
+):
+    """Upload an audio file and start an async transcription job.
+
+    Returns ``{job_id}`` immediately; poll
+    GET /studio/transcribe/{job_id}/status for progress and the final text.
+    """
+    cfg = get_config()
+    db = get_db()
+
+    orig_name = file.filename or "recording"
+    ext = Path(orig_name).suffix.lower()
+    if ext not in _AUDIO_EXTS:
+        raise HTTPException(
+            422,
+            f"Unsupported audio format {ext or '(none)'!r} — "
+            f"supported: {', '.join(sorted(_AUDIO_EXTS))}",
+        )
+
+    # Spool the upload to a private temp dir (chunked — never whole-file in RAM).
+    # The route is exempt from the in-RAM body limit, so the streamed byte cap
+    # below is the real size control: on breach we delete the partial file and 413.
+    tmp_dir = Path(tempfile.mkdtemp(prefix="orv-transcribe-"))
+    tmp_path = tmp_dir / f"upload{ext}"
+
+    def _cleanup_tmp() -> None:
+        tmp_path.unlink(missing_ok=True)
+        try:
+            tmp_dir.rmdir()
+        except OSError:
+            pass
+
+    size = 0
+    try:
+        with open(tmp_path, "wb") as fh:
+            while chunk := await file.read(1024 * 1024):
+                size += len(chunk)
+                if size > _MAX_TRANSCRIBE_BYTES:
+                    raise HTTPException(
+                        413,
+                        f"Audio file too large (limit "
+                        f"{_MAX_TRANSCRIBE_BYTES // (1024 * 1024)} MB)",
+                    )
+                fh.write(chunk)
+    except HTTPException:
+        _cleanup_tmp()
+        raise
+    except Exception as exc:
+        _cleanup_tmp()
+        raise HTTPException(500, f"Could not store upload: {exc}")
+    if size == 0:
+        _cleanup_tmp()
+        raise HTTPException(422, "Uploaded file is empty")
+
+    # Magic-byte check: reject files whose content doesn't match the extension.
+    from orivellum.api.routes.library import _validate_mime_signature
+    try:
+        _validate_mime_signature(tmp_path, orig_name)
+    except HTTPException:
+        _cleanup_tmp()
+        raise
+
+    job_id = str(uuid.uuid4())
+    with _transcribe_jobs_lock:
+        _prune_transcribe_jobs()
+        _transcribe_jobs[job_id] = {
+            "state": "running",
+            "stage": "queued",
+            "filename": orig_name,
+            "cancel": threading.Event(),
+            "text": None,
+            "engine": None,
+            "word_count": None,
+            "doc_id": None,
+            "error": None,
+        }
+
+    from orivellum.api.executor import _tracked_submit
+    _tracked_submit(
+        _run_transcribe_job,
+        job_id, tmp_path, orig_name, save_to_library, db, cfg,
+        kind="transcribe",
+        label=f"transcribe:{orig_name[:30]}",
+    )
+    return {"job_id": job_id}
+
+
+@router.get("/studio/transcribe/{job_id}/status")
+def get_transcribe_status(job_id: str):
+    """Return current progress / result for a transcription job."""
+    with _transcribe_jobs_lock:
+        raw = _transcribe_jobs.get(job_id)
+    if raw is None:
+        raise HTTPException(404, f"Transcription job {job_id!r} not found")
+    job = {k: v for k, v in raw.items() if k != "cancel"}
+    return {"job_id": job_id, **job}
+
+
+@router.delete("/studio/transcribe/{job_id}")
+def cancel_transcription(job_id: str):
+    """Best-effort cancel: takes effect before/after the engine call, not mid-call."""
+    with _transcribe_jobs_lock:
+        job = _transcribe_jobs.get(job_id)
+        if job is None:
+            raise HTTPException(404, f"Transcription job {job_id!r} not found")
+        if job["state"] != "running":
+            return {"ok": True, "state": job["state"]}
+        job["cancel"].set()
+        job["state"] = "cancelling"
     return {"ok": True, "state": "cancelling"}
 
 

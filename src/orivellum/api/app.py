@@ -366,7 +366,7 @@ def create_app() -> FastAPI:
     # ── Request size limit ────────────────────────────────────────────────────
     # Routes that stream the body to disk (multipart upload) are exempt from the
     # in-RAM body limit — their practical ceiling is disk space, not memory.
-    _BODY_LIMIT_EXEMPT = frozenset({"/api/library/upload"})
+    _BODY_LIMIT_EXEMPT = frozenset({"/api/library/upload", "/api/studio/transcribe"})
 
     @app.middleware("http")
     async def limit_body_size(request: Request, call_next):

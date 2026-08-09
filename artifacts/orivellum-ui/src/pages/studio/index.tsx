@@ -13,7 +13,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Mic, Play, Pause, Settings2, Video, Image as ImageIcon,
   FileAudio, Loader2, Volume2, Download, BookHeadphones, FileText,
-  X, Trash2, RefreshCw, Activity, Sparkles, FileSpreadsheet,
+  X, Trash2, RefreshCw, Activity, Sparkles, FileSpreadsheet, Check, Copy,
   Presentation, CheckCircle2, AlertTriangle, ChevronRight, Wand2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -26,6 +26,7 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { apiFetch } from "@/lib/auth";
+import { copyToClipboard } from "@/lib/uuid";
 import { useReadAloud } from "@/lib/read-aloud";
 import { VoiceStudio } from "./VoiceStudio";
 
@@ -56,6 +57,12 @@ type StudioStatus = {
   };
   image_gen: { available: boolean; backends: ImgBackend[] };
   ocr: { available: boolean; engine: string | null; missing: string[] };
+  asr?: {
+    available: boolean;
+    active_engine: string | null;
+    ai_server_available: boolean;
+    faster_whisper_installed: boolean;
+  };
   last_checked: string;
 };
 
@@ -1504,6 +1511,286 @@ function DocumentWorkshopPanel() {
   );
 }
 
+// ── Transcription panel ───────────────────────────────────────────────────────
+
+const AUDIO_ACCEPT = ".mp3,.wav,.m4a,.ogg,.flac";
+
+function TranscribePanel() {
+  const { data: studioStatus } = useStudioStatus();
+  const asr = studioStatus?.asr;
+
+  const [file, setFile] = useState<File | null>(null);
+  const [saveToLibrary, setSaveToLibrary] = useState(true);
+  const [jobState, setJobState] = useState<"idle" | "uploading" | "running" | "done" | "error">("idle");
+  const [stage, setStage] = useState<string | null>(null);
+  const [text, setText] = useState<string | null>(null);
+  const [engine, setEngine] = useState<string | null>(null);
+  const [wordCount, setWordCount] = useState<number | null>(null);
+  const [docId, setDocId] = useState<string | null>(null);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const jobIdRef = useRef<string | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Cancel any in-flight job on unmount.
+  useEffect(() => {
+    return () => {
+      if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+      if (jobIdRef.current) {
+        apiFetch(`${BASE}/studio/transcribe/${jobIdRef.current}`, { method: "DELETE" }).catch(() => {});
+        jobIdRef.current = null;
+      }
+    };
+  }, []);
+
+  function stopPolling() {
+    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+    jobIdRef.current = null;
+  }
+
+  function handlePick(f: File | null) {
+    setFile(f);
+    setText(null);
+    setEngine(null);
+    setWordCount(null);
+    setDocId(null);
+    setErrorMsg(null);
+    setJobState("idle");
+  }
+
+  async function handleTranscribe() {
+    if (!file) return;
+    setJobState("uploading");
+    setStage("uploading");
+    setText(null);
+    setErrorMsg(null);
+    setDocId(null);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      form.append("save_to_library", saveToLibrary ? "true" : "false");
+      const resp = await apiFetch(`${BASE}/studio/transcribe`, { method: "POST", body: form });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        const raw = (err as any).detail;
+        throw new Error(typeof raw === "string" ? raw : `HTTP ${resp.status}`);
+      }
+      const { job_id } = await resp.json();
+      jobIdRef.current = job_id;
+      setJobState("running");
+      setStage("queued");
+      pollRef.current = setInterval(async () => {
+        try {
+          const sr = await apiFetch(`${BASE}/studio/transcribe/${job_id}/status`);
+          if (!sr.ok) {
+            if (sr.status === 404) {
+              stopPolling();
+              setJobState("error");
+              setErrorMsg("Server restarted — the transcription job was lost. Please try again.");
+            }
+            return;
+          }
+          const s = await sr.json();
+          setStage(s.stage ?? null);
+          if (s.state === "done") {
+            stopPolling();
+            setText(s.text ?? "");
+            setEngine(s.engine ?? null);
+            setWordCount(s.word_count ?? null);
+            setDocId(s.doc_id ?? null);
+            setJobState("done");
+            toast.success("Transcription complete");
+          } else if (s.state === "error") {
+            stopPolling();
+            setJobState("error");
+            setErrorMsg(s.error ?? "Transcription failed");
+          } else if (s.state === "cancelled") {
+            stopPolling();
+            setJobState("idle");
+          }
+        } catch {
+          /* transient poll failure — keep trying */
+        }
+      }, 2000);
+    } catch (e: any) {
+      stopPolling();
+      setJobState("error");
+      setErrorMsg(e.message ?? "Upload failed");
+    }
+  }
+
+  async function handleCopy() {
+    if (!text) return;
+    try {
+      await copyToClipboard(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      toast.error("Could not copy to clipboard");
+    }
+  }
+
+  function handleDownloadTxt() {
+    if (!text) return;
+    const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${(file?.name ?? "recording").replace(/\.[^.]+$/, "")}-transcript.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  const busy = jobState === "uploading" || jobState === "running";
+  const stageLabel =
+    stage === "saving" ? "Saving to Library…"
+    : stage === "transcribing" ? "Transcribing audio…"
+    : jobState === "uploading" ? "Uploading…"
+    : "Starting…";
+
+  return (
+    <Card className="border-border/50">
+      <CardHeader className="pb-3">
+        <CardTitle className="flex items-center gap-2 font-serif text-lg">
+          <FileAudio className="w-5 h-5 text-muted-foreground" />
+          Transcription
+        </CardTitle>
+        {asr && (
+          <div className="flex flex-wrap gap-1.5 pt-1">
+            <StatusPill
+              label="Engine"
+              available={asr.available}
+              detail={asr.available ? (asr.active_engine ?? undefined) : "unavailable"}
+              note={
+                asr.available
+                  ? `Next transcription will use: ${asr.active_engine}`
+                  : "No transcription engine available — start the AI server or install faster-whisper on Nimo."
+              }
+            />
+          </div>
+        )}
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {/* File picker */}
+        <div className="space-y-1">
+          <label className="text-xs font-mono uppercase text-muted-foreground">Audio file</label>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept={AUDIO_ACCEPT}
+            className="hidden"
+            onChange={(e) => handlePick(e.target.files?.[0] ?? null)}
+            data-testid="input-transcribe-file"
+          />
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={busy}
+            className="w-full min-h-[64px] rounded-lg border border-dashed border-border bg-muted/20 hover:bg-muted/40 transition-colors px-4 py-3 text-left disabled:opacity-50"
+            data-testid="button-pick-audio"
+          >
+            {file ? (
+              <span className="flex items-center gap-2.5 min-w-0">
+                <FileAudio className="w-4 h-4 text-primary shrink-0" />
+                <span className="min-w-0">
+                  <span className="block text-sm font-medium truncate">{file.name}</span>
+                  <span className="block text-[11px] font-mono text-muted-foreground">
+                    {(file.size / 1024 / 1024).toFixed(1)} MB — tap to change
+                  </span>
+                </span>
+              </span>
+            ) : (
+              <span className="flex items-center gap-2.5 text-muted-foreground">
+                <FileAudio className="w-4 h-4 shrink-0" />
+                <span className="text-sm">Choose an audio file… <span className="text-[11px] font-mono opacity-70">(mp3, wav, m4a, ogg, flac)</span></span>
+              </span>
+            )}
+          </button>
+        </div>
+
+        {/* Save to library toggle */}
+        <label className="flex items-center gap-2.5 cursor-pointer select-none min-h-[44px]">
+          <input
+            type="checkbox"
+            checked={saveToLibrary}
+            onChange={(e) => setSaveToLibrary(e.target.checked)}
+            disabled={busy}
+            className="w-4 h-4 accent-[var(--gilt,#b08d3f)]"
+            data-testid="checkbox-save-to-library"
+          />
+          <span className="text-sm">Save transcript to the Library</span>
+        </label>
+
+        {/* Transcribe button */}
+        <Button
+          onClick={handleTranscribe}
+          disabled={!file || busy || (asr ? !asr.available : false)}
+          className="w-full gap-2"
+          data-testid="button-start-transcribe"
+        >
+          {busy ? (
+            <><Loader2 className="w-4 h-4 animate-spin" /> {stageLabel}</>
+          ) : (
+            <><FileText className="w-4 h-4" /> Transcribe</>
+          )}
+        </Button>
+
+        {/* Error state */}
+        {jobState === "error" && errorMsg && (
+          <div className="flex items-start gap-2.5 p-3 rounded-lg border text-sm"
+            style={{ color: "var(--rust)", background: "var(--rust-soft)", borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)" }}
+            data-testid="text-transcribe-error">
+            <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+            <span className="min-w-0">{errorMsg}</span>
+          </div>
+        )}
+
+        {/* Result */}
+        {jobState === "done" && text !== null && (
+          <div className="space-y-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant="secondary" className="font-mono text-[10px]">
+                {engine === "ai_server" ? "AI server" : engine === "faster_whisper" ? "faster-whisper" : engine}
+              </Badge>
+              {wordCount != null && (
+                <span className="text-[11px] font-mono text-muted-foreground">{wordCount.toLocaleString()} words</span>
+              )}
+              <div className="ml-auto flex items-center gap-1">
+                <Button size="sm" variant="ghost" className="gap-1.5" onClick={handleCopy} data-testid="button-copy-transcript">
+                  {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                  {copied ? "Copied" : "Copy"}
+                </Button>
+                <Button size="sm" variant="ghost" className="gap-1.5" onClick={handleDownloadTxt} data-testid="button-download-transcript">
+                  <Download className="w-3.5 h-3.5" /> .txt
+                </Button>
+              </div>
+            </div>
+            {text ? (
+              <div className="p-4 rounded-lg bg-muted/30 border border-border/50 max-h-96 overflow-y-auto">
+                <p className="text-sm font-serif whitespace-pre-wrap leading-relaxed" data-testid="text-transcript">{text}</p>
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground" data-testid="text-transcript">
+                The recording produced no recognizable speech.
+              </p>
+            )}
+            {docId && (
+              <Link
+                href={`/library/${docId}`}
+                className="inline-flex items-center gap-1.5 text-sm text-primary hover:underline min-h-[44px]"
+                data-testid="link-transcript-doc"
+              >
+                <BookHeadphones className="w-4 h-4" /> View in Library <ChevronRight className="w-3.5 h-3.5" />
+              </Link>
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 // ── Studio hub — GD tool grid + recent-outputs shelf ─────────────────────────
 // Entry screen of the Studio app: pick a tool, do the job, collect the output.
 // Tools deep-link into the existing tabbed tool view via /studio?tool=…, and
@@ -1513,6 +1800,7 @@ const HUB_TOOLS = [
   { key: "voice",    href: "/studio?tool=voice",    icon: Volume2,  title: "Voice & narration", desc: "Read text aloud, preview voices, build audiobooks" },
   { key: "workshop", href: "/studio?tool=workshop", icon: Wand2,    title: "Scriptorium",        desc: "Generate Word, PDF, Excel & slide documents" },
   { key: "image",    href: "/studio?tool=image",    icon: ImageIcon, title: "Image generation",  desc: "Create images from text prompts" },
+  { key: "transcribe", href: "/studio?tool=transcribe", icon: FileAudio, title: "Transcription",  desc: "Turn audio recordings into text" },
   { key: "forge",    href: "/forge",                icon: Globe2,   title: "Pressworks",         desc: "Plan, build & release websites under quality gates" },
   { key: "graph",    href: "/graph",                icon: Network,  title: "Knowledge graph",   desc: "Explore how your knowledge connects" },
   { key: "outputs",  href: "/studio?tool=outputs",  icon: Video,    title: "Outputs",           desc: "Browse, play & download everything you've made" },
@@ -1635,7 +1923,7 @@ function StudioHub() {
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
-const TOOL_TABS = ["voice", "image", "workshop", "outputs"] as const;
+const TOOL_TABS = ["voice", "image", "workshop", "transcribe", "outputs"] as const;
 type ToolTab = (typeof TOOL_TABS)[number];
 
 export default function Studio() {
@@ -1655,6 +1943,7 @@ export default function Studio() {
     { id: "voice",    label: "Voice Studio",       icon: Volume2 },
     { id: "image",    label: "Image Generation",   icon: ImageIcon },
     { id: "workshop", label: "Scriptorium",        icon: Wand2 },
+    { id: "transcribe", label: "Transcription",    icon: FileAudio },
     { id: "outputs",  label: "Recent Outputs",     icon: Video },
   ] as const;
 
@@ -1740,6 +2029,14 @@ export default function Studio() {
           <ScrollArea className="h-full">
             <div className="p-6 max-w-3xl mx-auto space-y-6">
               <ErrorBoundary label="scriptorium"><DocumentWorkshopPanel /></ErrorBoundary>
+            </div>
+          </ScrollArea>
+        )}
+
+        {mainTab === "transcribe" && (
+          <ScrollArea className="h-full">
+            <div className="p-6 max-w-3xl mx-auto space-y-6">
+              <ErrorBoundary label="transcription panel"><TranscribePanel /></ErrorBoundary>
             </div>
           </ScrollArea>
         )}
