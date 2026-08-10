@@ -1,1 +1,0 @@
-Quantum computing uses quantum bits called qubits. Qubits can exist in superposition states. Entanglement is a quantum phenomenon where particles are correlated. Quantum algorithms include Shor algorithm for factoring and Grover algorithm for search.

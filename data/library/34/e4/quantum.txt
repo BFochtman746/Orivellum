@@ -1,1 +1,0 @@
-Quantum entanglement enables two particles to instantaneously share state. Albert Einstein called this spooky action at a distance. Modern quantum computers exploit superposition and entanglement to achieve exponential speedups over classical machines for specific problems like factoring large integers.

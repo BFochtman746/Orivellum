@@ -1,2 +1,0 @@
-Streaming upload smoke test.
-This is a plain text document about deep learning basics.

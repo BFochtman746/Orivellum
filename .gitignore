@@ -90,3 +90,11 @@ tmp*.db
 tmp*.db-wal
 tmp*.db-shm
 tmp*/
+
+# Leaked test artifacts & personal library content (never commit)
+pytest-of-runner/
+data/library/
+
+# Neural TTS model assets — fetch with scripts/fetch_tts_model.sh|.ps1
+kokoro-v0_19.onnx
+voices.bin
