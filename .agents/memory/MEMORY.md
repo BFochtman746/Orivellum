@@ -89,3 +89,4 @@
 - [GitHub CI rules](orivellum-ci.md) — runners lack ffmpeg/kokoro/secrets; pnpm needs packageManager pin + lib build before tsc; never patch one target from concurrent coroutines (leaks mocks).
 - [Re-extraction knowledge hygiene](orivellum-retranscribe.md) — re-running process_document must be preceded by delete_document_knowledge(); text-hash dedup keeps stale rows alive otherwise.
 - [In-browser mic recording](orivellum-mic-recording.md) — MediaRecorder needs a session-generation guard on getUserMedia+onstop; test mic flows via addInitScript getUserMedia stub (no audio devices in container).
+- [Audit remediation patterns](orivellum-audit-remediation.md) — internal_error helper, CAS transitions, router-level require_auth on every new router, bg_jobs upsert-before-submit, percent-encoded traversal tests.
