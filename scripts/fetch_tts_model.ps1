@@ -1,7 +1,7 @@
-# Fetch the Kokoro neural TTS model assets (one-time setup, ~340 MB total).
+﻿# Fetch the Kokoro neural TTS model assets (one-time setup, ~340 MB total).
 #
 # These are NOT bundled in git (the ONNX model is too large and Git LFS proved
-# unreliable — clones used to receive a 134-byte pointer file and silently lose
+# unreliable - clones used to receive a 134-byte pointer file and silently lose
 # neural TTS). Run this once from the repo root:
 #   powershell -ExecutionPolicy Bypass -File scripts\fetch_tts_model.ps1
 $ErrorActionPreference = "Stop"
