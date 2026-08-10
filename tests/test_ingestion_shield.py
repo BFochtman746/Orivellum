@@ -126,6 +126,11 @@ def db():
     with tempfile.TemporaryDirectory() as td:
         d = OrivellumDB(os.path.join(td, "t.db"))
         yield d
+        # Drain background work (pipeline vector/embedding submits) BEFORE the
+        # temp dir is removed, or rmtree races a thread still writing the DB.
+        from orivellum.api import executor as _exec
+
+        _exec.shutdown(wait=True)  # lazily re-created by the next submit
         d.close()
 
 
