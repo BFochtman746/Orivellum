@@ -74,6 +74,9 @@ const TTS_LS_SPEED = "orivellum:tts_speed";
 
 const RA_POS_PREFIX = "orivellum:ra_pos:";
 const RA_SAVE_EVERY_MS = 10_000;
+// Server sync is coarser than the local save so cross-device writes stay
+// infrequent; a part change flushes immediately regardless (see saveProgress).
+const RA_SERVER_SYNC_MS = 30_000;
 // Don't offer resume for trivial progress (a few seconds into part 1).
 const RA_MIN_RESUME_SECS = 20;
 
@@ -89,13 +92,16 @@ function loadSavedPos(key: string): SavedPos | null {
     const raw = localStorage.getItem(RA_POS_PREFIX + key);
     if (!raw) return null;
     const p = JSON.parse(raw);
-    const valid =
-      Number.isInteger(p?.part) && p.part >= 0 &&
-      Number.isFinite(p?.time) && p.time >= 0 &&
-      Number.isInteger(p?.partCount) && p.partCount > 0;
-    if (!valid) { clearSavedPos(key); return null; } // corrupt — drop it
+    if (!isValidPos(p)) { clearSavedPos(key); return null; } // corrupt — drop it
     return p as SavedPos;
   } catch { return null; }
+}
+
+function isValidPos(p: any): p is SavedPos {
+  return !!p &&
+    Number.isInteger(p.part) && p.part >= 0 &&
+    Number.isFinite(p.time) && p.time >= 0 &&
+    Number.isInteger(p.partCount) && p.partCount > 0;
 }
 
 function storeSavedPos(key: string, pos: SavedPos) {
@@ -104,6 +110,50 @@ function storeSavedPos(key: string, pos: SavedPos) {
 
 function clearSavedPos(key: string) {
   try { localStorage.removeItem(RA_POS_PREFIX + key); } catch { /* ignore */ }
+}
+
+// ── Server-synced positions (cross-device resume) ────────────────────────────
+// The document id doubles as the resume key, so positions are keyed per
+// document on the server too. All calls are best-effort: a network failure
+// never breaks playback — localStorage remains the fast, always-available path.
+
+async function fetchServerPos(key: string): Promise<SavedPos | null> {
+  try {
+    const resp = await apiFetch(`${BASE}/library/${encodeURIComponent(key)}/read-position`);
+    if (!resp.ok) return null;
+    const data = await resp.json().catch(() => null);
+    const raw = data?.position;
+    if (!raw) return null;
+    const pos = {
+      part: raw.part, time: raw.time,
+      partCount: raw.part_count, savedAt: raw.saved_at,
+    };
+    return isValidPos(pos) ? pos : null;
+  } catch { return null; }
+}
+
+function pushServerPos(key: string, pos: SavedPos): void {
+  // Fire-and-forget; keepalive lets the save survive a page unload/tab switch.
+  try {
+    void apiFetch(`${BASE}/library/${encodeURIComponent(key)}/read-position`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        part: pos.part, time: pos.time,
+        part_count: pos.partCount, saved_at: pos.savedAt,
+      }),
+      keepalive: true,
+    }).catch(() => {});
+  } catch { /* ignore */ }
+}
+
+function clearServerPos(key: string): void {
+  try {
+    void apiFetch(`${BASE}/library/${encodeURIComponent(key)}/read-position`, {
+      method: "DELETE",
+      keepalive: true,
+    }).catch(() => {});
+  } catch { /* ignore */ }
 }
 
 // The TTS endpoint caps requests at 10 000 chars; stay well under it and
@@ -259,6 +309,11 @@ export function ReadAloudProvider({
   // loadedmetadata listener can never seek a newer, unrelated source.
   const resumeKeyRef = useRef<string | null>(null);
   const pendingSeekRef = useRef<{ session: number; part: number; time: number } | null>(null);
+  // Wall-clock (ms) of the last server position push, to throttle sync writes.
+  const lastServerSyncRef = useRef(0);
+  // Bumped whenever the resume offer is resolved (accepted/declined) so a
+  // still-pending server-position fetch can't re-offer or seek after the fact.
+  const resumeResolveRef = useRef(0);
   // Live (voice-mode) session state. liveRef marks the session as live;
   // liveOpenRef is true while more text may still be enqueued; liveIdleRef is
   // true when the playback pipeline has drained (nothing playing or pending),
@@ -395,7 +450,7 @@ export function ReadAloudProvider({
   /** Persist the current listening position for the active TTS session.
    *  `partOverride`/`timeOverride` let part changes record the NEW part at
    *  t=0 before the audio element has actually switched. */
-  const saveProgress = useCallback((partOverride?: number, timeOverride?: number) => {
+  const saveProgress = useCallback((partOverride?: number, timeOverride?: number, flushServer = false) => {
     const key = resumeKeyRef.current;
     const partCount = chunksRef.current.length;
     if (!key || partCount === 0) return;
@@ -403,7 +458,15 @@ export function ReadAloudProvider({
     const time = timeOverride ?? (audioRef.current?.currentTime ?? 0);
     // Skip trivial progress so a brief tap of part 1 doesn't nag to resume.
     if (part === 0 && time < RA_MIN_RESUME_SECS) return;
-    storeSavedPos(key, { part, time, partCount, savedAt: Date.now() });
+    const pos: SavedPos = { part, time, partCount, savedAt: Date.now() };
+    storeSavedPos(key, pos);
+    // Server sync is coarser than the local save: push on an explicit flush
+    // (part change / close / session swap) or once every RA_SERVER_SYNC_MS,
+    // so cross-device writes stay infrequent.
+    if (flushServer || pos.savedAt - lastServerSyncRef.current >= RA_SERVER_SYNC_MS) {
+      lastServerSyncRef.current = pos.savedAt;
+      pushServerPos(key, pos);
+    }
   }, []);
 
   const reset = useCallback(() => {
@@ -431,8 +494,9 @@ export function ReadAloudProvider({
   }, []);
 
   const startText = useCallback(async ({ title, href, text, resumeKey }: { title: string; href?: string; text: string; resumeKey?: string }) => {
-    saveProgress(); // remember the outgoing session's place before replacing it
+    saveProgress(undefined, undefined, true); // remember the outgoing session's place before replacing it
     reset();
+    lastServerSyncRef.current = 0; // new session may sync immediately
     setLoading(true);
     // Capture the session BEFORE any await — if the player is closed or a
     // new read starts while synthesis is pending, this run must not touch
@@ -449,16 +513,40 @@ export function ReadAloudProvider({
       setNowPlaying({ title, href, kind: "tts" });
       resumeKeyRef.current = resumeKey ?? null;
       if (resumeKey) {
-        const saved = loadSavedPos(resumeKey);
-        // Only offer when the split still matches (text unchanged) and the
-        // saved spot is meaningfully past the start.
-        if (saved && saved.partCount === parts.length
-            && saved.part >= 0 && saved.part < parts.length
-            && (saved.part > 0 || saved.time >= RA_MIN_RESUME_SECS)) {
-          setResumeOffer({ part: saved.part, time: Math.max(0, saved.time) });
-        } else if (saved) {
-          clearSavedPos(resumeKey); // stale (document text changed) — drop it
-        }
+        // A saved position is offerable only when the split still matches
+        // (text unchanged) and the spot is meaningfully past the start.
+        const offerFrom = (saved: SavedPos | null): boolean => {
+          if (saved && saved.partCount === parts.length
+              && saved.part >= 0 && saved.part < parts.length
+              && (saved.part > 0 || saved.time >= RA_MIN_RESUME_SECS)) {
+            setResumeOffer({ part: saved.part, time: Math.max(0, saved.time) });
+            return true;
+          }
+          return false;
+        };
+        const local = loadSavedPos(resumeKey);
+        // Offer the local position immediately (fast path), then reconcile with
+        // the server copy — the freshest of the two wins, so a spot saved on
+        // another device (phone <-> desktop) is picked up here.
+        const localOffered = offerFrom(local);
+        if (!localOffered && local) clearSavedPos(resumeKey); // stale locally
+        const resolveGen = resumeResolveRef.current;
+        void (async () => {
+          const server = await fetchServerPos(resumeKey);
+          // Abort if the session was replaced, or the user already accepted /
+          // declined the offer while this fetch was in flight (either would
+          // make a late re-offer or seek surprising).
+          if (sessionRef.current !== session || resumeKeyRef.current !== resumeKey) return;
+          if (resumeResolveRef.current !== resolveGen) return;
+          if (!server) return;
+          // Keep whichever was saved most recently.
+          if (local && local.savedAt >= server.savedAt) return;
+          if (offerFrom(server)) {
+            storeSavedPos(resumeKey, server); // mirror the winner locally
+          } else if (!local) {
+            clearServerPos(resumeKey); // server copy stale for the current text
+          }
+        })();
       }
       const url = await synthesizePart(parts, 0, voiceRef.current, speedRef.current);
       if (sessionRef.current !== session) return; // closed/superseded meanwhile
@@ -478,7 +566,7 @@ export function ReadAloudProvider({
   }, [reset, synthesizePart, prefetchPart, fail]);
 
   const startUrl = useCallback(({ title, href, url }: { title: string; href?: string; url: string }) => {
-    saveProgress(); // remember the outgoing TTS session's place, if any
+    saveProgress(undefined, undefined, true); // remember the outgoing TTS session's place, if any
     reset();
     setNowPlaying({ title, href, kind: "url" });
     desiredSrcRef.current = url;
@@ -513,7 +601,7 @@ export function ReadAloudProvider({
       // Record the new part immediately (t≈0, or the pending resume seek) so
       // a reload right after a part change still resumes at the right part.
       const seek = pendingSeekRef.current;
-      saveProgress(i, seek && seek.session === session && seek.part === i ? seek.time : 0);
+      saveProgress(i, seek && seek.session === session && seek.part === i ? seek.time : 0, true);
     } catch (e: any) {
       if (e?.message !== TTS_STALE && sessionRef.current === session) {
         setPlaying(false);
@@ -532,7 +620,7 @@ export function ReadAloudProvider({
   }, [synthesizePart, prefetchPart, evictOldParts, fail]);
 
   const startLive = useCallback(({ title, href, onDone }: { title: string; href?: string; onDone?: () => void }) => {
-    saveProgress(); // remember the outgoing session's place, if any
+    saveProgress(undefined, undefined, true); // remember the outgoing session's place, if any
     reset();
     liveRef.current = true;
     liveOpenRef.current = true;
@@ -594,8 +682,10 @@ export function ReadAloudProvider({
       liveIdleRef.current = true;
       if (!liveOpenRef.current) fireLiveDone();
     } else if (resumeKeyRef.current) {
-      // Finished the last part — the document is done; forget the position.
+      // Finished the last part — the document is done; forget the position
+      // everywhere (local + server) so it doesn't offer to resume the end.
       clearSavedPos(resumeKeyRef.current);
+      clearServerPos(resumeKeyRef.current);
     }
   }, [goToPart]);
 
@@ -612,13 +702,14 @@ export function ReadAloudProvider({
   }, []);
 
   const close = useCallback(() => {
-    saveProgress(); // keep the place — closing the player isn't finishing
+    saveProgress(undefined, undefined, true); // keep the place across devices — closing isn't finishing
     reset();
     setLoading(false);
   }, [saveProgress, reset]);
 
   const acceptResume = useCallback(() => {
     if (!resumeOffer) return;
+    resumeResolveRef.current++; // a pending server-pos fetch must not re-offer/seek now
     setResumeOffer(null);
     pendingSeekRef.current = resumeOffer.time > 3
       ? { session: sessionRef.current, part: resumeOffer.part, time: resumeOffer.time }
@@ -630,8 +721,12 @@ export function ReadAloudProvider({
   }, [resumeOffer, goToPart]);
 
   const declineResume = useCallback(() => {
+    resumeResolveRef.current++; // a pending server-pos fetch must not re-offer now
     setResumeOffer(null);
-    if (resumeKeyRef.current) clearSavedPos(resumeKeyRef.current);
+    if (resumeKeyRef.current) {
+      clearSavedPos(resumeKeyRef.current);
+      clearServerPos(resumeKeyRef.current);
+    }
   }, []);
 
   // Periodic position save while listening (every ~10 s).

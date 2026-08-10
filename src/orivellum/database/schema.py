@@ -1987,4 +1987,18 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             updated_at TEXT NOT NULL
         );
     """),
+    # v113 — Read Aloud listening positions synced per document so a spot saved
+    # on one device (phone) is visible on another (desktop). One row per
+    # document; `saved_at` is the client wall-clock at save time (ms) and is
+    # used to pick the freshest of the local vs server position on resume.
+    (113, "Read Aloud cross-device listening positions", """
+        CREATE TABLE IF NOT EXISTS read_positions (
+            doc_id     TEXT PRIMARY KEY,
+            part       INTEGER NOT NULL,
+            time       REAL NOT NULL,
+            part_count INTEGER NOT NULL,
+            saved_at   INTEGER NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+    """),
 ]

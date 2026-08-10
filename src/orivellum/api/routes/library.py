@@ -467,6 +467,46 @@ def library_doc_knowledge(doc_id: str, limit: int = 200):
     return {"knowledge": items, "count": len(items), "doc_id": doc_id}
 
 
+class ReadPositionUpdate(BaseModel):
+    part: int
+    time: float
+    part_count: int
+    saved_at: int
+
+
+@router.get("/library/{doc_id}/read-position")
+def library_get_read_position(doc_id: str):
+    """Return the server-synced Read Aloud listening position, or null.
+
+    Not gated on the document existing: positions may briefly outlive a
+    document, and the client only uses this to offer a resume point.
+    """
+    db = get_db()
+    return {"position": db.get_read_position(doc_id)}
+
+
+@router.put("/library/{doc_id}/read-position")
+def library_set_read_position(doc_id: str, body: ReadPositionUpdate):
+    """Upsert the Read Aloud listening position for a document.
+
+    Called debounced by the client (~every 30s or on part change) so listening
+    resumes at the same spot on any device.
+    """
+    if body.part < 0 or body.time < 0 or body.part_count <= 0:
+        raise HTTPException(400, "part/time must be >= 0 and part_count > 0")
+    db = get_db()
+    db.set_read_position(doc_id, body.part, body.time, body.part_count, body.saved_at)
+    return {"ok": True}
+
+
+@router.delete("/library/{doc_id}/read-position")
+def library_clear_read_position(doc_id: str):
+    """Clear the server-synced listening position (finished or declined resume)."""
+    db = get_db()
+    db.delete_read_position(doc_id)
+    return {"ok": True}
+
+
 @router.get("/library/{doc_id}/versions")
 def library_versions(doc_id: str):
     db = get_db()

@@ -2115,6 +2115,57 @@ class OrivellumDB:
             ).fetchone()
         return self._doc_dict(row) if row else None
 
+    # ── Read Aloud listening positions (v113) — cross-device resume ───────────
+
+    def get_read_position(self, doc_id: str) -> dict | None:
+        """Return the saved Read Aloud position for a document, or None.
+
+        Read-path only (per-thread read connection); safe under concurrency.
+        """
+        row = self.read_conn().execute(
+            "SELECT doc_id, part, time, part_count, saved_at, updated_at "
+            "FROM read_positions WHERE doc_id=?",
+            (doc_id,),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def set_read_position(
+        self, doc_id: str, part: int, time: float, part_count: int, saved_at: int
+    ) -> None:
+        """Upsert the listening position for a document (one row per doc).
+
+        Freshest-wins: `saved_at` is the client wall-clock at save time, so an
+        out-of-order/stale PUT (fire-and-forget writes can arrive late, and two
+        devices compete for the same row) is ignored when a strictly newer
+        position is already stored.
+        """
+        now = _now()
+        with self._lock:
+            existing = self._conn.execute(
+                "SELECT saved_at FROM read_positions WHERE doc_id=?", (doc_id,)
+            ).fetchone()
+            if existing is not None and int(existing["saved_at"]) > int(saved_at):
+                return  # a newer position is already stored — drop the stale write
+            self._conn.execute(
+                """INSERT INTO read_positions
+                       (doc_id, part, time, part_count, saved_at, updated_at)
+                   VALUES (?,?,?,?,?,?)
+                   ON CONFLICT(doc_id) DO UPDATE SET
+                       part=excluded.part,
+                       time=excluded.time,
+                       part_count=excluded.part_count,
+                       saved_at=excluded.saved_at,
+                       updated_at=excluded.updated_at""",
+                (doc_id, int(part), float(time), int(part_count), int(saved_at), now),
+            )
+            self._conn.commit()
+
+    def delete_read_position(self, doc_id: str) -> None:
+        """Forget the listening position for a document (finished or declined)."""
+        with self._lock:
+            self._conn.execute("DELETE FROM read_positions WHERE doc_id=?", (doc_id,))
+            self._conn.commit()
+
     def update_document_lifecycle(self, doc_id: str, lifecycle: str) -> bool:
         """Set the lifecycle state for a document.
 
