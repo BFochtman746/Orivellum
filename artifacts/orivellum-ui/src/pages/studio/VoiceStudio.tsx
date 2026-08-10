@@ -1356,12 +1356,21 @@ function AudiobookTab({
   const [castMap, setCastMap] = useState<Record<string, string>>({});
   const [castDirty, setCastDirty] = useState(false);
   const [castSaving, setCastSaving] = useState(false);
+  const [castSuggesting, setCastSuggesting] = useState(false);
+  const [castHints, setCastHints] = useState<Record<string, { character: string; rationale: string }>>({});
+  const [castAnalysis, setCastAnalysis] = useState("");
+  // Bumped on every Work/mode change so an in-flight casting suggestion for a
+  // previous Work can never be applied to the newly selected one.
+  const castGenRef = useRef(0);
 
   useEffect(() => {
+    castGenRef.current += 1;
     if (!workId || mode !== "work") {
       setCastDocs([]); setCastMap({}); setCastDirty(false);
+      setCastHints({}); setCastAnalysis("");
       return;
     }
+    setCastHints({}); setCastAnalysis("");
     let cancelled = false;
     apiFetch(`${BASE}/studio/works/${workId}/casting`)
       .then(async r => {
@@ -1394,6 +1403,44 @@ function AudiobookTab({
       toast.error(`Couldn't save chapter voices: ${e.message}`);
     } finally {
       setCastSaving(false);
+    }
+  }
+
+  async function handleSuggestCasting() {
+    const gen = castGenRef.current;
+    setCastSuggesting(true);
+    try {
+      const resp = await apiFetch(`${BASE}/studio/works/${workId}/casting/recommend`, {
+        method: "POST",
+      });
+      if (gen !== castGenRef.current) return; // Work changed mid-request — discard
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        throw new Error((err as any).detail ?? `HTTP ${resp.status}`);
+      }
+      const data = await resp.json();
+      if (gen !== castGenRef.current) return;
+      if (data.fallback) {
+        toast.info("The AI casting director isn't available right now — try again in a moment");
+        return;
+      }
+      const hints: Record<string, { character: string; rationale: string }> = {};
+      for (const ch of data.chapters ?? []) {
+        if (ch.character || ch.rationale) hints[ch.id] = { character: ch.character, rationale: ch.rationale };
+      }
+      setCastHints(hints);
+      setCastAnalysis(data.casting_analysis ?? "");
+      setCastMap(data.sections ?? {});
+      setCastDirty(Object.keys(data.sections ?? {}).length > 0);
+      if (data.narrator_voice_id) setVoiceId(data.narrator_voice_id);
+      const castCount = Object.keys(data.sections ?? {}).length;
+      toast.success(castCount > 0
+        ? `Casting suggested for ${castCount} chapter${castCount === 1 ? "" : "s"} — review, then Save voices`
+        : "The AI suggests keeping every chapter on the narrator voice");
+    } catch (e: any) {
+      toast.error(`Couldn't suggest casting: ${e.message}`);
+    } finally {
+      setCastSuggesting(false);
     }
   }
 
@@ -1875,11 +1922,39 @@ function AudiobookTab({
         {/* Per-chapter voice casting */}
         {mode === "work" && workId && castDocs.length > 0 && (
           <div className="space-y-3">
-            <p className="text-xs font-mono uppercase text-muted-foreground">Chapter Voices</p>
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-xs font-mono uppercase text-muted-foreground">Chapter Voices</p>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 text-xs shrink-0"
+                onClick={handleSuggestCasting}
+                disabled={castSuggesting}
+                data-testid="button-suggest-casting"
+              >
+                {castSuggesting
+                  ? <Loader2 className="w-3 h-3 animate-spin mr-1" />
+                  : <Sparkles className="w-3 h-3 mr-1" style={{ color: "var(--gilt)" }} />}
+                Suggest casting
+              </Button>
+            </div>
+            {castAnalysis && (
+              <p className="text-xs text-muted-foreground leading-relaxed">{castAnalysis}</p>
+            )}
             <div className="rounded-xl border border-border/50 divide-y divide-border/40">
               {castDocs.map(d => (
                 <div key={d.id} className="flex items-center gap-3 p-2.5">
-                  <span className="text-sm flex-1 min-w-0 truncate" title={d.title}>{d.title}</span>
+                  <span className="text-sm flex-1 min-w-0 truncate" title={d.title}>
+                    {d.title}
+                    {castHints[d.id]?.character && (
+                      <span
+                        className="block text-[11px] text-muted-foreground truncate"
+                        title={castHints[d.id].rationale}
+                      >
+                        POV: {castHints[d.id].character}
+                      </span>
+                    )}
+                  </span>
                   <Select
                     value={castMap[d.id] ?? "__default"}
                     onValueChange={v => {
