@@ -191,7 +191,7 @@ function ActionCard({
             );
           })}
           {!canRun && (
-            <p className="text-[11px] text-amber-600 dark:text-amber-400">
+            <p className="text-[11px]" style={{ color: "var(--gilt)" }}>
               {missingWorkId ? "Select a Work to continue." : `Fill in: ${missingTextFields.join(", ")}`}
             </p>
           )}
@@ -246,14 +246,16 @@ function RunRow({ run, onDownload }: { run: ActionRun; onDownload: (run: ActionR
 
   const iconCls =
     run.status === "done"
-      ? "text-emerald-500"
+      ? ""
       : run.status === "error"
       ? "text-destructive"
       : "text-muted-foreground animate-spin";
+  const iconStyle: React.CSSProperties | undefined =
+    run.status === "done" ? { color: "var(--green-2)" } : undefined;
 
   return (
     <div className="flex items-center gap-3 px-4 py-2.5 hover:bg-muted/20 transition-colors">
-      <Icon className={`w-3.5 h-3.5 shrink-0 ${iconCls}`} />
+      <Icon className={`w-3.5 h-3.5 shrink-0 ${iconCls}`} style={iconStyle} />
       <div className="flex-1 min-w-0">
         <span className="text-xs font-mono font-medium">
           {run.action_name.replace(/_/g, " ")}

@@ -100,10 +100,10 @@ export default function Backups() {
       </div>
 
       {restorePending && (
-        <Card className="border-amber-500/40 bg-amber-500/5">
+        <Card style={{ borderColor: "var(--gilt-line)", background: "var(--gilt-soft)" }}>
           <CardContent className="p-4 flex items-center justify-between gap-4">
             <div className="flex items-center gap-3">
-              <History className="w-5 h-5 text-amber-500 shrink-0" />
+              <History className="w-5 h-5 shrink-0" style={{ color: "var(--gilt)" }} />
               <div className="text-sm">
                 <span className="font-medium">A restore is staged.</span>{" "}
                 <span className="text-muted-foreground">

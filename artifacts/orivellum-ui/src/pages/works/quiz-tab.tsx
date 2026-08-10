@@ -296,11 +296,15 @@ export function QuizTab({ workId, workTitle }: { workId: string; workTitle: stri
     const tier = pct >= 80 ? "excellent" : pct >= 60 ? "good" : "review";
     return (
       <div className="max-w-lg mx-auto py-12 space-y-6 text-center">
-        <div className={`p-6 rounded-2xl border space-y-3 ${
-          tier === "excellent" ? "bg-emerald-500/10 border-emerald-500/30"
-          : tier === "good"    ? "bg-amber-500/10 border-amber-500/30"
-          : "bg-red-500/10 border-red-500/30"}`}>
-          <Trophy className={`w-10 h-10 mx-auto ${tier === "excellent" ? "text-emerald-500" : tier === "good" ? "text-amber-500" : "text-red-500"}`} />
+        <div
+          className="p-6 rounded-2xl border space-y-3"
+          style={
+            tier === "excellent" ? { background: "var(--green-soft)", borderColor: "color-mix(in srgb, var(--green-2) 30%, transparent)" }
+            : tier === "good"    ? { background: "var(--gilt-soft)", borderColor: "var(--gilt-line)" }
+            : { background: "var(--rust-soft)", borderColor: "color-mix(in srgb, var(--rust) 30%, transparent)" }
+          }
+        >
+          <Trophy className="w-10 h-10 mx-auto" style={{ color: tier === "excellent" ? "var(--green-2)" : tier === "good" ? "var(--gilt)" : "var(--rust)" }} />
           <p className="text-3xl font-serif font-bold">{correctCount}/{total}</p>
           <p className="text-sm text-muted-foreground">
             {tier === "excellent" ? "Excellent! You've mastered this material." : tier === "good" ? "Good effort — a bit more practice and you'll have it." : "Keep studying — review the knowledge items for this Work."}
@@ -312,8 +316,8 @@ export function QuizTab({ workId, workTitle }: { workId: string; workTitle: stri
             <div className="flex items-center gap-3">
               <div className="flex-1 h-2 bg-muted rounded-full overflow-hidden">
                 <div
-                  className="h-full bg-emerald-500/70 rounded-full transition-all duration-700"
-                  style={{ width: `${masterySummary.mastery_pct}%` }}
+                  className="h-full rounded-full transition-all duration-700"
+                  style={{ width: `${masterySummary.mastery_pct}%`, background: "color-mix(in srgb, var(--green-2) 70%, transparent)" }}
                 />
               </div>
               <span className="text-sm font-semibold font-mono tabular-nums">
@@ -378,9 +382,10 @@ export function QuizTab({ workId, workTitle }: { workId: string; workTitle: stri
               : false;
 
             let cls = "flex items-center gap-3 px-4 py-3 rounded-lg border text-sm transition-colors ";
+            let optStyle: React.CSSProperties | undefined;
             if (isFeedback) {
-              if (showCorrect)   cls += "bg-emerald-500/10 border-emerald-500/40 text-emerald-700 dark:text-emerald-400";
-              else if (showWrong) cls += "bg-red-500/10 border-red-500/40 text-red-700 dark:text-red-400";
+              if (showCorrect)        optStyle = { background: "var(--green-soft)", borderColor: "color-mix(in srgb, var(--green-2) 40%, transparent)", color: "var(--green-2)" };
+              else if (showWrong)     optStyle = { background: "var(--rust-soft)", borderColor: "color-mix(in srgb, var(--rust) 40%, transparent)", color: "var(--rust)" };
               else               cls += "border-border/30 text-muted-foreground/60";
             } else {
               cls += isChosen
@@ -389,13 +394,13 @@ export function QuizTab({ workId, workTitle }: { workId: string; workTitle: stri
               if (isSubmitting) cls += " opacity-60 pointer-events-none";
             }
             return (
-              <div key={oi} className={cls} onClick={() => !isFeedback && !isSubmitting && submitAnswer(oi)}>
+              <div key={oi} className={cls} style={optStyle} onClick={() => !isFeedback && !isSubmitting && submitAnswer(oi)}>
                 <span className="w-6 h-6 rounded-full border border-current flex items-center justify-center text-[10px] font-mono shrink-0">
                   {String.fromCharCode(65 + oi)}
                 </span>
                 <span className="flex-1">{opt}</span>
-                {showCorrect && <Check className="w-4 h-4 text-emerald-500 shrink-0" />}
-                {showWrong   && <X    className="w-4 h-4 text-red-500    shrink-0" />}
+                {showCorrect && <Check className="w-4 h-4 shrink-0" style={{ color: "var(--green-2)" }} />}
+                {showWrong   && <X    className="w-4 h-4 shrink-0" style={{ color: "var(--rust)" }} />}
               </div>
             );
           })}
@@ -410,8 +415,13 @@ export function QuizTab({ workId, workTitle }: { workId: string; workTitle: stri
 
         {/* Feedback block */}
         {isFeedback && feedback && (
-          <div className={`rounded-lg border p-3 space-y-1 ${feedback.is_correct ? "bg-emerald-500/8 border-emerald-500/30" : "bg-amber-500/8 border-amber-500/30"}`}>
-            <p className={`text-xs font-semibold ${feedback.is_correct ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}`}>
+          <div
+            className="rounded-lg border p-3 space-y-1"
+            style={feedback.is_correct
+              ? { background: "var(--green-soft)", borderColor: "color-mix(in srgb, var(--green-2) 30%, transparent)" }
+              : { background: "var(--gilt-soft)", borderColor: "var(--gilt-line)" }}
+          >
+            <p className="text-xs font-semibold" style={{ color: feedback.is_correct ? "var(--green-2)" : "var(--gilt)" }}>
               {feedback.is_correct ? "✓ Correct" : "✗ Incorrect"}
             </p>
             {feedback.feedback && (

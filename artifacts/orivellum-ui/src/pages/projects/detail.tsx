@@ -31,12 +31,13 @@ function masteryLabel(m: number): string {
   return "Not started";
 }
 
-function masteryColor(m: number): string {
-  if (m >= 0.9) return "text-emerald-700 bg-emerald-50 border-emerald-200";
-  if (m >= 0.7) return "text-blue-700 bg-blue-50 border-blue-200";
-  if (m >= 0.4) return "text-amber-700 bg-amber-50 border-amber-200";
-  if (m > 0) return "text-orange-700 bg-orange-50 border-orange-200";
-  return "text-muted-foreground bg-muted border-border";
+// Five distinct mastery tiers — kept visually distinct across the VELLUM palette.
+function masteryColor(m: number): { cls: string; style?: React.CSSProperties } {
+  if (m >= 0.9) return { cls: "", style: { color: "var(--green-2)", background: "var(--green-soft)", borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)" } };
+  if (m >= 0.7) return { cls: "", style: { color: "var(--green-raw)", background: "color-mix(in srgb, var(--green-raw) 10%, transparent)", borderColor: "color-mix(in srgb, var(--green-raw) 28%, transparent)" } };
+  if (m >= 0.4) return { cls: "", style: { color: "var(--gilt)", background: "var(--gilt-soft)", borderColor: "var(--gilt-line)" } };
+  if (m > 0) return { cls: "", style: { color: "var(--rust)", background: "var(--rust-soft)", borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)" } };
+  return { cls: "text-muted-foreground bg-muted border-border" };
 }
 
 export default function ProjectDetail() {
@@ -159,9 +160,11 @@ export default function ProjectDetail() {
                     <div className="flex-1 min-w-0 space-y-2">
                       <div className="flex items-center gap-2 flex-wrap">
                         <h3 className="font-medium">{c.name}</h3>
-                        <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-mono font-semibold border ${masteryColor(c.mastery)}`}>
+                        {(() => { const mc = masteryColor(c.mastery); return (
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-mono font-semibold border ${mc.cls}`} style={mc.style}>
                           {masteryLabel(c.mastery)}
                         </span>
+                        ); })()}
                         {c.prereq_count && c.prereq_count > 0 ? (
                           <span className="text-[10px] font-mono text-muted-foreground">{c.prereq_count} prereq{c.prereq_count !== 1 ? "s" : ""}</span>
                         ) : null}

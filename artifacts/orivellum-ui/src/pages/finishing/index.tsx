@@ -39,8 +39,8 @@ function useApi<T>(key: string[], path: string) {
 
 function StatusBadge({ passed }: { passed: boolean }) {
   return passed
-    ? <Badge className="bg-emerald-50 text-emerald-700 border-emerald-200 border">PASS</Badge>
-    : <Badge className="bg-rose-50 text-rose-700 border-rose-200 border">FAIL</Badge>;
+    ? <Badge className="border" style={{ color: "var(--green-2)", background: "var(--green-soft)", borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)" }}>PASS</Badge>
+    : <Badge className="border" style={{ color: "var(--rust)", background: "var(--rust-soft)", borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)" }}>FAIL</Badge>;
 }
 
 function SectionHeader({ title, icon: Icon }: { title: string; icon: React.ElementType }) {
@@ -103,8 +103,8 @@ function PressVerifyCard({ slug }: { slug: string }) {
       <CardContent className="space-y-1 text-xs">
         {Object.entries(checks).map(([k, v]) => (
           <div key={k} className="flex items-center gap-2">
-            {v ? <Check className="h-3 w-3 text-emerald-500" /> : <AlertTriangle className="h-3 w-3 text-rose-500" />}
-            <span className={v ? "text-foreground" : "text-rose-600"}>{k.replace(/_/g, " ")}</span>
+            {v ? <Check className="h-3 w-3" style={{ color: "var(--green-2)" }} /> : <AlertTriangle className="h-3 w-3" style={{ color: "var(--rust)" }} />}
+            <span className={v ? "text-foreground" : ""} style={v ? undefined : { color: "var(--rust)" }}>{k.replace(/_/g, " ")}</span>
           </div>
         ))}
         {data.word_count != null && (
@@ -281,7 +281,8 @@ function PressDetail({ slug }: { slug: string }) {
               return (
                 <button key={side}
                   onClick={() => setMatter.mutate({ front: side === "front" ? !active : !!b.has_front, back: side === "back" ? !active : !!b.has_back })}
-                  className={`flex items-center gap-1 rounded px-2 py-1 border transition-colors ${active ? "bg-emerald-50 border-emerald-200 text-emerald-700" : "border-border text-muted-foreground"}`}
+                  className={`flex items-center gap-1 rounded px-2 py-1 border transition-colors ${active ? "" : "border-border text-muted-foreground"}`}
+                  style={active ? { color: "var(--green-2)", background: "var(--green-soft)", borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)" } : undefined}
                 >
                   {active ? <Check className="h-3 w-3" /> : <Plus className="h-3 w-3" />}
                   {side} matter

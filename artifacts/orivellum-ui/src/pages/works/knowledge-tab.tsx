@@ -508,7 +508,8 @@ export function KnowledgeTab({ workId }: { workId: string }) {
                       filter === key
                         ? "bg-background text-foreground shadow-sm font-semibold"
                         : "text-muted-foreground hover:text-foreground"
-                    } ${key === "pending" && pendingCount > 0 ? "text-violet-700" : ""}`}
+                    }`}
+                    style={key === "pending" && pendingCount > 0 ? { color: "var(--gilt)" } : undefined}
                   >
                     {label}
                   </button>

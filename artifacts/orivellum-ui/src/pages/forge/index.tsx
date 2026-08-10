@@ -30,11 +30,11 @@ type ForgeProject = {
   updated_at: string;
 };
 
-const STATUS_META: Record<string, { label: string; color: string; icon: any }> = {
-  active:   { label: "Active",   color: "text-emerald-600 bg-emerald-50 border-emerald-200 dark:text-emerald-400 dark:bg-emerald-950/30 dark:border-emerald-800", icon: CheckCircle2 },
-  building: { label: "Building", color: "text-amber-600 bg-amber-50 border-amber-200 dark:text-amber-400 dark:bg-amber-950/30 dark:border-amber-800", icon: Hammer },
-  released: { label: "Released", color: "text-primary bg-primary/5 border-primary/20", icon: Globe2 },
-  archived: { label: "Archived", color: "text-muted-foreground bg-muted/50 border-border", icon: HelpCircle },
+const STATUS_META: Record<string, { label: string; color: string; style: React.CSSProperties; icon: any }> = {
+  active:   { label: "Active",   color: "", style: { color: "var(--green-2)", background: "var(--green-soft)", borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)" }, icon: CheckCircle2 },
+  building: { label: "Building", color: "", style: { color: "var(--gilt)", background: "var(--gilt-soft)", borderColor: "var(--gilt-line)" }, icon: Hammer },
+  released: { label: "Released", color: "text-primary bg-primary/5 border-primary/20", style: {}, icon: Globe2 },
+  archived: { label: "Archived", color: "text-muted-foreground bg-muted/50 border-border", style: {}, icon: HelpCircle },
 };
 
 export default function ForgePage() {
@@ -134,7 +134,7 @@ export default function ForgePage() {
                       {proj.name}
                     </h3>
                   </div>
-                  <span className={`flex items-center gap-1 text-[10px] font-mono uppercase px-2 py-0.5 rounded-full border ${meta.color}`}>
+                  <span className={`flex items-center gap-1 text-[10px] font-mono uppercase px-2 py-0.5 rounded-full border ${meta.color}`} style={meta.style}>
                     <Icon className="w-3 h-3" />
                     {meta.label}
                   </span>

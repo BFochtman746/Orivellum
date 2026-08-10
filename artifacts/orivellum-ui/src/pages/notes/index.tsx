@@ -40,11 +40,11 @@ interface NotesResponse {
   counts: Record<string, number>;
 }
 
-const STATUS_META: Record<NoteBlock["status"], { label: string; icon: typeof Inbox; cls: string }> = {
+const STATUS_META: Record<NoteBlock["status"], { label: string; icon: typeof Inbox; cls: string; style?: React.CSSProperties }> = {
   inbox:    { label: "Inbox",        icon: Inbox,        cls: "text-muted-foreground" },
-  proposed: { label: "Awaiting you", icon: Scale,        cls: "text-amber-600 dark:text-amber-400" },
-  approved: { label: "Approved",     icon: CheckCircle2, cls: "text-emerald-600 dark:text-emerald-400" },
-  filed:    { label: "Filed",        icon: CheckCircle2, cls: "text-emerald-600 dark:text-emerald-400" },
+  proposed: { label: "Awaiting you", icon: Scale,        cls: "", style: { color: "var(--gilt)" } },
+  approved: { label: "Approved",     icon: CheckCircle2, cls: "", style: { color: "var(--green-2)" } },
+  filed:    { label: "Filed",        icon: CheckCircle2, cls: "", style: { color: "var(--green-2)" } },
   rejected: { label: "Dismissed",    icon: XCircle,      cls: "text-muted-foreground/60" },
 };
 
@@ -265,7 +265,7 @@ export default function NotesPage() {
                   )}
                 </div>
                 <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-                  <span className={`inline-flex items-center gap-1 text-[10px] font-mono uppercase tracking-wider ${meta.cls}`}>
+                  <span className={`inline-flex items-center gap-1 text-[10px] font-mono uppercase tracking-wider ${meta.cls}`} style={meta.style}>
                     <StatusIcon className="w-3 h-3" />
                     {meta.label}
                   </span>

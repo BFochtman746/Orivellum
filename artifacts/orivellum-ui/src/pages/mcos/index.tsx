@@ -125,11 +125,11 @@ interface TelemetryDay {
 
 // ── Small helpers ───────────────────────────────────────────────────────────────
 
-function scoreColor(score: number | null | undefined): string {
-  if (score == null) return "text-muted-foreground";
-  if (score >= 0.8) return "text-emerald-600 dark:text-emerald-400";
-  if (score >= 0.5) return "text-amber-600 dark:text-amber-400";
-  return "text-red-600 dark:text-red-400";
+function scoreColorStyle(score: number | null | undefined): { cls: string; style: React.CSSProperties } {
+  if (score == null) return { cls: "text-muted-foreground", style: {} };
+  if (score >= 0.8) return { cls: "", style: { color: "var(--green-2)" } };
+  if (score >= 0.5) return { cls: "", style: { color: "var(--gilt)" } };
+  return { cls: "", style: { color: "var(--rust)" } };
 }
 
 function scorePct(score: number | null | undefined): string {
@@ -145,16 +145,20 @@ function fmtTime(iso: string | null | undefined): string {
 }
 
 function StatusBadge({ status }: { status: string }) {
-  const cfg: Record<string, string> = {
-    running:  "text-blue-600 border-blue-200 bg-blue-50 dark:text-blue-300 dark:border-blue-900 dark:bg-blue-950",
-    success:  "text-emerald-600 border-emerald-200 bg-emerald-50 dark:text-emerald-300 dark:border-emerald-900 dark:bg-emerald-950",
-    complete: "text-emerald-600 border-emerald-200 bg-emerald-50 dark:text-emerald-300 dark:border-emerald-900 dark:bg-emerald-950",
-    error:    "text-red-600 border-red-200 bg-red-50 dark:text-red-300 dark:border-red-900 dark:bg-red-950",
-    failed:   "text-red-600 border-red-200 bg-red-50 dark:text-red-300 dark:border-red-900 dark:bg-red-950",
+  const cfg: Record<string, React.CSSProperties> = {
+    // running (was blue / info-processing) → gilt, nearest VELLUM token
+    running:  { color: "var(--gilt)", borderColor: "var(--gilt-line)", background: "var(--gilt-soft)" },
+    success:  { color: "var(--green-2)", borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)", background: "var(--green-soft)" },
+    complete: { color: "var(--green-2)", borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)", background: "var(--green-soft)" },
+    error:    { color: "var(--rust)", borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)", background: "var(--rust-soft)" },
+    failed:   { color: "var(--rust)", borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)", background: "var(--rust-soft)" },
   };
-  const cls = cfg[status] ?? "text-muted-foreground";
+  const style = cfg[status];
   return (
-    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-mono font-medium border ${cls}`}>
+    <span
+      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-mono font-medium border ${style ? "" : "text-muted-foreground"}`}
+      style={style}
+    >
       {status === "running" && <Loader2 className="w-3 h-3 animate-spin" />}
       {status}
     </span>
@@ -165,7 +169,7 @@ function DeltaArrow({ delta }: { delta: number | null | undefined }) {
   if (delta == null || delta === 0) return <span className="text-muted-foreground">—</span>;
   const up = delta > 0;
   return (
-    <span className={`inline-flex items-center gap-0.5 text-xs font-mono ${up ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>
+    <span className="inline-flex items-center gap-0.5 text-xs font-mono" style={{ color: up ? "var(--green-2)" : "var(--rust)" }}>
       {up ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />}
       {up ? "+" : ""}{Math.round(delta * 100)}%
     </span>
@@ -177,7 +181,7 @@ function DeltaArrow({ delta }: { delta: number | null | undefined }) {
 function ErrorState({ message, onRetry }: { message: string; onRetry: () => void }) {
   return (
     <div className="flex flex-col items-center justify-center gap-3 py-10 text-center">
-      <AlertCircle className="w-8 h-8 text-red-500" />
+      <AlertCircle className="w-8 h-8" style={{ color: "var(--rust)" }} />
       <p className="text-sm text-muted-foreground">{message}</p>
       <Button variant="outline" size="sm" onClick={onRetry}>
         <RefreshCw className="w-3.5 h-3.5 mr-1.5" />
@@ -205,14 +209,14 @@ function CaseRow({ result }: { result: CaseResult }) {
             <div className="flex-1 min-w-0">
               <p className="text-sm line-clamp-2">{result.question || "(no question)"}</p>
               <div className="flex flex-wrap items-center gap-2 mt-1 text-[11px] font-mono text-muted-foreground">
-                <span className={scoreColor(result.score)}>{scorePct(result.score)}</span>
+                {(() => { const sc = scoreColorStyle(result.score); return <span className={sc.cls} style={sc.style}>{scorePct(result.score)}</span>; })()}
                 {judgeBadges.map((b) => (
                   <span key={b.key} className="px-1.5 py-0.5 rounded border text-[10px] text-muted-foreground bg-muted/30">
                     {b.label} {Math.round((js![b.key] as number) * 100)}%
                   </span>
                 ))}
                 <span>{result.latency_ms != null ? `${result.latency_ms} ms` : "—"}</span>
-                {result.error && <span className="text-red-500">error</span>}
+                {result.error && <span style={{ color: "var(--rust)" }}>error</span>}
               </div>
               {llmReason && (
                 <p className="text-[11px] text-muted-foreground/80 italic mt-1 line-clamp-2">{llmReason}</p>
@@ -223,7 +227,7 @@ function CaseRow({ result }: { result: CaseResult }) {
         <CollapsibleContent>
           <div className="px-3 pb-3 pl-9 space-y-2">
             {result.error && (
-              <div className="text-xs font-mono text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900 rounded p-2">
+              <div className="text-xs font-mono border rounded p-2" style={{ color: "var(--rust)", background: "var(--rust-soft)", borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)" }}>
                 {result.error}
               </div>
             )}
@@ -328,12 +332,12 @@ function RunsTable({ runs, isLoading, isError, onRetry }: {
                       <TableCell className="font-medium">{run.benchmark_name}</TableCell>
                       <TableCell className="text-sm text-muted-foreground">{fmtTime(run.started_at)}</TableCell>
                       <TableCell><StatusBadge status={run.status} /></TableCell>
-                      <TableCell className={`text-right font-mono ${scoreColor(run.avg_score)}`}>{scorePct(run.avg_score)}</TableCell>
+                      <TableCell className={`text-right font-mono ${scoreColorStyle(run.avg_score).cls}`} style={scoreColorStyle(run.avg_score).style}>{scorePct(run.avg_score)}</TableCell>
                       <TableCell className="text-right">
                         <div className="flex items-center justify-end gap-2">
                           <DeltaArrow delta={run.meta?.delta} />
                           {run.meta?.regressed && (
-                            <Badge variant="outline" className="text-[10px] text-red-600 border-red-300 dark:text-red-400 dark:border-red-900">
+                            <Badge variant="outline" className="text-[10px]" style={{ color: "var(--rust)", borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)" }}>
                               Regression
                             </Badge>
                           )}
@@ -421,7 +425,7 @@ function TelemetryCard() {
                     <TableCell className="text-right font-mono">{p.avg_latency_ms != null ? `${Math.round(p.avg_latency_ms)} ms` : "—"}</TableCell>
                     <TableCell className="text-right font-mono">{p.total_prompt_tokens ?? 0}</TableCell>
                     <TableCell className="text-right font-mono">{p.total_completion_tokens ?? 0}</TableCell>
-                    <TableCell className={`text-right font-mono ${(p.error_rate ?? 0) > 0.05 ? "text-red-600 dark:text-red-400" : ""}`}>
+                    <TableCell className="text-right font-mono" style={(p.error_rate ?? 0) > 0.05 ? { color: "var(--rust)" } : undefined}>
                       {p.error_rate != null ? `${Math.round(p.error_rate * 100)}%` : "—"}
                     </TableCell>
                   </TableRow>
@@ -468,7 +472,7 @@ function BenchmarkCard({ bench, running, onRun }: {
 
         <div className="flex items-end justify-between gap-2 mt-auto pt-2">
           <div>
-            <p className={`text-2xl font-mono font-semibold ${scoreColor(bench.last_run?.avg_score)}`}>
+            <p className={`text-2xl font-mono font-semibold ${scoreColorStyle(bench.last_run?.avg_score).cls}`} style={scoreColorStyle(bench.last_run?.avg_score).style}>
               {scorePct(bench.last_run?.avg_score)}
             </p>
             <p className="text-[11px] text-muted-foreground">
@@ -726,7 +730,7 @@ function CandidatePrompt({ prompt, slot, benchmarkable, onChanged }: {
             Activate
           </Button>
           <Button size="sm" variant="ghost" disabled={remove.isPending} onClick={handleDelete}
-            className="text-muted-foreground hover:text-red-600">
+            className="text-muted-foreground hover:text-destructive">
             {remove.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
           </Button>
         </div>
@@ -741,15 +745,17 @@ function CandidatePrompt({ prompt, slot, benchmarkable, onChanged }: {
       {benchmarkable && done && (
         <div className="rounded border border-border/50 bg-muted/20 p-2.5 space-y-2">
           <div className="flex items-center gap-4 text-xs font-mono">
-            <span>candidate <span className={scoreColor(candAvg)}>{scorePct(candAvg)}</span></span>
+            <span>candidate <span className={scoreColorStyle(candAvg).cls} style={scoreColorStyle(candAvg).style}>{scorePct(candAvg)}</span></span>
             <span className="text-muted-foreground">vs</span>
-            <span>active <span className={scoreColor(actAvg)}>{scorePct(actAvg)}</span></span>
+            <span>active <span className={scoreColorStyle(actAvg).cls} style={scoreColorStyle(actAvg).style}>{scorePct(actAvg)}</span></span>
             {delta != null && (
-              <Badge variant="outline" className={`text-[10px] ${
-                delta >= 0
-                  ? "text-emerald-600 border-emerald-300 dark:text-emerald-400 dark:border-emerald-900"
-                  : "text-red-600 border-red-300 dark:text-red-400 dark:border-red-900"
-              }`}>
+              <Badge
+                variant="outline"
+                className="text-[10px]"
+                style={delta >= 0
+                  ? { color: "var(--green-2)", borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)" }
+                  : { color: "var(--rust)", borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)" }}
+              >
                 {delta >= 0 ? "+" : ""}{Math.round(delta * 100)} pts
               </Badge>
             )}
@@ -770,7 +776,7 @@ function CandidatePrompt({ prompt, slot, benchmarkable, onChanged }: {
                       <div key={s.benchmark_id} className="flex items-center justify-between text-[11px] font-mono">
                         <span className="text-muted-foreground truncate">{s.benchmark_id}</span>
                         <span className="flex items-center gap-3">
-                          <span className={scoreColor(s.avg_score)}>{scorePct(s.avg_score)}</span>
+                          <span className={scoreColorStyle(s.avg_score).cls} style={scoreColorStyle(s.avg_score).style}>{scorePct(s.avg_score)}</span>
                           <span className="text-muted-foreground/60">vs {scorePct(actSuite?.avg_score ?? null)}</span>
                         </span>
                       </div>
@@ -895,11 +901,11 @@ function PromptLabCard() {
         ) : (
           <div className="space-y-3">
             {active && (
-              <div className="rounded-lg border border-emerald-200/70 bg-emerald-50/30 dark:border-emerald-900/60 dark:bg-emerald-950/20 p-3">
+              <div className="rounded-lg border p-3" style={{ borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)", background: "var(--green-soft)" }}>
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="font-medium truncate">{active.name}</span>
                   <Badge variant="outline" className="text-[10px] font-mono">v{active.version}</Badge>
-                  <Badge className="text-[10px] bg-emerald-600 hover:bg-emerald-600">Active</Badge>
+                  <Badge className="text-[10px]" style={{ background: "var(--green-2)", color: "var(--paper)" }}>Active</Badge>
                 </div>
                 <div className="flex items-center gap-3 mt-0.5 text-[11px] font-mono text-muted-foreground">
                   <span>{active.created_at ? fmtTime(active.created_at) : "—"}</span>
@@ -1144,13 +1150,13 @@ function RagCalibrationCard() {
                     const isBest = !!(best && res.target_words === best.target_words && res.overlap_words === best.overlap_words);
                     return (
                       <TableRow key={`${res.target_words}-${res.overlap_words}`}
-                        className={isBest ? "bg-emerald-50/60 dark:bg-emerald-950/20" : undefined}>
+                        style={isBest ? { background: "var(--green-soft)" } : undefined}>
                         <TableCell className="text-right font-mono">
                           {res.target_words}
-                          {isBest && <Badge className="ml-2 text-[9px] bg-emerald-600 hover:bg-emerald-600">best</Badge>}
+                          {isBest && <Badge className="ml-2 text-[9px]" style={{ background: "var(--green-2)", color: "var(--paper)" }}>best</Badge>}
                         </TableCell>
                         <TableCell className="text-right font-mono">{res.overlap_words}</TableCell>
-                        <TableCell className={`text-right font-mono ${scoreColor(res.score)}`}>{scorePct(res.score)}</TableCell>
+                        <TableCell className={`text-right font-mono ${scoreColorStyle(res.score).cls}`} style={scoreColorStyle(res.score).style}>{scorePct(res.score)}</TableCell>
                         <TableCell className="text-right font-mono">{res.chunk_count ?? "—"}</TableCell>
                       </TableRow>
                     );

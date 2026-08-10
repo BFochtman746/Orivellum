@@ -340,7 +340,8 @@ export function DocumentsTab({ workId }: { workId: string }) {
                   readinessFilter === key
                     ? "bg-background text-foreground shadow-sm font-semibold"
                     : "text-muted-foreground hover:text-foreground"
-                } ${key === "error" && count > 0 ? "data-[active=false]:text-red-600" : ""}`}
+                }`}
+                style={key === "error" && count > 0 && readinessFilter !== key ? { color: "var(--rust)" } : undefined}
               >
                 {label}
                 {count > 0 && <span className="ml-1 opacity-60">{count}</span>}
@@ -415,12 +416,13 @@ export function DocumentsTab({ workId }: { workId: string }) {
             return (
             <Card
               key={doc.id}
-              className={`hover-elevate cursor-pointer group ${isError ? "border-red-200/60" : ""}`}
+              className="hover-elevate cursor-pointer group"
+              style={isError ? { borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)" } : undefined}
               onClick={() => navigate(`/library/${doc.id}`)}
             >
               <CardContent className="p-4 flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  <FileText className={`w-5 h-5 ${isError ? "text-red-400" : "text-muted-foreground"}`} />
+                  <FileText className={`w-5 h-5 ${isError ? "" : "text-muted-foreground"}`} style={isError ? { color: "var(--rust)" } : undefined} />
                   <div>
                     <h4 className="font-medium">{doc.title || doc.source || "Untitled"}</h4>
                     <div className="flex gap-2 mt-1 flex-wrap">

@@ -184,7 +184,7 @@ function CopyButton({ text, label = "Copy" }: { text: string; label?: string }) 
       onClick={copy}
       className="inline-flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded border border-border/50 bg-muted/30 text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors"
     >
-      {copied ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
+      {copied ? <Check className="w-3 h-3" style={{ color: "var(--green-2)" }} /> : <Copy className="w-3 h-3" />}
       {copied ? "Copied!" : label}
     </button>
   );
@@ -455,11 +455,12 @@ function ShotlistPanel({
                 <Badge
                   className={`text-[9px] font-mono shrink-0 ${
                     shot.beat_type === "hook"
-                      ? "bg-orange-500/15 text-orange-600 border-orange-500/30"
+                      ? ""
                       : shot.beat_type === "peak"
                         ? "bg-primary/15 text-primary border-primary/30"
                         : "bg-muted text-muted-foreground border-border"
                   }`}
+                  style={shot.beat_type === "hook" ? { background: "var(--rust-soft)", color: "var(--rust)", borderColor: "color-mix(in srgb, var(--rust) 30%, transparent)" } : undefined}
                   variant="outline"
                 >
                   {shot.beat_type.toUpperCase()}
@@ -1199,11 +1200,11 @@ function TrailerPackageDetail({ trailer }: { trailer: TrailerPackage }) {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           {valOk ? (
-            <span className="flex items-center gap-1.5 text-xs font-mono text-emerald-700 bg-emerald-50/80 border border-emerald-200 rounded-full px-2.5 py-1">
+            <span className="flex items-center gap-1.5 text-xs font-mono rounded-full px-2.5 py-1 border" style={{ color: "var(--green-2)", background: "var(--green-soft)", borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)" }}>
               <CheckCircle className="w-3.5 h-3.5" /> READY
             </span>
           ) : (
-            <span className="flex items-center gap-1.5 text-xs font-mono text-amber-700 bg-amber-50/80 border border-amber-200 rounded-full px-2.5 py-1">
+            <span className="flex items-center gap-1.5 text-xs font-mono rounded-full px-2.5 py-1 border" style={{ color: "var(--gilt)", background: "var(--gilt-soft)", borderColor: "var(--gilt-line)" }}>
               <AlertCircle className="w-3.5 h-3.5" /> BLOCKED · {criticalCount} critical
             </span>
           )}
@@ -1213,7 +1214,7 @@ function TrailerPackageDetail({ trailer }: { trailer: TrailerPackage }) {
           <span className="text-xs font-mono text-muted-foreground">
             {shots.length} shots · ~{duration}s
             {activeFmt === "short"  && <span className="ml-1 text-sky-600">· 9:16</span>}
-            {activeFmt === "square" && <span className="ml-1 text-violet-600">· 1:1</span>}
+            {activeFmt === "square" && <span className="ml-1" style={{ color: "var(--gilt)" }}>· 1:1</span>}
           </span>
         </div>
         <Button
@@ -1337,12 +1338,12 @@ function TrailerHistoryRow({ trailer, workId }: { trailer: TrailerListItem; work
           {isRunning && <PhaseProgress phase={livePhase} />}
         </div>
         {liveStatus === "ready" && (
-          <span className="flex items-center gap-1 text-[10px] font-mono text-emerald-600 shrink-0">
+          <span className="flex items-center gap-1 text-[10px] font-mono shrink-0" style={{ color: "var(--green-2)" }}>
             <CheckCircle className="w-3 h-3" /> READY
           </span>
         )}
         {liveStatus === "blocked" && (
-          <span className="flex items-center gap-1 text-[10px] font-mono text-amber-600 shrink-0">
+          <span className="flex items-center gap-1 text-[10px] font-mono shrink-0" style={{ color: "var(--gilt)" }}>
             <AlertCircle className="w-3 h-3" /> BLOCKED
           </span>
         )}

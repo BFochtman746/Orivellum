@@ -522,9 +522,9 @@ function ActionConfirmCard({
 
   if (status === "done" && result) {
     return (
-      <div className="mt-2 flex items-center gap-2 px-3 py-2 rounded-lg border border-emerald-200/60 bg-emerald-50/40 dark:bg-emerald-950/20 dark:border-emerald-800/30 text-xs">
-        <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-        <span className="flex-1 text-emerald-700 dark:text-emerald-300">
+      <div className="mt-2 flex items-center gap-2 px-3 py-2 rounded-lg border text-xs" style={{ borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)", background: "var(--green-soft)" }}>
+        <Check className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--green-2)" }} />
+        <span className="flex-1" style={{ color: "var(--green-2)" }}>
           {result.summary ?? result.output_label ?? "Action complete"}
         </span>
         {result.download_url && (
@@ -532,7 +532,8 @@ function ActionConfirmCard({
             href={result.download_url}
             target="_blank"
             rel="noopener noreferrer"
-            className="flex items-center gap-1 px-2 py-1 rounded bg-emerald-600 text-white hover:bg-emerald-700 transition-colors font-medium shrink-0"
+            className="flex items-center gap-1 px-2 py-1 rounded transition-opacity hover:opacity-80 font-medium shrink-0"
+            style={{ background: "var(--green-2)", color: "var(--paper)" }}
           >
             <Download className="w-3 h-3" />
             Download
@@ -619,28 +620,31 @@ function ReasoningBlock({ text, streaming }: { text: string; streaming?: boolean
     return undefined;
   }, [streaming]);  // eslint-disable-line react-hooks/exhaustive-deps
 
+  // No violet VELLUM token — gilt is the nearest processing/reasoning-state equivalent
   return (
-    <div className="mb-2.5 rounded-lg border border-violet-200/50 bg-violet-50/40 dark:bg-violet-950/20 dark:border-violet-800/30 overflow-hidden">
+    <div className="mb-2.5 rounded-lg border overflow-hidden" style={{ borderColor: "var(--gilt-line)", background: "var(--gilt-soft)" }}>
       <button
         onClick={() => setOpen((v) => !v)}
-        className="w-full flex items-center gap-2 px-3 py-1.5 text-left hover:bg-violet-100/40 dark:hover:bg-violet-900/20 transition-colors"
+        className="w-full flex items-center gap-2 px-3 py-1.5 text-left transition-opacity hover:opacity-80"
       >
         <Brain
-          className={`w-3 h-3 text-violet-500/80 shrink-0 ${streaming ? "animate-pulse" : ""}`}
+          className={`w-3 h-3 shrink-0 ${streaming ? "animate-pulse" : ""}`}
+          style={{ color: "var(--gilt)" }}
         />
-        <span className="text-[11px] font-mono text-violet-600/70 dark:text-violet-400/60 flex-1">
+        <span className="text-[11px] font-mono flex-1" style={{ color: "var(--gilt)" }}>
           {streaming ? "Reasoning…" : "Reasoning"}
         </span>
         <ChevronDown
-          className={`w-3 h-3 text-violet-400/60 transition-transform duration-200 ${open ? "rotate-180" : ""}`}
+          className={`w-3 h-3 transition-transform duration-200 ${open ? "rotate-180" : ""}`}
+          style={{ color: "var(--gilt)" }}
         />
       </button>
       {open && (
-        <div className="px-3 pb-2.5 pt-1.5 border-t border-violet-200/30 dark:border-violet-800/20">
-          <p className="text-[12px] font-mono text-violet-700/55 dark:text-violet-300/45 italic leading-relaxed whitespace-pre-wrap">
+        <div className="px-3 pb-2.5 pt-1.5 border-t" style={{ borderColor: "var(--gilt-line)" }}>
+          <p className="text-[12px] font-mono italic leading-relaxed whitespace-pre-wrap" style={{ color: "color-mix(in srgb, var(--gilt) 70%, transparent)" }}>
             {text}
             {streaming && (
-              <span className="inline-block w-0.5 h-3 bg-violet-400/60 ml-0.5 animate-pulse align-text-bottom" />
+              <span className="inline-block w-0.5 h-3 ml-0.5 animate-pulse align-text-bottom" style={{ background: "var(--gilt)" }} />
             )}
           </p>
         </div>
@@ -673,7 +677,7 @@ function CodeBlock({ lang, className, children }: { lang: string; className?: st
           title="Copy code"
           className="flex items-center gap-1 text-[10px] font-mono text-zinc-500 hover:text-zinc-300 transition-colors"
         >
-          {copied ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+          {copied ? <Check className="w-3 h-3" style={{ color: "var(--green-2)" }} /> : <Copy className="w-3 h-3" />}
           <span>{copied ? "Copied" : "Copy"}</span>
         </button>
       </span>
@@ -1047,10 +1051,13 @@ type MemoryFact = {
   evidence_message_id?: string | null;
 };
 
-const MEMORY_TYPE_STYLE: Record<string, { label: string; cls: string }> = {
-  episodic:     { label: "episodic",     cls: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400" },
-  semantic:     { label: "semantic",     cls: "bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400" },
-  procedural:   { label: "procedural",   cls: "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400" },
+// Memory-kind badges. The blue/violet/amber hues map onto distinct VELLUM
+// tokens (via `style`); gray/teal have no semantic-colour equivalent to remove
+// so they keep neutral Tailwind classes in `cls`.
+const MEMORY_TYPE_STYLE: Record<string, { label: string; cls: string; style?: React.CSSProperties }> = {
+  episodic:     { label: "episodic",     cls: "", style: { color: "var(--gilt)", background: "var(--gilt-soft)" } },
+  semantic:     { label: "semantic",     cls: "", style: { color: "color-mix(in srgb, var(--gilt) 55%, var(--rust))", background: "color-mix(in srgb, color-mix(in srgb, var(--gilt) 55%, var(--rust)) 12%, transparent)" } },
+  procedural:   { label: "procedural",   cls: "", style: { color: "var(--green-raw)", background: "color-mix(in srgb, var(--green-raw) 12%, transparent)" } },
   working:      { label: "working",      cls: "bg-gray-100 text-gray-500 dark:bg-gray-800/50 dark:text-gray-400" },
   zettelkasten: { label: "zettelkasten", cls: "bg-teal-100 text-teal-700 dark:bg-teal-900/30 dark:text-teal-400" },
 };
@@ -1180,11 +1187,11 @@ function MemoryPanel({ apiBase }: { apiBase: string }) {
   const conflictCount = conflicts.length;
 
   return (
-    <div className="border-b border-border/50 bg-violet-500/5">
+    <div className="border-b border-border/50" style={{ background: "var(--gilt-soft)" }}>
       <div className="px-4 py-2.5 flex items-center justify-between">
         <div className="flex items-center gap-1.5">
-          <Sparkles className="w-3 h-3 text-violet-500" />
-          <span className="text-xs font-medium text-violet-700 dark:text-violet-300">
+          <Sparkles className="w-3 h-3" style={{ color: "var(--gilt)" }} />
+          <span className="text-xs font-medium" style={{ color: "var(--gilt)" }}>
             Memory
           </span>
           {facts.length > 0 && (
@@ -1196,7 +1203,8 @@ function MemoryPanel({ apiBase }: { apiBase: string }) {
             <button
               onClick={() => setShowConflicts(v => !v)}
               title={`${conflictCount} unresolved conflict${conflictCount !== 1 ? "s" : ""} — click to review`}
-              className="flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-orange-100 dark:bg-orange-900/30 text-orange-600 dark:text-orange-400 hover:bg-orange-200 dark:hover:bg-orange-900/50 transition-colors"
+              className="flex items-center gap-0.5 px-1.5 py-0.5 rounded transition-opacity hover:opacity-80"
+              style={{ background: "var(--rust-soft)", color: "var(--rust)" }}
             >
               <AlertTriangle className="w-2.5 h-2.5" />
               <span className="text-[9px] font-semibold">{conflictCount}</span>
@@ -1215,27 +1223,28 @@ function MemoryPanel({ apiBase }: { apiBase: string }) {
 
       {/* ── Conflicts panel ── */}
       {showConflicts && conflictCount > 0 && (
-        <div className="px-4 pb-3 space-y-2 border-b border-orange-200/40 dark:border-orange-800/30">
-          <div className="text-[9px] font-semibold uppercase tracking-wide text-orange-500/80 mb-1.5">
+        <div className="px-4 pb-3 space-y-2 border-b" style={{ borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)" }}>
+          <div className="text-[9px] font-semibold uppercase tracking-wide mb-1.5" style={{ color: "var(--rust)" }}>
             Conflicting memories ({conflictCount})
           </div>
           {conflicts.map(c => (
             <div
               key={c.id}
-              className="rounded border border-orange-200/60 dark:border-orange-800/40 bg-orange-50/40 dark:bg-orange-950/20 p-2 space-y-1.5"
+              className="rounded border p-2 space-y-1.5"
+              style={{ borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)", background: "var(--rust-soft)" }}
             >
               <div className="flex gap-2 text-[10px]">
                 {/* Side A — memory_id_a (newer by convention when set by dedup) */}
                 <div className="flex-1 space-y-0.5">
                   <div className="text-[9px] text-muted-foreground/50 font-mono uppercase">Newer</div>
-                  <div className="font-mono text-violet-600/80 dark:text-violet-400/80 truncate">{c.key_a ?? "—"}:</div>
+                  <div className="font-mono truncate" style={{ color: "var(--gilt)" }}>{c.key_a ?? "—"}:</div>
                   <div className="text-foreground/70 line-clamp-2">{c.value_a ?? "—"}</div>
                 </div>
-                <div className="w-px bg-orange-200/60 dark:bg-orange-800/40 self-stretch" />
+                <div className="w-px self-stretch" style={{ background: "color-mix(in srgb, var(--rust) 28%, transparent)" }} />
                 {/* Side B — memory_id_b (older by convention) */}
                 <div className="flex-1 space-y-0.5">
                   <div className="text-[9px] text-muted-foreground/50 font-mono uppercase">Older</div>
-                  <div className="font-mono text-violet-600/80 dark:text-violet-400/80 truncate">{c.key_b ?? "—"}:</div>
+                  <div className="font-mono truncate" style={{ color: "var(--gilt)" }}>{c.key_b ?? "—"}:</div>
                   <div className="text-foreground/70 line-clamp-2">{c.value_b ?? "—"}</div>
                 </div>
               </div>
@@ -1293,10 +1302,10 @@ function MemoryPanel({ apiBase }: { apiBase: string }) {
                   /* ── Edit mode ────────────────────────────────────────── */
                   <div className="space-y-1.5">
                     <div className="flex items-center gap-1">
-                      <span className={`text-[9px] font-mono font-semibold px-1 py-0.5 rounded shrink-0 ${typeStyle.cls}`}>
+                      <span className={`text-[9px] font-mono font-semibold px-1 py-0.5 rounded shrink-0 ${typeStyle.cls}`} style={typeStyle.style}>
                         {typeStyle.label}
                       </span>
-                      <span className="font-mono text-violet-600/80 dark:text-violet-400/80 shrink-0">
+                      <span className="font-mono shrink-0" style={{ color: "var(--gilt)" }}>
                         {f.key}:
                       </span>
                     </div>
@@ -1309,13 +1318,15 @@ function MemoryPanel({ apiBase }: { apiBase: string }) {
                         if (e.key === "Enter") saveFact(fid, f.key, f.value);
                         if (e.key === "Escape") cancelEdit();
                       }}
-                      className="w-full text-[11px] border border-violet-400/40 rounded px-2 py-1 bg-background focus:outline-none focus:ring-1 focus:ring-violet-400/50"
+                      className="w-full text-[11px] border rounded px-2 py-1 bg-background focus:outline-none focus:ring-1"
+                      style={{ borderColor: "var(--gilt-line)", ["--tw-ring-color" as string]: "var(--gilt-line)" }}
                     />
                     <div className="flex items-center gap-1.5">
                       <button
                         onClick={() => saveFact(fid, f.key, f.value)}
                         disabled={savingId === fid || !editValue.trim() || editValue.trim() === f.value}
-                        className="text-[9px] px-1.5 py-0.5 rounded bg-violet-500/80 hover:bg-violet-500 text-white disabled:opacity-40 transition-colors flex items-center gap-0.5"
+                        className="text-[9px] px-1.5 py-0.5 rounded disabled:opacity-40 transition-opacity hover:opacity-80 flex items-center gap-0.5"
+                        style={{ background: "var(--gilt)", color: "var(--paper)" }}
                       >
                         {savingId === fid
                           ? <Loader2 className="w-2.5 h-2.5 animate-spin" />
@@ -1333,10 +1344,10 @@ function MemoryPanel({ apiBase }: { apiBase: string }) {
                 ) : (
                   /* ── View mode ────────────────────────────────────────── */
                   <div className="flex items-start gap-1 flex-wrap group">
-                    <span className={`text-[9px] font-mono font-semibold px-1 py-0.5 rounded shrink-0 mt-px ${typeStyle.cls}`}>
+                    <span className={`text-[9px] font-mono font-semibold px-1 py-0.5 rounded shrink-0 mt-px ${typeStyle.cls}`} style={typeStyle.style}>
                       {typeStyle.label}
                     </span>
-                    <span className="font-mono text-violet-600/80 dark:text-violet-400/80 shrink-0">
+                    <span className="font-mono shrink-0" style={{ color: "var(--gilt)" }}>
                       {f.key}:
                     </span>
                     <span className="text-foreground/80 flex-1">{f.value}</span>
@@ -1383,7 +1394,8 @@ function MemoryPanel({ apiBase }: { apiBase: string }) {
                     {f.evidence_conversation_id && (
                       <a
                         href={`/chat?id=${f.evidence_conversation_id}`}
-                        className="inline-flex items-center gap-0.5 text-[9px] text-violet-500/70 hover:text-violet-500 transition-colors"
+                        className="inline-flex items-center gap-0.5 text-[9px] transition-opacity hover:opacity-80"
+                        style={{ color: "var(--gilt)" }}
                       >
                         <ExternalLink className="w-2.5 h-2.5" />
                         View conversation
@@ -2258,7 +2270,8 @@ export default function Chat() {
               <button
                 onClick={() => setShowMemory((v) => !v)}
                 title="Memory — facts I've learned about you"
-                className={`p-1.5 rounded transition-colors ${showMemory ? "text-violet-600 bg-violet-500/10" : "text-muted-foreground hover:text-foreground"}`}
+                className={`p-1.5 rounded transition-colors ${showMemory ? "" : "text-muted-foreground hover:text-foreground"}`}
+                style={showMemory ? { color: "var(--gilt)", background: "var(--gilt-soft)" } : undefined}
               >
                 <Sparkles className="w-3.5 h-3.5" />
               </button>
@@ -2276,7 +2289,7 @@ export default function Chat() {
           </div>
           <div className="flex items-center gap-1.5 text-xs">
             {aiOnline ? (
-              <><Wifi className="w-3 h-3 text-emerald-500" /><span className="text-emerald-600 font-mono">AI connected</span></>
+              <><Wifi className="w-3 h-3" style={{ color: "var(--green-2)" }} /><span className="font-mono" style={{ color: "var(--green-2)" }}>AI connected</span></>
             ) : (
               <><WifiOff className="w-3 h-3 text-muted-foreground" /><span className="text-muted-foreground font-mono">AI offline</span></>
             )}
@@ -2369,7 +2382,7 @@ export default function Chat() {
                           onClick={(e) => { e.stopPropagation(); updateConvMeta.mutate({ convId: c.id!, data: { archived: true } }, { onSuccess: () => { queryClient.invalidateQueries({ queryKey: getListConversationsQueryKey() }); toast.success("Archived"); }, onError: () => toast.error("Could not archive") }); }}
                           title="Archive"
                           data-testid={`button-archive-${c.id}`}
-                          className="chat-icon-btn p-0.5 rounded hover:text-amber-600 text-muted-foreground"
+                          className="chat-icon-btn p-0.5 rounded hover:text-foreground text-muted-foreground"
                         >
                           <Archive className="w-3 h-3" />
                         </button>
@@ -2379,7 +2392,7 @@ export default function Chat() {
                           onClick={(e) => { e.stopPropagation(); updateConvMeta.mutate({ convId: c.id!, data: { archived: false } }, { onSuccess: () => { queryClient.invalidateQueries({ queryKey: getListConversationsQueryKey() }); toast.success("Restored"); }, onError: () => toast.error("Could not restore") }); }}
                           title="Restore"
                           data-testid={`button-restore-${c.id}`}
-                          className="chat-icon-btn p-0.5 rounded hover:text-emerald-600 text-muted-foreground"
+                          className="chat-icon-btn p-0.5 rounded hover:text-foreground text-muted-foreground"
                         >
                           <ArchiveRestore className="w-3 h-3" />
                         </button>
@@ -2505,17 +2518,23 @@ export default function Chat() {
                   )}
                   {displayMessages.map((msg, msgIdx) => (
                     <div key={msg.id} data-msg-id={msg.id} data-role={msg.role} className={`flex gap-3 ${msg.role === "user" ? "flex-row-reverse" : ""}`}>
-                      <div className={`w-7 h-7 shrink-0 rounded-sm flex items-center justify-center
+                      <div
+                        className={`w-7 h-7 shrink-0 rounded-sm flex items-center justify-center
                         ${msg.isClarification
-                          ? "bg-amber-500/15 text-amber-600"
+                          ? ""
                           : msg.role === "user"
                             ? "bg-secondary text-secondary-foreground"
-                            : "bg-primary text-primary-foreground"}`}>
+                            : "bg-primary text-primary-foreground"}`}
+                        style={msg.isClarification ? { color: "var(--gilt)", background: "color-mix(in srgb, var(--gilt) 15%, transparent)" } : undefined}
+                      >
                         {msg.isClarification ? <HelpCircle className="w-3.5 h-3.5" /> : msg.role === "user" ? <User className="w-3.5 h-3.5" /> : <Bot className="w-3.5 h-3.5" />}
                       </div>
                       <div className={`flex flex-col gap-1 max-w-[78%] ${msg.role === "user" ? "items-end" : "items-start"}`}>
                         <div className="flex items-center gap-2">
-                          <span className={`text-[10px] font-mono uppercase tracking-wider ${msg.isClarification ? "text-amber-600/70" : "text-muted-foreground"}`}>
+                          <span
+                            className={`text-[10px] font-mono uppercase tracking-wider ${msg.isClarification ? "" : "text-muted-foreground"}`}
+                            style={msg.isClarification ? { color: "var(--gilt)" } : undefined}
+                          >
                             {msg.isClarification ? "Needs clarification" : msg.role}
                           </span>
                           {/* Show timestamp in header only for user messages; assistant time appears in model label */}
@@ -2568,14 +2587,19 @@ export default function Chat() {
                             </button>
                           </div>
                         )}
-                        <div className={`px-4 py-3 rounded-lg text-base break-words chat-msg-bubble
+                        <div
+                          className={`px-4 py-3 rounded-lg text-base break-words chat-msg-bubble
                           ${msg.status === "failed" && msg.role === "assistant"
                             ? "bg-destructive/5 border border-destructive/30 text-destructive"
                             : msg.isClarification
-                              ? "bg-amber-50/50 border border-amber-200/60 text-amber-900 dark:bg-amber-950/20 dark:border-amber-800/40 dark:text-amber-100"
+                              ? "border"
                               : msg.role === "user"
                                 ? "bg-secondary/60 border border-secondary whitespace-pre-wrap"
-                                : "bg-muted/40 border border-border/40"}`}>
+                                : "bg-muted/40 border border-border/40"}`}
+                          style={msg.isClarification && !(msg.status === "failed" && msg.role === "assistant")
+                            ? { background: "var(--gilt-soft)", borderColor: "var(--gilt-line)", color: "var(--gilt)" }
+                            : undefined}
+                        >
                           {msg.text ? (
                             msg.role === "assistant" ? (
                               <>
@@ -2589,15 +2613,16 @@ export default function Chat() {
                                 {msg.streaming && <span className="inline-block w-0.5 h-3.5 bg-current ml-0.5 animate-pulse align-text-bottom" />}
                                 {msg.incomplete && (() => {
                                   return (
-                                    <div className="mt-2 flex items-center justify-between gap-2 border-t border-amber-200/40 pt-2">
-                                      <div className="flex items-center gap-1.5 text-xs text-amber-600">
+                                    <div className="mt-2 flex items-center justify-between gap-2 border-t pt-2" style={{ borderColor: "var(--gilt-line)" }}>
+                                      <div className="flex items-center gap-1.5 text-xs" style={{ color: "var(--gilt)" }}>
                                         <AlertTriangle className="w-3 h-3 shrink-0" />
                                         <span>Response was cut short.</span>
                                       </div>
                                       <button
                                         onClick={() => handleContinue(msg.id)}
                                         disabled={sending}
-                                        className="text-xs font-mono text-amber-700 hover:text-amber-900 underline underline-offset-2 shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
+                                        className="text-xs font-mono underline underline-offset-2 shrink-0 disabled:opacity-40 disabled:cursor-not-allowed transition-opacity hover:opacity-80"
+                                        style={{ color: "var(--gilt)" }}
                                       >
                                         Continue
                                       </button>

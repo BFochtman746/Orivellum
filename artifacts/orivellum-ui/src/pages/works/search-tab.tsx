@@ -196,7 +196,7 @@ export function SearchTab({ workId, initialQuery = "" }: { workId: string; initi
 
       {/* Semantic search readiness banner (#203) */}
       {embedStatus?.circuit_open && (
-        <div className="flex items-center gap-2 px-3 py-2 rounded-md border border-amber-200 bg-amber-50 text-amber-800 text-xs font-mono">
+        <div className="flex items-center gap-2 px-3 py-2 rounded-md border text-xs font-mono" style={{ color: "var(--gilt)", background: "var(--gilt-soft)", borderColor: "var(--gilt-line)" }}>
           <Search className="w-3.5 h-3.5 shrink-0" />
           <span>Semantic search is temporarily unavailable — showing keyword results only. The embeddings service will retry automatically.</span>
         </div>
@@ -237,12 +237,12 @@ export function SearchTab({ workId, initialQuery = "" }: { workId: string; initi
                       </div>
                       {item.confidence != null && (() => {
                         const pct = item.confidence * 100;
-                        const tier =
-                          pct >= 80 ? { label: "High", color: "text-emerald-700 bg-emerald-50 border-emerald-200" }
-                          : pct >= 50 ? { label: "Med", color: "text-amber-700 bg-amber-50 border-amber-200" }
-                          : { label: "Low", color: "text-red-700 bg-red-50 border-red-200" };
+                        const tier: { label: string; style: React.CSSProperties } =
+                          pct >= 80 ? { label: "High", style: { color: "var(--green-2)", background: "var(--green-soft)", borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)" } }
+                          : pct >= 50 ? { label: "Med", style: { color: "var(--gilt)", background: "var(--gilt-soft)", borderColor: "var(--gilt-line)" } }
+                          : { label: "Low", style: { color: "var(--rust)", background: "var(--rust-soft)", borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)" } };
                         return (
-                          <span className={`text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded border shrink-0 ${tier.color}`}>
+                          <span className="text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded border shrink-0" style={tier.style}>
                             {pct.toFixed(0)}% {tier.label}
                           </span>
                         );

@@ -97,10 +97,10 @@ const TYPE_META: Record<ReviewItem["item_type"], {
 type TypeFilter = "all" | ReviewItem["item_type"];
 
 function confidenceColor(c: number | null): string {
-  if (c == null) return "bg-muted-foreground/40";
-  if (c < 0.5) return "bg-red-400";
-  if (c < 0.8) return "bg-amber-400";
-  return "bg-emerald-400";
+  if (c == null) return "color-mix(in srgb, var(--muted-foreground) 40%, transparent)";
+  if (c < 0.5) return "var(--rust)";
+  if (c < 0.8) return "var(--gilt)";
+  return "var(--green-2)";
 }
 
 // ── Evidence rendering ────────────────────────────────────────────────────────
@@ -269,8 +269,8 @@ function ReviewCard({ item, onResolved }: { item: ReviewItem; onResolved: () => 
         {pct != null && (
           <div className="flex items-center gap-1.5 shrink-0" title={`Confidence ${pct}%`}>
             <div className="w-16 h-1.5 rounded-full bg-muted overflow-hidden">
-              <div className={`h-full ${confidenceColor(item.confidence)}`}
-                   style={{ width: `${pct}%` }} />
+              <div className="h-full"
+                   style={{ width: `${pct}%`, background: confidenceColor(item.confidence) }} />
             </div>
             <span className="text-[10px] font-mono text-muted-foreground">{pct}%</span>
           </div>

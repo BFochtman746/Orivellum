@@ -49,25 +49,36 @@ export function chapterProgressLabel(b: {
   return approved > 0 ? `${base} · ${approved} approved` : base;
 }
 
-const STAGE_COLOR: Record<string, string> = {
-  B0: "bg-zinc-100 text-zinc-700 border-zinc-200",
-  B1: "bg-blue-50 text-blue-700 border-blue-200",
-  B2: "bg-blue-50 text-blue-700 border-blue-200",
-  B3: "bg-violet-50 text-violet-700 border-violet-200",
-  B4: "bg-violet-50 text-violet-700 border-violet-200",
-  B5: "bg-violet-50 text-violet-700 border-violet-200",
-  B6: "bg-amber-50 text-amber-700 border-amber-200",
-  B7: "bg-amber-50 text-amber-700 border-amber-200",
-  B8: "bg-amber-50 text-amber-700 border-amber-200",
-  B9: "bg-orange-50 text-orange-700 border-orange-200",
-  B10: "bg-orange-50 text-orange-700 border-orange-200",
-  B11: "bg-orange-50 text-orange-700 border-orange-200",
-  B12: "bg-emerald-50 text-emerald-700 border-emerald-200",
-  B13: "bg-emerald-50 text-emerald-700 border-emerald-200",
-  B14: "bg-emerald-50 text-emerald-700 border-emerald-200",
-  B15: "bg-teal-50 text-teal-700 border-teal-200",
-  B16: "bg-teal-50 text-teal-700 border-teal-200",
-  B17: "bg-green-50 text-green-700 border-green-200",
+// Stage ladder (B0→B17) — kept visually distinct across the run using VELLUM
+// tokens and color-mix blends so each phase group reads as a step forward.
+const STAGE_NEUTRAL: React.CSSProperties = {};
+const STAGE_STYLE: Record<string, React.CSSProperties> = {
+  // B0 — neutral (uses text-muted-foreground via STAGE_CLS)
+  B0: {},
+  // B1–B2 — early / info: soft gilt at low strength
+  B1: { color: "var(--gilt)", background: "color-mix(in srgb, var(--gilt) 8%, transparent)", borderColor: "color-mix(in srgb, var(--gilt) 18%, transparent)" },
+  B2: { color: "var(--gilt)", background: "color-mix(in srgb, var(--gilt) 8%, transparent)", borderColor: "color-mix(in srgb, var(--gilt) 18%, transparent)" },
+  // B3–B5 — AI/design (was violet): gilt, nearest VELLUM token
+  B3: { color: "var(--gilt)", background: "var(--gilt-soft)", borderColor: "var(--gilt-line)" },
+  B4: { color: "var(--gilt)", background: "var(--gilt-soft)", borderColor: "var(--gilt-line)" },
+  B5: { color: "var(--gilt)", background: "var(--gilt-soft)", borderColor: "var(--gilt-line)" },
+  // B6–B8 — building (amber): gilt strong
+  B6: { color: "var(--gilt)", background: "var(--gilt-soft)", borderColor: "color-mix(in srgb, var(--gilt) 40%, transparent)" },
+  B7: { color: "var(--gilt)", background: "var(--gilt-soft)", borderColor: "color-mix(in srgb, var(--gilt) 40%, transparent)" },
+  B8: { color: "var(--gilt)", background: "var(--gilt-soft)", borderColor: "color-mix(in srgb, var(--gilt) 40%, transparent)" },
+  // B9–B11 — later build (orange): gilt/rust blend, warmer than gilt
+  B9: { color: "color-mix(in srgb, var(--gilt) 55%, var(--rust))", background: "color-mix(in srgb, var(--rust) 8%, transparent)", borderColor: "color-mix(in srgb, var(--rust) 22%, transparent)" },
+  B10: { color: "color-mix(in srgb, var(--gilt) 55%, var(--rust))", background: "color-mix(in srgb, var(--rust) 8%, transparent)", borderColor: "color-mix(in srgb, var(--rust) 22%, transparent)" },
+  B11: { color: "color-mix(in srgb, var(--gilt) 55%, var(--rust))", background: "color-mix(in srgb, var(--rust) 8%, transparent)", borderColor: "color-mix(in srgb, var(--rust) 22%, transparent)" },
+  // B12–B14 — success (emerald): green-2
+  B12: { color: "var(--green-2)", background: "var(--green-soft)", borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)" },
+  B13: { color: "var(--green-2)", background: "var(--green-soft)", borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)" },
+  B14: { color: "var(--green-2)", background: "var(--green-soft)", borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)" },
+  // B15–B16 — near-done (teal): green blend, distinct from B12–B14 and B17
+  B15: { color: "color-mix(in srgb, var(--green-2) 70%, var(--green-raw))", background: "var(--green-soft)", borderColor: "color-mix(in srgb, var(--green-raw) 28%, transparent)" },
+  B16: { color: "color-mix(in srgb, var(--green-2) 70%, var(--green-raw))", background: "var(--green-soft)", borderColor: "color-mix(in srgb, var(--green-raw) 28%, transparent)" },
+  // B17 — published (deep forest): green-raw
+  B17: { color: "var(--green-raw)", background: "var(--green-soft)", borderColor: "color-mix(in srgb, var(--green-raw) 40%, transparent)" },
 };
 
 function stageProgress(status: string): number {
@@ -118,7 +129,8 @@ function PromoteButton({ workId, workTitle }: { workId: string; workTitle: strin
 
 function BookCard({ book }: { book: BookEntry }) {
   const progress = stageProgress(book.pipeline_status);
-  const stageClass = STAGE_COLOR[book.pipeline_status] ?? "bg-muted text-muted-foreground border-border";
+  const stageStyle = STAGE_STYLE[book.pipeline_status] ?? STAGE_NEUTRAL;
+  const stageClass = STAGE_STYLE[book.pipeline_status] ? "" : "text-muted-foreground";
   const isPublished = book.pipeline_status === "B17";
 
   return (
@@ -133,7 +145,7 @@ function BookCard({ book }: { book: BookEntry }) {
                   {book.title}
                 </h3>
                 {isPublished && (
-                  <Sparkles className="w-4 h-4 text-green-500 shrink-0" />
+                  <Sparkles className="w-4 h-4 shrink-0" style={{ color: "var(--green-2)" }} />
                 )}
               </div>
               {book.description && (
@@ -143,6 +155,7 @@ function BookCard({ book }: { book: BookEntry }) {
             <Badge
               variant="outline"
               className={`text-[10px] font-mono uppercase shrink-0 ${stageClass}`}
+              style={stageStyle}
             >
               {book.pipeline_status} · {book.stage_label}
             </Badge>
@@ -156,8 +169,8 @@ function BookCard({ book }: { book: BookEntry }) {
             </div>
             <div className="h-1.5 bg-muted rounded-full overflow-hidden">
               <div
-                className={`h-full rounded-full transition-all duration-500 ${isPublished ? "bg-green-500" : "bg-primary/70"}`}
-                style={{ width: `${progress}%` }}
+                className={`h-full rounded-full transition-all duration-500 ${isPublished ? "" : "bg-primary/70"}`}
+                style={{ width: `${progress}%`, ...(isPublished ? { background: "var(--green-2)" } : {}) }}
               />
             </div>
           </div>
@@ -180,17 +193,11 @@ function BookCard({ book }: { book: BookEntry }) {
                 <span>{book.doc_count} doc{book.doc_count !== 1 ? "s" : ""}</span>
               )}
             </div>
-            <Button
-              size="sm"
-              variant="ghost"
-              className="gap-1 text-xs h-7 opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity"
-              onClick={e => e.stopPropagation()}
-              asChild
-            >
-              <Link href={`/works/${book.id}`}>
-                Open <ChevronRight className="w-3 h-3" />
-              </Link>
-            </Button>
+            {/* Decorative CTA — the whole card is already a link; a nested
+                <Link> here renders an <a> inside an <a> (hydration error). */}
+            <span className="inline-flex items-center gap-1 text-xs h-7 px-2 rounded-md opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity text-muted-foreground">
+              Open <ChevronRight className="w-3 h-3" />
+            </span>
           </div>
         </CardContent>
       </Card>
@@ -299,7 +306,7 @@ export default function BooksPage() {
           {publishedBooks.length > 0 && (
             <div className="space-y-3">
               <h2 className="text-lg font-serif font-semibold flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-green-500" /> Published
+                <Sparkles className="w-4 h-4" style={{ color: "var(--green-2)" }} /> Published
               </h2>
               <div className="grid sm:grid-cols-2 gap-4">
                 {publishedBooks.map(b => <BookCard key={b.id} book={b} />)}

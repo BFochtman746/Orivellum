@@ -46,25 +46,44 @@ const STEPS = [
 
 // ── Status styling ─────────────────────────────────────────────────────────────
 
-const STATUS_COLOR: Record<string, string> = {
-  pending:           "text-muted-foreground bg-muted/50",
-  running:           "text-amber-600 bg-amber-50 dark:text-amber-400 dark:bg-amber-950/30",
-  awaiting_approval: "text-blue-600 bg-blue-50 dark:text-blue-400 dark:bg-blue-950/30",
-  passed:            "text-emerald-600 bg-emerald-50 dark:text-emerald-400 dark:bg-emerald-950/30",
-  conditional:       "text-orange-600 bg-orange-50 dark:text-orange-400 dark:bg-orange-950/30",
-  blocked:           "text-destructive bg-destructive/10",
-  failed:            "text-destructive bg-destructive/10",
-  rejected:          "text-muted-foreground bg-muted/50",
+const STATUS_STYLE: Record<string, { cls: string; style: React.CSSProperties }> = {
+  pending:           { cls: "text-muted-foreground bg-muted/50", style: {} },
+  running:           { cls: "", style: { color: "var(--gilt)", background: "var(--gilt-soft)" } },
+  // awaiting_approval (was blue / info-running) → gilt, nearest VELLUM token
+  awaiting_approval: { cls: "", style: { color: "var(--gilt)", background: "var(--gilt-soft)" } },
+  passed:            { cls: "", style: { color: "var(--green-2)", background: "var(--green-soft)" } },
+  // conditional (was orange / warn-with-caveat) → gilt/rust blend, between gilt and rust
+  conditional:       { cls: "", style: { color: "color-mix(in srgb, var(--gilt) 55%, var(--rust))", background: "color-mix(in srgb, var(--rust) 8%, transparent)" } },
+  blocked:           { cls: "text-destructive bg-destructive/10", style: {} },
+  failed:            { cls: "text-destructive bg-destructive/10", style: {} },
+  rejected:          { cls: "text-muted-foreground bg-muted/50", style: {} },
 };
 
-const PHASE_COLOR: Record<string, string> = {
-  plan_start: "text-blue-500",   plan_ready: "text-blue-600",  plan_complete: "text-emerald-600",
-  design_start: "text-purple-500", design_ready: "text-purple-600", design_complete: "text-emerald-600",
-  build_start: "text-amber-500", file_written: "text-muted-foreground", cmd_run: "text-cyan-600",
-  build_done: "text-emerald-600", build_complete: "text-emerald-600",
-  gate_result: "text-muted-foreground", gates_done: "text-emerald-600",
-  job_error: "text-destructive", approved: "text-emerald-600", rejected: "text-muted-foreground",
-  __done__: "text-primary",
+// Event-phase accent colors. Kept distinct across phase families using VELLUM
+// tokens: plan/build → gilt, design (was purple, AI accent) → gilt/rust blend,
+// cmd_run (was cyan) → green-2, *_complete/done → green-2.
+const PHASE_STYLE: Record<string, React.CSSProperties> = {
+  plan_start:      { color: "color-mix(in srgb, var(--gilt) 70%, transparent)" },
+  plan_ready:      { color: "var(--gilt)" },
+  plan_complete:   { color: "var(--green-2)" },
+  design_start:    { color: "color-mix(in srgb, var(--gilt) 60%, var(--rust))" },
+  design_ready:    { color: "color-mix(in srgb, var(--gilt) 45%, var(--rust))" },
+  design_complete: { color: "var(--green-2)" },
+  build_start:     { color: "var(--gilt)" },
+  cmd_run:         { color: "var(--green-raw)" },
+  build_done:      { color: "var(--green-2)" },
+  build_complete:  { color: "var(--green-2)" },
+  gates_done:      { color: "var(--green-2)" },
+  approved:        { color: "var(--green-2)" },
+};
+
+// Phases that use a neutral utility class rather than a token color.
+const PHASE_CLS: Record<string, string> = {
+  file_written: "text-muted-foreground",
+  gate_result:  "text-muted-foreground",
+  job_error:    "text-destructive",
+  rejected:     "text-muted-foreground",
+  __done__:     "text-primary",
 };
 
 function phaseIcon(phase: string): string {
@@ -91,10 +110,16 @@ function EventLog({ events }: { events: ForgeEvent[] }) {
           <span className="text-muted-foreground/40 shrink-0">
             {ev.ts ? format(new Date(ev.ts), "HH:mm:ss") : "—"}
           </span>
-          <span className={`shrink-0 ${PHASE_COLOR[ev.phase] ?? "text-muted-foreground"}`}>
+          <span
+            className={`shrink-0 ${PHASE_CLS[ev.phase] ?? (PHASE_STYLE[ev.phase] ? "" : "text-muted-foreground")}`}
+            style={PHASE_STYLE[ev.phase]}
+          >
             {phaseIcon(ev.phase)}
           </span>
-          <span className={PHASE_COLOR[ev.phase] ?? "text-foreground"}>
+          <span
+            className={PHASE_CLS[ev.phase] ?? (PHASE_STYLE[ev.phase] ? "" : "text-foreground")}
+            style={PHASE_STYLE[ev.phase]}
+          >
             {ev.message}
           </span>
         </div>
@@ -362,19 +387,29 @@ export default function ForgeDetail() {
 
           return (
             <div key={step.type} className="flex items-center">
-              <div className={`flex flex-col items-center px-4 py-3 rounded-lg min-w-[96px] border transition-all ${
-                isActive && !isDone
-                  ? "border-primary/30 bg-primary/5"
-                  : isDone
-                  ? "border-emerald-200 dark:border-emerald-800 bg-emerald-50/50 dark:bg-emerald-950/20"
-                  : "border-border/40 bg-card"
-              }`}>
-                <div className={`w-8 h-8 rounded-full flex items-center justify-center mb-1.5 ${
-                  isDone ? "bg-emerald-100 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400"
-                  : isRunning ? "bg-amber-100 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400"
-                  : isAwaiting ? "bg-blue-100 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400"
-                  : "bg-muted text-muted-foreground"
-                }`}>
+              <div
+                className={`flex flex-col items-center px-4 py-3 rounded-lg min-w-[96px] border transition-all ${
+                  isActive && !isDone
+                    ? "border-primary/30 bg-primary/5"
+                    : isDone
+                    ? ""
+                    : "border-border/40 bg-card"
+                }`}
+                style={isDone && !(isActive && !isDone)
+                  ? { borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)", background: "var(--green-soft)" }
+                  : undefined}
+              >
+                <div
+                  className={`w-8 h-8 rounded-full flex items-center justify-center mb-1.5 ${
+                    (isDone || isRunning || isAwaiting) ? "" : "bg-muted text-muted-foreground"
+                  }`}
+                  style={
+                    isDone ? { color: "var(--green-2)", background: "var(--green-soft)" }
+                    : isRunning ? { color: "var(--gilt)", background: "var(--gilt-soft)" }
+                    : isAwaiting ? { color: "var(--gilt)", background: "var(--gilt-soft)" }
+                    : undefined
+                  }
+                >
                   {isRunning
                     ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
                     : isDone
@@ -384,7 +419,7 @@ export default function ForgeDetail() {
                 </div>
                 <div className="text-[11px] font-semibold font-mono">{step.label}</div>
                 {isAwaiting && (
-                  <div className="text-[9px] text-blue-600 dark:text-blue-400 font-mono uppercase mt-0.5">
+                  <div className="text-[9px] font-mono uppercase mt-0.5" style={{ color: "var(--gilt)" }}>
                     Needs review
                   </div>
                 )}
@@ -451,7 +486,8 @@ export default function ForgeDetail() {
                   size="sm"
                   onClick={() => approveJob.mutate({ jobId: latestPlan.id })}
                   disabled={approveJob.isPending}
-                  className="gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white"
+                  className="gap-1.5 hover:brightness-95 dark:hover:brightness-110"
+                  style={{ background: "var(--green-2)", color: "var(--paper)" }}
                 >
                   <ThumbsUp className="w-3.5 h-3.5" /> Approve plan
                 </Button>
@@ -467,7 +503,7 @@ export default function ForgeDetail() {
               </div>
             </div>
           ) : latestPlan.status === "passed" ? (
-            <div className="flex items-center gap-2 text-sm text-emerald-600 dark:text-emerald-400">
+            <div className="flex items-center gap-2 text-sm" style={{ color: "var(--green-2)" }}>
               <CheckCircle2 className="w-4 h-4" /> Plan approved
             </div>
           ) : (
@@ -530,7 +566,8 @@ export default function ForgeDetail() {
                           selectedConceptId,
                         })}
                         disabled={approveJob.isPending || !selectedConceptId}
-                        className="gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white"
+                        className="gap-1.5 hover:brightness-95 dark:hover:brightness-110"
+                        style={{ background: "var(--green-2)", color: "var(--paper)" }}
                       >
                         <ThumbsUp className="w-3.5 h-3.5" />
                         {selectedConceptId ? "Approve selected concept" : "Select a concept first"}
@@ -551,7 +588,7 @@ export default function ForgeDetail() {
                 )}
               </div>
             ) : latestDesign.status === "passed" ? (
-              <div className="flex items-center gap-2 text-sm text-emerald-600 dark:text-emerald-400">
+              <div className="flex items-center gap-2 text-sm" style={{ color: "var(--green-2)" }}>
                 <CheckCircle2 className="w-4 h-4" />
                 Design approved
                 {designConcepts.find(c => c.id === latestDesign.meta_data?.selected_concept_id) && (
@@ -628,8 +665,8 @@ export default function ForgeDetail() {
               <Terminal className="w-3.5 h-3.5 text-muted-foreground" />
               <span className="text-muted-foreground">Build log</span>
               {streaming && (
-                <span className="flex items-center gap-1 text-amber-600 dark:text-amber-400">
-                  <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+                <span className="flex items-center gap-1" style={{ color: "var(--gilt)" }}>
+                  <span className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: "var(--gilt)" }} />
                   live
                 </span>
               )}
@@ -716,11 +753,14 @@ export default function ForgeDetail() {
 
 function JobStatusBadge({ status, small }: { status: string; small?: boolean }) {
   const label = status.replace(/_/g, " ");
-  const color = STATUS_COLOR[status] ?? "text-muted-foreground bg-muted/50";
+  const cfg = STATUS_STYLE[status] ?? { cls: "text-muted-foreground bg-muted/50", style: {} };
   return (
-    <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-mono ${
-      small ? "text-[10px]" : "text-xs"
-    } ${color}`}>
+    <span
+      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-mono ${
+        small ? "text-[10px]" : "text-xs"
+      } ${cfg.cls}`}
+      style={cfg.style}
+    >
       {status === "running" && <Loader2 className="w-2.5 h-2.5 animate-spin" />}
       {label}
     </span>

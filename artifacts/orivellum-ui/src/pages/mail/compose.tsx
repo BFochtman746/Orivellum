@@ -305,7 +305,7 @@ export default function ComposePage() {
                 <Badge variant="destructive" className="text-[10px]">High risk</Badge>
               )}
               {assessment.injection_flagged && (
-                <Badge variant="outline" className="text-[10px] border-yellow-500 text-yellow-600">Injection flag</Badge>
+                <Badge variant="outline" className="text-[10px]" style={{ color: "var(--gilt)", borderColor: "var(--gilt)" }}>Injection flag</Badge>
               )}
             </div>
           )}

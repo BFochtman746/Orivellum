@@ -81,23 +81,27 @@ interface PipelineData {
 
 // ── Colour helpers ─────────────────────────────────────────────────────────────
 
-function scoreColor(score: number) {
-  if (score >= 80) return "text-emerald-700";
-  if (score >= 50) return "text-amber-700";
-  return "text-red-700";
+function scoreColor(score: number): string {
+  if (score >= 80) return "var(--green-2)";
+  if (score >= 50) return "var(--gilt)";
+  return "var(--rust)";
 }
 
+// Five distinct completeness-dimension bar colours mapped onto the VELLUM palette.
 const DIM_BAR: Record<string, string> = {
-  structural: "bg-violet-500", content: "bg-blue-500",
-  research:   "bg-emerald-500", editorial: "bg-amber-500", source: "bg-orange-400",
+  structural: "var(--gilt)",
+  content:    "color-mix(in srgb, var(--gilt) 55%, var(--rust))",
+  research:   "var(--green-2)",
+  editorial:  "var(--green-raw)",
+  source:     "var(--rust)",
 };
-const GAP_ROW: Record<string, string> = {
-  high:   "border-red-200   bg-red-50/40",
-  medium: "border-amber-200 bg-amber-50/40",
-  low:    "border-blue-200  bg-blue-50/40",
+const GAP_ROW: Record<string, React.CSSProperties> = {
+  high:   { borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)", background: "var(--rust-soft)" },
+  medium: { borderColor: "var(--gilt-line)", background: "var(--gilt-soft)" },
+  low:    { borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)", background: "var(--green-soft)" },
 };
 const GAP_DOT: Record<string, string> = {
-  high: "bg-red-500", medium: "bg-amber-400", low: "bg-blue-400",
+  high: "var(--rust)", medium: "var(--gilt)", low: "var(--green-2)",
 };
 
 // ── Stages with AI workers ────────────────────────────────────────────────────
@@ -291,7 +295,7 @@ export default function WorkIntelligence() {
           value={totalGaps ? String(totalGaps) : (gaps ? "0" : "—")}
           sub={totalGaps > 0 ? `${highGaps.length} high · ${medGaps.length} med` : "none detected"}
           loading={gapsLoading}
-          color={totalGaps > 0 ? "text-red-600" : (gaps ? "text-emerald-700" : "text-muted-foreground")}
+          color={totalGaps > 0 ? "var(--rust)" : (gaps ? "var(--green-2)" : "text-muted-foreground")}
         />
         <MetricCard
           label="Chapters"
@@ -336,7 +340,7 @@ export default function WorkIntelligence() {
             label="Tasks"
             value={String(statsData.pending_task_count)}
             sub="pending"
-            color={statsData.pending_task_count > 0 ? "text-amber-600" : "text-muted-foreground"}
+            color={statsData.pending_task_count > 0 ? "var(--gilt)" : "text-muted-foreground"}
           />
           <MetricCard
             label="Chats"
@@ -367,13 +371,14 @@ export default function WorkIntelligence() {
 
       {/* ── Low research coverage CTA ─────────────────────────────────────────── */}
       {researchLow && (
-        <div className="flex items-center justify-between gap-3 px-4 py-3 rounded-lg border border-amber-200 bg-amber-50/50">
-          <div className="flex items-center gap-2 text-amber-800 text-sm">
+        <div className="flex items-center justify-between gap-3 px-4 py-3 rounded-lg border" style={{ borderColor: "var(--gilt-line)", background: "var(--gilt-soft)" }}>
+          <div className="flex items-center gap-2 text-sm" style={{ color: "var(--gilt)" }}>
             <TrendingUp className="w-4 h-4 shrink-0" />
             <span>Research coverage is low ({researchDim!.score}%). Import more primary sources to strengthen this Work.</span>
           </div>
           <Button size="sm" variant="outline"
-            className="gap-1.5 h-7 text-xs shrink-0 border-amber-300 text-amber-800 hover:bg-amber-100"
+            className="gap-1.5 h-7 text-xs shrink-0 hover:opacity-80"
+            style={{ borderColor: "var(--gilt-line)", color: "var(--gilt)" }}
             onClick={() => navigate(`${LIB}?import=1`)}>
             <UploadCloud className="w-3 h-3" />
             Import sources
@@ -404,11 +409,12 @@ export default function WorkIntelligence() {
                     </span>
                   </div>
                   <div className="flex items-center gap-2">
-                    <span className={`font-mono font-semibold text-sm ${scoreColor(d.score)}`}>{d.score}%</span>
+                    <span className="font-mono font-semibold text-sm" style={{ color: scoreColor(d.score) }}>{d.score}%</span>
                     {/* Import CTA on the research bar */}
                     {d.name === "research" && d.score < 40 && (
                       <button
-                        className="flex items-center gap-1 text-[10px] font-mono text-amber-700 hover:text-amber-900 transition-colors"
+                        className="flex items-center gap-1 text-[10px] font-mono transition-opacity hover:opacity-80"
+                        style={{ color: "var(--gilt)" }}
                         onClick={() => navigate(`${LIB}?import=1`)}
                       >
                         <UploadCloud className="w-3 h-3" />
@@ -419,8 +425,8 @@ export default function WorkIntelligence() {
                 </div>
                 <div className="h-1.5 bg-muted rounded-full overflow-hidden">
                   <div
-                    className={`h-full rounded-full transition-all duration-500 ${DIM_BAR[d.name] ?? "bg-primary"}`}
-                    style={{ width: `${d.score}%` }}
+                    className="h-full rounded-full transition-all duration-500"
+                    style={{ width: `${d.score}%`, background: DIM_BAR[d.name] ?? "var(--primary)" }}
                   />
                 </div>
                 <p className="text-[10px] font-mono text-muted-foreground/70">{d.rule}</p>
@@ -463,13 +469,13 @@ export default function WorkIntelligence() {
             ].filter(g => g.items.length > 0).map(({ severity, label, items }) => (
               <div key={severity} className="space-y-2">
                 <div className="flex items-center gap-2">
-                  <span className={`w-2 h-2 rounded-full shrink-0 ${GAP_DOT[severity]}`} />
+                  <span className="w-2 h-2 rounded-full shrink-0" style={{ background: GAP_DOT[severity] }} />
                   <span className="text-[11px] font-mono font-semibold uppercase tracking-wider text-muted-foreground">
                     {label} ({items.length})
                   </span>
                 </div>
                 {items.map((g, i) => (
-                  <div key={i} className={`flex items-start gap-3 p-3 rounded-lg border text-sm ${GAP_ROW[g.severity] ?? ""}`}>
+                  <div key={i} className="flex items-start gap-3 p-3 rounded-lg border text-sm" style={GAP_ROW[g.severity]}>
                     <div className="flex-1 min-w-0">
                       <p className="font-medium leading-snug">{g.title}</p>
                       <p className="text-[11px] text-muted-foreground mt-0.5">{g.description}</p>
@@ -491,7 +497,8 @@ export default function WorkIntelligence() {
                           Find sources
                         </button>
                         <button
-                          className="flex items-center gap-1 text-[10px] font-mono text-amber-600/80 hover:text-amber-700 transition-colors whitespace-nowrap"
+                          className="flex items-center gap-1 text-[10px] font-mono transition-opacity hover:opacity-80 whitespace-nowrap"
+                          style={{ color: "var(--gilt)" }}
                           onClick={() => goBrainstorm(g.title)}
                           title={`Brainstorm approaches for: ${g.title}`}
                         >
@@ -499,7 +506,7 @@ export default function WorkIntelligence() {
                           Brainstorm approaches
                         </button>
                         {trackedGaps.has(g.title) ? (
-                          <span className="flex items-center gap-1 text-[10px] font-mono text-emerald-700 whitespace-nowrap">
+                          <span className="flex items-center gap-1 text-[10px] font-mono whitespace-nowrap" style={{ color: "var(--green-2)" }}>
                             <CheckSquare className="w-3 h-3" />
                             Task created
                           </span>
@@ -524,7 +531,7 @@ export default function WorkIntelligence() {
             ))}
           </div>
         ) : gaps ? (
-          <div className="flex items-center gap-2 text-sm text-emerald-700 py-4">
+          <div className="flex items-center gap-2 text-sm py-4" style={{ color: "var(--green-2)" }}>
             <CheckCircle2 className="w-4 h-4" />
             No research gaps detected — all chapters have sufficient coverage.
           </div>
@@ -600,14 +607,15 @@ export default function WorkIntelligence() {
                 <p className="text-sm leading-snug flex-1">{item.text}</p>
                 {item.confidence != null && (() => {
                   const pct = item.confidence * 100;
-                  const tier = pct >= 80
-                    ? { label: 'High', cls: 'text-emerald-700 bg-emerald-50 border-emerald-200' }
+                  const tier: { label: string; style: React.CSSProperties } = pct >= 80
+                    ? { label: 'High', style: { color: "var(--green-2)", background: "var(--green-soft)", borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)" } }
                     : pct >= 50
-                    ? { label: 'Med', cls: 'text-amber-700 bg-amber-50 border-amber-200' }
-                    : { label: 'Low', cls: 'text-red-700 bg-red-50 border-red-200' };
+                    ? { label: 'Med', style: { color: "var(--gilt)", background: "var(--gilt-soft)", borderColor: "var(--gilt-line)" } }
+                    : { label: 'Low', style: { color: "var(--rust)", background: "var(--rust-soft)", borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)" } };
                   return (
                     <span
-                      className={`text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded border shrink-0 mt-0.5 ${tier.cls}`}
+                      className="text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded border shrink-0 mt-0.5"
+                      style={tier.style}
                       title={`Confidence: ${pct.toFixed(1)}% (estimated)`}
                     >
                       {pct.toFixed(0)}% {tier.label}
@@ -640,13 +648,19 @@ export default function WorkIntelligence() {
 
 // ── Chapter list with expandable knowledge panels ──────────────────────────────
 
-const KIND_COLOR: Record<string, string> = {
-  character:     "text-violet-700 border-violet-200 bg-violet-50",
-  event:         "text-blue-700   border-blue-200   bg-blue-50",
-  setting:       "text-emerald-700 border-emerald-200 bg-emerald-50",
-  relationship:  "text-amber-700  border-amber-200  bg-amber-50",
-  theme:         "text-rose-700   border-rose-200   bg-rose-50",
-  foreshadowing: "text-indigo-700 border-indigo-200 bg-indigo-50",
+// Six distinct entity-kind badge styles mapped onto the VELLUM palette. Each
+// pairs a token colour with a matching soft background + border so every kind
+// stays visually distinct even though VELLUM has fewer hues than the original.
+// Six distinct entity-kind badge styles mapped onto the VELLUM palette. Each
+// pairs a token colour with a matching soft background + border so every kind
+// stays visually distinct even though VELLUM has fewer hues than the original.
+const KIND_COLOR: Record<string, React.CSSProperties> = {
+  character:     { color: "var(--gilt)", borderColor: "var(--gilt-line)", background: "var(--gilt-soft)" },
+  event:         { color: "color-mix(in srgb, var(--gilt) 55%, var(--rust))", borderColor: "color-mix(in srgb, color-mix(in srgb, var(--gilt) 55%, var(--rust)) 28%, transparent)", background: "color-mix(in srgb, color-mix(in srgb, var(--gilt) 55%, var(--rust)) 12%, transparent)" },
+  setting:       { color: "var(--green-2)", borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)", background: "var(--green-soft)" },
+  relationship:  { color: "var(--green-raw)", borderColor: "color-mix(in srgb, var(--green-raw) 28%, transparent)", background: "color-mix(in srgb, var(--green-raw) 12%, transparent)" },
+  theme:         { color: "var(--rust)", borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)", background: "var(--rust-soft)" },
+  foreshadowing: { color: "color-mix(in srgb, var(--rust) 55%, var(--gilt))", borderColor: "color-mix(in srgb, color-mix(in srgb, var(--rust) 55%, var(--gilt)) 28%, transparent)", background: "color-mix(in srgb, color-mix(in srgb, var(--rust) 55%, var(--gilt)) 12%, transparent)" },
 };
 
 function ChapterKnowledgePanel({ workId, chapterId, baseApiUrl }: {
@@ -671,7 +685,7 @@ function ChapterKnowledgePanel({ workId, chapterId, baseApiUrl }: {
   }
   if (isError || !data) {
     return (
-      <p className="pl-7 pt-1 text-[11px] font-mono text-red-500">
+      <p className="pl-7 pt-1 text-[11px] font-mono" style={{ color: "var(--rust)" }}>
         Could not load chapter knowledge.
       </p>
     );
@@ -701,7 +715,10 @@ function ChapterKnowledgePanel({ workId, chapterId, baseApiUrl }: {
             {items.map((item) => (
               <div key={item.id}
                 className="flex items-start gap-2 text-[11px] leading-snug text-muted-foreground">
-                <span className={`shrink-0 mt-0.5 text-[8px] font-mono font-semibold uppercase px-1 py-px rounded border ${KIND_COLOR[item.kind] ?? "text-muted-foreground border-border"}`}>
+                <span
+                  className={`shrink-0 mt-0.5 text-[8px] font-mono font-semibold uppercase px-1 py-px rounded border ${KIND_COLOR[item.kind] ? "" : "text-muted-foreground border-border"}`}
+                  style={KIND_COLOR[item.kind]}
+                >
                   {kind.slice(0, 4)}
                 </span>
                 <span className="flex-1 min-w-0">{item.text}</span>
@@ -781,7 +798,8 @@ function ChapterList({
               </Badge>
               {missingChapters.length > 0 && (
                 <button
-                  className="flex items-center gap-1 text-[10px] font-mono text-amber-700 hover:text-amber-900 transition-colors shrink-0"
+                  className="flex items-center gap-1 text-[10px] font-mono transition-opacity hover:opacity-80 shrink-0"
+                  style={{ color: "var(--gilt)" }}
                   onClick={() => onNavigate(`${libBase}/${docGroup.doc_id}`)}
                   title={`${missingChapters.length} missing chapter${missingChapters.length !== 1 ? "s" : ""} — view document in Library`}
                 >
@@ -806,9 +824,10 @@ function ChapterList({
                         arrived from a badge deep-link (targetChapterId). */}
                     <div
                       className={`flex items-center gap-2 text-xs py-0.5 rounded px-1 -mx-1 group
-                        ${isMissing ? "text-red-600/80" : "text-muted-foreground"}
+                        ${isMissing ? "" : "text-muted-foreground"}
                         ${hasKnowledge ? "hover:bg-muted/30 cursor-pointer" : ""}
                         ${ch.id === highlightedId ? "chapter-highlight" : ""}`}
+                      style={isMissing ? { color: "color-mix(in srgb, var(--rust) 80%, transparent)" } : undefined}
                       onClick={hasKnowledge ? () => toggleChapter(ch.id) : undefined}
                       title={hasKnowledge ? (isExpanded ? "Collapse knowledge" : `Show ${ch.knowledge_count} knowledge items`) : undefined}
                     >
@@ -829,7 +848,7 @@ function ChapterList({
                       </span>
 
                       {isMissing && (
-                        <span className="text-[9px] font-mono uppercase bg-red-100 text-red-600 px-1 rounded shrink-0">
+                        <span className="text-[9px] font-mono uppercase px-1 rounded shrink-0" style={{ color: "var(--rust)", background: "var(--rust-soft)" }}>
                           missing
                         </span>
                       )}
@@ -882,7 +901,7 @@ function PipelineBanner({
 
   if (isTerminal) {
     return (
-      <div className="flex items-center gap-2 px-4 py-2.5 rounded-lg border border-emerald-200 bg-emerald-50/50 text-emerald-700 text-xs">
+      <div className="flex items-center gap-2 px-4 py-2.5 rounded-lg border text-xs" style={{ borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)", background: "var(--green-soft)", color: "var(--green-2)" }}>
         <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
         <span className="font-medium">Pipeline complete</span>
         <span className="opacity-70">— this Work has reached B17 (Published).</span>
@@ -895,8 +914,8 @@ function PipelineBanner({
 
   if (readyToAdvance && nextLabel) {
     return (
-      <div className="flex items-center justify-between gap-3 px-4 py-2.5 rounded-lg border border-emerald-200 bg-emerald-50/60">
-        <div className="flex items-center gap-2 text-emerald-800 text-xs">
+      <div className="flex items-center justify-between gap-3 px-4 py-2.5 rounded-lg border" style={{ borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)", background: "var(--green-soft)" }}>
+        <div className="flex items-center gap-2 text-xs" style={{ color: "var(--green-2)" }}>
           <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
           <span>
             <span className="font-medium">Ready to advance</span>
@@ -904,7 +923,8 @@ function PipelineBanner({
           </span>
         </div>
         <Button size="sm" variant="outline"
-          className="gap-1.5 h-7 text-xs shrink-0 border-emerald-300 text-emerald-800 hover:bg-emerald-100"
+          className="gap-1.5 h-7 text-xs shrink-0 hover:opacity-80"
+          style={{ borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)", color: "var(--green-2)" }}
           onClick={onGoBook}>
           Advance to {nextLabel} <ArrowRight className="w-3 h-3" />
         </Button>
@@ -915,8 +935,8 @@ function PipelineBanner({
   if (hasBlockers) {
     const high = (pipeline.open_findings ?? []).filter(f => f.severity === "high" || f.severity === "critical");
     return (
-      <div className="flex items-center justify-between gap-3 px-4 py-2.5 rounded-lg border border-red-200 bg-red-50/40">
-        <div className="flex items-center gap-2 text-red-800 text-xs">
+      <div className="flex items-center justify-between gap-3 px-4 py-2.5 rounded-lg border" style={{ borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)", background: "var(--rust-soft)" }}>
+        <div className="flex items-center gap-2 text-xs" style={{ color: "var(--rust)" }}>
           <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
           <span>
             <span className="font-mono">{pipeline.status}</span> {stageLabel} has{" "}
@@ -925,7 +945,8 @@ function PipelineBanner({
           </span>
         </div>
         <Button size="sm" variant="outline"
-          className="gap-1.5 h-7 text-xs shrink-0 border-red-300 text-red-800 hover:bg-red-100"
+          className="gap-1.5 h-7 text-xs shrink-0 hover:opacity-80"
+          style={{ borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)", color: "var(--rust)" }}
           onClick={onGoBook}>
           Resolve in Book tab <ExternalLink className="w-3 h-3" />
         </Button>
@@ -935,15 +956,16 @@ function PipelineBanner({
 
   if (needsArtifact) {
     return (
-      <div className="flex items-center justify-between gap-3 px-4 py-2.5 rounded-lg border border-amber-200 bg-amber-50/40">
-        <div className="flex items-center gap-2 text-amber-800 text-xs">
+      <div className="flex items-center justify-between gap-3 px-4 py-2.5 rounded-lg border" style={{ borderColor: "var(--gilt-line)", background: "var(--gilt-soft)" }}>
+        <div className="flex items-center gap-2 text-xs" style={{ color: "var(--gilt)" }}>
           <Zap className="w-3.5 h-3.5 shrink-0" />
           <span>
             Stage <span className="font-mono">{pipeline.status}</span> ({stageLabel}) needs its AI work run before you can advance.
           </span>
         </div>
         <Button size="sm" variant="outline"
-          className="gap-1.5 h-7 text-xs shrink-0 border-amber-300 text-amber-800 hover:bg-amber-100"
+          className="gap-1.5 h-7 text-xs shrink-0 hover:opacity-80"
+          style={{ borderColor: "var(--gilt-line)", color: "var(--gilt)" }}
           onClick={onGoBook}>
           Run stage work <ArrowRight className="w-3 h-3" />
         </Button>
@@ -968,15 +990,23 @@ function PipelineBanner({
 
 // ── Helper components ──────────────────────────────────────────────────────────
 
-function MetricCard({ label, value, sub, loading, color = "text-foreground" }: {
+function MetricCard({ label, value, sub, loading, color }: {
   label: string; value: string; sub: string; loading?: boolean; color?: string;
 }) {
+  // `color` may be a Tailwind neutral class (e.g. text-muted-foreground) or a
+  // VELLUM CSS colour token (var(...) / color-mix(...)). Route tokens through
+  // an inline style so they adapt to dark mode automatically.
+  const isToken = !!color && (color.startsWith("var(") || color.startsWith("color-mix("));
+  const colorClass = isToken ? "" : (color ?? "text-foreground");
   return (
     <Card className="border-border/50">
       <CardContent className="p-4 space-y-1">
         <p className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">{label}</p>
         {loading ? <Skeleton className="h-8 w-20" /> : (
-          <p className={`text-2xl font-mono font-bold ${color}`}>{value}</p>
+          <p
+            className={`text-2xl font-mono font-bold ${colorClass}`}
+            style={isToken ? { color } : undefined}
+          >{value}</p>
         )}
         <p className="text-[11px] font-mono text-muted-foreground">{sub}</p>
       </CardContent>

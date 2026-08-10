@@ -119,20 +119,25 @@ interface ComplReport {
   dimensions: ComplDimension[];
 }
 
-const READINESS_COLOR: Record<string, string> = {
-  "Ready":          "text-emerald-700 bg-emerald-50 border-emerald-200",
-  "Near-Complete":  "text-blue-700 bg-blue-50 border-blue-200",
-  "Substantial":    "text-violet-700 bg-violet-50 border-violet-200",
-  "Developing":     "text-amber-700 bg-amber-50 border-amber-200",
-  "Draft":          "text-muted-foreground bg-muted border-border",
+// Five distinct completeness tiers — kept visually distinct across the VELLUM
+// palette. "Draft" stays neutral via muted classes.
+const READINESS_COLOR: Record<string, { cls: string; style?: React.CSSProperties }> = {
+  "Ready":          { cls: "", style: { color: "var(--green-2)", background: "var(--green-soft)", borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)" } },
+  "Near-Complete":  { cls: "", style: { color: "var(--green-raw)", background: "color-mix(in srgb, var(--green-raw) 10%, transparent)", borderColor: "color-mix(in srgb, var(--green-raw) 28%, transparent)" } },
+  "Substantial":    { cls: "", style: { color: "color-mix(in srgb, var(--gilt) 55%, var(--rust))", background: "color-mix(in srgb, var(--gilt) 12%, transparent)", borderColor: "color-mix(in srgb, var(--gilt) 45%, var(--rust) 30%)" } },
+  "Developing":     { cls: "", style: { color: "var(--gilt)", background: "var(--gilt-soft)", borderColor: "var(--gilt-line)" } },
+  "Draft":          { cls: "text-muted-foreground bg-muted border-border" },
 };
 
+// Five distinct dimension-bar colours — kept visually distinct.
 const DIM_BAR_COLOR: Record<string, string> = {
-  structural: "bg-violet-500",
-  content:    "bg-blue-500",
-  research:   "bg-emerald-500",
-  editorial:  "bg-amber-500",
-  source:     "bg-orange-400",
+  // Keep in sync with DIM_BAR in works/intelligence.tsx — same dimensions,
+  // same colors, so the two views read as one system.
+  structural: "var(--gilt)",
+  content:    "color-mix(in srgb, var(--gilt) 55%, var(--rust))",
+  research:   "var(--green-2)",
+  editorial:  "var(--green-raw)",
+  source:     "var(--rust)",
 };
 
 export function CompletenessTab({ workId }: { workId: string }) {
@@ -225,12 +230,12 @@ export function CompletenessTab({ workId }: { workId: string }) {
     </div>
   );
 
-  const readinessClass = READINESS_COLOR[data.readiness] ?? READINESS_COLOR["Draft"];
+  const readinessCfg = READINESS_COLOR[data.readiness] ?? READINESS_COLOR["Draft"];
 
   return (
     <div className="space-y-6">
       {/* Overall banner */}
-      <div className={`flex items-center justify-between p-4 rounded-xl border ${readinessClass}`}>
+      <div className={`flex items-center justify-between p-4 rounded-xl border ${readinessCfg.cls}`} style={readinessCfg.style}>
         <div>
           <p className="text-xs font-mono uppercase tracking-wider opacity-70 mb-0.5">Readiness</p>
           <p className="text-2xl font-serif font-semibold">{data.readiness}</p>
@@ -399,8 +404,8 @@ export function CompletenessTab({ workId }: { workId: string }) {
             {/* Progress bar */}
             <div className="h-2 bg-muted rounded-full overflow-hidden">
               <div
-                className={`h-full rounded-full transition-all duration-500 ${DIM_BAR_COLOR[dim.name] ?? "bg-primary"}`}
-                style={{ width: `${dim.score}%` }}
+                className="h-full rounded-full transition-all duration-500"
+                style={{ width: `${dim.score}%`, background: DIM_BAR_COLOR[dim.name] ?? "var(--primary)" }}
               />
             </div>
             {/* Rule + evidence */}

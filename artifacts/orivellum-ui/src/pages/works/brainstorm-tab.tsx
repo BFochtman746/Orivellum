@@ -392,7 +392,7 @@ export function BrainstormTab({ workId, initialSeed = "", initialContext = "gene
       {/* Header */}
       <div className="space-y-1">
         <div className="flex items-center gap-2">
-          <Lightbulb className="w-4 h-4 text-amber-500" />
+          <Lightbulb className="w-4 h-4" style={{ color: "var(--gilt)" }} />
           <h3 className="font-medium text-sm">Divergent Thinking</h3>
         </div>
         <p className="text-xs text-muted-foreground max-w-prose">

@@ -118,13 +118,14 @@ interface GapReport {
   gaps: GapItem[]; suggested_queries: string[]; evaluated_at: string;
 }
 
-const GAP_SEVERITY_STYLE: Record<string, string> = {
-  high:   "border-red-200 bg-red-50/40 text-red-900",
-  medium: "border-amber-200 bg-amber-50/40 text-amber-900",
-  low:    "border-blue-200 bg-blue-50/40 text-blue-900",
+// Three distinct severity tiers — high (rust), medium (gilt), low (green-2).
+const GAP_SEVERITY_STYLE: Record<string, React.CSSProperties> = {
+  high:   { borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)", background: "var(--rust-soft)", color: "var(--rust)" },
+  medium: { borderColor: "var(--gilt-line)", background: "var(--gilt-soft)", color: "var(--gilt)" },
+  low:    { borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)", background: "var(--green-soft)", color: "var(--green-2)" },
 };
 const GAP_DOT: Record<string, string> = {
-  high: "bg-red-500", medium: "bg-amber-400", low: "bg-blue-400",
+  high: "var(--rust)", medium: "var(--gilt)", low: "var(--green-2)",
 };
 
 export function GapsTab({ workId, onBrainstorm }: { workId: string; onBrainstorm?: (seed: string) => void }) {
@@ -255,11 +256,13 @@ export function GapsTab({ workId, onBrainstorm }: { workId: string; onBrainstorm
         </div>
         <div className="h-2.5 bg-muted rounded-full overflow-hidden">
           <div
-            className={`h-full rounded-full transition-all duration-500 ${
-              data.coverage_pct >= 80 ? "bg-emerald-500" :
-              data.coverage_pct >= 50 ? "bg-amber-400" : "bg-red-400"
-            }`}
-            style={{ width: `${data.coverage_pct}%` }}
+            className="h-full rounded-full transition-all duration-500"
+            style={{
+              width: `${data.coverage_pct}%`,
+              background:
+                data.coverage_pct >= 80 ? "var(--green-2)" :
+                data.coverage_pct >= 50 ? "var(--gilt)" : "var(--rust)",
+            }}
           />
         </div>
         <p className="text-xs font-mono text-muted-foreground">
@@ -280,7 +283,7 @@ export function GapsTab({ workId, onBrainstorm }: { workId: string; onBrainstorm
             return (
               <div key={sev} className="space-y-2">
                 <h4 className="text-[11px] font-mono uppercase tracking-widest text-muted-foreground flex items-center gap-2">
-                  <span className={`w-2 h-2 rounded-full ${GAP_DOT[sev]}`} />
+                  <span className="w-2 h-2 rounded-full" style={{ background: GAP_DOT[sev] }} />
                   {sev} priority ({items.length})
                 </h4>
                 {items.map((g, i) => {
@@ -289,7 +292,7 @@ export function GapsTab({ workId, onBrainstorm }: { workId: string; onBrainstorm
                   const isResearchPending = actionPending === chapTitle;
                   const isExtractPending  = actionPending === docId;
                   return (
-                    <div key={i} className={`p-3.5 rounded-lg border ${GAP_SEVERITY_STYLE[sev]}`}>
+                    <div key={i} className="p-3.5 rounded-lg border" style={GAP_SEVERITY_STYLE[sev]}>
                       <div className="flex items-start justify-between gap-2 mb-1">
                         <p className="font-medium text-sm">{g.title}</p>
                         <div className="flex items-center gap-1.5 shrink-0">
@@ -315,7 +318,8 @@ export function GapsTab({ workId, onBrainstorm }: { workId: string; onBrainstorm
                         {onBrainstorm && (
                           <button
                             onClick={() => onBrainstorm(g.title)}
-                            className="flex items-center gap-1.5 text-[11px] font-mono text-violet-500 opacity-80 hover:opacity-100 transition-opacity"
+                            className="flex items-center gap-1.5 text-[11px] font-mono opacity-80 hover:opacity-100 transition-opacity"
+                            style={{ color: "var(--gilt)" }}
                           >
                             <Lightbulb className="w-3 h-3" />
                             Brainstorm this →

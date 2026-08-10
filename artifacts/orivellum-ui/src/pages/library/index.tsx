@@ -123,8 +123,8 @@ function DuplicatePairRow({
   };
 
   return (
-    <div className="flex flex-col gap-1.5 py-2 border-t border-amber-200/60 first:border-t-0 first:pt-0">
-      <p className="text-[11px] font-mono text-amber-800 flex items-center flex-wrap gap-x-1.5 gap-y-0.5">
+    <div className="flex flex-col gap-1.5 py-2 border-t first:border-t-0 first:pt-0" style={{ borderColor: "var(--gilt-line)" }}>
+      <p className="text-[11px] font-mono flex items-center flex-wrap gap-x-1.5 gap-y-0.5" style={{ color: "var(--gilt)" }}>
         <span className="font-semibold">{pair.doc_a_title || pair.doc_a_id.slice(0, 8)}</span>
         <span className="opacity-60">↔</span>
         <span className="font-semibold">{pair.doc_b_title || pair.doc_b_id.slice(0, 8)}</span>
@@ -136,21 +136,24 @@ function DuplicatePairRow({
         <button
           onClick={() => resolve("mark_versions")}
           disabled={resolving !== null}
-          className="text-[10px] font-mono px-2 py-0.5 rounded border border-amber-400 bg-amber-100 hover:bg-amber-200 text-amber-900 disabled:opacity-40 transition-colors"
+          className="text-[10px] font-mono px-2 py-0.5 rounded border disabled:opacity-40 transition-opacity hover:opacity-80"
+          style={{ borderColor: "color-mix(in srgb, var(--gilt) 55%, transparent)", background: "var(--gilt-soft)", color: "var(--gilt)" }}
         >
           {resolving === "mark_versions" ? "…" : "Link as versions"}
         </button>
         <button
           onClick={() => resolve("mark_superseded")}
           disabled={resolving !== null}
-          className="text-[10px] font-mono px-2 py-0.5 rounded border border-amber-300 bg-white/50 hover:bg-amber-100 text-amber-800 disabled:opacity-40 transition-colors"
+          className="text-[10px] font-mono px-2 py-0.5 rounded border bg-white/50 disabled:opacity-40 transition-opacity hover:opacity-80"
+          style={{ borderColor: "var(--gilt-line)", color: "var(--gilt)" }}
         >
           {resolving === "mark_superseded" ? "…" : "Mark older superseded"}
         </button>
         <button
           onClick={() => resolve("keep_both")}
           disabled={resolving !== null}
-          className="text-[10px] font-mono px-2 py-0.5 rounded text-amber-600/70 hover:text-amber-700 disabled:opacity-40 transition-colors"
+          className="text-[10px] font-mono px-2 py-0.5 rounded disabled:opacity-40 transition-opacity hover:opacity-80"
+          style={{ color: "var(--gilt)" }}
         >
           {resolving === "keep_both" ? "…" : "Keep both"}
         </button>
@@ -252,16 +255,17 @@ function DuplicatesBanner({ readyDocCount = 0 }: { readyDocCount?: number }) {
   }
 
   return (
-    <div className="rounded-lg border border-amber-200 bg-amber-50/60 text-amber-900 overflow-hidden">
+    <div className="rounded-lg border overflow-hidden" style={{ borderColor: "color-mix(in srgb, var(--gilt) 40%, transparent)", background: "var(--gilt-soft)", color: "var(--gilt)" }}>
       {/* Header row */}
       <div className="flex items-center gap-2.5 px-4 py-2.5">
-        <GitMerge className="w-4 h-4 shrink-0 text-amber-600" />
+        <GitMerge className="w-4 h-4 shrink-0" style={{ color: "var(--gilt)" }} />
         <p className="flex-1 text-sm font-medium">
           {count} near-duplicate pair{count !== 1 ? "s" : ""} detected
         </p>
         <button
           onClick={() => setCollapsed((c) => !c)}
-          className="text-[10px] font-mono text-amber-600/70 hover:text-amber-700 transition-colors"
+          className="text-[10px] font-mono transition-opacity hover:opacity-80"
+          style={{ color: "var(--gilt)" }}
         >
           {collapsed ? "show" : "hide"}
         </button>
@@ -273,7 +277,7 @@ function DuplicatesBanner({ readyDocCount = 0 }: { readyDocCount?: number }) {
             <DuplicatePairRow key={p.id} pair={p} onResolved={handleResolved} />
           ))}
           {count > 5 && (
-            <p className="text-[10px] font-mono text-amber-700/60 pt-1.5 border-t border-amber-200/60">
+            <p className="text-[10px] font-mono pt-1.5 border-t" style={{ color: "var(--gilt)", borderColor: "var(--gilt-line)" }}>
               {count - 5} more pair{count - 5 !== 1 ? "s" : ""} not shown
             </p>
           )}
@@ -607,8 +611,8 @@ function ImportDialog({ onSuccess, defaultOpen = false }: ImportDialogProps) {
   const total = queue.length;
 
   const stateIcon = (s: FileStatus) => {
-    if (s.state === "done")      return <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />;
-    if (s.state === "duplicate") return <CheckCircle2 className="w-3.5 h-3.5 text-blue-400 shrink-0" />;
+    if (s.state === "done")      return <CheckCircle2 className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--green-2)" }} />;
+    if (s.state === "duplicate") return <CheckCircle2 className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--gilt)" }} />;
     if (s.state === "error")     return <AlertCircle  className="w-3.5 h-3.5 text-destructive shrink-0" />;
     if (s.state === "uploading") return <Clock        className="w-3.5 h-3.5 text-primary animate-pulse shrink-0" />;
     if (s.state === "cancelled") return <X            className="w-3.5 h-3.5 text-muted-foreground shrink-0" />;
@@ -686,7 +690,7 @@ function ImportDialog({ onSuccess, defaultOpen = false }: ImportDialogProps) {
                   ) : s.state === "error" ? (
                     <p className="text-[10px] text-destructive font-mono mt-0.5 truncate">{s.error}</p>
                   ) : s.state === "duplicate" ? (
-                    <p className="text-[10px] text-blue-500 font-mono mt-0.5">already in library</p>
+                    <p className="text-[10px] font-mono mt-0.5" style={{ color: "var(--gilt)" }}>already in library</p>
                   ) : s.state === "cancelled" ? (
                     <p className="text-[10px] text-muted-foreground font-mono mt-0.5">cancelled</p>
                   ) : (
@@ -701,7 +705,8 @@ function ImportDialog({ onSuccess, defaultOpen = false }: ImportDialogProps) {
                 {s.state === "duplicate" && s.docId && (
                   <button
                     onClick={() => navigateTo(`/library/${s.docId}`)}
-                    className="text-[10px] font-mono text-blue-500 hover:underline shrink-0"
+                    className="text-[10px] font-mono hover:underline shrink-0"
+                    style={{ color: "var(--gilt)" }}
                   >
                     View
                   </button>
@@ -1041,7 +1046,8 @@ export default function Library() {
                 <Button
                   variant="outline"
                   size="sm"
-                  className="gap-1.5 text-xs border-amber-300 text-amber-700 hover:bg-amber-50"
+                  className="gap-1.5 text-xs hover:opacity-80"
+                  style={{ borderColor: "var(--gilt-line)", color: "var(--gilt)" }}
                   onClick={handleExplodeZips}
                   disabled={explodingZips}
                 >
@@ -1266,9 +1272,10 @@ export default function Library() {
                   }
                 }
               }
-              const groups: Array<{ title: string; color: string; docs: any[] }> = [];
+              const groups: Array<{ title: string; color: string; colorStyle?: React.CSSProperties; docs: any[] }> = [];
               for (const [label, gdocs] of grouped) {
-                groups.push({ title: label, color: hasTopics ? "text-primary" : "text-violet-600", docs: gdocs });
+                // No violet VELLUM token — gilt is the nearest accent for grouped works.
+                groups.push({ title: label, color: hasTopics ? "text-primary" : "", colorStyle: hasTopics ? undefined : { color: "var(--gilt)" }, docs: gdocs });
               }
               if (unclassified.length > 0) {
                 groups.push({ title: hasTopics ? "Unclassified" : "Unassigned", color: "text-muted-foreground", docs: unclassified });
@@ -1284,8 +1291,8 @@ export default function Library() {
                 <div key={group.title} className="space-y-2">
                   <div className={`pt-2 pb-1 border-b border-border/40`}>
                     <div className="flex items-center gap-2">
-                      <FolderOpen className={`w-4 h-4 ${group.color} shrink-0`} />
-                      <span className={`text-sm font-semibold font-serif ${group.color}`}>{group.title}</span>
+                      <FolderOpen className={`w-4 h-4 ${group.color} shrink-0`} style={group.colorStyle} />
+                      <span className={`text-sm font-semibold font-serif ${group.color}`} style={group.colorStyle}>{group.title}</span>
                       <span className="text-xs font-mono text-muted-foreground">
                         {group.docs.length} doc{group.docs.length !== 1 ? "s" : ""}
                       </span>
@@ -1311,8 +1318,8 @@ export default function Library() {
                       >
                         <CardContent className="p-3 sm:p-4 flex items-center justify-between gap-4">
                           <div className="flex items-center gap-3 min-w-0">
-                            <div className={`w-8 h-8 rounded flex items-center justify-center shrink-0 border ${hasError ? "bg-red-50 border-red-200" : "bg-muted/50 border-border/50"}`}>
-                              {hasError ? <AlertCircle className="w-3.5 h-3.5 text-red-500" /> : <FileText className="w-3.5 h-3.5 text-muted-foreground" />}
+                            <div className={`w-8 h-8 rounded flex items-center justify-center shrink-0 border ${hasError ? "" : "bg-muted/50 border-border/50"}`} style={hasError ? { background: "var(--rust-soft)", borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)" } : undefined}>
+                              {hasError ? <AlertCircle className="w-3.5 h-3.5" style={{ color: "var(--rust)" }} /> : <FileText className="w-3.5 h-3.5 text-muted-foreground" />}
                             </div>
                             <div className="min-w-0">
                               <h3 className="font-medium truncate text-sm">{doc.title || doc.source || "Untitled"}</h3>
@@ -1322,12 +1329,12 @@ export default function Library() {
                                 <LifecycleBadge lifecycle={doc.lifecycle} />
                                 {doc.word_count > 0 && <span className="text-[10px] font-mono text-muted-foreground">{doc.word_count.toLocaleString()} words</span>}
                                 {doc.meta?.zip_exploded && (
-                                  <span className="text-[10px] text-amber-600 flex items-center gap-1 font-mono bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5">
+                                  <span className="text-[10px] flex items-center gap-1 font-mono border rounded px-1.5 py-0.5" style={{ color: "var(--gilt)", background: "var(--gilt-soft)", borderColor: "var(--gilt-line)" }}>
                                     <Package className="w-2.5 h-2.5" />{doc.meta.zip_child_count ?? "?"} inside
                                   </span>
                                 )}
                                 {doc.meta?.from_zip && !doc.meta?.zip_exploded && (
-                                  <span className="text-[10px] text-violet-500 flex items-center gap-1 font-mono bg-violet-50 border border-violet-200 rounded px-1.5 py-0.5">
+                                  <span className="text-[10px] flex items-center gap-1 font-mono border rounded px-1.5 py-0.5" style={{ color: "var(--ink-soft)", borderColor: "var(--line)", background: "transparent" }}>
                                     <FolderOpen className="w-2.5 h-2.5" />archive
                                   </span>
                                 )}
@@ -1341,7 +1348,7 @@ export default function Library() {
                           </div>
                           <div className="flex items-center gap-1 shrink-0">
                             {hasError && (
-                              <Button variant="ghost" size="icon" aria-label="Retry extraction" className="h-7 w-7 text-amber-600 hover:text-amber-700 hover:bg-amber-50" onClick={(e) => handleReprocess(doc.id, e)} disabled={isReprocessing}>
+                              <Button variant="ghost" size="icon" aria-label="Retry extraction" className="h-7 w-7 hover:opacity-80" style={{ color: "var(--gilt)" }} onClick={(e) => handleReprocess(doc.id, e)} disabled={isReprocessing}>
                                 <RefreshCw className={`w-3.5 h-3.5 ${isReprocessing ? "animate-spin" : ""}`} />
                               </Button>
                             )}
@@ -1446,11 +1453,12 @@ export default function Library() {
                             {doc.warnings.map((w: any) => (
                               <div
                                 key={w.id}
-                                className="flex items-start gap-1.5 text-xs font-mono text-red-700 bg-red-50/70 border border-red-100 rounded px-2 py-1"
+                                className="flex items-start gap-1.5 text-xs font-mono border rounded px-2 py-1"
+                                style={{ color: "var(--rust)", background: "var(--rust-soft)", borderColor: "color-mix(in srgb, var(--rust) 20%, transparent)" }}
                               >
-                                <AlertCircle className="w-3 h-3 mt-0.5 shrink-0 text-red-400" />
+                                <AlertCircle className="w-3 h-3 mt-0.5 shrink-0" style={{ color: "var(--rust)" }} />
                                 <span className="break-all">
-                                  <span className="font-semibold uppercase text-[10px] text-red-500 mr-1">
+                                  <span className="font-semibold uppercase text-[10px] mr-1" style={{ color: "var(--rust)" }}>
                                     {w.kind}
                                   </span>
                                   {w.detail}
@@ -1476,7 +1484,7 @@ export default function Library() {
                         {hasError && (
                           <Tooltip>
                             <TooltipTrigger asChild>
-                              <Button variant="ghost" size="icon" aria-label="Retry extraction" className="h-7 w-7 text-amber-600 hover:text-amber-700 hover:bg-amber-50" onClick={(e) => handleReprocess(doc.id, e)} disabled={isReprocessing}>
+                              <Button variant="ghost" size="icon" aria-label="Retry extraction" className="h-7 w-7 hover:opacity-80" style={{ color: "var(--gilt)" }} onClick={(e) => handleReprocess(doc.id, e)} disabled={isReprocessing}>
                                 <RefreshCw className={`w-3.5 h-3.5 ${isReprocessing ? "animate-spin" : ""}`} />
                               </Button>
                             </TooltipTrigger>

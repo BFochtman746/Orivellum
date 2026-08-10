@@ -233,7 +233,7 @@ export default function TopicsPage() {
                   <div className="space-y-1">
                     <p className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Gaps</p>
                     {detail.profile.gaps.slice(0, 3).map((g, i) => (
-                      <p key={i} className="text-[11px] text-amber-700">• {g}</p>
+                      <p key={i} className="text-[11px]" style={{ color: "var(--gilt)" }}>• {g}</p>
                     ))}
                   </div>
                 )}

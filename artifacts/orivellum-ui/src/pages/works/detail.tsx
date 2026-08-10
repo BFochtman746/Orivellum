@@ -248,7 +248,8 @@ export default function WorkDetail() {
                 variant="outline"
                 disabled={startPipeline.isPending}
                 onClick={() => startPipeline.mutate()}
-                className="gap-1.5 text-xs border-amber-400/40 text-amber-700 hover:bg-amber-50 dark:text-amber-400 dark:hover:bg-amber-950/30"
+                className="gap-1.5 text-xs transition-opacity hover:opacity-80"
+                style={{ color: "var(--gilt)", borderColor: "var(--gilt-line)" }}
               >
                 {startPipeline.isPending
                   ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Starting…</>

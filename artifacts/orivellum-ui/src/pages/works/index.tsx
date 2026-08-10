@@ -154,7 +154,7 @@ function ImportFromLibraryDialog({
                       key={doc.id}
                       className="flex items-center gap-3 px-3 py-2.5 rounded-lg opacity-40 cursor-not-allowed"
                     >
-                      <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
+                      <CheckCircle2 className="w-4 h-4 shrink-0" style={{ color: "var(--green-2)" }} />
                       <FileText className="w-4 h-4 text-muted-foreground shrink-0" />
                       <div className="min-w-0 flex-1">
                         <div className="text-sm font-medium truncate">

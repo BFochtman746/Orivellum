@@ -221,7 +221,8 @@ export function GenerateMenu({ workId }: { workId: string }) {
         <Button
           size="sm"
           variant="outline"
-          className="gap-1.5 text-xs border-emerald-600/30 text-emerald-700 hover:bg-emerald-50 dark:text-emerald-400 dark:border-emerald-400/30 dark:hover:bg-emerald-900/20"
+          className="gap-1.5 text-xs transition-opacity hover:opacity-80"
+          style={{ color: "var(--green-2)", borderColor: "color-mix(in srgb, var(--green-2) 30%, transparent)" }}
           disabled={!!busy}
         >
           {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5" />}
@@ -253,7 +254,7 @@ export function GenerateMenu({ workId }: { workId: string }) {
         {result && (
           <>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={downloadResult} className="gap-2 text-emerald-700 dark:text-emerald-400 cursor-pointer">
+            <DropdownMenuItem onClick={downloadResult} className="gap-2 cursor-pointer" style={{ color: "var(--green-2)" }}>
               <Download className="w-4 h-4" />
               <div className="flex-1 min-w-0">
                 <div className="text-sm font-medium">Download last output</div>
