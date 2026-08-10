@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import io
 import os
 import sys
 import tempfile
@@ -225,8 +224,14 @@ class TestOCRConcurrency(unittest.TestCase):
 
     def test_fast_request_not_blocked_by_slow_ocr(self):
         """The fast GET /api/studio/status request must return well before
-        the slow (0.5 s) OCR call finishes."""
+        the slow OCR call finishes."""
+        import threading
 
+        # CI runners can be heavily loaded — give the fast request a much
+        # wider window there so scheduling jitter can't flake the test.
+        ocr_duration = 2.0 if os.environ.get("CI") else 0.5
+
+        ocr_started = threading.Event()
         ocr_finish_time: list[float] = []
         fast_finish_time: list[float] = []
 
@@ -240,7 +245,8 @@ class TestOCRConcurrency(unittest.TestCase):
 
                 async def _slow_ocr_call():
                     def _blocking(_img):
-                        time.sleep(0.5)    # simulate 500 ms OCR
+                        ocr_started.set()
+                        time.sleep(ocr_duration)    # simulate slow OCR
                         return "scanned text"
 
                     fake_img = MagicMock()
@@ -254,8 +260,10 @@ class TestOCRConcurrency(unittest.TestCase):
                     ocr_finish_time.append(time.monotonic())
 
                 async def _fast_call():
-                    # Wait a tiny bit to ensure OCR has started
-                    await asyncio.sleep(0.05)
+                    # Wait until the OCR worker thread has actually started,
+                    # so the fast request gets the full OCR duration as its
+                    # completion window (a fixed sleep flakes on slow runners).
+                    await asyncio.to_thread(ocr_started.wait, 10)
                     await client.get("/api/studio/status")
                     fast_finish_time.append(time.monotonic())
 
