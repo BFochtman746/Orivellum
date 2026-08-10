@@ -28,3 +28,24 @@ uri = "file://reports/task-cleanup-2026-08-10.md"
 type = "text"
 title = "Task cleanup — full review of all 518 open tasks"
 description = "Every open task classified: 97 recommended for archiving (retired phone app, duplicates, already built) and 421 keepers ranked in 5 priority tiers."
+
+[[outputs]]
+id = "rpBOiisOm18q9Zp5YcO-H"
+uri = "file://deliverables/PDF_TO_EXCEL_v2.1.zip"
+type = "unspecified"
+title = "PDF_TO_EXCEL v2.1 (corrected pack)"
+description = "Fixed workbook check, restored folder layout, regenerated checksums, added 2026 research update."
+
+[[outputs]]
+id = "zLQk3hBSHLFQSaGFV1ihL"
+uri = "file://deliverables/PDF_TO_EXCEL_Review_Report.md"
+type = "text"
+title = "Verification & Optimization Report"
+description = "What was checked, what was broken, what was fixed, and how the protocol was brought up to 2026 research."
+
+[[outputs]]
+id = "7uLgDWlG0PHHvcSA-8voG"
+uri = "file://deliverables/Forensic_Excel_Standard_Evaluation.md"
+type = "text"
+title = "Forensic Excel Standard — Evaluation"
+description = "What the proposed standard would do for Orivellum, what we already meet, what's wrong with it, and the four gaps to close."

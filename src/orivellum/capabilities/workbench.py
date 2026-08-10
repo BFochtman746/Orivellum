@@ -399,6 +399,7 @@ def _publish_version(
     files: list[dict],
     checks: dict | None,
     note: str = "",
+    verdict: str = "verified",
 ) -> dict:
     """Copy *src_dir* into the project as the next version: stage, insert the
     row, atomically rename staging → v{n}. If the rename fails the row is
@@ -408,10 +409,14 @@ def _publish_version(
     pdir = project_dir(cfg, project_id)
     pdir.mkdir(parents=True, exist_ok=True)
     staging = pdir / f".staging-{_uuid_mod.uuid4().hex}"
-    shutil.copytree(src_dir, staging)
+    try:
+        shutil.copytree(src_dir, staging)
+    except Exception:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
     try:
         row = db.create_wb_version(
-            project_id, instruction, files, checks=checks, verdict="verified", note=note
+            project_id, instruction, files, checks=checks, verdict=verdict, note=note
         )
     except Exception:
         shutil.rmtree(staging, ignore_errors=True)
@@ -424,6 +429,170 @@ def _publish_version(
         shutil.rmtree(staging, ignore_errors=True)
         raise
     return row
+
+
+_IMPORT_JUNK_PREFIXES = ("__MACOSX/",)
+_IMPORT_JUNK_NAMES = {".DS_Store", "Thumbs.db"}
+_XLSX_MAX_MEMBERS = 10_000
+_XLSX_MAX_UNCOMPRESSED = 300 * 1024 * 1024
+
+
+def check_xlsx_zip_safety(path: pathlib.Path) -> str | None:
+    """Declared-size guard against OOXML decompression bombs: an .xlsx is
+    itself a zip, so a small file can expand enormously when opened.
+    Returns an error string, or ``None`` when safe (or not a zip at all —
+    openpyxl then reports its own load error)."""
+    try:
+        with zipfile.ZipFile(path) as zf:
+            infos = zf.infolist()
+            if len(infos) > _XLSX_MAX_MEMBERS:
+                return f"workbook zip has too many members ({len(infos)})"
+            total = sum(i.file_size for i in infos)
+            if total > _XLSX_MAX_UNCOMPRESSED:
+                mb = total // (1024 * 1024)
+                return f"workbook expands to {mb} MB uncompressed — refusing to open it"
+    except (zipfile.BadZipFile, OSError):
+        return None
+    return None
+
+
+def _detect_kind(names: list[str]) -> str:
+    """xlsx if the upload contains a workbook and no source-code files,
+    otherwise code."""
+    from orivellum.capabilities.workbench_analyze import _CODE_EXTS
+
+    exts = {pathlib.PurePosixPath(n).suffix.lower() for n in names}
+    if ".xlsx" in exts and not (exts & _CODE_EXTS):
+        return "xlsx"
+    return "code"
+
+
+def _safe_zip_member(info: zipfile.ZipInfo) -> pathlib.PurePosixPath | None:
+    """Validate one zip entry. Returns its relative path, ``None`` for
+    junk/directories, or raises for traversal attempts and symlinks."""
+    raw = info.filename
+    if info.is_dir() or raw.startswith(_IMPORT_JUNK_PREFIXES):
+        return None
+    parts = pathlib.PurePosixPath(raw.replace("\\", "/")).parts
+    if not parts or parts[-1] in _IMPORT_JUNK_NAMES:
+        return None
+    if any(p in ("..", "") for p in parts) or parts[0].endswith(":") or raw.startswith("/"):
+        raise ValueError(f"unsafe path in zip: {raw!r}")
+    if (info.external_attr >> 16) & 0o170000 == 0o120000:
+        raise ValueError(f"symlinks are not allowed in imports: {raw!r}")
+    return pathlib.PurePosixPath(*parts)
+
+
+def _extract_zip_member(zf, info, dest: pathlib.Path, total: int) -> int:
+    """Stream one member to *dest*, enforcing the cumulative byte cap.
+    Returns the new cumulative total."""
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    limit_mb = _MAX_OUTPUT_BYTES // (1024 * 1024)
+    with zf.open(info) as src, open(dest, "wb") as dst:
+        while True:
+            chunk = src.read(1024 * 1024)
+            if not chunk:
+                return total
+            total += len(chunk)
+            if total > _MAX_OUTPUT_BYTES:
+                raise ValueError(f"zip contents too large (limit {limit_mb} MB uncompressed)")
+            dst.write(chunk)
+
+
+def _extract_upload(upload_path: pathlib.Path, filename: str, stage: pathlib.Path) -> list[str]:
+    """Stage the uploaded file (single .xlsx) or its zip contents.
+    Rejects path traversal, symlinks, and anything over the version
+    limits. Returns the staged relative file names."""
+    suffix = pathlib.PurePosixPath(filename).suffix.lower()
+    if suffix == ".xlsx":
+        if upload_path.stat().st_size > _MAX_OUTPUT_BYTES:
+            raise ValueError(f"file too large (limit {_MAX_OUTPUT_BYTES // (1024 * 1024)} MB)")
+        shutil.copy2(upload_path, stage / pathlib.PurePosixPath(filename).name)
+        return [pathlib.PurePosixPath(filename).name]
+    if suffix != ".zip":
+        raise ValueError("upload must be a .xlsx workbook or a .zip of project files")
+
+    try:
+        zf = zipfile.ZipFile(upload_path)
+    except zipfile.BadZipFile as exc:
+        raise ValueError("the uploaded file is not a valid zip") from exc
+    names: list[str] = []
+    total = 0
+    stage_resolved = stage.resolve()
+    with zf:
+        for info in zf.infolist():
+            rel = _safe_zip_member(info)
+            if rel is None:
+                continue
+            dest = (stage / rel).resolve()
+            if not dest.is_relative_to(stage_resolved):
+                raise ValueError(f"unsafe path in zip: {info.filename!r}")
+            if len(names) + 1 > _MAX_OUTPUT_FILES:
+                raise ValueError(f"too many files in zip (limit {_MAX_OUTPUT_FILES})")
+            total = _extract_zip_member(zf, info, dest, total)
+            names.append(str(rel))
+    if not names:
+        raise ValueError("the zip contains no usable files")
+    return names
+
+
+def import_upload(
+    db,
+    cfg,
+    title: str,
+    brief: str,
+    upload_path: pathlib.Path,
+    filename: str,
+    kind: str | None = None,
+) -> dict:
+    """Create a project whose v1 is the uploaded workbook / zip contents.
+    No build runs — the imported files ARE the first version. Verification
+    problems (e.g. a workbook that will not load) are recorded as warnings
+    on the version, not rejected: reviewing broken files is a valid use."""
+    with tempfile.TemporaryDirectory() as tmp:
+        stage = pathlib.Path(tmp) / "stage"
+        stage.mkdir()
+        names = _extract_upload(upload_path, filename, stage)
+        for staged in sorted(stage.rglob("*.xlsx")):
+            err = check_xlsx_zip_safety(staged)
+            if err:
+                raise ValueError(f"{staged.name}: {err}")
+        resolved_kind = kind if kind in KINDS else _detect_kind(names)
+        _ok, checks = _verify_output(resolved_kind, stage)
+        checks = {
+            "imported": True,
+            "source_filename": filename,
+            "source_sha256": _sha256(upload_path),
+            "import_warnings": checks.get("problems") or [],
+            **({"error": checks["error"]} if checks.get("error") else {}),
+        }
+        if checks.get("error"):
+            # Structural limits (count/bytes) are enforced even for imports.
+            raise ValueError(checks["error"])
+        proj = db.create_wb_project(title, resolved_kind, brief)
+        db.claim_wb_build(proj["id"])  # fresh project — always succeeds
+        try:
+            files = _snapshot(stage)
+            _publish_version(
+                db,
+                cfg,
+                proj["id"],
+                stage,
+                f"Imported from {filename}",
+                files,
+                checks,
+                note=f"{len(files)} file(s) imported",
+                verdict="imported",
+            )
+        except Exception:
+            # Remove both the DB rows AND any files staged under the project
+            # directory so a failed import leaves nothing behind.
+            db.delete_wb_project(proj["id"])
+            shutil.rmtree(project_dir(cfg, proj["id"]), ignore_errors=True)
+            raise
+        finally:
+            db.update_wb_project(proj["id"], building=0)
+    return db.get_wb_project(proj["id"])
 
 
 def revert_to(db, cfg, project_id: str, version_no: int) -> dict:

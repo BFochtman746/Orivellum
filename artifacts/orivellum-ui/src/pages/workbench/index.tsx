@@ -12,7 +12,7 @@ import {
 } from "@/components/ui/dialog";
 import {
   Hammer, Plus, Loader2, ArrowRight, FileSpreadsheet, Code2, Archive,
-  AlertCircle,
+  AlertCircle, Upload,
 } from "lucide-react";
 import { format } from "date-fns";
 import { toast } from "sonner";
@@ -36,9 +36,11 @@ export default function WorkbenchPage() {
   const [, navigate] = useLocation();
   const queryClient = useQueryClient();
   const [showNew, setShowNew] = useState(false);
+  const [mode, setMode] = useState<"describe" | "import">("describe");
   const [title, setTitle] = useState("");
   const [kind, setKind] = useState<"xlsx" | "code">("xlsx");
   const [brief, setBrief] = useState("");
+  const [importFile, setImportFile] = useState<File | null>(null);
 
   const { data, isLoading } = useQuery<{ projects: WbProject[] }>({
     queryKey: ["wb-projects"],
@@ -62,6 +64,27 @@ export default function WorkbenchPage() {
       navigate(`/workbench/${res.id}`);
     },
     onError: () => toast.error("Could not create project"),
+  });
+
+  const importProject = useMutation({
+    mutationFn: async () => {
+      if (!importFile) throw new Error("Choose a file first");
+      const form = new FormData();
+      form.append("file", importFile, importFile.name);
+      if (title.trim()) form.append("title", title.trim());
+      if (brief.trim()) form.append("brief", brief.trim());
+      const r = await apiFetch(`${API}/projects/import`, { method: "POST", body: form });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error((body as { detail?: string }).detail ?? "Import failed");
+      return body as { id: string };
+    },
+    onSuccess: (res) => {
+      queryClient.invalidateQueries({ queryKey: ["wb-projects"] });
+      toast.success("Imported — the files are saved as v1");
+      setShowNew(false); setTitle(""); setBrief(""); setImportFile(null);
+      navigate(`/workbench/${res.id}`);
+    },
+    onError: (e: Error) => toast.error(e.message),
   });
 
   const projects = data?.projects ?? [];
@@ -138,53 +161,98 @@ export default function WorkbenchPage() {
           <DialogHeader>
             <DialogTitle>New Workbench project</DialogTitle>
             <DialogDescription>
-              The AI builds the first version from your brief. You then refine it with
-              instructions — every accepted change is saved as a new version.
+              {mode === "describe"
+                ? "The AI builds the first version from your brief. You then refine it with instructions — every accepted change is saved as a new version."
+                : "Bring an existing Excel workbook or a zip of project files. The upload becomes version 1 exactly as it is — then you can analyze and improve it."}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
+            <div className="flex gap-2">
+              {([["describe", "Describe it", Hammer], ["import", "Import files", Upload]] as const).map(([m, label, Icon]) => (
+                <Button
+                  key={m}
+                  type="button"
+                  variant={mode === m ? "default" : "outline"}
+                  onClick={() => setMode(m)}
+                  className="flex-1"
+                  data-testid={`button-wb-mode-${m}`}
+                >
+                  <Icon className="h-4 w-4 mr-1" /> {label}
+                </Button>
+              ))}
+            </div>
+            {mode === "import" && (
+              <Input
+                type="file"
+                accept=".xlsx,.zip"
+                onChange={e => {
+                  const f = e.target.files?.[0] ?? null;
+                  setImportFile(f);
+                  if (f && !title.trim()) setTitle(f.name.replace(/\.(xlsx|zip)$/i, ""));
+                }}
+                data-testid="input-wb-import-file"
+              />
+            )}
             <Input
-              placeholder="Project title"
+              placeholder={mode === "import" ? "Project title (optional — filename is used)" : "Project title"}
               value={title}
               onChange={e => setTitle(e.target.value)}
               data-testid="input-wb-title"
             />
-            <div className="flex gap-2">
-              {(["xlsx", "code"] as const).map(k => (
-                <Button
-                  key={k}
-                  type="button"
-                  variant={kind === k ? "default" : "outline"}
-                  onClick={() => setKind(k)}
-                  className="flex-1"
-                  data-testid={`button-wb-kind-${k}`}
-                >
-                  {k === "xlsx"
-                    ? <><FileSpreadsheet className="h-4 w-4 mr-1" /> Excel workbook</>
-                    : <><Code2 className="h-4 w-4 mr-1" /> Code project</>}
-                </Button>
-              ))}
-            </div>
+            {mode === "describe" && (
+              <div className="flex gap-2">
+                {(["xlsx", "code"] as const).map(k => (
+                  <Button
+                    key={k}
+                    type="button"
+                    variant={kind === k ? "default" : "outline"}
+                    onClick={() => setKind(k)}
+                    className="flex-1"
+                    data-testid={`button-wb-kind-${k}`}
+                  >
+                    {k === "xlsx"
+                      ? <><FileSpreadsheet className="h-4 w-4 mr-1" /> Excel workbook</>
+                      : <><Code2 className="h-4 w-4 mr-1" /> Code project</>}
+                  </Button>
+                ))}
+              </div>
+            )}
             <Textarea
-              placeholder={kind === "xlsx"
-                ? "Describe the workbook — sheets, columns, formulas, what it should calculate…"
-                : "Describe the program — what it does, language, inputs and outputs…"}
+              placeholder={mode === "import"
+                ? "Optional: what this project is, so later AI builds have context…"
+                : kind === "xlsx"
+                  ? "Describe the workbook — sheets, columns, formulas, what it should calculate…"
+                  : "Describe the program — what it does, language, inputs and outputs…"}
               rows={4}
               value={brief}
               onChange={e => setBrief(e.target.value)}
               data-testid="input-wb-brief"
             />
-            <Button
-              className="w-full"
-              disabled={!title.trim() || !brief.trim() || createProject.isPending}
-              onClick={() => createProject.mutate({ title: title.trim(), kind, brief: brief.trim() })}
-              data-testid="button-wb-create"
-            >
-              {createProject.isPending
-                ? <Loader2 className="h-4 w-4 animate-spin mr-1" />
-                : <Hammer className="h-4 w-4 mr-1" />}
-              Create & build v1
-            </Button>
+            {mode === "describe" ? (
+              <Button
+                className="w-full"
+                disabled={!title.trim() || !brief.trim() || createProject.isPending}
+                onClick={() => createProject.mutate({ title: title.trim(), kind, brief: brief.trim() })}
+                data-testid="button-wb-create"
+              >
+                {createProject.isPending
+                  ? <Loader2 className="h-4 w-4 animate-spin mr-1" />
+                  : <Hammer className="h-4 w-4 mr-1" />}
+                Create & build v1
+              </Button>
+            ) : (
+              <Button
+                className="w-full"
+                disabled={!importFile || importProject.isPending}
+                onClick={() => importProject.mutate()}
+                data-testid="button-wb-import"
+              >
+                {importProject.isPending
+                  ? <Loader2 className="h-4 w-4 animate-spin mr-1" />
+                  : <Upload className="h-4 w-4 mr-1" />}
+                Import as v1
+              </Button>
+            )}
           </div>
         </DialogContent>
       </Dialog>

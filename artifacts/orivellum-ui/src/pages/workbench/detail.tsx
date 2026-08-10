@@ -11,9 +11,14 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import {
+  Dialog, DialogContent, DialogHeader, DialogTitle,
+} from "@/components/ui/dialog";
+import {
   ArrowLeft, Loader2, Download, Archive, RotateCcw, Hammer, CheckCircle2,
-  AlertCircle, FileSpreadsheet, Code2, Trash2, Send,
+  AlertCircle, FileSpreadsheet, Code2, Trash2, Send, ScanSearch, Upload,
+  FileText,
 } from "lucide-react";
+import ReactMarkdown from "react-markdown";
 import { format } from "date-fns";
 import { toast } from "sonner";
 import type { WbProject } from "./index";
@@ -60,6 +65,7 @@ export default function WorkbenchDetail() {
   const [instruction, setInstruction] = useState("");
   const [confirmComplete, setConfirmComplete] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [reportVersion, setReportVersion] = useState<number | null>(null);
 
   const { data: proj, isLoading } = useQuery<WbDetail>({
     queryKey: ["wb-project", projectId],
@@ -85,6 +91,29 @@ export default function WorkbenchDetail() {
       }).then(async r => { if (!r.ok) throw new Error((await r.json()).detail ?? "failed"); return r.json(); }),
     onSuccess: () => { setInstruction(""); invalidate(); },
     onError: (e: Error) => toast.error(e.message),
+  });
+
+  const analyze = useMutation({
+    mutationFn: (focus: string) =>
+      apiFetch(`${API}/projects/${projectId}/analyze`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ focus }),
+      }).then(async r => { if (!r.ok) throw new Error((await r.json()).detail ?? "failed"); return r.json(); }),
+    onSuccess: () => {
+      setInstruction("");
+      toast.success("Analyzing — the report will appear as a new version");
+      invalidate();
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const { data: reportData, isLoading: reportLoading } = useQuery<{ report: string }>({
+    queryKey: ["wb-report", projectId, reportVersion],
+    queryFn: () => apiFetch(`${API}/projects/${projectId}/versions/${reportVersion}/report`)
+      .then(r => { if (!r.ok) throw new Error("no report"); return r.json(); }),
+    enabled: !!projectId && reportVersion !== null,
+    staleTime: Infinity,
   });
 
   const revert = useMutation({
@@ -202,7 +231,21 @@ export default function WorkbenchDetail() {
             disabled={proj.building}
             data-testid="input-wb-instruction"
           />
-          <div className="flex justify-end">
+          <div className="flex justify-end gap-2">
+            {versions.length > 0 && (
+              <Button
+                variant="outline"
+                disabled={proj.building || analyze.isPending}
+                onClick={() => analyze.mutate(instruction.trim())}
+                title="Review the current files and produce a findings report as a new version. The text box above (optional) focuses the review."
+                data-testid="button-wb-analyze"
+              >
+                {analyze.isPending
+                  ? <Loader2 className="h-4 w-4 animate-spin mr-1" />
+                  : <ScanSearch className="h-4 w-4 mr-1" />}
+                Analyze
+              </Button>
+            )}
             <Button
               disabled={!instruction.trim() || proj.building || iterate.isPending}
               onClick={() => iterate.mutate(instruction.trim())}
@@ -238,6 +281,16 @@ export default function WorkbenchDetail() {
                   <CheckCircle2 className="h-3 w-3" /> Checks passed
                 </Badge>
               )}
+              {v.verdict === "imported" && (
+                <Badge variant="outline" className="gap-1 text-sky-700 border-sky-300">
+                  <Upload className="h-3 w-3" /> Imported
+                </Badge>
+              )}
+              {v.verdict === "analyzed" && (
+                <Badge variant="outline" className="gap-1 text-violet-700 border-violet-300">
+                  <ScanSearch className="h-3 w-3" /> Analyzed
+                </Badge>
+              )}
               <span className="text-xs text-muted-foreground ml-auto">
                 {format(new Date(v.created_at), "MMM d, yyyy HH:mm")}
               </span>
@@ -256,6 +309,15 @@ export default function WorkbenchDetail() {
               ))}
             </div>
             <div className="flex gap-2 mt-3">
+              {v.files.some(f => f.name === "ANALYSIS_REPORT.md") && (
+                <Button
+                  size="sm" variant="outline"
+                  onClick={() => setReportVersion(v.version_no)}
+                  data-testid={`button-wb-report-${v.version_no}`}
+                >
+                  <FileText className="h-3.5 w-3.5 mr-1" /> View report
+                </Button>
+              )}
               <Button
                 size="sm" variant="outline"
                 onClick={() => downloadUrl(
@@ -280,6 +342,23 @@ export default function WorkbenchDetail() {
           </div>
         ))}
       </div>
+
+      <Dialog open={reportVersion !== null} onOpenChange={(o) => { if (!o) setReportVersion(null); }}>
+        <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <FileText className="h-4 w-4" /> Analysis report — v{reportVersion}
+            </DialogTitle>
+          </DialogHeader>
+          {reportLoading ? (
+            <div className="space-y-3"><Skeleton className="h-6 w-2/3" /><Skeleton className="h-40 w-full" /></div>
+          ) : (
+            <div className="prose prose-sm dark:prose-invert max-w-none break-words" data-testid="text-wb-report">
+              <ReactMarkdown>{reportData?.report ?? "_Report could not be loaded._"}</ReactMarkdown>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       <AlertDialog open={confirmComplete} onOpenChange={setConfirmComplete}>
         <AlertDialogContent>

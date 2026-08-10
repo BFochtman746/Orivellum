@@ -243,7 +243,7 @@ def _run_fallback_tracked(fn, args, kwargs, kind: str, label: str) -> bool:
     return True
 
 
-def submit_bg(fn, *args, kind: str = "background", label: str = "", **kwargs) -> None:
+def submit_bg(fn, *args, kind: str = "background", label: str = "", **kwargs) -> bool:
     """Fire-and-forget background submit — the preferred replacement for bare
     ``threading.Thread(daemon=True).start()`` calls throughout the codebase.
 
@@ -253,7 +253,9 @@ def submit_bg(fn, *args, kind: str = "background", label: str = "", **kwargs) ->
     never an untracked, unbounded daemon thread (FA-06).  When even that pool is
     saturated the failure is logged and the work is dropped (a ``failed`` job
     row records it); ``submit_bg`` still **never raises** so callers need no
-    try/except wrapper.
+    try/except wrapper. Returns ``True`` when the work was dispatched and
+    ``False`` when it was dropped — callers that hold a claim or lock for
+    the background work MUST check the return value and release on False.
 
     Usage::
 
@@ -262,6 +264,7 @@ def submit_bg(fn, *args, kind: str = "background", label: str = "", **kwargs) ->
     """
     try:
         _tracked_submit(fn, *args, kind=kind, label=label, **kwargs)
+        return True
     except Exception as exc:
         logger.warning(
             "executor submit failed (%s), using bounded fallback: %s",
@@ -281,6 +284,7 @@ def submit_bg(fn, *args, kind: str = "background", label: str = "", **kwargs) ->
                 label,
                 _MAX_FALLBACK_THREADS,
             )
+        return started
 
 
 def _public_entry(entry: dict) -> dict:

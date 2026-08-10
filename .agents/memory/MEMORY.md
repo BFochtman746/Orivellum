@@ -94,3 +94,4 @@
 - [Orivellum Runner xlsx proving](orivellum-runner.md) — standalone harness at orivellum-runner/; surgery-only writes, six proof gates, candidate→rename certification, formulas==1.3.4 engine.
 - [Work render pause/resume](orivellum-work-render-resume.md) — segment texts single-sourced; resume-info counts only engine-reachable cache; status copied under lock; UI detach + job-id poll guard.
 - [Project Workbench](orivellum-workbench.md) — Tasklet-style build/edit/repair for xlsx+code; claim-before-mutate, files-before-row publish, hash-gated archives; proof gates queued.
+- [Workbench import + analyze](orivellum-workbench-import-analyze.md) — upload becomes v1 verbatim; analyze publishes report versions; submit_bg returns bool (release claims on False); xlsx zip-bomb guard.

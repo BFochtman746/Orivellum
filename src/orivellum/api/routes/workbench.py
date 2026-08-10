@@ -10,8 +10,9 @@ from __future__ import annotations
 
 import json
 import logging
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
@@ -38,6 +39,13 @@ class IterateBody(BaseModel):
 
 class RevertBody(BaseModel):
     version_no: int = Field(ge=1)
+
+
+class AnalyzeBody(BaseModel):
+    focus: str = Field(default="", max_length=2000)
+
+
+_MAX_IMPORT_UPLOAD_BYTES = 30 * 1024 * 1024  # compressed upload cap
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -78,6 +86,8 @@ def _require_active(proj: dict) -> None:
 
 
 def _start_build(project_id: str, instruction: str) -> None:
+    """Dispatch a build; if the executor drops the work, release the claim
+    and record the error so the project is never stranded as 'building'."""
     from orivellum.api.executor import submit_bg
 
     def _run() -> None:
@@ -85,7 +95,14 @@ def _start_build(project_id: str, instruction: str) -> None:
 
         run_build(get_db(), get_config(), project_id, instruction)
 
-    submit_bg(_run, kind="workbench.build", label=f"workbench {project_id[:8]}")
+    if not submit_bg(_run, kind="workbench.build", label=f"workbench {project_id[:8]}"):
+        db = get_db()
+        db.update_wb_project(
+            project_id,
+            building=0,
+            last_error="the background worker is saturated — try again in a moment",
+        )
+        raise HTTPException(503, "the background worker is saturated — try again in a moment")
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
@@ -114,6 +131,65 @@ def create_project(body: ProjectCreate):
     return _project_out(proj, [])
 
 
+@router.post("/projects/import")
+async def import_project(
+    file: Annotated[UploadFile, File()],
+    title: Annotated[str, Form()] = "",
+    brief: Annotated[str, Form()] = "",
+    kind: Annotated[str | None, Form()] = None,
+):
+    """Create a project from an existing .xlsx workbook or a .zip of
+    project files. The upload becomes v1 verbatim — no build runs."""
+    import os
+    import pathlib
+    import tempfile
+
+    filename = pathlib.PurePosixPath((file.filename or "").replace("\\", "/")).name
+    if not filename:
+        raise HTTPException(422, "upload has no filename")
+    from orivellum.capabilities.workbench import KINDS, import_upload
+
+    if kind is not None and kind not in KINDS:
+        raise HTTPException(422, f"kind must be one of {KINDS}")
+    db, cfg = get_db(), get_config()
+
+    fd, tmp_name = tempfile.mkstemp(suffix=".part")
+    size = 0
+    try:
+        with os.fdopen(fd, "wb") as tmp:
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > _MAX_IMPORT_UPLOAD_BYTES:
+                    raise HTTPException(
+                        413,
+                        f"upload too large (limit {_MAX_IMPORT_UPLOAD_BYTES // (1024 * 1024)} MB)",
+                    )
+                tmp.write(chunk)
+        if size == 0:
+            raise HTTPException(400, "uploaded file is empty")
+        stem = pathlib.PurePosixPath(filename).stem
+        try:
+            proj = import_upload(
+                db,
+                cfg,
+                title=(title.strip() or stem)[:200],
+                brief=(brief.strip() or f"Imported project from {filename}.")[:8000],
+                upload_path=pathlib.Path(tmp_name),
+                filename=filename,
+                kind=kind,
+            )
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        except Exception as exc:  # noqa: BLE001
+            raise internal_error(logger, exc, "workbench import") from exc
+    finally:
+        pathlib.Path(tmp_name).unlink(missing_ok=True)
+    return _project_out(proj, db.list_wb_versions(proj["id"]))
+
+
 @router.get("/projects/{project_id}")
 def get_project(project_id: str):
     db = get_db()
@@ -130,6 +206,52 @@ def iterate_project(project_id: str, body: IterateBody):
         raise HTTPException(409, "a build is already running for this project")
     _start_build(project_id, body.instruction.strip())
     return _project_out(db.get_wb_project(project_id))
+
+
+@router.post("/projects/{project_id}/analyze")
+def analyze_project(project_id: str, body: AnalyzeBody):
+    """Review the latest version and publish an ANALYSIS_REPORT.md as a
+    new version (verdict 'analyzed'). Runs in the background."""
+    db = get_db()
+    proj = _get_or_404(db, project_id)
+    _require_active(proj)
+    if not db.list_wb_versions(project_id):
+        raise HTTPException(409, "nothing to analyze — the project has no versions yet")
+    if not db.claim_wb_build(project_id):
+        raise HTTPException(409, "a build is already running for this project")
+    from orivellum.api.executor import submit_bg
+
+    focus = body.focus.strip()
+
+    def _run() -> None:
+        from orivellum.capabilities.workbench_analyze import run_analysis
+
+        run_analysis(get_db(), get_config(), project_id, focus)
+
+    if not submit_bg(_run, kind="workbench.analyze", label=f"workbench analyze {project_id[:8]}"):
+        db.update_wb_project(
+            project_id,
+            building=0,
+            last_error="the background worker is saturated — try again in a moment",
+        )
+        raise HTTPException(503, "the background worker is saturated — try again in a moment")
+    return _project_out(db.get_wb_project(project_id))
+
+
+@router.get("/projects/{project_id}/versions/{version_no}/report")
+def get_version_report(project_id: str, version_no: int):
+    """Return the analysis report text of a version, if it has one."""
+    db, cfg = get_db(), get_config()
+    _get_or_404(db, project_id)
+    if not db.get_wb_version(project_id, version_no):
+        raise HTTPException(404, f"version v{version_no} not found")
+    from orivellum.capabilities.workbench import version_dir
+    from orivellum.capabilities.workbench_analyze import REPORT_FILENAME
+
+    path = version_dir(cfg, project_id, version_no) / REPORT_FILENAME
+    if not path.is_file():
+        raise HTTPException(404, "this version has no analysis report")
+    return {"report": path.read_text(encoding="utf-8", errors="replace")}
 
 
 @router.post("/projects/{project_id}/revert")
