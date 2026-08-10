@@ -1355,16 +1355,39 @@ function ExtractionTemplatesCard() {
 
 // ─── Audio Enhancement (DeepFilterNet3) toggle ────────────────────────────────
 
+type AudioEnhanceSetupProgress = {
+  stage: "resolving" | "downloading" | "installing" | "verifying";
+  detail: string | null;
+  packages: number;
+  total_mb: number;
+  last_line: string | null;
+  elapsed_s: number;
+};
+
 type AudioEnhanceStatus = {
   enabled: boolean;
   installed: boolean;
   mode: "in-process" | "sidecar" | null;
   setting_up: boolean;
+  setup_progress: AudioEnhanceSetupProgress | null;
   model: string;
   install_hint: string | null;
   error: string | null;
   python: string | null;
 };
+
+const SETUP_STAGE_LABELS: Record<string, string> = {
+  resolving:   "Preparing — working out what to download…",
+  downloading: "Downloading packages…",
+  installing:  "Installing into the helper environment…",
+  verifying:   "Almost done — verifying the helper starts…",
+};
+
+function formatElapsed(s: number): string {
+  const m = Math.floor(s / 60);
+  const sec = s % 60;
+  return m > 0 ? `${m}m ${String(sec).padStart(2, "0")}s` : `${sec}s`;
+}
 
 function useAudioEnhanceSetting() {
   return useQuery({
@@ -1374,8 +1397,9 @@ function useAudioEnhanceSetting() {
       if (!r.ok) throw new Error("Failed to fetch audio enhancement setting");
       return r.json() as Promise<AudioEnhanceStatus>;
     },
-    // While the one-time background setup runs, poll until it settles.
-    refetchInterval: (query) => (query.state.data?.setting_up ? 3000 : false),
+    // While the one-time background setup runs, poll until it settles —
+    // fast enough that the staged progress text feels live.
+    refetchInterval: (query) => (query.state.data?.setting_up ? 2000 : false),
     staleTime: 30_000,
   });
 }
@@ -1480,12 +1504,34 @@ function AudioEnhancementCard() {
                 Runs on CPU at ~0.2× real-time with no GPU required.
               </p>
               {data && !data.installed && settingUp && (
-                <p className="text-xs mt-1 flex items-center gap-1.5" style={{ color: 'var(--gilt)' }}>
-                  <Loader2 className="w-3 h-3 animate-spin shrink-0" />
-                  Setting up in the background — the first time downloads
-                  ~300 MB and can take a few minutes. You can leave this page;
-                  the card updates itself when it's done.
-                </p>
+                <div className="text-xs mt-1 space-y-1">
+                  <p className="flex items-center gap-1.5" style={{ color: 'var(--gilt)' }}>
+                    <Loader2 className="w-3 h-3 animate-spin shrink-0" />
+                    <span className="font-medium">
+                      {SETUP_STAGE_LABELS[data.setup_progress?.stage ?? ""] ?? "Setting up in the background…"}
+                    </span>
+                    {data.setup_progress && (
+                      <span className="font-mono text-muted-foreground">
+                        {formatElapsed(data.setup_progress.elapsed_s)}
+                      </span>
+                    )}
+                  </p>
+                  {data.setup_progress?.detail && (
+                    <p className="font-mono text-[11px] text-muted-foreground break-all pl-[18px]">
+                      {data.setup_progress.detail}
+                      {data.setup_progress.stage === "downloading" && data.setup_progress.packages > 0 && (
+                        <span>
+                          {" · "}{data.setup_progress.packages} package{data.setup_progress.packages === 1 ? "" : "s"}
+                          {data.setup_progress.total_mb > 0 && <> · ~{Math.round(data.setup_progress.total_mb)} MB so far</>}
+                        </span>
+                      )}
+                    </p>
+                  )}
+                  <p className="text-muted-foreground pl-[18px]">
+                    First-time setup downloads ~300 MB. You can leave this page —
+                    the card updates itself when it's done.
+                  </p>
+                </div>
               )}
               {data && !data.installed && !settingUp && (
                 <div className="space-y-1.5 mt-1">

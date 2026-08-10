@@ -36,10 +36,13 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
 import threading
+import time
+from collections import deque
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -82,6 +85,9 @@ _sidecar_ok: bool | None = None
 _sidecar_error: str | None = None
 _setup_running: bool = False   # forced setup subprocess in flight
 _setup_pending: bool = False   # setup submitted to the executor, not started yet
+# Live progress of the in-flight setup, parsed from uv's streamed output.
+# None when no setup is running.  Guarded by _sidecar_lock.
+_setup_progress: dict | None = None
 
 INSTALL_HINT = (
     "No install needed — click \"Check again\" and DeepFilterNet3 is set up "
@@ -153,6 +159,158 @@ def setup_in_progress() -> bool:
         return _setup_running or _setup_pending
 
 
+# ── Setup progress (streamed from uv's output) ───────────────────────────────
+# uv prints its lifecycle to stderr in non-TTY mode, one line per event:
+#   "Resolved 25 packages in 1.2s"        → resolution done
+#   "Downloading torch (184.3MiB)"        → one line per package fetch
+#   "Prepared 25 packages in 90s"         → wheels unpacked into the cache
+#   "Installed 25 packages in 1.1s"       → env ready; the import check runs
+# We map those onto coarse stages the UI can show.  Anything unrecognized is
+# kept as `last_line` so a stall or error is still visible live.
+
+_DL_RE = re.compile(r"^\s*Downloading\s+(\S+)(?:\s+\(([\d.]+)\s*(KiB|MiB|GiB)\))?")
+_SIZE_TO_MB = {"KiB": 1.0 / 1024, "MiB": 1.0, "GiB": 1024.0}
+
+
+def _apply_setup_line(line: str, prog: dict) -> None:
+    """Fold one line of uv output into the progress dict (mutates *prog*)."""
+    m = _DL_RE.match(line)
+    if m:
+        prog["stage"] = "downloading"
+        prog["packages"] = prog.get("packages", 0) + 1
+        size_txt = ""
+        if m.group(2):
+            prog["total_mb"] = round(
+                prog.get("total_mb", 0.0) + float(m.group(2)) * _SIZE_TO_MB[m.group(3)], 1)
+            size_txt = f" ({m.group(2)} {m.group(3)})"
+        prog["detail"] = f"Downloading {m.group(1)}{size_txt}"
+        return
+    stripped = line.strip()
+    if stripped.startswith("Resolved"):
+        prog["detail"] = stripped
+    elif stripped.startswith("Prepared"):
+        prog["stage"] = "installing"
+        prog["detail"] = stripped
+    elif stripped.startswith(("Installed", "Audited")):
+        prog["stage"] = "verifying"
+        prog["detail"] = "Verifying the helper starts…"
+    else:
+        prog["last_line"] = stripped[:200]
+
+
+def _progress_begin() -> None:
+    global _setup_progress
+    with _sidecar_lock:
+        _setup_progress = {
+            "stage": "resolving",
+            "detail": "Resolving the helper environment…",
+            "packages": 0,
+            "total_mb": 0.0,
+            "last_line": None,
+            "started_at": time.time(),
+        }
+
+
+def _progress_apply(line: str) -> None:
+    with _sidecar_lock:
+        if _setup_progress is not None:
+            _apply_setup_line(line, _setup_progress)
+
+
+def get_setup_progress() -> dict | None:
+    """Snapshot of the in-flight setup's progress, or None when idle."""
+    with _sidecar_lock:
+        if _setup_progress is None:
+            return None
+        snap = dict(_setup_progress)
+    snap["elapsed_s"] = int(time.time() - snap.pop("started_at"))
+    return snap
+
+
+def _kill_setup_tree(proc: subprocess.Popen) -> None:
+    """Kill the setup process AND all descendants.
+
+    ``uv run`` spawns a Python child that inherits the merged stdout pipe;
+    killing only uv would leave that child holding the pipe open, so the
+    streaming reader would never see EOF and the deadline would be violated.
+    """
+    if sys.platform == "win32":
+        try:
+            subprocess.run(
+                ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                capture_output=True, timeout=30, creationflags=_CREATIONFLAGS,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+    else:
+        import signal
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except (OSError, ProcessLookupError):
+            pass
+    try:
+        proc.kill()
+    except OSError:
+        pass
+
+
+def _run_setup(cmd: list[str]) -> tuple[bool, str | None]:
+    """Run the sidecar setup subprocess, streaming output into live progress.
+
+    Unlike a plain ``subprocess.run``, streaming means a mid-download failure
+    surfaces the moment uv exits (with uv's own error line), instead of the
+    caller only learning anything at the full timeout.
+    """
+    tail: deque[str] = deque(maxlen=12)
+    timed_out = threading.Event()
+    # POSIX: run the setup in its own process group so the whole tree can be
+    # killed on timeout. Windows uses taskkill /T instead.
+    group_kw: dict = {} if sys.platform == "win32" else {"start_new_session": True}
+    try:
+        proc = subprocess.Popen(
+            cmd, env=_sidecar_env(), stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT, text=True, encoding="utf-8",
+            errors="replace", creationflags=_CREATIONFLAGS, **group_kw,
+        )
+    except OSError as exc:
+        return False, f"could not launch uv: {exc}"
+
+    def _on_deadline() -> None:
+        if proc.poll() is not None:
+            return  # finished before the deadline — not a timeout
+        timed_out.set()
+        _kill_setup_tree(proc)
+
+    timer = threading.Timer(_PROBE_TIMEOUT_S, _on_deadline)
+    timer.daemon = True
+    timer.start()
+    try:
+        assert proc.stdout is not None
+        for raw in proc.stdout:
+            line = raw.rstrip("\r\n")
+            if not line.strip():
+                continue
+            tail.append(line.strip())
+            _progress_apply(line)
+        proc.wait()
+    finally:
+        timer.cancel()
+        try:
+            if proc.stdout is not None:
+                proc.stdout.close()
+        except OSError:
+            pass
+    if proc.returncode == 0:
+        # A killed process never exits 0, so success always wins even if the
+        # timer raced with a completion right at the deadline.
+        return True, None
+    if timed_out.is_set():
+        return False, f"sidecar setup timed out after {_PROBE_TIMEOUT_S}s"
+    # Prefer uv's explicit "error:" line over whatever happened to be last.
+    err_line = next((ln for ln in tail if ln.lower().startswith("error")), None)
+    return False, "sidecar setup failed: " + (err_line or (tail[-1] if tail else "unknown error"))
+
+
 def _sidecar_probe(force: bool) -> bool:
     """Check (and on first use, set up) the uv sidecar environment.
 
@@ -164,7 +322,7 @@ def _sidecar_probe(force: bool) -> bool:
     forced probe returns False immediately (the running setup will publish
     its result when it finishes — poll ``probe()`` to observe it).
     """
-    global _sidecar_ok, _sidecar_error, _setup_running, _setup_pending
+    global _sidecar_ok, _sidecar_error, _setup_running, _setup_pending, _setup_progress
     marker = _marker_path()
 
     with _sidecar_lock:
@@ -210,29 +368,17 @@ def _sidecar_probe(force: bool) -> bool:
         "Probing DeepFilterNet3 sidecar (Python %s via uv — first run may "
         "download ~300 MB)…", _SIDECAR_PYTHON,
     )
+    _progress_begin()
     ok = False
     error: str | None = None
     try:
-        try:
-            proc = subprocess.run(
-                cmd, env=_sidecar_env(), capture_output=True, text=True,
-                timeout=_PROBE_TIMEOUT_S, creationflags=_CREATIONFLAGS,
-            )
-        except subprocess.TimeoutExpired:
-            error = f"sidecar setup timed out after {_PROBE_TIMEOUT_S}s"
-        except OSError as exc:
-            error = f"could not launch uv: {exc}"
-        else:
-            if proc.returncode == 0:
-                ok = True
-            else:
-                tail = (proc.stderr or proc.stdout or "").strip().splitlines()
-                error = "sidecar setup failed: " + (tail[-1] if tail else "unknown error")
+        ok, error = _run_setup(cmd)
     finally:
         with _sidecar_lock:
             _setup_running = False
             _sidecar_ok = ok
             _sidecar_error = error
+            _setup_progress = None
             try:
                 if ok:
                     marker.parent.mkdir(parents=True, exist_ok=True)
@@ -328,6 +474,7 @@ def probe(force: bool = False) -> dict:
         "available": available,
         "mode": mode,
         "setting_up": setting_up,
+        "setup_progress": get_setup_progress() if setting_up else None,
         "error": error,
         "python": sys.executable,
         "install_hint": None if available or setting_up else INSTALL_HINT,
