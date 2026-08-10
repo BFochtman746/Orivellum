@@ -354,8 +354,10 @@ def _fetch_youtube_transcript(video_id: str) -> str | None:
     """
     try:
         from youtube_transcript_api import YouTubeTranscriptApi  # type: ignore[import]
-        entries = YouTubeTranscriptApi.get_transcript(video_id)
-        text    = " ".join(e.get("text", "") for e in entries if e.get("text"))
+        # youtube-transcript-api 1.x replaced the static get_transcript() with
+        # an instance .fetch() returning FetchedTranscript snippet objects.
+        fetched = YouTubeTranscriptApi().fetch(video_id)
+        text    = " ".join(s.text for s in fetched if getattr(s, "text", ""))
         return text.strip() or None
     except Exception as exc:
         logger.debug("Transcript fetch failed for %s (non-fatal): %s", video_id, exc)

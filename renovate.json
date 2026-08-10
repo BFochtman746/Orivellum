@@ -1,0 +1,10 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended", "group:allNonMajor"],
+  "schedule": ["before 3am on monday"],
+  "vulnerabilityAlerts": { "labels": ["security"] },
+  "packageRules": [
+    { "matchUpdateTypes": ["patch", "minor"], "automerge": true },
+    { "matchUpdateTypes": ["major"], "automerge": false }
+  ]
+}
