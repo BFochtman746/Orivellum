@@ -1113,6 +1113,21 @@ export default function DocumentDetail() {
     }
   };
 
+  // Deep-link: ?listen=1 (Library "resume listening" badge) kicks off Read
+  // Aloud once the document has loaded; the player then offers to resume.
+  // The param is stripped immediately so back/refresh doesn't restart it.
+  // (Safe under autoplay policies — the player never autoplays part 1; the
+  // dock appears and the user taps play.)
+  const autoListenRef = useRef(false);
+  useEffect(() => {
+    if (autoListenRef.current || !doc || !docId) return;
+    if (new URLSearchParams(_libSearch).get("listen") !== "1") return;
+    autoListenRef.current = true;
+    navigate(`/library/${docId}`, { replace: true });
+    void handleReadAloud();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [_libSearch, doc, docId]);
+
   // Cancel any in-flight audiobook job when navigating. (Read Aloud playback
   // deliberately survives navigation — it lives in the global docked player.)
   useEffect(() => {

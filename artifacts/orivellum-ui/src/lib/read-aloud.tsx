@@ -101,15 +101,65 @@ function isValidPos(p: any): p is SavedPos {
   return !!p &&
     Number.isInteger(p.part) && p.part >= 0 &&
     Number.isFinite(p.time) && p.time >= 0 &&
-    Number.isInteger(p.partCount) && p.partCount > 0;
+    Number.isInteger(p.partCount) && p.partCount > 0 &&
+    p.part < p.partCount; // a position at/past the end is finished, not resumable
+}
+
+/** Fired on window whenever a saved position is written or cleared, so
+ *  same-tab listeners (e.g. the Library's resume badges) can refresh —
+ *  the browser's `storage` event only fires in OTHER tabs. */
+export const RA_POS_CHANGED_EVENT = "orivellum:ra-pos-changed";
+
+function notifyPosChanged() {
+  try { window.dispatchEvent(new Event(RA_POS_CHANGED_EVENT)); } catch { /* SSR/tests */ }
 }
 
 function storeSavedPos(key: string, pos: SavedPos) {
   try { localStorage.setItem(RA_POS_PREFIX + key, JSON.stringify(pos)); } catch { /* quota */ }
+  notifyPosChanged();
 }
 
 function clearSavedPos(key: string) {
   try { localStorage.removeItem(RA_POS_PREFIX + key); } catch { /* ignore */ }
+  notifyPosChanged();
+}
+
+// ── Library integration ───────────────────────────────────────────────────────
+// Lets the Library surface a "resume listening" indicator on documents with a
+// saved position. Mirrors the resume-offer gate: trivial progress (a few
+// seconds into part 1) is treated as no position at all.
+
+export interface ListeningProgress {
+  part: number;       // 0-based index of the part the user stopped in
+  partCount: number;  // total parts at the time the position was saved
+}
+
+export function getSavedListeningProgress(key: string): ListeningProgress | null {
+  const p = loadSavedPos(key);
+  if (!p) return null;
+  if (p.part === 0 && p.time < RA_MIN_RESUME_SECS) return null;
+  return { part: p.part, partCount: p.partCount };
+}
+
+/** All documents with a meaningful saved listening position, keyed by resume
+ *  key (the document id). Reads localStorage only — cheap enough to call on
+ *  every Library mount/focus. */
+export function listSavedListeningProgress(): Record<string, ListeningProgress> {
+  const out: Record<string, ListeningProgress> = {};
+  try {
+    // Collect keys first: loadSavedPos() may delete corrupt entries, and
+    // mutating localStorage while indexing it would skip entries.
+    const keys: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith(RA_POS_PREFIX)) keys.push(k.slice(RA_POS_PREFIX.length));
+    }
+    for (const docKey of keys) {
+      const prog = getSavedListeningProgress(docKey);
+      if (prog) out[docKey] = prog;
+    }
+  } catch { /* localStorage unavailable */ }
+  return out;
 }
 
 // ── Server-synced positions (cross-device resume) ────────────────────────────

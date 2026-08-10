@@ -21,7 +21,9 @@ import {
   Library as LibraryIcon, AlertCircle, RefreshCw, Trash2,
   CheckCircle2, Clock, FileQuestion, X, Package, Layers,
   FolderOpen, Sparkles, GitMerge, Star, GitBranch, Download, Network, StopCircle,
+  BookHeadphones,
 } from "lucide-react";
+import { listSavedListeningProgress, RA_POS_CHANGED_EVENT, type ListeningProgress } from "@/lib/read-aloud";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
   DialogTrigger, DialogFooter,
@@ -782,11 +784,49 @@ function ImportDialog({ onSuccess, defaultOpen = false }: ImportDialogProps) {
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 
+/** "Resume listening — Part N of M" badge shown on cards for documents with a
+ *  saved Read Aloud position. Clicking it opens the doc with ?listen=1, which
+ *  starts Read Aloud there (the player then offers to resume at the spot). */
+function ResumeListeningBadge({ prog, onClick }: { prog: ListeningProgress; onClick: (e: React.MouseEvent) => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title="Resume listening"
+      aria-label={`Resume listening — part ${prog.part + 1} of ${prog.partCount}`}
+      className="text-[10px] flex items-center gap-1 font-mono border rounded px-1.5 py-0.5 hover:opacity-80 transition-opacity"
+      style={{ color: "var(--gilt)", background: "var(--gilt-soft)", borderColor: "var(--gilt-line)" }}
+    >
+      <BookHeadphones className="w-2.5 h-2.5" />
+      Part {prog.part + 1} of {prog.partCount}
+    </button>
+  );
+}
+
 export default function Library() {
   const [search, setSearch] = useState("");
   const [reprocessingIds, setReprocessingIds] = useState<Set<string>>(new Set());
   const queryClient = useQueryClient();
   const [, navigate] = useLocation();
+
+  // Saved Read Aloud positions (localStorage). Refreshed when the player
+  // saves/clears a position in THIS tab (the dock is global, so a listen can
+  // finish while the Library is visible), when the tab regains focus, and via
+  // the storage event for changes made in other tabs.
+  const [listenProgress, setListenProgress] = useState<Record<string, ListeningProgress>>(() => listSavedListeningProgress());
+  useEffect(() => {
+    const refresh = () => setListenProgress(listSavedListeningProgress());
+    window.addEventListener(RA_POS_CHANGED_EVENT, refresh);
+    window.addEventListener("storage", refresh);
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      window.removeEventListener(RA_POS_CHANGED_EVENT, refresh);
+      window.removeEventListener("storage", refresh);
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, []);
   const searchStr = useSearch();
   const openImport = new URLSearchParams(searchStr).get("import") === "1";
   // Tier filter pre-selected from URL (e.g. linked from dashboard scorecard tiles)
@@ -1327,6 +1367,12 @@ export default function Library() {
                                 <Badge variant="secondary" className="font-mono text-[10px] uppercase">{doc.kind ?? "file"}</Badge>
                                 <ReadinessBadge readiness={readiness} />
                                 <LifecycleBadge lifecycle={doc.lifecycle} />
+                                {listenProgress[doc.id] && (
+                                  <ResumeListeningBadge
+                                    prog={listenProgress[doc.id]}
+                                    onClick={(e) => { e.stopPropagation(); navigate(`/library/${doc.id}?listen=1`); }}
+                                  />
+                                )}
                                 {doc.word_count > 0 && <span className="text-[10px] font-mono text-muted-foreground">{doc.word_count.toLocaleString()} words</span>}
                                 {doc.meta?.zip_exploded && (
                                   <span className="text-[10px] flex items-center gap-1 font-mono border rounded px-1.5 py-0.5" style={{ color: "var(--gilt)", background: "var(--gilt-soft)", borderColor: "var(--gilt-line)" }}>
@@ -1405,6 +1451,12 @@ export default function Library() {
                           </Badge>
                           <ReadinessBadge readiness={readiness} />
                           <LifecycleBadge lifecycle={doc.lifecycle} />
+                          {listenProgress[doc.id] && (
+                            <ResumeListeningBadge
+                              prog={listenProgress[doc.id]}
+                              onClick={(e) => { e.stopPropagation(); navigate(`/library/${doc.id}?listen=1`); }}
+                            />
+                          )}
                           {doc.word_count > 0 && (
                             <span className="text-[10px] font-mono text-muted-foreground">
                               {doc.word_count.toLocaleString()} words
