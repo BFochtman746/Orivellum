@@ -1400,6 +1400,135 @@ def put_work_voice_casting(work_id: str, body: VoiceCastingUpdate):
     return {"ok": True, "work_id": work_id, "sections": cleaned}
 
 
+# ── Per-Work spatial audio settings ──────────────────────────────────────────
+# Stored in works.meta["spatial_audio"] as {enabled, mode, ambience_doc_id}.
+# Applied at render time only — the dry TTS segment cache stays untouched.
+
+_SPATIAL_DEFAULTS = {"enabled": False, "mode": "subtle", "ambience_doc_id": None}
+_AUDIO_DOC_KINDS = {"mp3", "wav", "m4a", "ogg", "flac", "audio", "opus", "aac", "webm"}
+
+
+def _get_spatial_settings(db, work_id: str) -> dict:
+    work = db.get_work(work_id)
+    saved = ((work or {}).get("meta") or {}).get("spatial_audio") or {}
+    from orivellum.capabilities.spatial import SPATIAL_MODES
+    mode = saved.get("mode")
+    return {
+        "enabled": bool(saved.get("enabled")),
+        "mode": mode if mode in SPATIAL_MODES else "subtle",
+        "ambience_doc_id": saved.get("ambience_doc_id") or None,
+    }
+
+
+class SpatialSettingsUpdate(BaseModel):
+    enabled: bool = False
+    mode: str = "subtle"              # "subtle" (stereo placement) | "wide" (headphone)
+    ambience_doc_id: str | None = None  # library audio doc used as the bed
+
+
+@router.get("/studio/works/{work_id}/spatial")
+def get_work_spatial_settings(work_id: str):
+    """Return the Work's spatial-audio render settings."""
+    db = get_db()
+    if not db.get_work(work_id):
+        raise HTTPException(404, f"Work {work_id!r} not found")
+    return {"work_id": work_id, **_get_spatial_settings(db, work_id)}
+
+
+@router.put("/studio/works/{work_id}/spatial")
+def put_work_spatial_settings(work_id: str, body: SpatialSettingsUpdate):
+    """Persist the Work's spatial-audio render settings."""
+    db = get_db()
+    work = db.get_work(work_id)
+    if not work:
+        raise HTTPException(404, f"Work {work_id!r} not found")
+    from orivellum.capabilities.spatial import SPATIAL_MODES
+    if body.mode not in SPATIAL_MODES:
+        raise HTTPException(422, f"Unknown spatial mode {body.mode!r} — "
+                                 f"expected one of {list(SPATIAL_MODES)}")
+    amb = body.ambience_doc_id or None
+    if amb:
+        with db._lock:
+            row = db._conn.execute(
+                "SELECT kind, content_path FROM documents WHERE id=?", (amb,)
+            ).fetchone()
+        if not row:
+            raise HTTPException(422, f"Ambience document {amb!r} not found")
+        kind = (row["kind"] or "").lower()
+        ext = Path(row["content_path"] or "").suffix.lstrip(".").lower()
+        if kind not in _AUDIO_DOC_KINDS and ext not in _AUDIO_DOC_KINDS:
+            raise HTTPException(
+                422, f"Ambience document {amb!r} is not an audio file "
+                     f"(kind={kind!r}) — pick an audio doc from the Library")
+    meta = dict(work.get("meta") or {})
+    settings = {"enabled": body.enabled, "mode": body.mode, "ambience_doc_id": amb}
+    if body.enabled or amb or body.mode != "subtle":
+        meta["spatial_audio"] = settings
+    else:
+        meta.pop("spatial_audio", None)  # back to defaults — keep meta tidy
+    db.update_work(work_id, meta=meta)
+    return {"ok": True, "work_id": work_id, **settings}
+
+
+def _resolve_spatial_cfg(
+    db, cfg, work_id: str,
+    override_enabled: bool | None,
+    override_mode: str | None,
+    override_ambience: str | None,
+) -> dict | None:
+    """Merge request overrides over saved per-Work settings.
+
+    Returns {"mode", "ambience_path"} when spatial rendering should run,
+    or None when disabled.  A missing/unreadable ambience doc downgrades to
+    no bed rather than failing the render.
+    """
+    from orivellum.capabilities.spatial import SPATIAL_MODES, ambience_path_for_doc
+    saved = _get_spatial_settings(db, work_id)
+    enabled = override_enabled if override_enabled is not None else saved["enabled"]
+    if not enabled:
+        return None
+    mode = override_mode or saved["mode"]
+    if mode not in SPATIAL_MODES:
+        mode = "subtle"
+    amb_doc = (override_ambience if override_ambience is not None
+               else saved["ambience_doc_id"])
+    amb_path = None
+    if amb_doc:
+        amb_path = ambience_path_for_doc(db, cfg, amb_doc)
+        if amb_path is None:
+            logger.warning(
+                "Spatial ambience doc %s has no readable file — rendering without bed",
+                amb_doc,
+            )
+    return {"mode": mode, "ambience_path": amb_path}
+
+
+def _apply_spatial_finish(mp3_path: Path, spatial_cfg: dict, out_dir: Path) -> Path:
+    """Optional post-mastering spatial pass (widen and/or ambience bed).
+
+    Best-effort: on any failure — including a QA-gate failure on the result —
+    the mastered input file is kept unchanged.  Returns the path to serve.
+    """
+    from orivellum.capabilities.spatial import finish_spatial, needs_finish_pass
+    if not needs_finish_pass(spatial_cfg["mode"], spatial_cfg["ambience_path"]):
+        return mp3_path
+    polished = out_dir / f".{mp3_path.stem}.spatial.tmp.mp3"
+    try:
+        ok = finish_spatial(str(mp3_path), str(polished),
+                            spatial_cfg["mode"], spatial_cfg["ambience_path"])
+        if ok and _qa_check_audio(polished) is None:
+            import os as _os
+            _os.replace(polished, mp3_path)
+        else:
+            logger.warning(
+                "Spatial finish pass %s — keeping mastered output without polish",
+                "failed QA" if ok else "failed",
+            )
+    finally:
+        polished.unlink(missing_ok=True)
+    return mp3_path
+
+
 class WorkAudiobookRequest(BaseModel):
     work_id: str
     voice: str = "bm_george"
@@ -1407,6 +1536,10 @@ class WorkAudiobookRequest(BaseModel):
     include_credits: bool = True   # opening + closing ACX-style credits
     acx_mastering: bool = True     # apply loudnorm ACX mastering
     return_url: bool = False       # for mobile: return JSON path instead of FileResponse
+    # Spatial overrides — None means "use the Work's saved spatial settings"
+    spatial: bool | None = None
+    spatial_mode: str | None = None
+    ambience_doc_id: str | None = None
 
 
 @router.post("/studio/tts/work")
@@ -1490,6 +1623,7 @@ def synthesize_work_audiobook(body: WorkAudiobookRequest):
         _sf = None  # type: ignore[assignment]
 
     wav_parts: list[Path] = []
+    part_voices: list[str | None] = []  # parallel to wav_parts; None = silence (center)
 
     def _synth_segment(text: str, idx: int, seg_voice: str | None = None) -> Path | None:
         """Synthesise one segment to WAV (cache → engines → QA gate)."""
@@ -1568,6 +1702,7 @@ def synthesize_work_audiobook(body: WorkAudiobookRequest):
             p = _synth_segment(credits_text, seg_idx)
             if p:
                 wav_parts.append(p)
+                part_voices.append(body.voice)
                 seg_idx += 1
             # 1-second silence between credits and content
             sil = tmp_dir / f"seg_{seg_idx:06d}.wav"
@@ -1578,6 +1713,7 @@ def synthesize_work_audiobook(body: WorkAudiobookRequest):
             )
             if sil.exists():
                 wav_parts.append(sil)
+                part_voices.append(None)
                 seg_idx += 1
 
         # ── Document chapters ──────────────────────────────────────────────────
@@ -1588,6 +1724,7 @@ def synthesize_work_audiobook(body: WorkAudiobookRequest):
             chapter_intro = _synth_segment(doc_title + ".", seg_idx, chap_voice)
             if chapter_intro:
                 wav_parts.append(chapter_intro)
+                part_voices.append(chap_voice)
                 seg_idx += 1
 
             # Segment the document text
@@ -1596,6 +1733,7 @@ def synthesize_work_audiobook(body: WorkAudiobookRequest):
                 p = _synth_segment(seg_text, seg_idx, chap_voice)
                 if p:
                     wav_parts.append(p)
+                    part_voices.append(chap_voice)
                     seg_idx += 1
 
             # Short silence between chapters
@@ -1607,6 +1745,7 @@ def synthesize_work_audiobook(body: WorkAudiobookRequest):
             )
             if sil.exists():
                 wav_parts.append(sil)
+                part_voices.append(None)
                 seg_idx += 1
 
         # ── Closing credits ────────────────────────────────────────────────────
@@ -1618,18 +1757,39 @@ def synthesize_work_audiobook(body: WorkAudiobookRequest):
             p = _synth_segment(closing, seg_idx)
             if p:
                 wav_parts.append(p)
+                part_voices.append(body.voice)
 
         if not wav_parts:
             raise RuntimeError("No audio segments were generated")
 
+        # ── Optional spatial placement (per-voice panning at concat) ──────────
+        # All-or-nothing: on any failure we fall back to the dry mono parts so
+        # a spatial hiccup can never break the render.  The segment cache is
+        # untouched — panned copies are per-render temp files.
+        spatial_cfg = _resolve_spatial_cfg(
+            db, cfg, body.work_id, body.spatial, body.spatial_mode,
+            body.ambience_doc_id,
+        )
+        concat_parts = wav_parts
+        spatial_applied = False
+        if spatial_cfg is not None:
+            from orivellum.capabilities.spatial import spatialize_parts
+            panned = spatialize_parts(wav_parts, part_voices, body.voice, tmp_dir)
+            if panned is not None:
+                concat_parts = panned
+                spatial_applied = True
+            else:
+                logger.warning("Spatial pan stage failed — rendering non-spatial output")
+
         # ── Concatenate all WAVs ───────────────────────────────────────────────
         safe_title = re.sub(r"[^\w\-]", "_", work_title)[:50]
-        raw_mp3    = out_dir / f"{safe_title}_{uuid.uuid4().hex[:6]}_raw.mp3"
-        final_mp3  = out_dir / f"{safe_title}_{uuid.uuid4().hex[:6]}.mp3"
+        tag        = "_spatial" if spatial_applied else ""
+        raw_mp3    = out_dir / f"{safe_title}{tag}_{uuid.uuid4().hex[:6]}_raw.mp3"
+        final_mp3  = out_dir / f"{safe_title}{tag}_{uuid.uuid4().hex[:6]}.mp3"
 
         concat_list = tmp_dir / "concat.txt"
         concat_list.write_text(
-            "\n".join(f"file '{p}'" for p in wav_parts), encoding="utf-8"
+            "\n".join(f"file '{p}'" for p in concat_parts), encoding="utf-8"
         )
 
         ff = subprocess.run(
@@ -1651,15 +1811,20 @@ def synthesize_work_audiobook(body: WorkAudiobookRequest):
             final_mp3.unlink(missing_ok=True) if not final_mp3.exists() else None
             mp3_path = raw_mp3 if raw_mp3.exists() else final_mp3
 
+        # ── Spatial finish pass (post-mastering widen / ambience bed) ─────────
+        if spatial_applied:
+            mp3_path = _apply_spatial_finish(mp3_path, spatial_cfg, out_dir)
+
         # Hard-link into library before rotation
         _ab_rel = _link_output_sync(mp3_path)
         _rotate_outputs(out_dir)
 
         all_text = "\n\n".join(t for _, _, t in doc_texts)
+        reg_title = f"Audiobook: {work_title}" + (" (spatial)" if spatial_applied else "")
         from orivellum.api.executor import get_executor as _gex
         _gex().submit(
             _register_output_bg, mp3_path, all_text[:8000], "mp3",
-            f"Audiobook: {work_title}", prelinked_rel=_ab_rel,
+            reg_title, prelinked_rel=_ab_rel,
         )
 
         if body.return_url:
@@ -1700,6 +1865,7 @@ def _run_work_tts_job(
     out_dir: Path,
     cfg,
     casting: dict[str, str] | None = None,
+    spatial_cfg: dict | None = None,
 ) -> None:
     """Background worker: synthesise a full work audiobook chapter by chapter."""
     kokoro_eng = _get_kokoro()
@@ -1714,6 +1880,7 @@ def _run_work_tts_job(
 
     tmp_dir = Path(tempfile.mkdtemp())
     wav_parts: list[Path] = []
+    part_voices: list[str | None] = []  # parallel to wav_parts; None = silence (center)
     seg_idx = 0
 
     premium_ok = _is_premium_tts_enabled(cfg)
@@ -1793,6 +1960,7 @@ def _run_work_tts_job(
         )
         if sil.exists():
             wav_parts.append(sil)
+            part_voices.append(None)
 
     def _cancelled() -> bool:
         with _work_tts_jobs_lock:
@@ -1811,6 +1979,7 @@ def _run_work_tts_job(
             p = _synth(credits_text)
             if p:
                 wav_parts.append(p)
+                part_voices.append(voice)
             _silence(1.0)
 
         # Chapter-by-chapter synthesis (each chapter may have its own cast voice)
@@ -1831,6 +2000,7 @@ def _run_work_tts_job(
             intro = _synth(doc_title + ".", chap_voice)
             if intro:
                 wav_parts.append(intro)
+                part_voices.append(chap_voice)
 
             for seg_text in _split_text_into_segments(doc_text)[:60]:
                 if _cancelled():
@@ -1840,6 +2010,7 @@ def _run_work_tts_job(
                 p = _synth(seg_text, chap_voice)
                 if p:
                     wav_parts.append(p)
+                    part_voices.append(chap_voice)
 
             _silence(1.5)
 
@@ -1852,6 +2023,7 @@ def _run_work_tts_job(
             p = _synth(closing)
             if p:
                 wav_parts.append(p)
+                part_voices.append(voice)
 
         if not wav_parts:
             raise RuntimeError("No audio segments were generated")
@@ -1864,14 +2036,29 @@ def _run_work_tts_job(
                 _work_tts_jobs[job_id]["state"] = "cancelled"
             return
 
+        # Optional spatial placement — all-or-nothing panning at concat time;
+        # any failure falls back to the dry mono parts (never breaks a render).
+        concat_parts = wav_parts
+        spatial_applied = False
+        if spatial_cfg is not None:
+            from orivellum.capabilities.spatial import spatialize_parts
+            panned = spatialize_parts(wav_parts, part_voices, voice, tmp_dir)
+            if panned is not None:
+                concat_parts = panned
+                spatial_applied = True
+            else:
+                logger.warning("Work TTS job %s: spatial pan stage failed — "
+                               "rendering non-spatial output", job_id)
+
         # Concatenate all WAV parts to MP3
         safe_title = re.sub(r"[^\w\-]", "_", work_title)[:50]
-        raw_mp3    = out_dir / f"{safe_title}_{uuid.uuid4().hex[:6]}_raw.mp3"
-        final_mp3  = out_dir / f"{safe_title}_{uuid.uuid4().hex[:6]}.mp3"
+        tag        = "_spatial" if spatial_applied else ""
+        raw_mp3    = out_dir / f"{safe_title}{tag}_{uuid.uuid4().hex[:6]}_raw.mp3"
+        final_mp3  = out_dir / f"{safe_title}{tag}_{uuid.uuid4().hex[:6]}.mp3"
 
         concat_list = tmp_dir / "concat.txt"
         concat_list.write_text(
-            "\n".join(f"file '{p}'" for p in wav_parts), encoding="utf-8"
+            "\n".join(f"file '{p}'" for p in concat_parts), encoding="utf-8"
         )
         ff = subprocess.run(
             ["ffmpeg", "-y", "-f", "concat", "-safe", "0",
@@ -1890,6 +2077,10 @@ def _run_work_tts_job(
             raw_mp3.rename(final_mp3)
             mp3_path = final_mp3 if final_mp3.exists() else raw_mp3
 
+        # Spatial finish pass (post-mastering widen / ambience bed)
+        if spatial_applied:
+            mp3_path = _apply_spatial_finish(mp3_path, spatial_cfg, out_dir)
+
         # Cancellation gate: checked BEFORE any durable publication so a cancel
         # that arrived during mastering cannot leave a registered artifact behind.
         if _cancelled():
@@ -1905,10 +2096,11 @@ def _run_work_tts_job(
         _rotate_outputs(out_dir)
 
         all_text = "\n\n".join(t for _, _, t in doc_texts)
+        reg_title = f"Audiobook: {work_title}" + (" (spatial)" if spatial_applied else "")
         from orivellum.api.executor import get_executor as _gex_wj
         _gex_wj().submit(
             _register_output_bg, mp3_path, all_text[:8000], "mp3",
-            f"Audiobook: {work_title}", prelinked_rel=_ab_rel,
+            reg_title, prelinked_rel=_ab_rel,
         )
 
         rel = str(mp3_path.relative_to(out_dir))
@@ -1945,6 +2137,10 @@ class WorkAudiobookStartRequest(BaseModel):
     speed: float = 1.0
     include_credits: bool = True
     acx_mastering: bool = True
+    # Spatial overrides — None means "use the Work's saved spatial settings"
+    spatial: bool | None = None
+    spatial_mode: str | None = None
+    ambience_doc_id: str | None = None
 
 
 @router.post("/studio/tts/work/start")
@@ -2012,6 +2208,11 @@ def start_work_audiobook_async(body: WorkAudiobookStartRequest):
     out_dir = Path(cfg.data_dir) / "outputs"
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    spatial_cfg = _resolve_spatial_cfg(
+        db, cfg, body.work_id, body.spatial, body.spatial_mode,
+        body.ambience_doc_id,
+    )
+
     with _work_tts_jobs_lock:
         _work_tts_jobs[job_id] = {
             "state": "starting",
@@ -2019,6 +2220,7 @@ def start_work_audiobook_async(body: WorkAudiobookStartRequest):
             "total_chapters": len(doc_texts),
             "chapter_title": "",
             "work_title": work_title,
+            "spatial": spatial_cfg is not None,
             "cancel_requested": False,
         }
 
@@ -2027,6 +2229,7 @@ def start_work_audiobook_async(body: WorkAudiobookStartRequest):
         _run_work_tts_job,
         job_id, body.voice, body.speed, body.include_credits,
         body.acx_mastering, work_title, doc_texts, out_dir, cfg, casting,
+        spatial_cfg,
         kind="studio", label=f"work_tts:{job_id[:8]}",
     )
 

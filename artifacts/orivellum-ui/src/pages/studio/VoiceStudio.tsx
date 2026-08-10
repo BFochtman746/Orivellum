@@ -1257,6 +1257,14 @@ function AudiobookTab({
   const [speed, setSpeed]     = useState(1.0);
   const [credits, setCredits] = useState(true);
   const [acx, setAcx]         = useState(true);
+  // Spatial audio (per-Work, saved automatically)
+  const [spatialOn, setSpatialOn] = useState(false);
+  const [spatialMode, setSpatialMode] = useState<"subtle" | "wide">("subtle");
+  const [ambienceDocId, setAmbienceDocId] = useState("");
+  // Work whose spatial settings have finished loading — until the selected
+  // Work resolves, renders omit spatial overrides so saved settings apply.
+  const [spatialLoadedFor, setSpatialLoadedFor] = useState<string | null>(null);
+  const spatialSaveSeq = useRef(0);
   const [loading, setLoading] = useState(false);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [audioName, setAudioName] = useState("audiobook.mp3");
@@ -1315,6 +1323,60 @@ function AudiobookTab({
       setCastSaving(false);
     }
   }
+
+  // ── Per-Work spatial audio settings ─────────────────────────────────────────
+  useEffect(() => {
+    // Reset immediately on Work change so a previous Work's settings can
+    // never leak into the newly selected one.
+    setSpatialLoadedFor(null);
+    setSpatialOn(false); setSpatialMode("subtle"); setAmbienceDocId("");
+    if (!workId || mode !== "work") return;
+    let cancelled = false;
+    apiFetch(`${BASE}/studio/works/${workId}/spatial`)
+      .then(async r => {
+        if (cancelled || !r.ok) return;
+        const data = await r.json();
+        if (cancelled) return;
+        setSpatialOn(!!data.enabled);
+        setSpatialMode(data.mode === "wide" ? "wide" : "subtle");
+        setAmbienceDocId(data.ambience_doc_id ?? "");
+        setSpatialLoadedFor(workId);
+      })
+      .catch(() => {/* spatial is optional — plain render still works */});
+    return () => { cancelled = true; };
+  }, [workId, mode]);
+
+  async function saveSpatial(next: { enabled: boolean; mode: "subtle" | "wide"; ambience_doc_id: string | null }) {
+    if (!workId) return;
+    const prev = { enabled: spatialOn, mode: spatialMode, ambience_doc_id: ambienceDocId || null };
+    const targetWork = workId;
+    const seq = ++spatialSaveSeq.current;
+    setSpatialOn(next.enabled);
+    setSpatialMode(next.mode);
+    setAmbienceDocId(next.ambience_doc_id ?? "");
+    try {
+      const resp = await apiFetch(`${BASE}/studio/works/${targetWork}/spatial`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(next),
+      });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        throw new Error((err as any).detail ?? `HTTP ${resp.status}`);
+      }
+    } catch (e: any) {
+      toast.error(`Couldn't save spatial settings: ${e.message}`);
+      // Roll back only if this is still the latest save for the same Work.
+      if (seq === spatialSaveSeq.current && targetWork === workId) {
+        setSpatialOn(prev.enabled);
+        setSpatialMode(prev.mode);
+        setAmbienceDocId(prev.ambience_doc_id ?? "");
+      }
+    }
+  }
+
+  const AUDIO_KINDS = ["mp3", "wav", "m4a", "ogg", "flac", "audio"];
+  const audioDocs = docs.filter(d => AUDIO_KINDS.includes((d.kind ?? "").toLowerCase()));
 
   // ── Proactive AI voice suggestion ────────────────────────────────────────────
   // Fires in the background whenever a Work is selected; the card appears
@@ -1377,6 +1439,14 @@ function AudiobookTab({
           body: JSON.stringify({
             work_id: workId, voice: voiceId, speed,
             include_credits: credits, acx_mastering: acx,
+            // Only override when this Work's settings have resolved;
+            // otherwise omit so the server uses the saved settings.
+            ...(spatialLoadedFor === workId
+              ? {
+                  spatial: spatialOn, spatial_mode: spatialMode,
+                  ambience_doc_id: spatialOn && ambienceDocId ? ambienceDocId : null,
+                }
+              : {}),
           }),
         });
         if (!resp.ok) {
@@ -1703,6 +1773,62 @@ function AudiobookTab({
                   </div>
                 </label>
               ))}
+
+              {/* Spatial audio — per-Work, saved automatically */}
+              <div className="p-3 rounded-xl border border-border/50 space-y-3">
+                <label className="flex items-start gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={spatialOn}
+                    onChange={e => saveSpatial({ enabled: e.target.checked, mode: spatialMode, ambience_doc_id: ambienceDocId || null })}
+                    className="mt-0.5"
+                  />
+                  <div>
+                    <p className="text-sm font-medium leading-tight">Spatial audio</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      Places each chapter's cast voice at its own spot in the stereo field —
+                      the narrator stays center. Best experienced with headphones. Saved for this Work.
+                    </p>
+                  </div>
+                </label>
+                {spatialOn && (
+                  <div className="space-y-2 pl-7">
+                    <Select
+                      value={spatialMode}
+                      onValueChange={(v: "subtle" | "wide") =>
+                        saveSpatial({ enabled: true, mode: v, ambience_doc_id: ambienceDocId || null })}
+                    >
+                      <SelectTrigger className="h-8 text-xs">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="subtle">Subtle — gentle stereo placement</SelectItem>
+                        <SelectItem value="wide">Wide — extra headphone depth</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <Select
+                      value={ambienceDocId || "__none"}
+                      onValueChange={v =>
+                        saveSpatial({ enabled: true, mode: spatialMode, ambience_doc_id: v === "__none" ? null : v })}
+                    >
+                      <SelectTrigger className="h-8 text-xs">
+                        <SelectValue placeholder="Ambience bed" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__none">No ambience bed</SelectItem>
+                        {audioDocs.map(d => (
+                          <SelectItem key={d.id} value={d.id}>{d.title}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-[11px] text-muted-foreground">
+                      An ambience bed loops quietly under the narration and automatically
+                      ducks when someone is speaking. Pick any audio file from your Library
+                      (Music Studio tracks work great).
+                    </p>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         )}
