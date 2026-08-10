@@ -417,5 +417,96 @@ class EngineSerializationTest(unittest.TestCase):
                         "_load must run while _synth_lock is held")
 
 
+class _FakeTensor:
+    """Minimal torch-tensor stand-in: detach().to('cpu').float().numpy()."""
+
+    def __init__(self, arr):
+        self._arr = arr
+
+    def detach(self):
+        return self
+
+    def to(self, _device):
+        return self
+
+    def float(self):
+        return self
+
+    def numpy(self):
+        return self._arr
+
+
+class EngineAdapterTest(unittest.TestCase):
+    """Exercise the real inference adapters with representative outputs:
+    Stable Audio returns a NUMPY array by default (output_type='np'),
+    MusicGen returns torch tensors.  Both must survive WAV encoding."""
+
+    def _assert_wav(self, wav: bytes, sr: int, expect_sr: int):
+        self.assertEqual(sr, expect_sr)
+        self.assertTrue(wav.startswith(b"RIFF"))
+        self.assertEqual(wav[8:12], b"WAVE")
+
+    def test_stable_audio_numpy_output_encodes_wav(self):
+        import numpy as np
+        from sidecars.music_gen import engine
+
+        audio_np = np.zeros((2, 4410), dtype="float32")  # stereo numpy — the default
+        result = SimpleNamespace(audios=[audio_np])
+        pipe = mock.Mock(return_value=result)
+        pipe.vae = SimpleNamespace(sampling_rate=44100)
+
+        with mock.patch.object(engine, "_load", return_value=pipe):
+            wav, sr = engine.generate_wav("stable_audio_open", "low braam", 2)
+        self._assert_wav(wav, sr, 44100)
+        call = pipe.call_args.kwargs
+        self.assertEqual(call["prompt"], "low braam")
+        self.assertEqual(call["audio_end_in_s"], 2.0)
+
+    def test_stable_audio_tensor_output_also_handled(self):
+        import numpy as np
+        from sidecars.music_gen import engine
+
+        tensor = _FakeTensor(np.zeros((2, 2205), dtype="float32"))
+        pipe = mock.Mock(return_value=SimpleNamespace(audios=[tensor]))
+        pipe.vae = SimpleNamespace(sampling_rate=44100)
+
+        with mock.patch.object(engine, "_load", return_value=pipe):
+            wav, sr = engine.generate_wav("stable_audio_open", "hit", 1)
+        self._assert_wav(wav, sr, 44100)
+
+    def test_musicgen_tensor_output_encodes_wav(self):
+        import numpy as np
+        from sidecars.music_gen import engine
+
+        processor = mock.Mock()
+        inputs = mock.Mock()
+        processor.return_value.to.return_value = inputs
+        inputs.keys = mock.Mock(return_value=[])
+        model = mock.Mock()
+        model.device = "cpu"
+        model.config = SimpleNamespace(
+            audio_encoder=SimpleNamespace(sampling_rate=32000))
+        model.generate.return_value = [
+            _FakeTensor(np.zeros((1, 32000), dtype="float32"))]
+
+        # model.generate(**inputs, ...) requires a mapping — use a dict shim
+        processor.return_value.to.return_value = {}
+        with mock.patch.object(engine, "_load", return_value=(processor, model)):
+            wav, sr = engine.generate_wav("musicgen", "warm piano", 10)
+        self._assert_wav(wav, sr, 32000)
+        # duration → token budget (~50 tok/s)
+        self.assertEqual(model.generate.call_args.kwargs["max_new_tokens"], 500)
+
+    def test_unexpected_inference_error_maps_to_runtime_error(self):
+        from sidecars.music_gen import engine
+
+        pipe = mock.Mock(side_effect=AttributeError("'ndarray' object has no attribute 'to'"))
+        pipe.vae = SimpleNamespace(sampling_rate=44100)
+        with mock.patch.object(engine, "_load", return_value=pipe):
+            with self.assertRaises(RuntimeError) as ctx:
+                engine.generate_wav("stable_audio_open", "x", 2)
+        self.assertIn("AttributeError", str(ctx.exception))
+
+
 if __name__ == "__main__":
     unittest.main()

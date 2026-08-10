@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
   Start the Orivellum Music & SFX generation sidecar on Windows.
@@ -15,10 +15,10 @@
   3. In config.yaml set music_gen_url: "http://127.0.0.1:9884",
      then restart Orivellum.
 
-  Stable Audio Open weights are gated on Hugging Face — accept the license
+  Stable Audio Open weights are gated on Hugging Face - accept the license
   at https://huggingface.co/stabilityai/stable-audio-open-1.0 and run
   `huggingface-cli login` (inside .venv-music) before first use.
-  MusicGen weights download automatically (no gate) but are CC-BY-NC —
+  MusicGen weights download automatically (no gate) but are CC-BY-NC -
   non-commercial use only; the Orivellum UI asks you to acknowledge this.
 
 .PARAMETER Setup

@@ -148,6 +148,19 @@ def status() -> dict:
     }
 
 
+def _to_numpy(audio):
+    """Normalize pipeline output to a float32 numpy array.
+
+    Diffusers/transformers return either a numpy array (StableAudioPipeline's
+    default ``output_type="np"``) or a torch tensor — handle both without
+    assuming torch is importable.
+    """
+    import numpy as np
+    if hasattr(audio, "detach"):  # torch tensor
+        audio = audio.detach().to("cpu").float().numpy()
+    return np.asarray(audio, dtype="float32")
+
+
 def _to_wav_bytes(audio, sample_rate: int) -> bytes:
     """Encode a float waveform (numpy [channels, samples] or [samples]) → 16-bit WAV."""
     import numpy as np
@@ -187,29 +200,36 @@ def generate_wav(model_id: str, prompt: str, duration_s: float,
         if backend is None:
             raise RuntimeError(_load_errors.get(model_id, f"{model_id} not loaded"))
 
-        if model_id == "stable_audio_open":
-            import torch
-            pipe = backend
-            generator = torch.Generator(device=_device or "cpu")
-            result = pipe(
-                prompt=prompt,
-                negative_prompt=negative_prompt or None,
-                audio_end_in_s=duration_s,
-                num_inference_steps=100,
-                num_waveforms_per_prompt=1,
-                generator=generator,
-            )
-            audio = result.audios[0].to(torch.float32).cpu().numpy()
-            sr = int(pipe.vae.sampling_rate)
-            return _to_wav_bytes(audio, sr), sr
+        try:
+            if model_id == "stable_audio_open":
+                pipe = backend
+                result = pipe(
+                    prompt=prompt,
+                    negative_prompt=negative_prompt or None,
+                    audio_end_in_s=duration_s,
+                    num_inference_steps=100,
+                    num_waveforms_per_prompt=1,
+                )
+                audio = _to_numpy(result.audios[0])
+                sr = int(pipe.vae.sampling_rate)
+                return _to_wav_bytes(audio, sr), sr
 
-        # musicgen
-        processor, model = backend
-        inputs = processor(text=[prompt], padding=True, return_tensors="pt").to(model.device)
-        # MusicGen's audio codec runs at ~50 tokens/second of audio.
-        max_new_tokens = max(64, int(duration_s * 50))
-        audio_values = model.generate(**inputs, do_sample=True, guidance_scale=3.0,
-                                      max_new_tokens=max_new_tokens)
-        sr = int(model.config.audio_encoder.sampling_rate)
-        audio = audio_values[0].to("cpu").float().numpy()  # [channels, samples]
-        return _to_wav_bytes(audio, sr), sr
+            # musicgen
+            processor, model = backend
+            inputs = processor(text=[prompt], padding=True,
+                               return_tensors="pt").to(model.device)
+            # MusicGen's audio codec runs at ~50 tokens/second of audio.
+            max_new_tokens = max(64, int(duration_s * 50))
+            audio_values = model.generate(**inputs, do_sample=True, guidance_scale=3.0,
+                                          max_new_tokens=max_new_tokens)
+            sr = int(model.config.audio_encoder.sampling_rate)
+            audio = _to_numpy(audio_values[0])  # [channels, samples]
+            return _to_wav_bytes(audio, sr), sr
+        except (ValueError, RuntimeError):
+            raise
+        except Exception as exc:
+            # Anything unexpected (dtype/shape surprises, CUDA errors, …) must
+            # surface as the documented availability error, never a 500.
+            raise RuntimeError(
+                f"{model_id} generation failed: {type(exc).__name__}: {exc}"
+            ) from exc
