@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  python:
+    name: Lint + tests (Python)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+
+      - name: Ruff (errors only — style findings are not gated)
+        run: uvx ruff check src/ --select F,E9
+
+      - name: Tests with coverage gate
+        env:
+          SESSION_SECRET: ci-test-secret-not-a-real-key
+        # --cov-fail-under is a ratchet: it must never be lowered, only raised.
+        # Baseline measured 2026-08-10; see CONTRIBUTING.md.
+        run: >
+          uv run --with pytest --with pytest-cov python -m pytest tests/ -q
+          -p no:cacheprovider
+          --cov=src/orivellum --cov-report=term
+          --cov-fail-under=__COVERAGE_BASELINE__
+
+  javascript:
+    name: Typecheck + audit (JS/TS)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck UI
+        run: pnpm --filter @workspace/orivellum-ui exec tsc --noEmit
+
+      - name: Audit production dependencies
+        run: pnpm audit --prod

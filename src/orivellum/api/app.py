@@ -258,13 +258,8 @@ def create_app() -> FastAPI:
             return await call_next(request)
 
         # ── Bearer token (API clients / mobile) ───────────────────────────
-        expected_key = os.environ.get("SESSION_SECRET", "")
-        if not expected_key:
-            try:
-                db = _deps.get_db()
-                expected_key = db.get_setting("api_key", "")
-            except RuntimeError:
-                return JSONResponse({"detail": "Service unavailable"}, status_code=503)
+        from orivellum.api.auth_keys import key_matches, resolve_login_key
+        expected_key = resolve_login_key()
 
         if not expected_key:
             # No key is available even after startup completed — this should
@@ -285,7 +280,7 @@ def create_app() -> FastAPI:
         if not token:
             token = request.headers.get("x-api-key", "").strip()
 
-        if token and token == expected_key:
+        if key_matches(token, expected_key):
             return await call_next(request)
 
         return JSONResponse({"detail": "Unauthorized"}, status_code=401)

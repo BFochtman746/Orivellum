@@ -16,26 +16,12 @@ directly (the auth middleware in app.py checks both paths).
 """
 from __future__ import annotations
 
-import os
-
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-from orivellum.api import _deps
+from orivellum.api.auth_keys import key_matches, resolve_login_key
 
 router = APIRouter()
-
-
-def _resolve_expected_key() -> str:
-    """Return the configured API key (env var or DB), or '' if not ready."""
-    key = os.environ.get("SESSION_SECRET", "")
-    if key:
-        return key
-    try:
-        db = _deps.get_db()
-        return db.get_setting("api_key", "")
-    except RuntimeError:
-        return ""
 
 
 @router.post("/api/auth/login")
@@ -52,13 +38,14 @@ async def login(request: Request):
         return JSONResponse({"detail": "Invalid request body"}, status_code=400)
 
     provided_key: str = body.get("key", "")
-    expected_key = _resolve_expected_key()
+    expected_key = resolve_login_key()
 
     if not expected_key:
         return JSONResponse({"detail": "Service unavailable — API key not configured yet"},
                             status_code=503)
 
-    if not provided_key or provided_key != expected_key:
+    # Constant-time comparison — timing leaks nothing about partial matches.
+    if not key_matches(provided_key, expected_key):
         return JSONResponse({"detail": "Invalid key"}, status_code=401)
 
     request.session["authenticated"] = True
