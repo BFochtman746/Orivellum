@@ -1,19 +1,15 @@
 ---
 name: Spatial audiobook rendering
-description: Design rules for the optional spatial pass on audiobook renders (panning, wide mode, ambience beds)
+description: Durable design rules for the optional spatial pass on audiobook renders (panning, wide mode, ambience beds)
 ---
 
-# Spatial audiobook rendering
+# Spatial audiobook rendering — design rules
 
-Capability lives in `capabilities/spatial.py`; wired into both the sync route and the async worker in the studio routes.
-
-**Rules:**
-- Panning happens on per-render temp copies at concat time — the dry TTS segment cache is NEVER modified. Panned parts are all-or-nothing: mixing mono and stereo inputs breaks the concat demuxer, so any per-part failure falls back to the dry mono parts.
-- Narrator (and silences) are always dead center; cast voices get deterministic hash-derived positions capped at ±0.35 so re-renders are stable.
-- Order: pan at concat → loudnorm mastering (stereo, preserves balance) → optional post-master pass (stereowiden for "wide" + alimiter at −3 dBTP; ambience bed looped + sidechaincompress duck ~−20 dB under speech, amix normalize=0) → QA gate.
-- **Fallback policy:** the optional enhancement can never fail a render. Every spatial stage (pan, finish pass, QA on the result) falls back to the plain mastered output on failure.
-- Settings are per-Work in `works.meta["spatial_audio"]` with GET/PUT endpoints mirroring the voice-casting pattern; render request fields are overrides where None = "use saved settings".
-- **Why:** UI races taught us the client must omit spatial overrides until that Work's settings have resolved (gate on a loaded-for-work marker), or a stale/false override silently disables a saved setting. Optimistic saves need rollback + a save sequence counter.
-- Ambience doc must validate as audio at PUT time (kind or content_path extension), not degrade at render time.
-- Spatial outputs carry a `_spatial` filename tag and " (spatial)" registered title so the outputs gallery distinguishes them.
-- Trailers never render audio (script/plan only) — spatial applies to audiobook renders exclusively.
+- **Dry cache is sacred.** Spatialization operates on per-render temp copies at concat time; cached TTS segments are never modified. Panning is all-or-nothing per render — mixing mono and stereo inputs breaks the concat demuxer, so any per-part failure means falling back to the dry mono parts.
+  **Why:** cache corruption would poison every future render; partial panning corrupts concat output.
+- **Optional enhancements never fail a render.** Every spatial stage (pan, post-master polish, QA of the polished result) falls back to the plain mastered output on failure.
+- **Stage order matters:** pan → loudness mastering (stereo loudnorm preserves balance) → widen/ambience polish (with a limiter at the mastering true-peak ceiling) → QA gate. Ducking an ambience bed under speech uses sidechain compression (~−20 dB duck per the owner's research doc) with the bed held quiet enough that silence/clipping QA still holds.
+- **Placement is deterministic:** narrator and silence always dead center; other voices hash to stable, bounded off-center positions so re-renders sound identical.
+- **Per-Work settings, override-or-saved semantics:** settings persist on the Work; render-request fields are overrides where "unset" means "use saved". Validate ambience sources as audio at save time, not render time.
+- **Client races (learned via review rejection):** auto-saved per-entity settings need (a) controls gated until that entity's settings have loaded, (b) load responses discarded once a save has started, (c) saves queued so PUTs arrive in user-action order, and (d) failure rollback only when no newer save superseded it. This ordering logic should live in a small testable module, not inline in the component.
+- Trailers never render audio (script/plan output only) — spatial treatment applies exclusively to audiobook renders.

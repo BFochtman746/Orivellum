@@ -28,6 +28,7 @@ import {
 } from "@/components/ui/select";
 import { toast } from "sonner";
 import { apiFetch } from "@/lib/auth";
+import { SpatialSettingsSync, type SpatialSettings } from "./spatialSettings";
 
 const BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
 
@@ -1262,9 +1263,10 @@ function AudiobookTab({
   const [spatialMode, setSpatialMode] = useState<"subtle" | "wide">("subtle");
   const [ambienceDocId, setAmbienceDocId] = useState("");
   // Work whose spatial settings have finished loading — until the selected
-  // Work resolves, renders omit spatial overrides so saved settings apply.
+  // Work resolves, the controls are disabled and renders omit spatial
+  // overrides so the server-saved settings apply.
   const [spatialLoadedFor, setSpatialLoadedFor] = useState<string | null>(null);
-  const spatialSaveSeq = useRef(0);
+  const spatialSync = useRef(new SpatialSettingsSync()).current;
   const [loading, setLoading] = useState(false);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [audioName, setAudioName] = useState("audiobook.mp3");
@@ -1332,11 +1334,14 @@ function AudiobookTab({
     setSpatialOn(false); setSpatialMode("subtle"); setAmbienceDocId("");
     if (!workId || mode !== "work") return;
     let cancelled = false;
+    const loadToken = spatialSync.beginLoad();
     apiFetch(`${BASE}/studio/works/${workId}/spatial`)
       .then(async r => {
         if (cancelled || !r.ok) return;
         const data = await r.json();
-        if (cancelled) return;
+        // Discard the response if it's stale (Work changed) or a save has
+        // started since this load began — never overwrite newer user input.
+        if (cancelled || !spatialSync.shouldApplyLoad(loadToken)) return;
         setSpatialOn(!!data.enabled);
         setSpatialMode(data.mode === "wide" ? "wide" : "subtle");
         setAmbienceDocId(data.ambience_doc_id ?? "");
@@ -1346,28 +1351,35 @@ function AudiobookTab({
     return () => { cancelled = true; };
   }, [workId, mode]);
 
-  async function saveSpatial(next: { enabled: boolean; mode: "subtle" | "wide"; ambience_doc_id: string | null }) {
-    if (!workId) return;
-    const prev = { enabled: spatialOn, mode: spatialMode, ambience_doc_id: ambienceDocId || null };
+  const spatialReady = mode === "work" && !!workId && spatialLoadedFor === workId;
+
+  async function saveSpatial(next: SpatialSettings) {
+    // Controls are disabled until this Work's settings resolve, so a save
+    // can never race an in-flight load — this guard is belt-and-braces.
+    if (!spatialReady) return;
+    const prev: SpatialSettings = { enabled: spatialOn, mode: spatialMode, ambience_doc_id: ambienceDocId || null };
     const targetWork = workId;
-    const seq = ++spatialSaveSeq.current;
     setSpatialOn(next.enabled);
     setSpatialMode(next.mode);
     setAmbienceDocId(next.ambience_doc_id ?? "");
-    try {
-      const resp = await apiFetch(`${BASE}/studio/works/${targetWork}/spatial`, {
+    // Saves are queued so PUTs reach the server in user-action order — the
+    // final click always wins, even if the network reorders completions.
+    const { ok, latest } = await spatialSync.save(targetWork, next, async (wid, value) => {
+      const resp = await apiFetch(`${BASE}/studio/works/${wid}/spatial`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(next),
+        body: JSON.stringify(value),
       });
       if (!resp.ok) {
         const err = await resp.json().catch(() => ({}));
         throw new Error((err as any).detail ?? `HTTP ${resp.status}`);
       }
-    } catch (e: any) {
-      toast.error(`Couldn't save spatial settings: ${e.message}`);
-      // Roll back only if this is still the latest save for the same Work.
-      if (seq === spatialSaveSeq.current && targetWork === workId) {
+    });
+    if (!ok) {
+      toast.error("Couldn't save spatial settings — reverted to the last saved values");
+      // Roll back only if no newer save superseded this one and the user is
+      // still on the same Work.
+      if (latest && targetWork === workId) {
         setSpatialOn(prev.enabled);
         setSpatialMode(prev.mode);
         setAmbienceDocId(prev.ambience_doc_id ?? "");
@@ -1776,10 +1788,11 @@ function AudiobookTab({
 
               {/* Spatial audio — per-Work, saved automatically */}
               <div className="p-3 rounded-xl border border-border/50 space-y-3">
-                <label className="flex items-start gap-3 cursor-pointer">
+                <label className={`flex items-start gap-3 ${spatialReady ? "cursor-pointer" : "opacity-60 cursor-wait"}`}>
                   <input
                     type="checkbox"
                     checked={spatialOn}
+                    disabled={!spatialReady}
                     onChange={e => saveSpatial({ enabled: e.target.checked, mode: spatialMode, ambience_doc_id: ambienceDocId || null })}
                     className="mt-0.5"
                   />
@@ -1795,6 +1808,7 @@ function AudiobookTab({
                   <div className="space-y-2 pl-7">
                     <Select
                       value={spatialMode}
+                      disabled={!spatialReady}
                       onValueChange={(v: "subtle" | "wide") =>
                         saveSpatial({ enabled: true, mode: v, ambience_doc_id: ambienceDocId || null })}
                     >
@@ -1808,6 +1822,7 @@ function AudiobookTab({
                     </Select>
                     <Select
                       value={ambienceDocId || "__none"}
+                      disabled={!spatialReady}
                       onValueChange={v =>
                         saveSpatial({ enabled: true, mode: spatialMode, ambience_doc_id: v === "__none" ? null : v })}
                     >
