@@ -132,14 +132,19 @@ def test_resume_info_includes_credits_segments(work_client):
     assert r.json()["total_segments"] == 6  # 4 chapter + opening/closing credits
 
 
-def test_resume_info_reports_cached_chapter_complete(work_client):
+def test_resume_info_reports_cached_chapter_complete(work_client, monkeypatch):
     """Seeding cache entries for every segment of ch1 marks it done."""
+    from orivellum.api.routes import studio
     from orivellum.api.routes.studio import (
         _chapter_segment_texts,
         _seg_cache_path,
     )
 
     client, cfg, wid = work_client
+    # CI runners have no Kokoro engine — resume-info only counts cache
+    # entries a reachable engine could reuse, so fake availability just like
+    # the render tests fake the engine itself.
+    monkeypatch.setattr(studio, "_kokoro_probably_available", lambda: True)
     for seg_text in _chapter_segment_texts("ch1", CH1_TEXT):
         p = _seg_cache_path(cfg, seg_text, "kokoro", BODY["voice"], BODY["speed"])
         p.write_bytes(b"RIFFfake")
@@ -163,6 +168,8 @@ def test_pause_keeps_progress_and_resume_skips_finished_segments(
     from orivellum.api.routes import studio
 
     client, _cfg, wid = work_client
+    # Resume-info must see Kokoro as reachable (no engine on CI runners).
+    monkeypatch.setattr(studio, "_kokoro_probably_available", lambda: True)
 
     # Run 1: "Pause" lands while segment 2 renders → chapter 1 finishes,
     # the job stops before chapter 2 ever starts.
