@@ -14,7 +14,7 @@ import {
   Mic, Play, Pause, Settings2, Video, Image as ImageIcon,
   FileAudio, Loader2, Volume2, Download, BookHeadphones, FileText,
   X, Trash2, RefreshCw, Activity, Sparkles, FileSpreadsheet, Check, Copy,
-  Presentation, CheckCircle2, AlertTriangle, ChevronRight, Wand2,
+  Presentation, CheckCircle2, AlertTriangle, ChevronRight, Wand2, Square,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Link, useLocation, useSearch } from "wouter";
@@ -1509,7 +1509,22 @@ function DocumentWorkshopPanel() {
 
 // ── Transcription panel ───────────────────────────────────────────────────────
 
-const AUDIO_ACCEPT = ".mp3,.wav,.m4a,.ogg,.flac";
+const AUDIO_ACCEPT = ".mp3,.wav,.m4a,.ogg,.flac,.webm";
+
+/** Pick the best MediaRecorder mime type for this browser. */
+function pickRecorderMime(): string {
+  if (typeof MediaRecorder === "undefined") return "";
+  for (const t of ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"]) {
+    if (MediaRecorder.isTypeSupported(t)) return t;
+  }
+  return "";
+}
+
+function formatRecClock(sec: number): string {
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
 
 /** Drop the "[Audio transcript: …]" banner extraction prepends to stored text. */
 function stripAudioHeader(text: string | null | undefined): string {
@@ -1524,7 +1539,7 @@ function TranscribePanel() {
   const asr = studioStatus?.asr;
   const queryClient = useQueryClient();
 
-  const [source, setSource] = useState<"upload" | "library">("upload");
+  const [source, setSource] = useState<"upload" | "library" | "record">("upload");
   const [file, setFile] = useState<File | null>(null);
   const [saveToLibrary, setSaveToLibrary] = useState(true);
   const [libDocId, setLibDocId] = useState<string | null>(null);
@@ -1557,7 +1572,128 @@ function TranscribePanel() {
   const jobIdRef = useRef<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Cancel any in-flight job on unmount.
+  // Microphone recording state.
+  const [recState, setRecState] = useState<"idle" | "starting" | "recording" | "recorded">("idle");
+  const [recFile, setRecFile] = useState<File | null>(null);
+  const [recUrl, setRecUrl] = useState<string | null>(null);
+  const [recSeconds, setRecSeconds] = useState(0);
+  const [recError, setRecError] = useState<string | null>(null);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const recChunksRef = useRef<Blob[]>([]);
+  const recStreamRef = useRef<MediaStream | null>(null);
+  const recTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const recUrlRef = useRef<string | null>(null);
+  // Generation counter: bumped by discard/teardown/unmount so that a
+  // getUserMedia promise or MediaRecorder onstop resolving late can tell it
+  // belongs to a dead session and must release resources instead of
+  // publishing state (mic-stays-hot / object-URL-leak races).
+  const recSessionRef = useRef(0);
+  const micSupported =
+    typeof navigator !== "undefined" &&
+    !!navigator.mediaDevices?.getUserMedia &&
+    typeof MediaRecorder !== "undefined";
+  const secureContext = typeof window === "undefined" || window.isSecureContext;
+
+  /** Kill the active recording session (recorder + mic stream + timer).
+   *  Bumps the session counter so any in-flight getUserMedia / onstop
+   *  callback knows it is stale. Captured state (recFile/recUrl) untouched. */
+  function teardownRecorder() {
+    recSessionRef.current += 1;
+    if (recTimerRef.current) { clearInterval(recTimerRef.current); recTimerRef.current = null; }
+    const mr = recorderRef.current;
+    if (mr && mr.state !== "inactive") {
+      try { mr.stop(); } catch { /* already stopped */ }
+    }
+    recorderRef.current = null;
+    recStreamRef.current?.getTracks().forEach(t => t.stop());
+    recStreamRef.current = null;
+  }
+
+  function discardRecording() {
+    teardownRecorder();
+    if (recUrlRef.current) { URL.revokeObjectURL(recUrlRef.current); recUrlRef.current = null; }
+    setRecUrl(null);
+    setRecFile(null);
+    setRecSeconds(0);
+    setRecState("idle");
+    setRecError(null);
+  }
+
+  async function startRecording() {
+    if (recState === "starting" || recState === "recording") return;
+    setRecError(null);
+    setText(null); setEngine(null); setWordCount(null);
+    setDocId(null); setErrorMsg(null); setJobState("idle");
+    setRecState("starting");
+    const session = ++recSessionRef.current;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      if (session !== recSessionRef.current) {
+        // Session was torn down (tab switch / discard / unmount) while the
+        // permission prompt was open — release the mic immediately.
+        stream.getTracks().forEach(t => t.stop());
+        return;
+      }
+      recStreamRef.current = stream;
+      const mime = pickRecorderMime();
+      const mr = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+      recChunksRef.current = [];
+      mr.ondataavailable = (e) => { if (e.data.size > 0) recChunksRef.current.push(e.data); };
+      mr.onstop = () => {
+        stream.getTracks().forEach(t => t.stop());
+        const chunks = recChunksRef.current;
+        recChunksRef.current = [];
+        if (session !== recSessionRef.current) return; // stale — resources released, publish nothing
+        recStreamRef.current = null;
+        const type = mr.mimeType || mime || "audio/webm";
+        const blob = new Blob(chunks, { type });
+        if (blob.size === 0) {
+          setRecError("Nothing was recorded — please try again.");
+          setRecState("idle");
+          return;
+        }
+        // Safari records audio/mp4 — name it .m4a (same container, accepted upstream).
+        const ext = type.includes("mp4") ? "m4a" : type.includes("ogg") ? "ogg" : "webm";
+        const stamp = new Date().toISOString().slice(0, 16).replace(/[T:]/g, "-");
+        const f = new File([blob], `recording-${stamp}.${ext}`, { type });
+        setRecFile(f);
+        if (recUrlRef.current) URL.revokeObjectURL(recUrlRef.current);
+        recUrlRef.current = URL.createObjectURL(blob);
+        setRecUrl(recUrlRef.current);
+        setRecState("recorded");
+      };
+      // 1s timeslice so long recordings flush chunks as they go.
+      mr.start(1000);
+      recorderRef.current = mr;
+      setRecFile(null);
+      if (recUrlRef.current) { URL.revokeObjectURL(recUrlRef.current); recUrlRef.current = null; }
+      setRecUrl(null);
+      setRecSeconds(0);
+      setRecState("recording");
+      recTimerRef.current = setInterval(() => setRecSeconds(s => s + 1), 1000);
+    } catch (e: any) {
+      if (session !== recSessionRef.current) return; // stale failure — state already reset elsewhere
+      recStreamRef.current?.getTracks().forEach(t => t.stop());
+      recStreamRef.current = null;
+      const name = e?.name ?? "";
+      setRecError(
+        name === "NotAllowedError" || name === "SecurityError"
+          ? "Microphone access was blocked. Allow microphone access for this site in your browser settings, then try again."
+          : name === "NotFoundError"
+          ? "No microphone was found on this device."
+          : e?.message || "Could not start recording.");
+      setRecState("idle");
+    }
+  }
+
+  function stopRecording() {
+    if (recTimerRef.current) { clearInterval(recTimerRef.current); recTimerRef.current = null; }
+    const mr = recorderRef.current;
+    if (mr && mr.state !== "inactive") mr.stop();
+    recorderRef.current = null;
+  }
+
+  // Cancel any in-flight job + release the microphone on unmount.
   useEffect(() => {
     return () => {
       if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
@@ -1565,6 +1701,14 @@ function TranscribePanel() {
         apiFetch(`${BASE}/studio/transcribe/${jobIdRef.current}`, { method: "DELETE" }).catch(() => {});
         jobIdRef.current = null;
       }
+      recSessionRef.current += 1; // invalidate in-flight getUserMedia / onstop
+      if (recTimerRef.current) { clearInterval(recTimerRef.current); recTimerRef.current = null; }
+      const mr = recorderRef.current;
+      if (mr && mr.state !== "inactive") { try { mr.stop(); } catch { /* noop */ } }
+      recorderRef.current = null;
+      recStreamRef.current?.getTracks().forEach(t => t.stop());
+      recStreamRef.current = null;
+      if (recUrlRef.current) { URL.revokeObjectURL(recUrlRef.current); recUrlRef.current = null; }
     };
   }, []);
 
@@ -1624,8 +1768,9 @@ function TranscribePanel() {
     }, 2000);
   }
 
-  async function handleTranscribe() {
-    if (!file) return;
+  async function handleTranscribe(fileOverride?: File) {
+    const f = fileOverride ?? file;
+    if (!f) return;
     setJobState("uploading");
     setStage("uploading");
     setText(null);
@@ -1633,7 +1778,7 @@ function TranscribePanel() {
     setDocId(null);
     try {
       const form = new FormData();
-      form.append("file", file);
+      form.append("file", f);
       form.append("save_to_library", saveToLibrary ? "true" : "false");
       const resp = await apiFetch(`${BASE}/studio/transcribe`, { method: "POST", body: form });
       if (!resp.ok) {
@@ -1697,6 +1842,8 @@ function TranscribePanel() {
     a.href = url;
     const baseName = source === "library"
       ? (libDoc?.title ?? "document")
+      : source === "record"
+      ? (recFile?.name ?? "recording")
       : (file?.name ?? "recording");
     a.download = `${baseName.replace(/\.[^.]+$/, "")}-transcript.txt`;
     a.click();
@@ -1735,14 +1882,15 @@ function TranscribePanel() {
       <CardContent className="space-y-4">
         {/* Source toggle: fresh upload vs existing Library audio */}
         <div className="flex rounded-lg border border-border overflow-hidden" role="tablist" aria-label="Audio source">
-          {([["upload", "Upload a file"], ["library", "From the Library"]] as const).map(([key, label]) => (
+          {([["upload", "Upload a file"], ["record", "Record"], ["library", "From the Library"]] as const).map(([key, label]) => (
             <button
               key={key}
               role="tab"
               aria-selected={source === key}
-              disabled={busy}
+              disabled={busy || recState === "recording" || recState === "starting"}
               onClick={() => {
                 if (source === key) return;
+                if (source === "record") discardRecording();
                 setSource(key);
                 setText(null); setEngine(null); setWordCount(null);
                 setDocId(null); setErrorMsg(null); setJobState("idle");
@@ -1794,6 +1942,102 @@ function TranscribePanel() {
           </button>
         </div>
         </>}
+
+        {source === "record" && (
+          <div className="space-y-3">
+            {!micSupported || !secureContext ? (
+              <div className="flex items-start gap-2.5 p-3 rounded-lg border text-sm"
+                style={{ color: "var(--rust)", background: "var(--rust-soft)", borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)" }}
+                data-testid="text-mic-unsupported">
+                <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                <span className="min-w-0">
+                  {!secureContext
+                    ? "Microphone recording needs a secure (HTTPS) connection. Open this page over HTTPS and try again."
+                    : "This browser doesn't support in-page audio recording."}
+                </span>
+              </div>
+            ) : recState === "recording" ? (
+              <div className="space-y-3">
+                <div className="flex items-center justify-center gap-3 py-6 rounded-lg border"
+                  style={{ borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)", background: "var(--rust-soft)" }}
+                  data-testid="indicator-recording">
+                  <span className="relative flex h-3 w-3">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-60" style={{ background: "var(--rust)" }} />
+                    <span className="relative inline-flex rounded-full h-3 w-3" style={{ background: "var(--rust)" }} />
+                  </span>
+                  <span className="text-sm font-medium" style={{ color: "var(--rust)" }}>Recording…</span>
+                  <span className="text-sm font-mono tabular-nums" style={{ color: "var(--rust)" }} data-testid="text-recording-time">
+                    {formatRecClock(recSeconds)}
+                  </span>
+                </div>
+                <Button
+                  onClick={stopRecording}
+                  className="w-full gap-2 min-h-[48px]"
+                  variant="destructive"
+                  data-testid="button-stop-recording"
+                >
+                  <Square className="w-4 h-4" /> Stop recording
+                </Button>
+              </div>
+            ) : recState === "recorded" && recFile ? (
+              <div className="space-y-3">
+                <div className="p-3 rounded-lg border border-border/50 bg-muted/20 space-y-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <FileAudio className="w-4 h-4 text-primary shrink-0" />
+                    <span className="text-sm font-medium truncate">{recFile.name}</span>
+                    <span className="text-[11px] font-mono text-muted-foreground shrink-0">
+                      {formatRecClock(recSeconds)} · {(recFile.size / 1024 / 1024).toFixed(1)} MB
+                    </span>
+                  </div>
+                  {recUrl && (
+                    <audio controls src={recUrl} className="w-full h-9" data-testid="audio-recording-preview" />
+                  )}
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    onClick={() => { discardRecording(); void startRecording(); }}
+                    variant="outline"
+                    disabled={busy}
+                    className="flex-1 gap-2"
+                    data-testid="button-rerecord"
+                  >
+                    <Mic className="w-4 h-4" /> Re-record
+                  </Button>
+                  <Button
+                    onClick={discardRecording}
+                    variant="ghost"
+                    disabled={busy}
+                    className="gap-2"
+                    data-testid="button-discard-recording"
+                  >
+                    <Trash2 className="w-4 h-4" /> Discard
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-1">
+                <Button
+                  onClick={() => void startRecording()}
+                  className="w-full gap-2 min-h-[56px]"
+                  data-testid="button-start-recording"
+                >
+                  <Mic className="w-5 h-5" /> Record from microphone
+                </Button>
+                <p className="text-[11px] text-muted-foreground text-center">
+                  Your browser will ask for microphone permission the first time.
+                </p>
+              </div>
+            )}
+            {recError && (
+              <div className="flex items-start gap-2.5 p-3 rounded-lg border text-sm"
+                style={{ color: "var(--rust)", background: "var(--rust-soft)", borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)" }}
+                data-testid="text-recording-error">
+                <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                <span className="min-w-0">{recError}</span>
+              </div>
+            )}
+          </div>
+        )}
 
         {source === "library" && (
           <div className="space-y-3">
@@ -1867,8 +2111,8 @@ function TranscribePanel() {
           </div>
         )}
 
-        {source === "upload" && <>
         {/* Save to library toggle */}
+        {(source === "upload" || (source === "record" && recState === "recorded")) && (
         <label className="flex items-center gap-2.5 cursor-pointer select-none min-h-[44px]">
           <input
             type="checkbox"
@@ -1880,10 +2124,11 @@ function TranscribePanel() {
           />
           <span className="text-sm">Save transcript to the Library</span>
         </label>
+        )}
 
-        {/* Transcribe button */}
+        {source === "upload" && (
         <Button
-          onClick={handleTranscribe}
+          onClick={() => void handleTranscribe()}
           disabled={!file || busy || (asr ? !asr.available : false)}
           className="w-full gap-2"
           data-testid="button-start-transcribe"
@@ -1894,7 +2139,22 @@ function TranscribePanel() {
             <><FileText className="w-4 h-4" /> Transcribe</>
           )}
         </Button>
-        </>}
+        )}
+
+        {source === "record" && recState === "recorded" && (
+        <Button
+          onClick={() => { if (recFile) void handleTranscribe(recFile); }}
+          disabled={!recFile || busy || (asr ? !asr.available : false)}
+          className="w-full gap-2"
+          data-testid="button-transcribe-recording"
+        >
+          {busy ? (
+            <><Loader2 className="w-4 h-4 animate-spin" /> {stageLabel}</>
+          ) : (
+            <><FileText className="w-4 h-4" /> Transcribe recording</>
+          )}
+        </Button>
+        )}
 
         {source === "library" && (
           <Button

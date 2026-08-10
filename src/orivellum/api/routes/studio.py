@@ -3135,7 +3135,9 @@ def cancel_doc_tts(job_id: str):
 # jobs above: POST starts the job, GET polls status, DELETE cancels (best
 # effort — a transcription already in flight cannot be interrupted).
 
-_AUDIO_EXTS = frozenset({".mp3", ".wav", ".m4a", ".ogg", ".flac"})
+# .webm covers in-browser MediaRecorder captures (Chrome/Firefox); Safari
+# recordings arrive as audio/mp4 and are named .m4a client-side.
+_AUDIO_EXTS = frozenset({".mp3", ".wav", ".m4a", ".ogg", ".flac", ".webm"})
 
 # Disk-based ceiling for a single upload.  The route is exempt from the in-RAM
 # body limit (it streams to disk), so this is the actual size control.
