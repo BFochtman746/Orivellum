@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { Toaster } from '@/components/ui/toaster';
 import { Toaster as SonnerToaster } from 'sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { Route, Switch, Router as WouterRouter, Redirect } from 'wouter';
@@ -287,9 +286,9 @@ function App() {
           </ReadAloudProvider>
           <CommandPalette />
         </WouterRouter>
-        <Toaster />
-        {/* Many pages emit toasts via sonner's toast() — without this mounted
-            Toaster those calls silently render nothing. */}
+        {/* Sonner is the app's single toast system — every page's toast()
+            renders through this one Toaster. Keep it mounted or all
+            notifications silently disappear. */}
         <SonnerToaster position="top-center" richColors closeButton />
       </TooltipProvider>
     </QueryClientProvider>

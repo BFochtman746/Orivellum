@@ -15,6 +15,7 @@ import React, {
   useCallback, useEffect, useRef, useState,
 } from 'react';
 import { apiFetch } from '@/lib/auth';
+import { toast } from 'sonner';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Typography from '@tiptap/extension-typography';
@@ -53,7 +54,6 @@ import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { useToast } from '@/hooks/use-toast';
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem,
   DropdownMenuSeparator, DropdownMenuTrigger,
@@ -258,7 +258,6 @@ function AIPanel({
   const [preview, setPreview] = useState('');
   const [pendingImage, setPendingImage] = useState<{ data: string; type: string } | null>(null);
   const imgInputRef = useRef<HTMLInputElement>(null);
-  const { toast } = useToast();
   const abortRef = useRef<AbortController | null>(null);
 
   const getContext = useCallback(() => {
@@ -271,7 +270,7 @@ function AIPanel({
 
   const handleImageFile = useCallback((file: File) => {
     if (!file.type.startsWith('image/')) {
-      toast({ title: 'Not an image', description: 'Please select an image file.', variant: 'destructive' });
+      toast.error('Not an image', { description: 'Please select an image file.' });
       return;
     }
     const reader = new FileReader();
@@ -281,7 +280,7 @@ function AIPanel({
       setPendingImage({ data: dataUrl.slice(comma + 1), type: file.type });
     };
     reader.readAsDataURL(file);
-  }, [toast]);
+  }, []);
 
   const runCommand = useCallback(async (cmd: AICommand, instruction = '', imgB64?: string, imgType?: string) => {
     if (!docId || streaming) return;
@@ -339,13 +338,13 @@ function AIPanel({
       if (result.trim()) setPreview(result.trim());
     } catch (err: unknown) {
       if ((err as Error).name !== 'AbortError') {
-        toast({ title: 'AI assist error', description: String(err), variant: 'destructive' });
+        toast.error('AI assist error', { description: String(err) });
         setPreview('');
       }
     } finally {
       setStreaming(false);
     }
-  }, [docId, streaming, getContext, toast]);
+  }, [docId, streaming, getContext]);
 
   const handleInsert = () => {
     if (!preview.trim()) return;
@@ -622,7 +621,6 @@ export default function WriteDeskPage() {
   // gets the full width without the user needing to find focus mode.
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const saveTimer                 = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const { toast } = useToast();
   const [, navigate] = useLocation();
 
   // ── Editor ────────────────────────────────────────────────────────────────
@@ -667,12 +665,12 @@ export default function WriteDeskPage() {
       setDocs(list);
       return list;
     } catch (err) {
-      toast({ title: 'Could not load documents', description: String(err), variant: 'destructive' });
+      toast.error('Could not load documents', { description: String(err) });
       return [] as WriteDoc[];
     } finally {
       setLoading(false);
     }
-  }, [toast]);
+  }, []);
 
   useEffect(() => {
     loadDocs().then((list) => {
@@ -755,9 +753,9 @@ export default function WriteDeskPage() {
       setDocs((prev) => [newDoc, ...prev]);
       await openDoc(newDoc);
     } catch (err) {
-      toast({ title: 'Could not create document', description: String(err), variant: 'destructive' });
+      toast.error('Could not create document', { description: String(err) });
     }
-  }, [openDoc, toast]);
+  }, [openDoc]);
 
   // ── Delete doc ────────────────────────────────────────────────────────────
 
@@ -771,9 +769,9 @@ export default function WriteDeskPage() {
         else { setActiveDoc(null); editor?.commands.setContent(''); setTitle(''); }
       }
     } catch (err) {
-      toast({ title: 'Delete failed', description: String(err), variant: 'destructive' });
+      toast.error('Delete failed', { description: String(err) });
     }
-  }, [docs, activeDoc, openDoc, editor, toast]);
+  }, [docs, activeDoc, openDoc, editor]);
 
   // ── Pin ───────────────────────────────────────────────────────────────────
 
@@ -798,9 +796,9 @@ export default function WriteDeskPage() {
       a.click();
       URL.revokeObjectURL(url);
     } catch (err) {
-      toast({ title: 'Export failed', description: String(err), variant: 'destructive' });
+      toast.error('Export failed', { description: String(err) });
     }
-  }, [activeDoc, toast]);
+  }, [activeDoc]);
 
   // ── AI insert helper ──────────────────────────────────────────────────────
 
