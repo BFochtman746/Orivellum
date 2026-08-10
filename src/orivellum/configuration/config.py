@@ -83,6 +83,15 @@ class ServingConfig:
     # Set True only after confirming the license terms for your use case.
     tts_premium_ack_license: bool = False
 
+    # ── Music / SFX generation ────────────────────────────────────────────────
+    # Base URL for the local music generation sidecar (sidecars/music_gen).
+    # Leave empty (default) to disable — trailer music/SFX Generate buttons
+    # stay hidden.  Unlike the premium TTS flag, license acknowledgement is
+    # PER MODEL and lives in DB settings (music_license_ack_<model_id>),
+    # collected through the UI before a model can generate.
+    # Example: "http://127.0.0.1:9884"
+    music_gen_url: str = ""
+
     # ── Reranker ──────────────────────────────────────────────────────────────
     # Leave empty to use RRF (reciprocal-rank fusion) only.
     # Cross-encoder reranker served by Lemonade's /rerank endpoint.
@@ -246,6 +255,7 @@ def load_config(path: str | None = None) -> OrivellumConfig:
             tts_premium_url=str(serving_raw.get("tts_premium_url", ServingConfig.tts_premium_url)),
             tts_premium_ack_license=bool(serving_raw.get(
                 "tts_premium_ack_license", ServingConfig.tts_premium_ack_license)),
+            music_gen_url=str(serving_raw.get("music_gen_url", ServingConfig.music_gen_url)),
             reranker_model=serving_raw.get("reranker_model", serving_raw.get(
                 "models", {}).get("reranker", ServingConfig.reranker_model)),
             timeout_sec=int(serving_raw.get("timeout_sec", ServingConfig.timeout_sec)),

@@ -6,7 +6,7 @@
  * progress, download production_package.json, and history list.
  */
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/auth";
 import { Card, CardContent } from "@/components/ui/card";
@@ -15,12 +15,23 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Dialog, DialogContent, DialogDescription, DialogFooter,
+  DialogHeader, DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select";
 import { toast } from "sonner";
+import { useReadAloud } from "@/lib/read-aloud";
 import {
   Film, Sparkles, Loader2, CheckCircle, AlertCircle, XCircle,
   Copy, Check, ChevronDown, ChevronRight, Download, Music,
   Mic, Clapperboard, LayoutList, BookOpen, Star, Clock,
   BarChart3, Layers, Settings2, Smartphone, Monitor, Blend,
+  Play, Wand2, ScrollText,
 } from "lucide-react";
 
 const BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
@@ -559,14 +570,321 @@ function ShotlistPanel({
   );
 }
 
+// ─── Music / SFX generation ───────────────────────────────────────────────────
+
+interface MusicModelInfo {
+  id: string;
+  name: string;
+  vendor: string;
+  license: string;
+  license_url: string;
+  license_summary: string;
+  commercial_use: string;
+  max_duration_s: number;
+  good_for: string[];
+  license_acked: boolean;
+  installed: boolean;
+  loaded: boolean;
+  load_error?: string | null;
+}
+
+interface MusicGenStatus {
+  configured: boolean;
+  reachable: boolean;
+  device?: string | null;
+  models: MusicModelInfo[];
+}
+
+function useMusicGenStatus() {
+  return useQuery<MusicGenStatus>({
+    queryKey: ["music-gen-status"],
+    queryFn: () => apiFetch(`${BASE}/studio/music/status`).then(r => r.json()),
+    staleTime: 30_000,
+    retry: 1,
+  });
+}
+
+const SFX_MAX_S = 15;
+
+/** One-tap generation for a trailer music/SFX prompt.
+ *  Renders nothing when the music sidecar is not configured (clean degradation). */
+function MusicGenControls({
+  prompt,
+  kind,
+  defaultDuration,
+  workId,
+}: {
+  prompt: string;
+  kind: "music" | "sfx";
+  defaultDuration?: number | null;
+  workId?: string;
+}) {
+  const { data: status } = useMusicGenStatus();
+  const qc = useQueryClient();
+  const readAloud = useReadAloud();
+
+  const models = (status?.models ?? []).filter(m => m.good_for.includes(kind));
+  const [modelId, setModelId] = useState<string>("");
+  const model = models.find(m => m.id === modelId) ?? models[0];
+
+  const cap = Math.min(model?.max_duration_s ?? 47, kind === "sfx" ? SFX_MAX_S : Infinity);
+  const [duration, setDuration] = useState<number>(() =>
+    Math.max(1, Math.min(defaultDuration ?? (kind === "sfx" ? 5 : 30), cap)));
+
+  const [generating, setGenerating] = useState(false);
+  const [outputPath, setOutputPath] = useState<string | null>(null);
+  const [licenseOpen, setLicenseOpen] = useState(false);
+  const [licenseChecked, setLicenseChecked] = useState(false);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Stop polling on unmount.
+  useEffect(() => () => {
+    if (pollRef.current) clearInterval(pollRef.current);
+  }, []);
+
+  if (!status?.configured || !model) return null;
+
+  const unreachable = !status.reachable;
+  const serveUrl = outputPath
+    ? `${BASE}/studio/outputs/serve?path=${encodeURIComponent(outputPath)}`
+    : null;
+
+  async function startGeneration() {
+    if (!model) return;
+    setGenerating(true);
+    setOutputPath(null);
+    try {
+      const dur = Math.max(1, Math.min(duration, cap));
+      const resp = await apiFetch(`${BASE}/studio/music/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt, model: model.id, kind, duration_s: dur, work_id: workId ?? null,
+        }),
+      });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        throw new Error((err as any).detail ?? `HTTP ${resp.status}`);
+      }
+      const { job_id } = await resp.json();
+      // Own exactly one interval: kill any stale poller before starting a new
+      // one, and let this closure clear only the interval it created.
+      if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+      const interval = setInterval(async () => {
+        const stop = () => {
+          clearInterval(interval);
+          if (pollRef.current === interval) pollRef.current = null;
+        };
+        try {
+          const r = await apiFetch(`${BASE}/studio/music/jobs/${job_id}`);
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          const job = await r.json();
+          if (job.state === "done") {
+            stop();
+            setGenerating(false);
+            setOutputPath(job.output_path);
+            qc.invalidateQueries({ queryKey: ["listStudioOutputs"] });
+            if (job.registered === false) {
+              toast.warning(job.warning ?? "Audio saved, but library registration failed.", { duration: 9000 });
+            } else {
+              toast.success(kind === "sfx" ? "Sound effect ready — find it in Studio outputs" : "Music ready — find it in Studio outputs");
+            }
+          } else if (job.state === "error") {
+            stop();
+            setGenerating(false);
+            toast.error(`Generation failed: ${job.error ?? "unknown error"}`, { duration: 9000 });
+          }
+        } catch {
+          stop();
+          setGenerating(false);
+          toast.error("Lost track of the generation job — check Studio outputs in a minute.");
+        }
+      }, 3000);
+      pollRef.current = interval;
+    } catch (e: any) {
+      setGenerating(false);
+      toast.error(`Could not start generation: ${e.message}`, { duration: 8000 });
+    }
+  }
+
+  function handleGenerateClick() {
+    if (!prompt.trim() || !model) return;
+    if (!model.license_acked) {
+      setLicenseChecked(false);
+      setLicenseOpen(true);
+      return;
+    }
+    void startGeneration();
+  }
+
+  async function acceptLicense() {
+    if (!model) return;
+    try {
+      const r = await apiFetch(`${BASE}/studio/music/licenses/${model.id}/ack`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accepted: true }),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      await qc.invalidateQueries({ queryKey: ["music-gen-status"] });
+      setLicenseOpen(false);
+      void startGeneration();
+    } catch (e: any) {
+      toast.error(`Could not record license acceptance: ${e.message}`);
+    }
+  }
+
+  return (
+    <div className="space-y-2 pt-2 border-t border-border/30">
+      <div className="flex flex-wrap items-center gap-2">
+        {models.length > 1 ? (
+          <Select value={model.id} onValueChange={setModelId}>
+            <SelectTrigger className="h-7 w-auto min-w-[160px] text-[11px] font-mono">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {models.map(m => (
+                <SelectItem key={m.id} value={m.id} className="text-xs">
+                  {m.name}{m.commercial_use === "no" ? " (non-commercial)" : ""}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        ) : (
+          <span className="text-[10px] font-mono text-muted-foreground">{model.name}</span>
+        )}
+        <div className="flex items-center gap-1">
+          <Input
+            type="number"
+            min={1}
+            max={cap}
+            value={duration}
+            onChange={(e) => setDuration(Number(e.target.value))}
+            className="h-7 w-16 text-[11px] font-mono"
+            aria-label="Duration in seconds"
+          />
+          <span className="text-[10px] font-mono text-muted-foreground">s · max {cap}s</span>
+        </div>
+        <Button
+          size="sm"
+          className="h-7 gap-1.5 text-xs"
+          disabled={generating || unreachable || !prompt.trim()}
+          onClick={handleGenerateClick}
+          title={unreachable ? "Music engine is configured but not reachable — start the sidecar" : undefined}
+        >
+          {generating
+            ? <><Loader2 className="w-3 h-3 animate-spin" /> Generating…</>
+            : <><Wand2 className="w-3 h-3" /> Generate {kind === "sfx" ? "effect" : "music"}</>}
+        </Button>
+        {serveUrl && (
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 gap-1.5 text-xs"
+            onClick={() => readAloud.startUrl({
+              title: kind === "sfx" ? "Sound effect" : "Trailer music",
+              href: "/studio",
+              url: serveUrl,
+            })}
+          >
+            <Play className="w-3 h-3" /> Play
+          </Button>
+        )}
+      </div>
+      {unreachable && (
+        <p className="text-[10px] font-mono" style={{ color: "var(--gilt)" }}>
+          Music engine configured but not responding — start the sidecar (scripts\start-music-sidecar.ps1).
+        </p>
+      )}
+      {model && !model.license_acked && (
+        <p className="text-[10px] font-mono text-muted-foreground/70 flex items-center gap-1">
+          <ScrollText className="w-3 h-3" /> {model.name} requires a one-time license acknowledgement before first use.
+        </p>
+      )}
+
+      {/* License acknowledgement dialog */}
+      <Dialog open={licenseOpen} onOpenChange={setLicenseOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="font-serif text-lg">
+              {model.name} — license terms
+            </DialogTitle>
+            <DialogDescription asChild>
+              <div className="space-y-3 pt-1 text-left">
+                <p className="text-xs font-mono uppercase tracking-widest text-muted-foreground">
+                  {model.license}
+                </p>
+                <p className="text-sm leading-relaxed">{model.license_summary}</p>
+                <a
+                  href={model.license_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-xs underline text-primary"
+                >
+                  Read the full license terms
+                </a>
+              </div>
+            </DialogDescription>
+          </DialogHeader>
+          <label className="flex items-start gap-2 text-sm cursor-pointer">
+            <Checkbox
+              checked={licenseChecked}
+              onCheckedChange={(v) => setLicenseChecked(v === true)}
+              className="mt-0.5"
+            />
+            <span>I have read and accept these license terms for my use case.</span>
+          </label>
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setLicenseOpen(false)}>
+              Cancel
+            </Button>
+            <Button size="sm" disabled={!licenseChecked} onClick={acceptLicense}>
+              Accept & generate
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+/** Free-prompt sound-effect generator shown under the music brief.
+ *  Hidden when the sidecar is not configured. */
+function SfxGenerator({ workId }: { workId?: string }) {
+  const { data: status } = useMusicGenStatus();
+  const [prompt, setPrompt] = useState("");
+  if (!status?.configured) return null;
+  const sfxCapable = (status.models ?? []).some(m => m.good_for.includes("sfx"));
+  if (!sfxCapable) return null;
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-2 text-[10px] font-mono uppercase tracking-widest text-muted-foreground">
+        <Wand2 className="w-3.5 h-3.5" />
+        Sound Effects
+      </div>
+      <div className="rounded-lg border border-border/50 bg-muted/10 p-4 space-y-2">
+        <Input
+          value={prompt}
+          onChange={(e) => setPrompt(e.target.value)}
+          placeholder="Describe an effect — e.g. deep cinematic braam with metallic tail…"
+          className="h-8 text-sm font-serif"
+        />
+        <MusicGenControls prompt={prompt} kind="sfx" defaultDuration={5} workId={workId} />
+      </div>
+    </div>
+  );
+}
+
 // ─── Narration & Music panel ──────────────────────────────────────────────────
 
 function NarrationMusicPanel({
   narration,
   music,
+  workId,
 }: {
   narration: TrailerNarrationLine[];
   music: TrailerMusic;
+  workId?: string;
 }) {
   return (
     <div className="space-y-6">
@@ -642,11 +960,24 @@ function NarrationMusicPanel({
               <div className="text-xs text-muted-foreground font-serif italic">{music.structure}</div>
             )}
             <p className="text-[10px] font-mono text-muted-foreground/60">
-              License note: MusicGen output is commercially usable (MIT). Do not substitute Stable Audio Open for shipped work.
+              License note: MusicGen weights are CC-BY-NC (non-commercial only — its MIT license covers
+              only the code). For work you may publish commercially, use Stable Audio Open and verify
+              the Stability AI Community License terms for your situation.
             </p>
+            {music.prompt && (
+              <MusicGenControls
+                prompt={music.prompt}
+                kind="music"
+                defaultDuration={music.length_seconds}
+                workId={workId}
+              />
+            )}
           </div>
         </div>
       )}
+
+      {/* Sound effects — free-prompt generation (hidden when engine not configured) */}
+      <SfxGenerator workId={workId} />
     </div>
   );
 }
@@ -931,7 +1262,7 @@ function TrailerPackageDetail({ trailer }: { trailer: TrailerPackage }) {
             <ShotlistPanel shots={shots} shotPrompts={shotPrompts} />
           </TabsContent>
           <TabsContent value="narration">
-            <NarrationMusicPanel narration={narration} music={music} />
+            <NarrationMusicPanel narration={narration} music={music} workId={trailer.work_id} />
           </TabsContent>
           <TabsContent value="assembly">
             <AssemblyPanel assembly={assembly} duration={duration} />

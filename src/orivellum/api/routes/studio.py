@@ -3363,6 +3363,10 @@ def list_outputs():
         if kind == "audio":
             if name.startswith("tts_full_"):
                 label: "str | None" = "Full narration"
+            elif name.startswith("music_"):
+                label = "Music"
+            elif name.startswith("sfx_"):
+                label = "Sound effect"
             elif name.startswith("tmp") and name.endswith(".mp3"):
                 label = "Clip"
             else:

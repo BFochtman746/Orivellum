@@ -105,6 +105,19 @@ serving:
   # Set to true only after confirming license terms for your use case.
   tts_premium_ack_license: false
 
+  # ── Music / SFX generation ────────────────────────────────────────────────────
+  # Local music generation sidecar for trailer soundtrack beds and effects
+  # (see sidecars/music_gen/README.md).
+  #   1. Run scripts\start-music-sidecar.ps1 -Setup   (once)
+  #   2. Run scripts\start-music-sidecar.ps1          (starts 127.0.0.1:9884)
+  #   3. Set music_gen_url: "http://127.0.0.1:9884"
+  # License acknowledgement is per model and collected in the UI:
+  #   Stable Audio Open — Stability AI Community License (commercial OK under
+  #   $1M annual revenue; weights gated on Hugging Face).
+  #   MusicGen — weights CC-BY-NC 4.0 (NON-commercial use only).
+  # Leave empty to disable (Generate buttons stay hidden).
+  music_gen_url: ""
+
   # ── Reranker ──────────────────────────────────────────────────────────────────
   # Cross-encoder second-pass scoring for knowledge search, chat context
   # selection, and web-search passages (+5-10% retrieval precision).
