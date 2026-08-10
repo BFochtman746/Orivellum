@@ -87,3 +87,4 @@
 - [Commonplace notes](orivellum-commonplace.md) — server-owned category policy; marker-idempotent vault; approval = atomic claim + replayable complete_approval; action provenance guard.
 - [Spatial audiobook rendering](orivellum-spatial-audio.md) — pan per-render temp copies at concat (dry cache untouched, all-or-nothing); spatial failures always fall back to plain render; UI must gate overrides on settings resolution.
 - [GitHub CI rules](orivellum-ci.md) — runners lack ffmpeg/kokoro/secrets; pnpm needs packageManager pin + lib build before tsc; never patch one target from concurrent coroutines (leaks mocks).
+- [Re-extraction knowledge hygiene](orivellum-retranscribe.md) — re-running process_document must be preceded by delete_document_knowledge(); text-hash dedup keeps stale rows alive otherwise.
