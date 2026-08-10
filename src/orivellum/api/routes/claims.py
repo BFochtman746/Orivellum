@@ -12,13 +12,12 @@ VER-INV-001: A8 claims are never returned by any read endpoint.
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from orivellum.api._deps import get_db
+from orivellum.api._deps import get_db, require_auth
 
-router = APIRouter(prefix="/api/claims", tags=["claims"])
-
+router = APIRouter(prefix="/api/claims", tags=["claims"], dependencies=[Depends(require_auth)])
 _A8_BLOCKED = "A8"  # Never surface A8 through the API
 
 

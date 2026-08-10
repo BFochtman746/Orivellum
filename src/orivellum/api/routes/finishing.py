@@ -7,14 +7,13 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from orivellum.api._deps import get_config
+from orivellum.api._deps import get_config, require_auth
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/finishing", tags=["finishing"])
-
+router = APIRouter(prefix="/api/finishing", tags=["finishing"], dependencies=[Depends(require_auth)])
 # ── lazy init helpers ─────────────────────────────────────────────────────────
 
 _initialized = False

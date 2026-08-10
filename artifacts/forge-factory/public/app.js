@@ -37,7 +37,13 @@ async function selectProject(projectId, quiet = false) {
 function renderDetail({ project, jobs }) {
   const panel = $('#detail-panel'); panel.textContent = '';
   const header = document.createElement('div'); header.className = 'detail-header';
-  header.innerHTML = `<div><p class="eyebrow">${escape(project.profile)}</p><h2>${escape(project.name)}</h2><p class="brief">${escape(project.brief)}</p></div>`;
+  const headerInfo = document.createElement('div');
+  headerInfo.append(
+    el('p', project.profile, 'eyebrow'),
+    el('h2', project.name),
+    el('p', project.brief, 'brief')
+  );
+  header.append(headerInfo);
   const actions = document.createElement('div'); actions.className = 'actions';
   actions.append(actionButton('Plan website', () => createJob(project.id, 'PLAN')));
   const latestPlan = jobs.find((job) => job.id === project.latestPlanJobId);
@@ -54,7 +60,12 @@ function renderDetail({ project, jobs }) {
 function renderJob(project, job) {
   const article = document.createElement('article'); article.className = 'job';
   const top = document.createElement('div'); top.className = 'job-top';
-  top.innerHTML = `<div><h3>${escape(job.type)} <small>${escape(job.id)}</small></h3><p>${new Date(job.createdAt).toLocaleString()}</p></div><span class="status ${job.status}">${escape(job.status)}</span>`;
+  const topInfo = document.createElement('div');
+  const heading = el('h3', `${job.type} `);
+  heading.append(el('small', job.id));
+  topInfo.append(heading, el('p', new Date(job.createdAt).toLocaleString()));
+  const statusBadge = el('span', job.status, `status ${statusClass(job.status)}`);
+  top.append(topInfo, statusBadge);
   article.append(top);
   const actions = document.createElement('div'); actions.className = 'job-actions';
   if (job.type === 'PLAN' && job.status === 'awaiting_approval') actions.append(actionButton('Approve plan', () => approveJob(project.id, job.id)));
@@ -72,14 +83,14 @@ function renderJob(project, job) {
     hydrateVisualDesign(project.id, job, designMount);
   }
   const events = document.createElement('ul'); events.className = 'event-list';
-  for (const event of (job.eventsData || []).slice(-8).reverse()) { const li = document.createElement('li'); li.innerHTML = `<time>${new Date(event.at).toLocaleTimeString()}</time> · <strong>${escape(event.phase)}</strong> · ${escape(event.message)}`; events.append(li); }
+  for (const event of (job.eventsData || []).slice(-8).reverse()) events.append(eventItem(event));
   article.append(events);
   hydrateEvents(project.id, job.id, events);
   return article;
 }
 
 async function hydrateEvents(projectId, jobId, container) {
-  try { const events = await api(`/api/projects/${projectId}/jobs/${jobId}/events`); container.textContent = ''; for (const event of events.slice(-8).reverse()) { const li = document.createElement('li'); li.innerHTML = `<time>${new Date(event.at).toLocaleTimeString()}</time> · <strong>${escape(event.phase)}</strong> · ${escape(event.message)}`; container.append(li); } }
+  try { const events = await api(`/api/projects/${projectId}/jobs/${jobId}/events`); container.textContent = ''; for (const event of events.slice(-8).reverse()) container.append(eventItem(event)); }
   catch { /* next refresh retries */ }
 }
 
@@ -88,7 +99,9 @@ async function hydrateVisualDesign(projectId, job, mount) {
     const design = await api(`/api/projects/${encodeURIComponent(projectId)}/jobs/${encodeURIComponent(job.id)}/artifacts/visual-design.json`);
     mount.textContent = '';
     const heading = document.createElement('div'); heading.className = 'visual-heading';
-    heading.innerHTML = `<div><p class="eyebrow">Visual design authority</p><h4>Choose one direction</h4></div><span class="design-source">${escape(design.source || 'local')}</span>`;
+    const headingInfo = document.createElement('div');
+    headingInfo.append(el('p', 'Visual design authority', 'eyebrow'), el('h4', 'Choose one direction'));
+    heading.append(headingInfo, el('span', design.source || 'local', 'design-source'));
     mount.append(heading);
     const guidance = document.createElement('p'); guidance.className = 'visual-guidance'; guidance.textContent = job.status === 'awaiting_approval' ? 'Selection is explicit and reversible only by creating a new design job. Build remains locked until this direction is approved.' : `Approved direction: ${design.selectedConceptId || 'not recorded'}.`;
     mount.append(guidance);
@@ -103,7 +116,10 @@ async function hydrateVisualDesign(projectId, job, mount) {
 function renderConcept(projectId, job, design, concept) {
   const card = document.createElement('section'); card.className = `concept ${design.selectedConceptId === concept.id ? 'selected' : ''}`;
   const title = document.createElement('div'); title.className = 'concept-title';
-  title.innerHTML = `<div><h5>${escape(concept.name)}</h5><p>${escape(concept.summary)}</p></div>${design.selectedConceptId === concept.id ? '<span class="selected-badge">Selected</span>' : ''}`;
+  const titleInfo = document.createElement('div');
+  titleInfo.append(el('h5', concept.name), el('p', concept.summary));
+  title.append(titleInfo);
+  if (design.selectedConceptId === concept.id) title.append(el('span', 'Selected', 'selected-badge'));
   card.append(title);
   const swatches = document.createElement('div'); swatches.className = 'swatches';
   for (const [name, value] of Object.entries(concept.palette || {}).slice(0, 6)) {
@@ -125,7 +141,15 @@ async function approveJob(projectId, jobId) { await api(`/api/projects/${project
 async function selectDesign(projectId, jobId, conceptId) { await api(`/api/projects/${projectId}/jobs/${jobId}/select-design`, { method:'POST', body: JSON.stringify({ conceptId }) }); await selectProject(projectId, true); }
 function scheduleRefresh() { clearTimeout(state.timer); state.timer = setTimeout(async () => { if (state.selected) { try { await selectProject(state.selected.project.id, true); } catch {} } }, 3000); }
 function toast(message, isError = false) { const element = document.createElement('div'); element.className = `toast ${isError ? 'error' : ''}`; element.textContent = message; document.body.append(element); setTimeout(() => element.remove(), 3600); }
-function escape(value) { return String(value ?? '').replace(/[&<>'"]/g, (char) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', "'":'&#39;', '"':'&quot;' })[char]); }
+function el(tag, text = '', className = '') { const node = document.createElement(tag); if (className) node.className = className; if (text !== '') node.textContent = String(text ?? ''); return node; }
+function statusClass(status) { return String(status ?? '').replace(/[^a-z0-9_-]/gi, '-'); }
+function eventItem(event) {
+  const li = document.createElement('li');
+  const time = document.createElement('time'); time.textContent = new Date(event.at).toLocaleTimeString();
+  const phase = document.createElement('strong'); phase.textContent = String(event.phase ?? '');
+  li.append(time, document.createTextNode(' · '), phase, document.createTextNode(` · ${String(event.message ?? '')}`));
+  return li;
+}
 
 $('#create-project').addEventListener('submit', async (event) => { event.preventDefault(); const form = new FormData(event.currentTarget); try { const project = await api('/api/projects', { method:'POST', body:JSON.stringify(Object.fromEntries(form)) }); event.currentTarget.reset(); toast('Project created.'); await loadProjects(project.id); } catch (error) { toast(error.message, true); } });
 $('#refresh').addEventListener('click', () => loadProjects());

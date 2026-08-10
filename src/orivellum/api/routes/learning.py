@@ -1,14 +1,12 @@
 """Adaptive learning API — /api/works/{work_id}/learning/*"""
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from orivellum.api._deps import get_config, get_db
+from orivellum.api._deps import get_config, get_db, require_auth
 
-router = APIRouter(prefix="/api")
-
-
+router = APIRouter(prefix="/api", dependencies=[Depends(require_auth)])
 def _cfg():
     c = get_config()
     return c.serving.base_url, c.serving.workhorse_model

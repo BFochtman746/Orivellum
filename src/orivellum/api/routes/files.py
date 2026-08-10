@@ -2,29 +2,43 @@
 from __future__ import annotations
 
 import base64
+import logging
 import mimetypes
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from orivellum.api._deps import get_config
+from orivellum.api._deps import get_config, require_auth
 
-router = APIRouter(prefix="/api")
+logger = logging.getLogger(__name__)
 
-
+router = APIRouter(prefix="/api", dependencies=[Depends(require_auth)])
 def _data_dir() -> Path:
     cfg = get_config()
     return Path(cfg.data_dir)
 
 
+def _resolve_within_data_dir(rel_path: str) -> tuple[Path, Path]:
+    """Resolve *rel_path* under the data dir, rejecting any escape.
+
+    Uses ``Path.relative_to`` on fully resolved paths (never string-prefix
+    comparison, which a sibling dir like ``data_backup/`` would bypass).
+    Returns ``(data_dir_resolved, target_resolved)`` or raises 403.
+    """
+    data_dir = _data_dir().resolve()
+    target = (data_dir / rel_path).resolve()
+    try:
+        target.relative_to(data_dir)
+    except ValueError:
+        raise HTTPException(403, "Path traversal not allowed")
+    return data_dir, target
+
+
 @router.get("/files")
 def list_files(subdir: str = ""):
-    data_dir = _data_dir()
-    target = (data_dir / subdir).resolve()
-    if not str(target).startswith(str(data_dir)):
-        raise HTTPException(403, "Path traversal not allowed")
+    data_dir, target = _resolve_within_data_dir(subdir)
     if not target.exists():
         return {"files": [], "dirs": [], "path": subdir}
 
@@ -65,9 +79,7 @@ def upload_file(body: UploadRequest):
     if not name or name.startswith("."):
         raise HTTPException(400, f"Bad filename: {body.filename!r}")
 
-    target_dir = (data_dir / body.subdir).resolve()
-    if not str(target_dir).startswith(str(data_dir)):
-        raise HTTPException(403, "Path traversal not allowed")
+    _, target_dir = _resolve_within_data_dir(body.subdir)
     target_dir.mkdir(parents=True, exist_ok=True)
 
     dest = target_dir / name
@@ -124,12 +136,13 @@ async def extract_file_for_chat(body: ExtractFileRequest):
                 parts = [page.get_text().strip() for page in doc if page.get_text().strip()]
                 text = "\n\n".join(parts)
                 doc.close()
-            except Exception as pdf_err:
+            except Exception:
                 try:
                     import pdfminer.high_level as _pml
                     text = _pml.extract_text(io.BytesIO(raw)) or ""
                 except Exception:
-                    text = f"[PDF extraction failed: {pdf_err}]"
+                    logger.exception("PDF extraction failed for %s", body.filename)
+                    text = "[PDF extraction failed — see server logs]"
 
         elif ext in (".docx",):
             try:
@@ -140,8 +153,9 @@ async def extract_file_for_chat(body: ExtractFileRequest):
                     for row in table.rows:
                         paras.append("\t".join(c.text.strip() for c in row.cells))
                 text = "\n".join(paras)
-            except Exception as docx_err:
-                text = f"[DOCX extraction failed: {docx_err}]"
+            except Exception:
+                logger.exception("DOCX extraction failed for %s", body.filename)
+                text = "[DOCX extraction failed — see server logs]"
 
         elif ext in (".xlsx", ".xls"):
             try:
@@ -156,8 +170,9 @@ async def extract_file_for_chat(body: ExtractFileRequest):
                             break
                         rows_out.append("\t".join("" if c is None else str(c) for c in row))
                 text = "\n".join(rows_out)
-            except Exception as xlsx_err:
-                text = f"[Spreadsheet extraction failed: {xlsx_err}]"
+            except Exception:
+                logger.exception("Spreadsheet extraction failed for %s", body.filename)
+                text = "[Spreadsheet extraction failed — see server logs]"
 
         elif ext in (".pptx",):
             try:
@@ -171,16 +186,20 @@ async def extract_file_for_chat(body: ExtractFileRequest):
                             slide_parts.extend(p.text for p in shape.text_frame.paragraphs if p.text.strip())
                     slides_text.append("\n".join(slide_parts))
                 text = "\n\n".join(slides_text)
-            except Exception as pptx_err:
-                text = f"[PPTX extraction failed: {pptx_err}]"
+            except Exception:
+                logger.exception("PPTX extraction failed for %s", body.filename)
+                text = "[PPTX extraction failed — see server logs]"
 
         else:
             text = (
                 f"[File type '{ext}' is not supported for text extraction. "
                 "Please use PDF, DOCX, PPTX, XLSX, CSV, or plain text.]"
             )
-    except Exception as exc:
-        text = f"[Extraction error: {exc}]"
+    except Exception:
+        # FA-03: never leak raw exception text to the client — the marker is
+        # embedded in extracted_text (chat context), so keep it generic.
+        logger.exception("extract-file failed for %s", body.filename)
+        text = "[Extraction failed — see server logs]"
 
     if len(text) > _MAX_CHARS:
         text = text[:_MAX_CHARS] + f"\n\n[... content truncated to {_MAX_CHARS:,} characters ...]"
@@ -193,12 +212,26 @@ async def extract_file_for_chat(body: ExtractFileRequest):
     }
 
 
+# FA-02: only user-content subtrees are servable. Everything else under the
+# data dir — SQLite DBs (+ -wal/-shm), backups, the mail token vault,
+# api_key.txt — must never leave the server via this endpoint.
+_DOWNLOAD_ALLOWED_SUBDIRS = frozenset({"library", "outputs", "intake"})
+_DOWNLOAD_DENIED_SUFFIXES = (".db", ".db-wal", ".db-shm", ".sqlite", ".sqlite3")
+_DOWNLOAD_DENIED_NAMES = frozenset({"api_key.txt"})
+
+
 @router.get("/download/{path:path}")
 def download_file(path: str):
-    data_dir = _data_dir()
-    target = (data_dir / path).resolve()
-    if not str(target).startswith(str(data_dir)):
-        raise HTTPException(403, "Path traversal not allowed")
+    data_dir, target = _resolve_within_data_dir(path)
+    rel = target.relative_to(data_dir)
+    if not rel.parts or rel.parts[0] not in _DOWNLOAD_ALLOWED_SUBDIRS:
+        raise HTTPException(
+            403,
+            "Downloads are limited to: " + ", ".join(sorted(_DOWNLOAD_ALLOWED_SUBDIRS)),
+        )
+    lower = target.name.lower()
+    if lower in _DOWNLOAD_DENIED_NAMES or lower.endswith(_DOWNLOAD_DENIED_SUFFIXES):
+        raise HTTPException(403, "This file type is not downloadable")
     if not target.exists() or not target.is_file():
         raise HTTPException(404, f"File not found: {path}")
     return FileResponse(str(target), filename=target.name)

@@ -17,6 +17,7 @@ import os
 import secrets
 import sys
 import time
+import uuid
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -312,7 +313,10 @@ async def lifespan(app: FastAPI):
     # Shutdown: close DB and executor
     logger.info("Shutting down...")
     from orivellum.api.executor import shutdown as _shutdown_executor
-    _shutdown_executor(wait=False)  # don't block; threads finish on their own
+    # Bounded drain (FA-06): give in-flight work a few seconds to finish and
+    # cancel still-queued futures, rather than abandoning writes mid-flight with
+    # wait=False.  The watchdog inside shutdown() guarantees we never hang.
+    _shutdown_executor(drain_timeout=5.0)
     db.close()
     logger.info("Shutdown complete")
 
@@ -488,13 +492,42 @@ def create_app() -> FastAPI:
 
     @app.middleware("http")
     async def access_log_middleware(request: Request, call_next):
+        # FA-12: assign a short correlation ID to every request so a full user
+        # journey can be reconstructed from logs (the "5-minute incident test").
+        _req_id = uuid.uuid4().hex[:12]
+        request.state.request_id = _req_id
+
         _t0 = time.monotonic()
         response = await call_next(request)
+
+        # Echo the correlation ID back so clients/proxies can quote it in bug
+        # reports and it appears in error responses' headers.
+        response.headers["X-Request-ID"] = _req_id
+
         _path = _canonical_path(request.url.path)
         if _path not in _ACCESS_LOG_EXCLUDE:
             _latency_ms = int((time.monotonic() - _t0) * 1000)
             _ip = request.client.host if request.client else None
             _ua = request.headers.get("user-agent", "")[:200]
+
+            # Cheap actor attribution mirroring the auth middleware's sources:
+            # an authenticated session cookie, a presented API token, or anon.
+            _actor = "anon"
+            try:
+                if request.session.get("authenticated"):
+                    _actor = "session"
+                elif (request.headers.get("authorization", "").lower().startswith("bearer ")
+                      or request.headers.get("x-api-key")):
+                    _actor = "apikey"
+            except Exception:
+                pass  # session middleware may be absent in some contexts
+
+            logger.info(
+                "access rid=%s actor=%s %s %s -> %s %dms ip=%s",
+                _req_id, _actor, request.method, _path,
+                response.status_code, _latency_ms, _ip or "-",
+            )
+
             try:
                 from orivellum.api.executor import get_executor as _gex_al
                 _db_ref = _deps.get_db
@@ -593,6 +626,7 @@ def create_app() -> FastAPI:
     from orivellum.capabilities.state_machine import (
         BlockedTransitionError,
         InvalidTransitionError,
+        TransitionConflictError,
     )
     from orivellum.database.db import VersionConflictError
 
@@ -656,6 +690,26 @@ def create_app() -> FastAPI:
                     for b in exc.blockers
                 ],
                 "retryable": False,
+            },
+            status_code=409,
+        )
+
+    @app.exception_handler(TransitionConflictError)
+    async def transition_conflict_handler(request: Request,
+                                          exc: TransitionConflictError):
+        """Return 409 Conflict when a compare-and-set transition loses a race.
+
+        The row was no longer in the claimed from_state at write time — the
+        caller's snapshot was stale (or forged). Safe to re-read and retry.
+        """
+        return JSONResponse(
+            {
+                "detail": str(exc),
+                "error": "TRANSITION_CONFLICT",
+                "object_id": exc.object_id,
+                "from_state": exc.from_state,
+                "to_state": exc.to_state,
+                "retryable": True,
             },
             status_code=409,
         )

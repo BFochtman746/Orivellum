@@ -7,11 +7,11 @@ import re
 from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from orivellum.api._deps import get_config, get_db
+from orivellum.api._deps import get_config, get_db, require_auth
 from orivellum.capabilities.pklos.abstention import AbstentionPolicy
 from orivellum.capabilities.pklos.capture_stamp import (
     CaptureStamp,
@@ -22,7 +22,7 @@ from orivellum.capabilities.pklos.fact_router import is_checkable_fact
 from orivellum.capabilities.pklos.output_validator import OutputValidator
 from orivellum.capabilities.pklos.policy_enforcer import PolicyEnforcer
 
-router = APIRouter(prefix="/api")
+router = APIRouter(prefix="/api", dependencies=[Depends(require_auth)])
 logger = logging.getLogger(__name__)
 
 # Max messages to send as history (keeps context window manageable)

@@ -2001,4 +2001,26 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             updated_at TEXT NOT NULL
         );
     """),
+
+    # v114 — Executor durable job records (FA-06 restart reconciliation).
+    # A lean, in-process durability table for the shared background executor
+    # (distinct from the richer `jobs` table used by JOB_SM). Each executor
+    # job persists a minimal row (id, kind, state, attempts) so that on the
+    # next startup any row left 'running'/'queued' from a crashed process can
+    # be marked 'failed' ("orphaned by restart") — clients polling old IDs get
+    # a truthful terminal state instead of a 404.
+    (114, "Executor durable job records (restart reconciliation)", """
+        CREATE TABLE IF NOT EXISTS bg_jobs (
+            id          TEXT PRIMARY KEY,
+            kind        TEXT NOT NULL,
+            label       TEXT,
+            state       TEXT NOT NULL DEFAULT 'running',
+            attempts    INTEGER NOT NULL DEFAULT 1,
+            error       TEXT,
+            created_at  TEXT NOT NULL,
+            updated_at  TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS bg_jobs_state   ON bg_jobs(state);
+        CREATE INDEX IF NOT EXISTS bg_jobs_created ON bg_jobs(created_at);
+    """),
 ]

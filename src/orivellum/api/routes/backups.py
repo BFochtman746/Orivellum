@@ -5,14 +5,12 @@ import zipfile
 from datetime import UTC, datetime
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 
-from orivellum.api._deps import get_config, get_db
+from orivellum.api._deps import get_config, get_db, require_auth
 
-router = APIRouter(prefix="/api")
-
-
+router = APIRouter(prefix="/api", dependencies=[Depends(require_auth)])
 def _backup_dir() -> Path:
     cfg = get_config()
     p = Path(cfg.data_dir) / "backups"

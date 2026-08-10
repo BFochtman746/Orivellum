@@ -62,6 +62,24 @@ class InvalidTransitionError(Exception):
         self.allowed = allowed
 
 
+class TransitionConflictError(Exception):
+    """Raised when the row is no longer in the claimed ``from_state``.
+
+    The UPDATE is compare-and-set (``WHERE id=? AND state=?``); a zero
+    rowcount means another actor transitioned the object concurrently or the
+    caller forged/staled its ``from_state``. Surfaces as HTTP 409.
+    """
+
+    def __init__(self, object_id: str, from_state: str, to_state: str) -> None:
+        super().__init__(
+            f"Object {object_id!r} is not in state {from_state!r} anymore — "
+            f"transition to {to_state!r} not applied (concurrent update?)"
+        )
+        self.object_id = object_id
+        self.from_state = from_state
+        self.to_state = to_state
+
+
 class BlockedTransitionError(Exception):
     """Raised when open findings block a forward transition.
 
@@ -174,6 +192,9 @@ def apply_transition(
         InvalidTransitionError: if the transition is not in *sm*.
         BlockedTransitionError: if open high/critical findings exist and
                                 *check_blockers* is True.
+        TransitionConflictError: if the row is not in *from_state* at write
+                                 time (compare-and-set failed) — the caller's
+                                 snapshot was stale or forged.
     """
     # 1 — Structural validation (pure, no DB access)
     sm.assert_transition(from_state, to_state)
@@ -188,7 +209,10 @@ def apply_transition(
         if blockers:
             raise BlockedTransitionError(from_state, to_state, blockers)
 
-    # 3 — Atomic domain write + audit + outbox
+    # 3 — Atomic domain write + audit + outbox. Compare-and-set: the UPDATE
+    # only applies while the row is still in the *claimed* from_state, so a
+    # forged/stale from_state (or two concurrent callers racing from the same
+    # snapshot) cannot authorize a different graph edge (FA-04).
     with db.governed_write(
         operation=f"{object_type}.transition",
         event_type=f"{object_type}.transition",
@@ -203,10 +227,14 @@ def apply_transition(
         actor=actor,
         detail=detail or f"{from_state}→{to_state}",
     ):
-        db._conn.execute(
-            f"UPDATE {table} SET {state_col}=? WHERE id=?",  # noqa: S608
-            (to_state, object_id),
+        cur = db._conn.execute(
+            f"UPDATE {table} SET {state_col}=? WHERE id=? AND {state_col}=?",  # noqa: S608
+            (to_state, object_id, from_state),
         )
+        if cur.rowcount == 0:
+            # Raising inside governed_write rolls the audit/outbox rows back
+            # together with the (empty) domain write.
+            raise TransitionConflictError(object_id, from_state, to_state)
 
 
 # ---------------------------------------------------------------------------

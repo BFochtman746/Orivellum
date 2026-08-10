@@ -3,14 +3,12 @@ from __future__ import annotations
 
 from datetime import UTC
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from orivellum.api._deps import get_db
+from orivellum.api._deps import get_db, require_auth
 
-router = APIRouter(prefix="/api")
-
-
+router = APIRouter(prefix="/api", dependencies=[Depends(require_auth)])
 class ProjectCreate(BaseModel):
     name: str
     description: str | None = None

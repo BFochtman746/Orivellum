@@ -7,9 +7,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    import fastapi
+from fastapi import Request
 
+if TYPE_CHECKING:
     from orivellum.configuration.config import OrivellumConfig
     from orivellum.database.db import OrivellumDB
 
@@ -35,21 +35,41 @@ def get_config() -> OrivellumConfig:
     return _CFG
 
 
-def require_auth(request: fastapi.Request) -> None:
-    """FastAPI dependency that enforces API key authentication.
+def require_auth(request: Request) -> None:
+    """FastAPI dependency that enforces authentication (FA-10 defense in depth).
 
-    Raises HTTP 401 when the request does not carry a valid bearer token or
-    X-Api-Key header, and HTTP 503 when no credential is configured at all
-    (fail closed).  Uses the same credential resolution and constant-time
-    comparison as the global middleware in app.py — see
-    orivellum.api.auth_keys.  Import and include as a router dependency where
-    you need per-route granularity; the global middleware covers all routes
-    by default.
+    Applied at the router level on privileged routers so authorization no
+    longer relies solely on the global path-prefix middleware in app.py: a
+    mounting/path-normalization regression that bypasses the middleware still
+    hits this second layer.
+
+    It honours the SAME auth sources the middleware accepts, in the same
+    order, using the same helpers (``orivellum.api.auth_keys``):
+
+      1. an authenticated session cookie (``request.session['authenticated']``);
+      2. a ``Bearer`` token or ``X-Api-Key`` header, compared constant-time.
+
+    When the middleware already authenticated the request (e.g. via cookie or
+    a matching token), this dependency re-runs the same cheap check and passes
+    — a no-op in the happy path.  Raises HTTP 401 when no valid credential is
+    present, and HTTP 503 (fail closed) when no credential is configured at
+    all.
     """
     from fastapi import HTTPException
     from fastapi.security.utils import get_authorization_scheme_param
 
     from orivellum.api.auth_keys import key_matches, resolve_login_key
+
+    # ── Session cookie (web browser) ──────────────────────────────────────
+    # SessionMiddleware runs outermost, so request.session is populated here
+    # exactly as it is inside the middleware.  Mirror the middleware's check.
+    try:
+        if request.session.get("authenticated"):
+            return
+    except (AssertionError, KeyError):
+        # SessionMiddleware not installed (e.g. isolated unit test) — fall
+        # through to token-based auth rather than erroring.
+        pass
 
     expected_key = resolve_login_key()
     if not expected_key:

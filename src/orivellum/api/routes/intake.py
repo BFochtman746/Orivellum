@@ -11,15 +11,17 @@ import logging
 import threading
 import time
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from orivellum.api._deps import get_config, get_db
+from orivellum.api._deps import get_config, get_db, require_auth
+from orivellum.api.errors import internal_error
 from orivellum.capabilities.intake import IntakeProfile, run_intake
 
 logger = logging.getLogger("orivellum.api.intake")
 
-router = APIRouter(prefix="/api", tags=["intake"])
+router = APIRouter(prefix="/api", tags=["intake"],
+                   dependencies=[Depends(require_auth)])
 
 
 # ── In-memory research job registry ──────────────────────────────────────────
@@ -210,8 +212,7 @@ def run_intake_pipeline(body: IntakeRequest):
     try:
         profile = run_intake(body.doc_id, db=db, cfg=cfg, research=False)
     except Exception as exc:
-        logger.exception("Intake pipeline failed for doc=%s", body.doc_id)
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise internal_error(logger, exc, f"intake pipeline for doc={body.doc_id!r}") from exc
 
     return _profile_to_out(profile)
 
@@ -248,13 +249,18 @@ def run_intake_research(body: ResearchRequest):
     if not db.get_document(body.doc_id):
         raise HTTPException(status_code=404, detail=f"Document {body.doc_id!r} not found")
 
+    # FA-15 — atomic dedup claim: the check ("is a job already pending/running?")
+    # and the create ("register a new pending job") happen together under one
+    # lock, so two rapid duplicate POSTs cannot both pass the check and enqueue
+    # duplicate research.  The lock is held across both the read and the write;
+    # the loser returns the in-progress job without spawning a second thread.
     with _research_jobs_lock:
         _maybe_evict_terminal_jobs()
         existing = _research_jobs.get(body.doc_id)
         if existing and existing["status"] in ("pending", "running"):
             # Idempotent — return the in-progress job without spawning another thread
             return ResearchJobOut(job_id=body.doc_id, status=existing["status"])
-        # Register a new job
+        # Register a new job (still holding the lock — this is the atomic claim)
         _research_jobs[body.doc_id] = {
             "status": "pending",
             "research_summary": None,
@@ -277,9 +283,9 @@ def run_intake_research(body: ResearchRequest):
         )
         logger.info("Research job queued for doc=%s", body.doc_id)
     except Exception as _submit_exc:
-        logger.error(
-            "Could not submit research job to executor for doc=%s: %s",
-            body.doc_id, _submit_exc,
+        logger.exception(
+            "Could not submit research job to executor for doc=%s",
+            body.doc_id,
         )
         with _research_jobs_lock:
             _research_jobs[body.doc_id].update({
@@ -338,7 +344,6 @@ def get_intake_profile(doc_id: str):
     try:
         profile = run_intake(doc_id, db=db, cfg=cfg, research=False)
     except Exception as exc:
-        logger.exception("Intake profile fetch failed for doc=%s", doc_id)
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise internal_error(logger, exc, f"intake profile fetch for doc={doc_id!r}") from exc
 
     return _profile_to_out(profile)

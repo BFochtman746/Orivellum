@@ -11,10 +11,10 @@ from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, Body, File, Form, HTTPException, UploadFile
-from pydantic import BaseModel
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
+from pydantic import BaseModel, ConfigDict, Field
 
-from orivellum.api._deps import get_config, get_db
+from orivellum.api._deps import get_config, get_db, require_auth
 from orivellum.capabilities.pipeline import process_document
 
 logger = logging.getLogger(__name__)
@@ -98,8 +98,7 @@ def _maybe_suggest_version(db, new_doc_id: str, work_id: str, filename: str) -> 
     except Exception as exc:  # noqa: BLE001
         logger.debug("Version suggestion check failed: %s", exc)
 
-router = APIRouter(prefix="/api")
-
+router = APIRouter(prefix="/api", dependencies=[Depends(require_auth)])
 _KIND_MAP = {
     ".pdf": "pdf", ".docx": "docx", ".doc": "docx",
     ".xlsx": "excel", ".xls": "excel", ".csv": "csv",
@@ -516,8 +515,15 @@ def library_versions(doc_id: str):
     return {"versions": versions, "count": len(versions), "doc_id": doc_id}
 
 
+class VersionCreate(BaseModel):
+    """FA-09: typed request body for creating a document version snapshot."""
+    model_config = ConfigDict(extra="forbid")
+    notes: str | None = Field(default=None, max_length=2000)
+    is_canonical: bool = False
+
+
 @router.post("/library/{doc_id}/versions")
-def library_create_version(doc_id: str, body: dict = Body(default={})):
+def library_create_version(doc_id: str, body: VersionCreate = VersionCreate()):
     """Snapshot current document state as a new version."""
     db = get_db()
     doc = db.get_document(doc_id)
@@ -527,8 +533,8 @@ def library_create_version(doc_id: str, body: dict = Body(default={})):
         doc_id=doc_id,
         sha256=doc.get("sha256"),
         word_count=doc.get("word_count") or 0,
-        notes=body.get("notes"),
-        is_canonical=bool(body.get("is_canonical", False)),
+        notes=body.notes,
+        is_canonical=bool(body.is_canonical),
     )
     # audit is emitted inside db.create_document_version
     return {"version": version}
@@ -842,6 +848,13 @@ def _cleanup_stale_parts(lib_root: Path, max_age_s: int = 3600) -> None:
         pass
 
 
+# FA-01: hard ceiling for a single library file. The streaming upload route is
+# (correctly) exempt from the in-RAM body-size middleware, so it must enforce
+# its own cap or a single request can fill the disk. 1 GiB comfortably covers
+# large audiobooks/ZIPs while bounding the damage of a runaway upload.
+_MAX_LIBRARY_FILE_BYTES = 1024 * 1024 * 1024
+
+
 def _validate_import_target(db, filename: str, work_id: str | None) -> str:
     """Validate filename + work_id; returns the sanitised basename."""
     name = Path(filename).name
@@ -864,6 +877,11 @@ def library_import(body: LibraryImport, background_tasks: BackgroundTasks):
         data = base64.b64decode(body.content_b64, validate=True)
     except Exception:
         raise HTTPException(400, "content_b64 is not valid base64")
+    if len(data) > _MAX_LIBRARY_FILE_BYTES:
+        raise HTTPException(
+            413,
+            f"File too large (limit {_MAX_LIBRARY_FILE_BYTES // (1024 * 1024)} MB)",
+        )
 
     name = _validate_import_target(db, body.filename, body.work_id)
     sha256 = hashlib.sha256(data).hexdigest()
@@ -916,6 +934,14 @@ async def library_upload(
                     break
                 hasher.update(chunk)
                 size += len(chunk)
+                if size > _MAX_LIBRARY_FILE_BYTES:
+                    # Stop writing immediately — the partial file is deleted by
+                    # the outer BaseException handler.
+                    raise HTTPException(
+                        413,
+                        f"File too large (limit "
+                        f"{_MAX_LIBRARY_FILE_BYTES // (1024 * 1024)} MB)",
+                    )
                 tmp.write(chunk)
         finally:
             tmp.close()

@@ -1,6 +1,6 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import { appendJsonLine, createId, ensureDir, nowIso, readJson, safeName, writeJsonAtomic } from './utils.mjs';
+import { appendJsonLine, createId, ensureDir, nowIso, readJson, resolveWithin, safeName, writeJsonAtomic } from './utils.mjs';
 import { runProcess } from './process.mjs';
 
 export class ForgeStore {
@@ -13,14 +13,26 @@ export class ForgeStore {
     await ensureDir(this.projectsRoot);
   }
 
-  projectDirectory(projectId) { return path.join(this.projectsRoot, projectId); }
-  projectFile(projectId) { return path.join(this.projectDirectory(projectId), 'project.json'); }
-  repositoryDirectory(projectId) { return path.join(this.projectDirectory(projectId), 'repository'); }
-  jobsDirectory(projectId) { return path.join(this.projectDirectory(projectId), 'jobs'); }
-  jobDirectory(projectId, jobId) { return path.join(this.jobsDirectory(projectId), jobId); }
-  jobFile(projectId, jobId) { return path.join(this.jobDirectory(projectId, jobId), 'job.json'); }
-  eventFile(projectId, jobId) { return path.join(this.jobDirectory(projectId, jobId), 'work-ledger.ndjson'); }
-  worktreeDirectory(projectId, jobId) { return path.join(this.projectDirectory(projectId), 'worktrees', jobId); }
+  // projectId and jobId originate from untrusted HTTP path segments and must be
+  // confined to a single directory name each — reject separators/traversal so a
+  // crafted id cannot escape projectsRoot (root-confinement is enforced again by
+  // resolveWithin below as defence in depth).
+  #segment(value, label) {
+    const raw = String(value ?? '');
+    if (!raw || raw === '.' || raw === '..' || /[\\/]/.test(raw) || raw.includes('\0')) {
+      throw new Error(`Invalid ${label}: ${raw}`);
+    }
+    return raw;
+  }
+
+  projectDirectory(projectId) { return resolveWithin(this.projectsRoot, this.#segment(projectId, 'project id')); }
+  projectFile(projectId) { return resolveWithin(this.projectDirectory(projectId), 'project.json'); }
+  repositoryDirectory(projectId) { return resolveWithin(this.projectDirectory(projectId), 'repository'); }
+  jobsDirectory(projectId) { return resolveWithin(this.projectDirectory(projectId), 'jobs'); }
+  jobDirectory(projectId, jobId) { return resolveWithin(this.jobsDirectory(projectId), this.#segment(jobId, 'job id')); }
+  jobFile(projectId, jobId) { return resolveWithin(this.jobDirectory(projectId, jobId), 'job.json'); }
+  eventFile(projectId, jobId) { return resolveWithin(this.jobDirectory(projectId, jobId), 'work-ledger.ndjson'); }
+  worktreeDirectory(projectId, jobId) { return resolveWithin(this.projectDirectory(projectId), 'worktrees', this.#segment(jobId, 'job id')); }
 
   async listProjects() {
     await this.init();
@@ -148,7 +160,7 @@ export class ForgeStore {
 
   async saveArtifact(projectId, jobId, name, value) {
     const fileName = safeName(name, 90);
-    const file = path.join(this.jobDirectory(projectId, jobId), fileName);
+    const file = resolveWithin(this.jobDirectory(projectId, jobId), fileName);
     if (typeof value === 'string') await fs.writeFile(file, value, 'utf8');
     else await writeJsonAtomic(file, value);
     const job = await this.getJob(projectId, jobId);
@@ -158,7 +170,7 @@ export class ForgeStore {
   }
 
   async readArtifact(projectId, jobId, name, fallback = null) {
-    const file = path.join(this.jobDirectory(projectId, jobId), safeName(name, 90));
+    const file = resolveWithin(this.jobDirectory(projectId, jobId), safeName(name, 90));
     return readJson(file, fallback);
   }
 

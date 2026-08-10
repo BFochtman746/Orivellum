@@ -293,7 +293,8 @@ class TestApiEndpoints(unittest.TestCase):
             self.assertGreaterEqual(len(resp.json()["results"]), 1)
 
     def test_benchmarks_error_detail_is_structured(self):
-        """Non-table failures must return a descriptive detail, not a 500 blob."""
+        """Non-table failures must return a generic, client-safe 500 detail with
+        an error reference id — never raw exception text (FA-03)."""
         with tempfile.TemporaryDirectory() as tmp:
             app, db, _cfg = _make_app(tmp)
             client = TestClient(app, raise_server_exceptions=False, headers=AUTH_HEADERS)
@@ -302,7 +303,11 @@ class TestApiEndpoints(unittest.TestCase):
                        side_effect=RuntimeError("boom")):
                 resp = client.get("/api/mcos/benchmarks")
             self.assertEqual(resp.status_code, 500)
-            self.assertIn("boom", resp.json()["detail"])
+            detail = resp.json()["detail"]
+            # Raw exception text must NOT leak to the client.
+            self.assertNotIn("boom", detail)
+            # A generic message with an error reference id is returned instead.
+            self.assertIn("Internal error (ref", detail)
 
     def test_run_endpoint_and_409(self):
         with tempfile.TemporaryDirectory() as tmp:

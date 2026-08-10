@@ -5,16 +5,16 @@ import logging
 from datetime import UTC
 from typing import Any
 
-from fastapi import APIRouter, Body, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
-from orivellum.api._deps import get_db
+from orivellum.api._deps import get_db, require_auth
+from orivellum.api.errors import internal_error
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api")
-
+router = APIRouter(prefix="/api", dependencies=[Depends(require_auth)])
 WORK_TYPES = [
     {"id": "research", "label": "Research", "description": "Deep research and knowledge synthesis"},
     {"id": "writing", "label": "Writing", "description": "Books, essays, articles"},
@@ -326,7 +326,7 @@ def knowledge_ask(
         knowledge = db.search_knowledge(q, work_id=work_id, doc_id=doc_id, limit=limit)
         chunks    = db.search_chunks(q,    work_id=work_id, limit=limit)
     except Exception as exc:
-        raise HTTPException(500, f"Search failed: {exc}")
+        raise internal_error(logger, exc, "cross-work search") from exc
     return {
         "knowledge": [dict(r) for r in knowledge],
         "chunks":    [dict(r) for r in chunks],
@@ -349,7 +349,7 @@ def works_search(work_id: str, q: str, limit: int = 20):
         knowledge = db.search_knowledge(q, work_id=work_id, limit=limit)
         chunks = db.search_chunks(q, work_id=work_id, limit=limit)
     except Exception as exc:
-        raise HTTPException(500, f"Search failed: {exc}")
+        raise internal_error(logger, exc, f"work search for {work_id!r}") from exc
     return {
         "knowledge": knowledge,
         "chunks": chunks,
@@ -1184,6 +1184,7 @@ def advance_pipeline(work_id: str):
         BOOK_SM,
         BlockedTransitionError,
         InvalidTransitionError,
+        TransitionConflictError,
         apply_transition,
     )
 
@@ -1223,6 +1224,9 @@ def advance_pipeline(work_id: str):
             status_code=409,
             content={"detail": str(exc), "blockers": exc.blockers},
         )
+    except TransitionConflictError as exc:
+        # Someone else advanced the pipeline between our read and write.
+        raise HTTPException(409, str(exc))
 
     return {"pipeline": db.get_book_pipeline_for_work(work_id)}
 
@@ -1265,7 +1269,7 @@ async def run_pipeline_stage(work_id: str):
             run_stage_worker as _run_worker,
         )
     except ImportError as exc:
-        raise HTTPException(500, f"Pipeline workers module unavailable: {exc}")
+        raise internal_error(logger, exc, "load pipeline_workers module") from exc
 
     if stage not in _STAGE_CFG:
         raise HTTPException(
@@ -1298,6 +1302,14 @@ async def run_pipeline_stage(work_id: str):
 
 # ─── Divergent Thinking (Brainstorm) ─────────────────────────────────────────
 
+class BrainstormRequest(BaseModel):
+    """FA-09: typed request body for a brainstorm session."""
+    model_config = ConfigDict(extra="forbid")
+    seed_prompt: str = Field(default="", max_length=4000)
+    context_type: str = Field(default="general", max_length=100)
+    n_domains: int = 5
+
+
 @router.get("/works/{work_id}/brainstorm")
 async def list_brainstorm_sessions(work_id: str, limit: int = 20):
     """Return the brainstorm session history for a Work (newest first)."""
@@ -1311,7 +1323,7 @@ async def list_brainstorm_sessions(work_id: str, limit: int = 20):
 @router.post("/works/{work_id}/brainstorm")
 async def run_brainstorm(
     work_id: str,
-    payload: dict = Body(default={}),
+    payload: BrainstormRequest = BrainstormRequest(),
 ):
     """Start and complete a divergent thinking brainstorm session.
 
@@ -1329,9 +1341,9 @@ async def run_brainstorm(
     from orivellum.api._deps import get_config
     from orivellum.capabilities.brainstorm import run_brainstorm_session
 
-    seed_prompt  = (payload.get("seed_prompt") or "").strip()
-    context_type = payload.get("context_type") or "general"
-    n_domains    = int(payload.get("n_domains") or 5)
+    seed_prompt  = (payload.seed_prompt or "").strip()
+    context_type = payload.context_type or "general"
+    n_domains    = int(payload.n_domains or 5)
 
     if not seed_prompt:
         raise HTTPException(422, "seed_prompt is required")

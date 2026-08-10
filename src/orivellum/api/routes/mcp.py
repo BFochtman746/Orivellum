@@ -19,14 +19,28 @@ import json
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from orivellum.api._deps import get_db
+from orivellum.api._deps import get_db, require_auth
 
 logger = logging.getLogger("orivellum.mcp")
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_auth)])
+# ── JSON-RPC 2.0 message envelope (FA-09) ───────────────────────────────────────
+# The MCP transport accepts a single message or a batch array, and notifications
+# (no ``id``). We validate each message envelope with a typed, length-bounded
+# model rather than trusting an unbounded raw dict, while preserving batch and
+# notification semantics that the protocol requires.
+
+class MCPMessage(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    jsonrpc: str = Field(default="2.0", max_length=10)
+    method: str = Field(default="", max_length=200)
+    params: dict[str, Any] = Field(default_factory=dict)
+    # id may be a string, int, or null per the JSON-RPC spec.
+    id: str | int | None = None
 
 # ── MCP helpers ───────────────────────────────────────────────────────────────
 
@@ -177,11 +191,25 @@ async def mcp_endpoint(request: Request):
     return JSONResponse(response)
 
 
-def _handle_jsonrpc(msg: dict) -> dict | None:
+def _handle_jsonrpc(raw: Any) -> dict | None:
     """Process one JSON-RPC 2.0 message and return a response (or None for notifications)."""
-    req_id = msg.get("id")
-    method = msg.get("method", "")
-    params = msg.get("params") or {}
+    if not isinstance(raw, dict):
+        return {
+            "jsonrpc": "2.0",
+            "error": {"code": -32600, "message": "Invalid Request"},
+            "id": None,
+        }
+    try:
+        msg = MCPMessage.model_validate(raw)
+    except ValidationError:
+        return {
+            "jsonrpc": "2.0",
+            "error": {"code": -32600, "message": "Invalid Request"},
+            "id": raw.get("id"),
+        }
+    req_id = msg.id
+    method = msg.method
+    params = msg.params or {}
 
     def ok(result: Any) -> dict:
         return {"jsonrpc": "2.0", "result": result, "id": req_id}

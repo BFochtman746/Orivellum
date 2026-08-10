@@ -11,16 +11,14 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from orivellum.api._deps import get_config, get_db
+from orivellum.api._deps import get_config, get_db, require_auth
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/write")
-
-
+router = APIRouter(prefix="/api/write", dependencies=[Depends(require_auth)])
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _now() -> str:

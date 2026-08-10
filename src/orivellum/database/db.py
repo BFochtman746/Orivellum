@@ -1643,25 +1643,35 @@ class OrivellumDB:
             InvalidTransitionError: if the transition is not in MESSAGE_SM.
             BlockedTransitionError: if open high/critical findings block it.
         """
-        from orivellum.capabilities.state_machine import MESSAGE_SM, apply_transition
+        from orivellum.capabilities.state_machine import (
+            MESSAGE_SM, TransitionConflictError, apply_transition,
+        )
         with self._lock:
             row = self._conn.execute(
                 "SELECT state FROM messages WHERE id=?", (msg_id,)
             ).fetchone()
         if not row:
             return  # message not found — caller already logged it
-        apply_transition(
-            self, MESSAGE_SM,
-            object_id=msg_id,
-            object_type="message",
-            table="messages",
-            state_col="state",
-            from_state=row["state"],
-            to_state=to_state,
-            actor="system",
-            # streaming transitions are never blocked by findings
-            check_blockers=False,
-        )
+        try:
+            apply_transition(
+                self, MESSAGE_SM,
+                object_id=msg_id,
+                object_type="message",
+                table="messages",
+                state_col="state",
+                from_state=row["state"],
+                to_state=to_state,
+                actor="system",
+                # streaming transitions are never blocked by findings
+                check_blockers=False,
+            )
+        except TransitionConflictError:
+            # A concurrent actor moved the message between our read and write.
+            # The streaming pipeline must not die over this — log and continue.
+            logger.warning(
+                "Message %s state moved concurrently (wanted %s→%s) — skipping",
+                msg_id, row["state"], to_state,
+            )
 
     def finalize_message(self, msg_id: str, text: str, state: str) -> None:
         """Write the final text + state to a pre-created assistant message stub.
@@ -1670,11 +1680,16 @@ class OrivellumDB:
         full reply text and the terminal state ('done' or 'failed') in one
         governed_write transaction.
 
-        Does NOT validate via MESSAGE_SM — the caller is responsible for
-        making sure the message is in a state that can reach *state* (i.e.
-        transition_message(msg_id, 'streaming') should have been called first).
+        FA-04: *state* is constrained to the terminal states ('done' /
+        'failed') and the UPDATE only applies while the message is still
+        non-terminal — a repeated finalize (or a race with another finalizer)
+        becomes a logged no-op instead of overwriting a terminal row.
         If the message is not found, the call is a no-op.
         """
+        if state not in ("done", "failed"):
+            raise ValueError(
+                f"finalize_message only writes terminal states, got {state!r}"
+            )
         _wc = len(text.split()) if text else 0
         with self.governed_write(
             operation="message.finalized",
@@ -1685,10 +1700,17 @@ class OrivellumDB:
             actor="system",
             detail=f"{state} {_wc}w",
         ):
-            self._conn.execute(
-                "UPDATE messages SET text=?, state=? WHERE id=?",
+            cur = self._conn.execute(
+                "UPDATE messages SET text=?, state=? WHERE id=? "
+                "AND state NOT IN ('done','failed')",
                 (text, state, msg_id),
             )
+            if cur.rowcount == 0:
+                logger.warning(
+                    "finalize_message(%s → %s): message missing or already "
+                    "terminal — no-op", msg_id, state,
+                )
+                return
             # Keep FTS index in sync — delete then insert (no OR IGNORE needed
             # after delete; avoids phantom duplicate FTS rows).
             try:
@@ -3446,6 +3468,48 @@ class OrivellumDB:
                 "UPDATE documents SET quarantined=?, meta=? WHERE id=?",
                 (state, _json.dumps(meta), doc_id),
             )
+
+    # ── Reset-in-progress marker (FA-07) ──────────────────────────────────────
+    # A destructive multi-step reset (clear warnings → delete derived knowledge
+    # → reset document → reprocess) spans separate commits.  A crash mid-sequence
+    # leaves old knowledge deleted and nothing rebuilt.  We record a durable
+    # marker under meta['reset_in_progress'] before starting and clear it on
+    # completion; the nightshift recovery pass treats a stale marker (>10 min)
+    # as a stuck document and re-drives reprocessing.
+
+    def set_reset_marker(self, doc_id: str, *, started_at: str,
+                         kind: str = "reprocess") -> None:
+        """Record meta['reset_in_progress'] = {started_at, kind} (best-effort)."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT meta FROM documents WHERE id=?", (doc_id,)
+            ).fetchone()
+            if row is None:
+                return
+            meta = _jload(row["meta"], {}) or {}
+            meta["reset_in_progress"] = {"started_at": started_at, "kind": kind}
+            self._conn.execute(
+                "UPDATE documents SET meta=? WHERE id=?",
+                (_jdump(meta), doc_id),
+            )
+            self._conn.commit()
+
+    def clear_reset_marker(self, doc_id: str) -> None:
+        """Remove meta['reset_in_progress'] once the sequence completes."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT meta FROM documents WHERE id=?", (doc_id,)
+            ).fetchone()
+            if row is None:
+                return
+            meta = _jload(row["meta"], {}) or {}
+            if "reset_in_progress" in meta:
+                meta.pop("reset_in_progress", None)
+                self._conn.execute(
+                    "UPDATE documents SET meta=? WHERE id=?",
+                    (_jdump(meta), doc_id),
+                )
+                self._conn.commit()
 
     def upsert_book_chapters(self, doc_id: str, work_id: str | None,
                              chapters: list[dict]) -> int:
@@ -5428,6 +5492,93 @@ class OrivellumDB:
                 params,
             ).fetchall()
         return [dict(r) for r in rows]
+
+    # -------------------------------------------------------------------------
+    # Executor durable job records (bg_jobs, v114) — FA-06 restart reconciliation
+    # -------------------------------------------------------------------------
+    # Lean, best-effort durability for the shared background executor.  These
+    # are intentionally simpler than the JOB_SM `jobs` table: they exist only so
+    # a restart can hand a truthful terminal state to a client polling an old
+    # id.  All methods swallow their own errors — a durability bookkeeping
+    # failure must never break the executor path.
+
+    def bg_job_upsert(
+        self,
+        job_id: str,
+        *,
+        kind: str,
+        label: str | None = None,
+        state: str = "running",
+        attempts: int = 1,
+        error: str | None = None,
+    ) -> None:
+        """Insert or update a durable executor job row (best-effort)."""
+        now = _now()
+        try:
+            with self._lock:
+                self._conn.execute(
+                    """INSERT INTO bg_jobs(id, kind, label, state, attempts,
+                                           error, created_at, updated_at)
+                       VALUES(?,?,?,?,?,?,?,?)
+                       ON CONFLICT(id) DO UPDATE SET
+                           kind=excluded.kind,
+                           label=excluded.label,
+                           state=excluded.state,
+                           attempts=excluded.attempts,
+                           error=excluded.error,
+                           updated_at=excluded.updated_at
+                       WHERE bg_jobs.state NOT IN ('done','failed')""",
+                    (job_id, kind, label, state, attempts, error, now, now),
+                )
+                self._conn.commit()
+        except Exception as exc:
+            logger.warning("bg_job_upsert failed for %s: %s", job_id, exc)
+
+    def bg_job_set_state(
+        self, job_id: str, state: str, *, error: str | None = None,
+        attempts: int | None = None,
+    ) -> None:
+        """Update state (and optionally error/attempts) of a durable job row."""
+        now = _now()
+        try:
+            with self._lock:
+                if attempts is None:
+                    self._conn.execute(
+                        "UPDATE bg_jobs SET state=?, error=?, updated_at=? WHERE id=?",
+                        (state, error, now, job_id),
+                    )
+                else:
+                    self._conn.execute(
+                        "UPDATE bg_jobs SET state=?, error=?, attempts=?, "
+                        "updated_at=? WHERE id=?",
+                        (state, error, attempts, now, job_id),
+                    )
+                self._conn.commit()
+        except Exception as exc:
+            logger.warning("bg_job_set_state failed for %s: %s", job_id, exc)
+
+    def bg_job_reconcile_orphans(self) -> int:
+        """Mark rows left 'running'/'queued' by a prior process as 'failed'.
+
+        Called once at startup.  Returns the number of rows reconciled so the
+        caller can log it.  Best-effort: returns 0 on any error.
+        """
+        now = _now()
+        try:
+            with self._lock:
+                cur = self._conn.execute(
+                    """UPDATE bg_jobs
+                       SET state='failed',
+                           error='orphaned by restart',
+                           updated_at=?
+                       WHERE state IN ('running', 'queued')""",
+                    (now,),
+                )
+                self._conn.commit()
+                return cur.rowcount or 0
+        except Exception as exc:
+            logger.warning("bg_job_reconcile_orphans failed: %s", exc)
+            return 0
 
     # -------------------------------------------------------------------------
     # Findings (M0.2 governance blockers)

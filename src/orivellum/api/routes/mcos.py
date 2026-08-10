@@ -10,16 +10,15 @@ import json
 import logging
 from datetime import UTC
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response
 from pydantic import BaseModel
 
-from orivellum.api._deps import get_config, get_db
+from orivellum.api._deps import get_config, get_db, require_auth
+from orivellum.api.errors import internal_error
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/mcos")
-
-
+router = APIRouter(prefix="/api/mcos", dependencies=[Depends(require_auth)])
 def _jload(s, default=None):
     if s is None:
         return default
@@ -236,11 +235,7 @@ def list_benchmarks():
                    f"(schema v{_schema_version(db)})",
         )
     except Exception as exc:
-        logger.exception("GET /mcos/benchmarks failed unexpectedly")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Benchmark listing failed: {exc.__class__.__name__}: {exc}",
-        )
+        raise internal_error(logger, exc, "GET /mcos/benchmarks") from exc
 
 
 @router.post("/seed")

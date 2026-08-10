@@ -13,19 +13,18 @@ from __future__ import annotations
 import json
 import logging
 import secrets
+import uuid
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from pydantic import BaseModel
 
-from orivellum.api._deps import get_config, get_db
+from orivellum.api._deps import get_config, get_db, require_auth
 from orivellum.capabilities.mail.models import MailStewardError
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/mail")
-
-
+router = APIRouter(prefix="/api/mail", dependencies=[Depends(require_auth)])
 # ── Request bodies ─────────────────────────────────────────────────────────────
 
 class ConnectPollBody(BaseModel):
@@ -105,7 +104,9 @@ def connect_start():
     try:
         data = oauth.request_device_code(include_send=include_send)
     except MailStewardError as exc:
-        raise HTTPException(502, str(exc))
+        ref = uuid.uuid4().hex[:8]
+        logger.exception("[%s] mail device-code request failed", ref)
+        raise HTTPException(502, f"Mail provider error (ref {ref})") from exc
 
     handle = secrets.token_urlsafe(16)
     _store_pending_device_code(db, handle, data["device_code"])
@@ -314,7 +315,9 @@ def update_draft(action_request_id: str, body: DraftUpdateBody):
             subject=body.subject,
         )
     except MailStewardError as exc:
-        raise HTTPException(502, str(exc))
+        ref = uuid.uuid4().hex[:8]
+        logger.exception("[%s] mail draft update failed", ref)
+        raise HTTPException(502, f"Mail provider error (ref {ref})") from exc
 
     return {"updated": True}
 

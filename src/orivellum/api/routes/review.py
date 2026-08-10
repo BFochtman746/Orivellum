@@ -18,15 +18,14 @@ import json
 import logging
 from datetime import UTC, datetime, timedelta
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel
 
-from orivellum.api._deps import get_db
+from orivellum.api._deps import get_db, require_auth
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api")
-
+router = APIRouter(prefix="/api", dependencies=[Depends(require_auth)])
 _DEFER_DAYS = 7
 _VALID_DECISIONS = {"approve", "reject", "defer"}
 _VALID_TYPES = {"knowledge", "reclassify", "suggestion", "duplicate", "quarantine", "noteblock"}

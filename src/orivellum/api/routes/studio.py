@@ -12,14 +12,15 @@ import uuid
 from datetime import UTC
 from pathlib import Path
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
-from orivellum.api._deps import get_config, get_db
+from orivellum.api._deps import get_config, get_db, require_auth
+from orivellum.api.errors import internal_error
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api")
+router = APIRouter(prefix="/api", dependencies=[Depends(require_auth)])
 
 _MAX_OUTPUTS = 50  # keep the newest N files; delete the rest
 
@@ -1834,8 +1835,7 @@ def synthesize_work_audiobook(body: WorkAudiobookRequest):
         return FileResponse(str(mp3_path), media_type="audio/mpeg", filename=mp3_path.name)
 
     except Exception as exc:
-        logger.error("Work audiobook failed: %s", exc)
-        raise HTTPException(500, f"Audiobook generation failed: {exc}")
+        raise internal_error(logger, exc, "work audiobook generation") from exc
     finally:
         for p in wav_parts:
             p.unlink(missing_ok=True)
@@ -2117,7 +2117,7 @@ def _run_work_tts_job(
             })
 
     except Exception as exc:
-        logger.error("Work TTS job %s failed: %s", job_id, exc)
+        logger.exception("Work TTS job %s failed", job_id)
         with _work_tts_jobs_lock:
             _work_tts_jobs[job_id].update({"state": "failed", "error": str(exc)[:400]})
     finally:
@@ -3012,7 +3012,7 @@ def _run_doc_tts_job(
             })
 
     except Exception as exc:
-        logger.error("Document TTS job %s failed: %s", job_id, exc)
+        logger.exception("Document TTS job %s failed", job_id)
         with _doc_tts_jobs_lock:
             _doc_tts_jobs[job_id].update({
                 "state": "failed",
@@ -3238,7 +3238,7 @@ def _run_transcribe_job(
                 _transcribe_jobs[job_id].update(
                     {"state": "done", "doc_id": doc_id, "stage": "done", "finished_at": time.time()})
     except Exception as exc:
-        logger.warning("Transcription job %s failed: %s", job_id, exc)
+        logger.exception("Transcription job %s failed", job_id)
         with _transcribe_jobs_lock:
             if job_id in _transcribe_jobs:
                 _transcribe_jobs[job_id].update(
@@ -3303,7 +3303,7 @@ async def start_transcription(
         raise
     except Exception as exc:
         _cleanup_tmp()
-        raise HTTPException(500, f"Could not store upload: {exc}")
+        raise internal_error(logger, exc, "store transcribe upload") from exc
     if size == 0:
         _cleanup_tmp()
         raise HTTPException(422, "Uploaded file is empty")
@@ -3394,6 +3394,20 @@ def _run_retranscribe_job(job_id: str, doc_id: str, file_path: str, db) -> None:
                     job.update({"state": "cancelled", "finished_at": time.time()})
                 return
 
+        # FA-07 — durable "reset in progress" marker.  The destructive sequence
+        # below (clear warnings → drop knowledge → reset document → reprocess)
+        # spans separate commits; a crash mid-sequence would leave old knowledge
+        # deleted and nothing rebuilt.  Record the marker BEFORE the first
+        # destructive commit so the nightshift recovery pass can detect a stale
+        # marker (>10 min) and re-drive reprocessing.  It is cleared on success
+        # and on the error paths below.
+        from datetime import datetime as _dt
+        try:
+            db.set_reset_marker(doc_id, started_at=_dt.now(UTC).isoformat(),
+                                kind="retranscribe")
+        except Exception as _mk_exc:  # marker is best-effort; never abort on it
+            logger.warning("Could not set reset marker for %s: %s", doc_id, _mk_exc)
+
         # Destructive retry starts here: clear warnings, drop knowledge
         # derived from the OLD transcript (human-approved items are kept),
         # and flip readiness so the Library UI shows the doc as processing.
@@ -3454,13 +3468,24 @@ def _run_retranscribe_job(job_id: str, doc_id: str, file_path: str, db) -> None:
                 "finished_at": time.time(),
             })
     except Exception as exc:
-        logger.warning("Re-transcription job %s (doc %s) failed: %s",
-                       job_id, doc_id, exc)
+        logger.exception("Re-transcription job %s (doc %s) failed",
+                         job_id, doc_id)
         with _transcribe_jobs_lock:
             if job_id in _transcribe_jobs:
                 _transcribe_jobs[job_id].update(
                     {"state": "error", "error": str(exc)[:300],
                      "finished_at": time.time()})
+    finally:
+        # FA-07 — clear the reset marker on every path that reaches the end of
+        # this worker (success OR any handled terminal error): the document now
+        # has a truthful terminal readiness that the ordinary stuck-doc pass can
+        # reason about.  Only a hard crash mid-sequence skips this finally, so
+        # the marker survives for the nightshift recovery pass to re-drive.
+        try:
+            db.clear_reset_marker(doc_id)
+        except Exception as _clr_exc:
+            logger.warning("Could not clear reset marker for %s: %s",
+                           doc_id, _clr_exc)
 
 
 @router.post("/studio/transcribe/library/{doc_id}")
@@ -3599,7 +3624,7 @@ async def voice_transcribe(file: UploadFile = File(...)):
         raise
     except Exception as exc:
         _cleanup_tmp()
-        raise HTTPException(500, f"Could not store upload: {exc}")
+        raise internal_error(logger, exc, "store voice clip upload") from exc
     if size == 0:
         _cleanup_tmp()
         raise HTTPException(422, "Uploaded clip is empty")
@@ -4778,4 +4803,4 @@ async def run_ocr(body: OCRRequest):
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(500, f"OCR failed: {exc}")
+        raise internal_error(logger, exc, "OCR extraction") from exc

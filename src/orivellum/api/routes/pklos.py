@@ -17,22 +17,30 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends
+from pydantic import BaseModel, ConfigDict
 
-from orivellum.api._deps import get_db
+from orivellum.api._deps import get_db, require_auth
+from orivellum.api.errors import internal_error
 from orivellum.capabilities.pklos.adapters.windows_inventory import WindowsInventoryAdapter
 from orivellum.capabilities.pklos.authority import SUBJECT_DEVICE_A01
 from orivellum.capabilities.pklos.policy_enforcer import PolicyEnforcer
 
-router = APIRouter(prefix="/api/pklos", tags=["pklos"])
+router = APIRouter(prefix="/api/pklos", tags=["pklos"], dependencies=[Depends(require_auth)])
 logger = logging.getLogger("orivellum.pklos.routes")
 
 
 # ── Request / Response models ──────────────────────────────────────────────────
 
 class InventoryPayload(BaseModel):
-    """Structured JSON emitted by scripts/inventory_collector.ps1."""
+    """Structured JSON emitted by scripts/inventory_collector.ps1.
+
+    FA-08: extras are forbidden so a client cannot mass-assign arbitrary
+    top-level keys into the persisted payload. Any additional metadata the
+    collector wants to carry goes through the explicit ``meta`` dict.
+    """
+    model_config = ConfigDict(extra="forbid")
+
     collector_version: str = "0.1.0"
     collected_at: str = ""
     subject: str = SUBJECT_DEVICE_A01
@@ -44,9 +52,7 @@ class InventoryPayload(BaseModel):
     bios: dict = {}
     storage: dict = {}
     installed_models: list = []
-
-    class Config:
-        extra = "allow"  # permit extra fields the collector might add
+    meta: dict = {}
 
 
 class EnforcementCheck(BaseModel):
@@ -66,15 +72,14 @@ def ingest_inventory(body: InventoryPayload):
     db = get_db()
     adapter = WindowsInventoryAdapter(db)
 
+    # FA-08: only the explicitly declared fields are persisted; model_extra is
+    # no longer merged in (extras are forbidden by the model config above).
     payload = body.model_dump()
-    # Add any extra fields (collector_version, installed_models, etc.)
-    payload.update(body.model_extra or {})
 
     try:
         result = adapter.ingest_inventory(payload)
     except Exception as exc:
-        logger.exception("Inventory ingest failed")
-        raise HTTPException(status_code=500, detail=f"Ingest failed: {exc}")
+        raise internal_error(logger, exc, "PKLOS inventory ingest") from exc
 
     if result["violations"]:
         logger.warning("INV-REQ-001 violations during ingest: %s", result["violations"])

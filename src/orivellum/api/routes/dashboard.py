@@ -1,14 +1,12 @@
 """Dashboard summary endpoints — /api/dashboard/*"""
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-from orivellum.api._deps import get_db
+from orivellum.api._deps import get_db, require_auth
 
-router = APIRouter(prefix="/api")
-
-
+router = APIRouter(prefix="/api", dependencies=[Depends(require_auth)])
 @router.get("/dashboard/summary")
 def dashboard_summary():
     db = get_db()

@@ -3,7 +3,7 @@ import path from 'node:path';
 import { createPlan, createVisualDesign, runBuilder, runReviewer } from './agent-runner.mjs';
 import { runQualityGates, releaseDecision } from './quality-gates.mjs';
 import { runProcess } from './process.mjs';
-import { errorRecord, nowIso, readJson, sha256, writeJsonAtomic } from './utils.mjs';
+import { errorRecord, nowIso, readJson, resolveWithin, sha256, writeJsonAtomic } from './utils.mjs';
 import { cssTokenSheet, designSystemManifest, getSelectedConcept } from './visual-design.mjs';
 
 export class FactoryService {
@@ -188,7 +188,7 @@ export class FactoryService {
     const { target, worktree } = await this.resolveTargetWorktree(project, job);
     const plan = await this.store.readArtifact(project.id, target.planJobId || project.latestPlanJobId, 'site-plan.json', {});
     const visualDesign = target.designJobId ? await this.store.readArtifact(project.id, target.designJobId, 'visual-design.json', {}) : {};
-    const gateReport = await readJson(path.join(this.store.jobDirectory(project.id, target.id), 'quality', 'quality-report.json'), { gates: [] });
+    const gateReport = await readJson(resolveWithin(this.store.jobDirectory(project.id, target.id), 'quality', 'quality-report.json'), { gates: [] });
     const diff = await runProcess('git', ['diff', 'HEAD~1..HEAD', '--', '.'], { cwd: worktree, maxOutputChars: 18000 });
     const review = await runReviewer({ lemonade: this.config.lemonade, project, plan, visualDesign, diff: diff.stdout || diff.stderr, gates: gateReport, onEvent: event });
     await this.store.saveArtifact(project.id, job.id, 'review.json', review);
@@ -197,7 +197,7 @@ export class FactoryService {
 
   async runRelease(project, job, event) {
     const { target } = await this.resolveTargetWorktree(project, job);
-    const gateReport = await readJson(path.join(this.store.jobDirectory(project.id, target.id), 'quality', 'quality-report.json'), { gates: [] });
+    const gateReport = await readJson(resolveWithin(this.store.jobDirectory(project.id, target.id), 'quality', 'quality-report.json'), { gates: [] });
     const relatedJobs = await this.store.listJobs(project.id);
     const reviewJob = relatedJobs.find((candidate) => candidate.type === 'REVIEW' && candidate.targetJobId === target.id && ['passed', 'conditional', 'blocked'].includes(candidate.status));
     const reviewer = reviewJob ? await this.store.readArtifact(project.id, reviewJob.id, 'review.json', null) : null;
@@ -215,16 +215,19 @@ export class FactoryService {
     const files = await listFiles(root);
     const entries = [];
     for (const file of files) {
-      const body = await fs.readFile(file);
-      entries.push({ path: path.relative(root, file).replaceAll('\\', '/'), sha256: sha256(body), bytes: body.byteLength });
+      // Confirm every enumerated file stays under the confined job root before
+      // reading it into the evidence manifest.
+      const confined = resolveWithin(root, path.relative(root, file));
+      const body = await fs.readFile(confined);
+      entries.push({ path: path.relative(root, confined).replaceAll('\\', '/'), sha256: sha256(body), bytes: body.byteLength });
     }
     return { generatedAt: nowIso(), targetJobId, releaseDecision: decision.status, files: entries.sort((a, b) => a.path.localeCompare(b.path)) };
   }
 
   async applyVisualSystem(worktree, visualDesign, event) {
     const selected = getSelectedConcept(visualDesign);
-    await fs.writeFile(path.join(worktree, 'design-tokens.css'), cssTokenSheet(visualDesign), 'utf8');
-    await writeJsonAtomic(path.join(worktree, 'design-system.json'), designSystemManifest(visualDesign));
+    await fs.writeFile(resolveWithin(worktree, 'design-tokens.css'), cssTokenSheet(visualDesign), 'utf8');
+    await writeJsonAtomic(resolveWithin(worktree, 'design-system.json'), designSystemManifest(visualDesign));
     await event('design_tokens', `Applied approved visual direction: ${selected.name}.`, { conceptId: selected.id });
   }
 

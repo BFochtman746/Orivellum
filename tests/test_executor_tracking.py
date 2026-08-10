@@ -167,6 +167,99 @@ class TestZipChildTracking:
             "get_executor().submit() call should not precede _tracked_submit in ZIP path"
 
 
+class TestAtomicRetryClaim:
+    """FA-06 — a failed job's retry claim must be atomic (only one retry wins)."""
+
+    def test_only_one_of_two_rapid_retries_wins(self):
+        # Create a failed entry directly in the registry with a stored callable.
+        entry = _exec_mod._job_entry("test", "race_job")
+        entry["state"] = "failed"
+        entry["_retry_fn"] = _noop
+        with _exec_mod._jobs_lock:
+            _exec_mod._jobs.append(entry)
+        job_id = entry["id"]
+
+        results = {"ok": 0, "conflict": 0}
+        barrier = threading.Barrier(2)
+
+        def _try_retry():
+            barrier.wait()
+            try:
+                fut = _exec_mod.retry_job(job_id)
+                fut.result(timeout=3)
+                results["ok"] += 1
+            except ValueError:
+                results["conflict"] += 1
+
+        threads = [threading.Thread(target=_try_retry) for _ in range(2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=5)
+
+        # Exactly one retry should succeed; the other must lose the claim (409).
+        assert results["ok"] == 1, f"expected 1 win, got {results}"
+        assert results["conflict"] == 1, f"expected 1 conflict, got {results}"
+
+    def test_retry_refused_past_attempt_cap(self):
+        entry = _exec_mod._job_entry("test", "capped_job")
+        entry["state"] = "failed"
+        entry["attempts"] = _exec_mod._MAX_ATTEMPTS  # already at the cap
+        entry["_retry_fn"] = _noop
+        with _exec_mod._jobs_lock:
+            _exec_mod._jobs.append(entry)
+
+        with pytest.raises(RuntimeError) as exc:
+            _exec_mod.retry_job(entry["id"])
+        assert "retry cap" in str(exc.value)
+
+    def test_retry_increments_attempts(self):
+        entry = _exec_mod._job_entry("test", "attempt_job")
+        entry["state"] = "failed"
+        entry["attempts"] = 1
+        entry["_retry_fn"] = _fast_work
+        with _exec_mod._jobs_lock:
+            _exec_mod._jobs.append(entry)
+
+        fut = _exec_mod.retry_job(entry["id"])
+        fut.result(timeout=3)
+
+        jobs = _exec_mod.get_recent_jobs()
+        retried = [j for j in jobs if j["label"].endswith("(retry)")]
+        assert retried, "no retry entry created"
+        assert retried[0]["attempts"] == 2
+
+
+class TestOrphanReconciliation:
+    """FA-06 — durable rows left running/queued by a prior process become failed."""
+
+    def test_reconcile_marks_orphans_failed(self, tmp_path):
+        from orivellum.database.db import OrivellumDB
+
+        db = OrivellumDB(str(tmp_path / "orphan.db"))
+        try:
+            # Simulate a prior process leaving two in-flight rows behind.
+            db.bg_job_upsert("j-run", kind="test", label="r", state="running")
+            db.bg_job_upsert("j-queue", kind="test", label="q", state="queued")
+            db.bg_job_upsert("j-done", kind="test", label="d", state="done")
+
+            n = db.bg_job_reconcile_orphans()
+            assert n == 2, f"expected 2 orphans reconciled, got {n}"
+
+            with db._lock:
+                rows = {
+                    r["id"]: (r["state"], r["error"])
+                    for r in db._conn.execute(
+                        "SELECT id, state, error FROM bg_jobs"
+                    ).fetchall()
+                }
+            assert rows["j-run"] == ("failed", "orphaned by restart")
+            assert rows["j-queue"] == ("failed", "orphaned by restart")
+            assert rows["j-done"][0] == "done"  # terminal rows untouched
+        finally:
+            db.close()
+
+
 class TestGetRecentJobs:
 
     def test_returns_newest_first(self):

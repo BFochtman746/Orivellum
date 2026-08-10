@@ -13,17 +13,16 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from orivellum.api._deps import get_config, get_db
+from orivellum.api._deps import get_config, get_db, require_auth
+from orivellum.api.errors import internal_error
 
 logger = logging.getLogger("orivellum.api.generate")
 
-router = APIRouter(prefix="/api", tags=["generate"])
-
-
+router = APIRouter(prefix="/api", tags=["generate"], dependencies=[Depends(require_auth)])
 # ── Pydantic request models ────────────────────────────────────────────────────
 
 class GenerateWorkRequest(BaseModel):
@@ -89,8 +88,7 @@ def generate_excel_endpoint(body: GenerateWorkRequest):
         from orivellum.capabilities.generate import generate_excel
         fpath, doc_id = generate_excel(body.work_id, db, cfg)
     except Exception as exc:
-        logger.exception("Excel generation failed for work %s", body.work_id)
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise internal_error(logger, exc, f"excel generation for work {body.work_id!r}") from exc
 
     return _generation_result(fpath, doc_id, cfg)
 
@@ -118,8 +116,7 @@ def generate_report_endpoint(body: GenerateReportRequest):
             from orivellum.capabilities.generate import generate_docx_report
             fpath, doc_id = generate_docx_report(body.work_id, db, cfg)
     except Exception as exc:
-        logger.exception("Report generation (%s) failed for work %s", fmt, body.work_id)
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise internal_error(logger, exc, f"report generation ({fmt}) for work {body.work_id!r}") from exc
 
     return _generation_result(fpath, doc_id, cfg)
 
@@ -139,8 +136,7 @@ def generate_slides_endpoint(body: GenerateWorkRequest):
         from orivellum.capabilities.generate import generate_pptx
         fpath, doc_id = generate_pptx(body.work_id, db, cfg)
     except Exception as exc:
-        logger.exception("PPTX generation failed for work %s", body.work_id)
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise internal_error(logger, exc, f"pptx generation for work {body.work_id!r}") from exc
 
     return _generation_result(fpath, doc_id, cfg)
 
@@ -163,8 +159,7 @@ def generate_bundle_endpoint(body: BundleRequest):
         from orivellum.capabilities.generate import bundle_files
         fpath, doc_id = bundle_files(body.paths, body.name or "bundle", body.work_id, db, cfg)
     except Exception as exc:
-        logger.exception("Bundle generation failed for work %s", body.work_id)
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise internal_error(logger, exc, f"bundle generation for work {body.work_id!r}") from exc
 
     return _generation_result(fpath, doc_id, cfg)
 
@@ -252,8 +247,7 @@ async def generate_from_prompt_endpoint(body: GenerateFromPromptRequest):
             cfg=cfg,
         )
     except Exception as exc:
-        logger.exception("from-prompt generation failed")
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise internal_error(logger, exc, "from-prompt generation") from exc
 
     return _generation_result(fpath, doc_id, cfg)
 
@@ -283,8 +277,7 @@ def workshop_plan(body: WorkshopPlanRequest):
             cfg=cfg,
         )
     except Exception as exc:
-        logger.exception("Workshop plan failed")
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise internal_error(logger, exc, "workshop plan") from exc
 
     return session
 
@@ -316,8 +309,7 @@ def workshop_execute(body: WorkshopExecuteRequest):
             cfg=cfg,
         )
     except Exception as exc:
-        logger.exception("Workshop execute failed")
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise internal_error(logger, exc, "workshop execute") from exc
 
     if not result.get("ok"):
         raise HTTPException(status_code=500, detail=result.get("error", "Generation failed"))

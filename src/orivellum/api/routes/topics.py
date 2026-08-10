@@ -10,16 +10,14 @@ from __future__ import annotations
 import json
 import logging
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel
 
-from orivellum.api._deps import get_config, get_db
+from orivellum.api._deps import get_config, get_db, require_auth
 
 logger = logging.getLogger("orivellum.api.topics")
 
-router = APIRouter(prefix="/api", tags=["topics"])
-
-
+router = APIRouter(prefix="/api", tags=["topics"], dependencies=[Depends(require_auth)])
 # ── GET /api/topics ──────────────────────────────────────────────────────────
 
 @router.get("/topics")

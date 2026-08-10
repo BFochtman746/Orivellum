@@ -1,14 +1,12 @@
 """Knowledge domain routes — /api/knowledge/*"""
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from orivellum.api._deps import get_db
+from orivellum.api._deps import get_db, require_auth
 
-router = APIRouter(prefix="/api")
-
-
+router = APIRouter(prefix="/api", dependencies=[Depends(require_auth)])
 class KnowledgeReview(BaseModel):
     review_status: str  # "approved" | "rejected" | "auto" | "ai_auto"
     force: bool = False  # override an already-finalized decision (deliberate flip)

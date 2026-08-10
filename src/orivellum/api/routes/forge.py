@@ -14,16 +14,15 @@ import logging
 import pathlib
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
-from orivellum.api._deps import get_config, get_db
+from orivellum.api._deps import get_config, get_db, require_auth
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/forge")
-
+router = APIRouter(prefix="/api/forge", dependencies=[Depends(require_auth)])
 # ── Request bodies ─────────────────────────────────────────────────────────────
 
 class ProjectCreate(BaseModel):

@@ -14,14 +14,13 @@ from __future__ import annotations
 import json
 import logging
 
-from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 
-from orivellum.api._deps import get_config, get_db
+from orivellum.api._deps import get_config, get_db, require_auth
+from orivellum.api.errors import internal_error
 
 logger = logging.getLogger("orivellum.api.actions")
-router = APIRouter(prefix="/api/actions", tags=["actions"])
-
-
+router = APIRouter(prefix="/api/actions", tags=["actions"], dependencies=[Depends(require_auth)])
 # ── Lazy registry loader ───────────────────────────────────────────────────────
 
 def _registry():
@@ -169,8 +168,9 @@ async def retry_run(run_id: str):
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     except Exception as exc:
-        logger.error("Retry of %s failed: %s", run["action_name"], exc, exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Retry failed: {exc}")
+        raise internal_error(
+            logger, exc, f"retry of action {run['action_name']!r}"
+        ) from exc
 
     download_url: str | None = None
     if result.get("output_path"):
@@ -258,7 +258,7 @@ async def template_fill_upload(
         if existing:
             tpl_doc_id = existing["id"]
         else:
-            raise HTTPException(status_code=500, detail=f"Could not register template: {exc}")
+            raise internal_error(logger, exc, "register uploaded template") from exc
 
     # Parse data
     try:
@@ -281,8 +281,10 @@ async def template_fill_upload(
 
     try:
         result = action.execute(fill_inputs, db, cfg)
-    except (ValueError, Exception) as exc:
+    except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
+    except Exception as exc:
+        raise internal_error(logger, exc, "template_fill execution") from exc
 
     download_url: str | None = None
     if result.get("output_path"):
@@ -329,8 +331,7 @@ async def execute_action(name: str, request: Request):
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     except Exception as exc:
-        logger.error("Action %s execution error: %s", name, exc, exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Action failed: {exc}")
+        raise internal_error(logger, exc, f"action {name!r} execution") from exc
 
     # Build a download URL if there is an output path
     download_url: str | None = None

@@ -7,17 +7,16 @@ import os
 import uuid
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, BackgroundTasks, Body, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from orivellum.api._deps import get_config, get_db
+from orivellum.api._deps import get_config, get_db, require_auth
+from orivellum.api.errors import internal_error
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api")
-
-
+router = APIRouter(prefix="/api", dependencies=[Depends(require_auth)])
 @router.get("/system/health")
 def system_health():
     db = get_db()
@@ -419,8 +418,7 @@ def auto_dedup_run_now():
         result = auto_resolve_duplicates(db)
         return result
     except Exception as exc:
-        logger.error("auto_dedup_run_now failed: %s", exc, exc_info=True)
-        raise HTTPException(500, f"Auto-dedup failed: {exc}") from exc
+        raise internal_error(logger, exc, "auto-dedup run") from exc
 
 
 @router.get("/system/auto-dedup/stats")
@@ -446,7 +444,7 @@ def auto_dedup_stats():
             "total":      row[4] or 0,
         }
     except Exception as exc:
-        raise HTTPException(500, str(exc)) from exc
+        raise internal_error(logger, exc, "auto-dedup stats") from exc
 
 
 @router.get("/system/nightshift/status")
@@ -637,7 +635,7 @@ def clear_all_user_memory():
                      actor="user", detail=f"{count} memories deleted")
         return {"deleted": count}
     except Exception as exc:
-        raise HTTPException(500, f"Could not clear memories: {exc}")
+        raise internal_error(logger, exc, "clear user memories") from exc
 
 
 @router.delete("/system/user-memory/{memory_id}")
@@ -654,7 +652,7 @@ def delete_user_memory(memory_id: str):
             db.audit("user_memory.deleted", object_id=memory_id, object_type="user_memory", actor="user")
         return {"deleted": memory_id}
     except Exception as exc:
-        raise HTTPException(500, f"Could not delete memory: {exc}")
+        raise internal_error(logger, exc, "delete user memory") from exc
 
 
 class _MemoryFactUpdate(BaseModel):
@@ -1799,7 +1797,9 @@ def retry_job(job_id: str):
     Returns:
         200 — job re-queued; new_job_id is the id of the replacement entry.
         404 — no job with that id found in the dashboard registry.
-        409 — job is not in state 'failed' (already running or done).
+        409 — job is not in state 'failed' (already running/queued/done — the
+              atomic retry claim was lost to a concurrent retry) OR the retry
+              attempt cap has been reached.
         501 — job pre-dates retry support (no stored callable).
     """
     from orivellum.api.executor import retry_job as _retry
@@ -1810,6 +1810,10 @@ def retry_job(job_id: str):
     except ValueError as exc:
         raise HTTPException(409, str(exc))
     except RuntimeError as exc:
+        # The retry cap is a conflict (409); a genuinely unsupported job (no
+        # stored callable) is 501.
+        if "retry cap" in str(exc):
+            raise HTTPException(409, str(exc))
         raise HTTPException(501, str(exc))
     return {"ok": True, "retried_job_id": job_id}
 

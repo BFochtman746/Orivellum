@@ -129,6 +129,55 @@ def _get_stuck_docs(db: OrivellumDB, max_docs: int = 20) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def _get_stale_reset_docs(db: OrivellumDB, max_docs: int = 5) -> list[dict]:
+    """Return documents whose FA-07 reset marker is stale (>10 min), oldest first.
+
+    A ``meta['reset_in_progress']`` marker means a destructive multi-step reset
+    (clear warnings → drop knowledge → reset → reprocess) began but a crash may
+    have interrupted it before the ``finally`` that clears the marker ran. Such a
+    document can be left with old knowledge deleted and nothing rebuilt, and its
+    readiness may not reflect a terminal state — so the ordinary stuck-doc query
+    could miss it. We detect a stale marker and re-drive reprocessing.
+
+    Read-only: parses each candidate's meta JSON and compares
+    ``reset_in_progress.started_at`` to now. Bounded to ``max_docs`` (recovery
+    passes cap re-drives per run).
+    """
+    from orivellum.database.db import _jload  # local import: avoid cycle at import time
+    with db._lock:
+        rows = db._conn.execute(
+            """SELECT d.id, d.work_id, d.title, d.source, d.content_path,
+                      d.kind, d.readiness, d.meta
+               FROM documents d
+               WHERE d.kind != 'zip'
+                 AND d.meta LIKE '%reset_in_progress%'
+               ORDER BY d.created_at ASC""",
+        ).fetchall()
+
+    now = datetime.now(UTC)
+    stale: list[dict] = []
+    for r in rows:
+        d = dict(r)
+        meta = _jload(d.get("meta"), {}) or {}
+        marker = meta.get("reset_in_progress")
+        if not isinstance(marker, dict):
+            continue
+        started_at = marker.get("started_at")
+        try:
+            started = datetime.fromisoformat(started_at)
+        except Exception:
+            # Unparseable timestamp — treat as stale so it doesn't linger forever.
+            stale.append(d)
+        else:
+            if started.tzinfo is None:
+                started = started.replace(tzinfo=UTC)
+            if (now - started).total_seconds() > 600:  # >10 minutes
+                stale.append(d)
+        if len(stale) >= max_docs:
+            break
+    return stale
+
+
 def _record_run(db: OrivellumDB, docs_processed: int, items_added: int,
                 report_path: str | None) -> None:
     """Persist a summary row for the completed run and emit an audit entry.
@@ -430,6 +479,27 @@ def _pass_stuck_docs(db: OrivellumDB, cfg: OrivellumConfig,
                 if not (d.get("readiness") == "no_text"
                         and d.get("kind") in ("pdf", "image"))
             ]
+
+        # FA-07 — fold in documents with a stale reset marker (>10 min). A crash
+        # mid-reset may leave a document that the readiness-based query above
+        # misses; re-drive it here (max 5/run) and clear its marker so it is not
+        # picked up again on the next pass unless it re-fails.
+        try:
+            stale_reset = _get_stale_reset_docs(db, max_docs=5)
+        except Exception as _sr_exc:
+            logger.warning("Stale-reset detection failed: %s", _sr_exc)
+            stale_reset = []
+        _seen_ids = {d["id"] for d in stuck}
+        for d in stale_reset:
+            if d["id"] not in _seen_ids:
+                stuck.append(d)
+                _seen_ids.add(d["id"])
+                logger.info("Nightshift: re-driving doc %s with stale reset marker",
+                            d["id"])
+            try:
+                db.clear_reset_marker(d["id"])
+            except Exception:
+                pass
 
         queue: list[dict] = []
         for sdoc in stuck:

@@ -41,11 +41,15 @@ export async function appendJsonLine(filePath, value) {
   await fs.appendFile(filePath, `${JSON.stringify(value)}\n`, 'utf8');
 }
 
-export function resolveWithin(root, requestedPath = '.') {
+export function resolveWithin(root, ...segments) {
   const resolvedRoot = path.resolve(root);
-  const resolvedPath = path.resolve(resolvedRoot, requestedPath);
-  if (resolvedPath !== resolvedRoot && !resolvedPath.startsWith(`${resolvedRoot}${path.sep}`)) {
-    throw new Error(`Path escapes permitted workspace: ${requestedPath}`);
+  const requested = segments.length ? segments : ['.'];
+  const resolvedPath = path.resolve(resolvedRoot, ...requested.map((segment) => String(segment)));
+  // Canonical root-confinement: the relative path from root to the resolved
+  // target must not climb out ('..') and must not be absolute (a different root).
+  const relative = path.relative(resolvedRoot, resolvedPath);
+  if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    throw new Error(`Path escapes permitted root: ${requested.join('/')}`);
   }
   return resolvedPath;
 }

@@ -19,13 +19,40 @@ from __future__ import annotations
 import logging
 import threading
 
-from fastapi import APIRouter, Body, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, ConfigDict, Field
 
-from orivellum.api._deps import get_config, get_db
+from orivellum.api._deps import get_config, get_db, require_auth
 
 logger = logging.getLogger("orivellum.api.bench")
 
-router = APIRouter(prefix="/api/bench", tags=["bench"])
+router = APIRouter(prefix="/api/bench", tags=["bench"], dependencies=[Depends(require_auth)])
+# ── Request models (FA-09: typed, length-bounded, extras forbidden) ─────────────
+
+class BenchRunRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    kind: str = Field(default="", max_length=100)
+    label: str = Field(default="", max_length=100)
+
+
+class GoldenCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    query: str = Field(default="", max_length=2000)
+    kind: str = Field(default="chunk", max_length=100)
+    relevant_ids: list[str] = Field(default_factory=list)
+    work_id: str | None = Field(default=None, max_length=200)
+    notes: str = Field(default="", max_length=500)
+
+
+class GoldenSeedRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    n: int = 20
+
+
+class RetrievalEvalRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    k: int = 5
+    label: str = Field(default="", max_length=100)
 
 # Server-side benchmark concurrency guard.  Probes stream against the live
 # LLM server for up to minutes; overlapping runs would contend for executor
@@ -44,12 +71,12 @@ def _run_bench_guarded(fn, cfg, db, kind: str, label: str) -> None:
 
 
 @router.post("/run")
-async def start_bench(payload: dict = Body(...)):
+async def start_bench(payload: BenchRunRequest):
     from orivellum.api.executor import submit_bg
     from orivellum.capabilities.bench import BENCH_KINDS
 
-    kind = (payload.get("kind") or "").strip()
-    label = (payload.get("label") or "").strip()[:100]
+    kind = payload.kind.strip()
+    label = payload.label.strip()[:100]
     fn = BENCH_KINDS.get(kind)
     if fn is None:
         raise HTTPException(400, f"kind must be one of {sorted(BENCH_KINDS)}")
@@ -108,17 +135,17 @@ async def get_goldens(kind: str | None = None):
 
 
 @router.post("/goldens")
-async def create_golden(payload: dict = Body(...)):
+async def create_golden(payload: GoldenCreateRequest):
     from orivellum.capabilities.evalset import add_golden
 
     try:
         golden = add_golden(
             get_db(),
-            query=payload.get("query") or "",
-            kind=payload.get("kind") or "chunk",
-            relevant_ids=payload.get("relevant_ids") or [],
-            work_id=payload.get("work_id"),
-            notes=(payload.get("notes") or "")[:500],
+            query=payload.query or "",
+            kind=payload.kind or "chunk",
+            relevant_ids=payload.relevant_ids or [],
+            work_id=payload.work_id,
+            notes=(payload.notes or "")[:500],
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc))
@@ -135,12 +162,12 @@ async def remove_golden(golden_id: str):
 
 
 @router.post("/goldens/auto-seed")
-async def seed_goldens(payload: dict = Body(default={})):
+async def seed_goldens(payload: GoldenSeedRequest = GoldenSeedRequest()):
     import asyncio
 
     from orivellum.capabilities.evalset import auto_seed_goldens
 
-    n = payload.get("n") or 20
+    n = payload.n or 20
     try:
         n = max(1, min(int(n), 50))
     except (TypeError, ValueError):
@@ -151,7 +178,7 @@ async def seed_goldens(payload: dict = Body(default={})):
 # ── Retrieval eval ────────────────────────────────────────────────────────────
 
 @router.post("/eval/retrieval")
-async def run_retrieval_eval(payload: dict = Body(default={})):
+async def run_retrieval_eval(payload: RetrievalEvalRequest = RetrievalEvalRequest()):
     import asyncio
 
     from orivellum.capabilities.evalset import evaluate_retrieval, list_goldens
@@ -162,10 +189,10 @@ async def run_retrieval_eval(payload: dict = Body(default={})):
             400,
             "No golden queries yet — add some or POST /api/bench/goldens/auto-seed",
         )
-    k = payload.get("k") or 5
+    k = payload.k or 5
     try:
         k = max(1, min(int(k), 20))
     except (TypeError, ValueError):
         raise HTTPException(400, "k must be an integer")
-    label = (payload.get("label") or "")[:100]
+    label = (payload.label or "")[:100]
     return await asyncio.to_thread(evaluate_retrieval, db, k=k, label=label)

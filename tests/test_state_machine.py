@@ -562,3 +562,72 @@ class TestApplyTransition:
             from_state="running", to_state="done",
         )
         assert _get_state(db, "jobs", "state", jid) == "done"
+
+
+# ---------------------------------------------------------------------------
+# FA-04 — compare-and-set: forged/stale from_state must not authorize an edge
+# ---------------------------------------------------------------------------
+
+class TestTransitionCompareAndSet:
+    def test_forged_from_state_is_rejected(self, db):
+        from orivellum.capabilities.state_machine import TransitionConflictError
+        # Row is already 'running'; caller forges from_state='queued' to
+        # authorize queued→running again. CAS must refuse and leave the row.
+        mid = _make_message(db, state="running")
+        with pytest.raises(TransitionConflictError):
+            apply_transition(
+                db, MESSAGE_SM,
+                object_id=mid, object_type="message",
+                table="messages", state_col="state",
+                from_state="queued", to_state="running",
+                check_blockers=False,
+            )
+        assert _get_state(db, "messages", "state", mid) == "running"
+
+    def test_conflict_rolls_back_audit(self, db):
+        from orivellum.capabilities.state_machine import TransitionConflictError
+        mid = _make_message(db, state="running")
+        before = db._conn.execute("SELECT COUNT(*) c FROM audit_log").fetchone()["c"]
+        with pytest.raises(TransitionConflictError):
+            apply_transition(
+                db, MESSAGE_SM,
+                object_id=mid, object_type="message",
+                table="messages", state_col="state",
+                from_state="queued", to_state="running",
+                check_blockers=False,
+            )
+        after = db._conn.execute("SELECT COUNT(*) c FROM audit_log").fetchone()["c"]
+        assert after == before  # no audit row for a refused transition
+
+    def test_valid_cas_still_applies(self, db):
+        mid = _make_message(db, state="queued")
+        apply_transition(
+            db, MESSAGE_SM,
+            object_id=mid, object_type="message",
+            table="messages", state_col="state",
+            from_state="queued", to_state="running",
+            check_blockers=False,
+        )
+        assert _get_state(db, "messages", "state", mid) == "running"
+
+
+class TestFinalizeMessageGuards:
+    def test_rejects_non_terminal_state(self, db):
+        mid = _make_message(db, state="streaming")
+        with pytest.raises(ValueError):
+            db.finalize_message(mid, "text", "streaming")
+
+    def test_finalize_from_streaming_works(self, db):
+        mid = _make_message(db, state="streaming")
+        db.finalize_message(mid, "final text", "done")
+        assert _get_state(db, "messages", "state", mid) == "done"
+
+    def test_double_finalize_is_noop(self, db):
+        mid = _make_message(db, state="streaming")
+        db.finalize_message(mid, "first", "done")
+        db.finalize_message(mid, "second overwrite attempt", "failed")
+        row = db._conn.execute(
+            "SELECT text, state FROM messages WHERE id=?", (mid,)
+        ).fetchone()
+        assert row["state"] == "done"
+        assert row["text"] == "first"

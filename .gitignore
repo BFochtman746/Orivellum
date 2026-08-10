@@ -99,3 +99,7 @@ data/library/
 kokoro-v0_19.onnx
 voices.bin
 .coverage
+
+# Python bytecode
+__pycache__/
+*.pyc

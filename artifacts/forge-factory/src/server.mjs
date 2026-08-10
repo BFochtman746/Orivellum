@@ -73,7 +73,7 @@ async function jobDetail(projectId, jobId) {
 
 async function artifact(response, projectId, jobId, name) {
   const safe = path.basename(name);
-  const file = path.join(store.jobDirectory(projectId, jobId), safe);
+  const file = resolveWithin(store.jobDirectory(projectId, jobId), safe);
   try {
     const stat = await fs.stat(file);
     if (!stat.isFile()) throw new Error('Not a file.');

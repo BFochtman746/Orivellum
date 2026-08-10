@@ -1,7 +1,7 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { runProcess } from './process.mjs';
-import { nowIso, truncate, writeJsonAtomic } from './utils.mjs';
+import { nowIso, resolveWithin, truncate, writeJsonAtomic } from './utils.mjs';
 
 export async function runQualityGates({ workspace, jobDirectory, policy, onEvent, previewUrl = null }) {
   const gates = [];
@@ -181,7 +181,12 @@ async function inspectHtmlLinks(workspace) {
     for (const match of matches) {
       const target = match[1];
       if (!target || target.startsWith('#') || /^(https?:|mailto:|tel:|data:|javascript:)/i.test(target)) continue;
-      const resolved = path.resolve(path.dirname(file), target.split(/[?#]/)[0]);
+      // Link targets come from LLM-generated HTML. Resolve relative to the file's
+      // directory but confine to the workspace root; a target that escapes the
+      // workspace is reported as a broken/forbidden link rather than probed on disk.
+      let resolved;
+      try { resolved = resolveWithin(workspace, path.relative(workspace, path.resolve(path.dirname(file), target.split(/[?#]/)[0]))); }
+      catch { findings.push({ file: path.relative(workspace, file).replaceAll('\\', '/'), target }); continue; }
       try { await fs.access(resolved); }
       catch { findings.push({ file: path.relative(workspace, file).replaceAll('\\', '/'), target }); }
     }

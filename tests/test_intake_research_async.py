@@ -22,6 +22,8 @@ import pytest
 from fastapi.testclient import TestClient
 from fastapi import FastAPI
 
+from tests.conftest import AUTH_HEADERS
+
 # ── Module under test ─────────────────────────────────────────────────────────
 from orivellum.api.routes.intake import (
     router,
@@ -73,7 +75,7 @@ def _app_with_mocks(db=None, cfg=None):
     _cfg = cfg or _make_cfg()
     with patch("orivellum.api.routes.intake.get_db", return_value=_db), \
          patch("orivellum.api.routes.intake.get_config", return_value=_cfg):
-        yield TestClient(app)
+        yield TestClient(app, headers=AUTH_HEADERS)
 
 
 @pytest.fixture(autouse=True)
@@ -95,7 +97,7 @@ class TestEgressGate:
         app = FastAPI(); app.include_router(router)
         with patch("orivellum.api.routes.intake.get_db", return_value=db), \
              patch("orivellum.api.routes.intake.get_config", return_value=cfg):
-            client = TestClient(app)
+            client = TestClient(app, headers=AUTH_HEADERS)
             resp = client.post("/api/intake/research", json={"doc_id": "doc-abc"})
         assert resp.status_code == 422
         assert "confirmed" in resp.json()["detail"].lower()
@@ -106,7 +108,7 @@ class TestEgressGate:
         app = FastAPI(); app.include_router(router)
         with patch("orivellum.api.routes.intake.get_db", return_value=db), \
              patch("orivellum.api.routes.intake.get_config", return_value=cfg):
-            client = TestClient(app)
+            client = TestClient(app, headers=AUTH_HEADERS)
             resp = client.post(
                 "/api/intake/research",
                 json={"doc_id": "missing", "confirmed": True},
@@ -130,7 +132,7 @@ class TestImmediateReturn:
         with patch("orivellum.api.routes.intake.get_db", return_value=db), \
              patch("orivellum.api.routes.intake.get_config", return_value=cfg), \
              patch("orivellum.api.routes.intake.run_intake", side_effect=slow_run_intake):
-            client = TestClient(app)
+            client = TestClient(app, headers=AUTH_HEADERS)
             t0 = time.monotonic()
             resp = client.post(
                 "/api/intake/research",
@@ -165,7 +167,7 @@ class TestIdempotency:
         with patch("orivellum.api.routes.intake.get_db", return_value=db), \
              patch("orivellum.api.routes.intake.get_config", return_value=cfg), \
              patch("orivellum.api.routes.intake.run_intake", side_effect=slow_run_intake):
-            client = TestClient(app)
+            client = TestClient(app, headers=AUTH_HEADERS)
             r1 = client.post("/api/intake/research",
                              json={"doc_id": "doc-abc", "confirmed": True})
             r2 = client.post("/api/intake/research",
@@ -183,7 +185,7 @@ class TestIdempotency:
 class TestStatusPolling:
     def test_status_404_when_no_job(self):
         app = FastAPI(); app.include_router(router)
-        client = TestClient(app)
+        client = TestClient(app, headers=AUTH_HEADERS)
         resp = client.get("/api/intake/no-such-doc/research-status")
         assert resp.status_code == 404
 
@@ -321,7 +323,7 @@ class TestTTLEviction:
 
         with patch("orivellum.api.routes.intake.get_db", return_value=db), \
              patch("orivellum.api.routes.intake.get_config", return_value=cfg):
-            client = TestClient(app)
+            client = TestClient(app, headers=AUTH_HEADERS)
             resp = client.get("/api/intake/doc-abc/research-status")
 
         assert resp.status_code == 404, (

@@ -20,7 +20,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from orivellum.api._deps import get_db
+from orivellum.api._deps import get_db, require_auth
 from orivellum.capabilities.genesis import (
     STAGE_BY_CODE,
     STAGE_CODES,
@@ -36,7 +36,8 @@ from orivellum.capabilities.genesis import (
 )
 from orivellum.capabilities.genesis.codex import CODEX_TEXT, get_codex_for_stage
 
-router = APIRouter(prefix="/api/works", tags=["genesis"])
+router = APIRouter(prefix="/api/works", tags=["genesis"],
+                   dependencies=[Depends(require_auth)])
 
 
 # ── Pydantic models ────────────────────────────────────────────────────────────
@@ -268,54 +269,62 @@ def record_gate(work_id: str, code: str, req: GateRequest, db=Depends(get_db)):
     if not req.author.strip():
         raise HTTPException(422, "author is required")
 
-    ss = get_stage_status(db._conn, book["id"])
+    # FA-05: the whole read-check-write sequence runs under the DB lock so two
+    # concurrent gate requests cannot both pass on the same stage-status
+    # snapshot and produce duplicate/conflicting ledger entries.
+    with db._lock:
+        ss = get_stage_status(db._conn, book["id"])
 
-    # Order enforcement — cannot pass until all prior stages are PASSED
-    if req.decision == "pass":
-        idx = STAGE_CODES.index(code)
-        for prior in STAGE_CODES[:idx]:
-            if ss.get(prior) != "PASSED":
+        # Order enforcement — cannot pass until all prior stages are PASSED
+        if req.decision == "pass":
+            idx = STAGE_CODES.index(code)
+            for prior in STAGE_CODES[:idx]:
+                if ss.get(prior) != "PASSED":
+                    raise HTTPException(
+                        422,
+                        f"Blocked: {prior} must be PASSED before {code} can pass.",
+                    )
+            # Idempotency claim: re-passing an already-PASSED gate is a
+            # duplicate submit (double-click / retry) — reject it cleanly.
+            if ss.get(code) == "PASSED":
+                raise HTTPException(409, f"Gate {code} is already PASSED.")
+
+            # Check artifact is filled (no <<FILL>> placeholders)
+            art = db._conn.execute(
+                "SELECT content FROM genesis_artifacts WHERE book_id=? AND stage_code=?",
+                (book["id"], code),
+            ).fetchone()
+            if not art or not art["content"] or "<<FILL>>" in art["content"]:
                 raise HTTPException(
                     422,
-                    f"Blocked: {prior} must be PASSED before {code} can pass.",
+                    f"Blocked: {code} artifact still contains <<FILL>> placeholders or is empty. "
+                    "Fill the template before passing the gate.",
                 )
 
-        # Check artifact is filled (no <<FILL>> placeholders)
-        art = db._conn.execute(
-            "SELECT content FROM genesis_artifacts WHERE book_id=? AND stage_code=?",
-            (book["id"], code),
-        ).fetchone()
-        if not art or not art["content"] or "<<FILL>>" in art["content"]:
-            raise HTTPException(
-                422,
-                f"Blocked: {code} artifact still contains <<FILL>> placeholders or is empty. "
-                "Fill the template before passing the gate.",
-            )
+        # Append-only gate record via ledger
+        ledger_append(db._conn, book["id"], f"gate.{req.decision}", {
+            "code": code,
+            "author": req.author,
+            "note": req.note,
+        })
 
-    # Append-only gate record via ledger
-    ledger_append(db._conn, book["id"], f"gate.{req.decision}", {
-        "code": code,
-        "author": req.author,
-        "note": req.note,
-    })
+        # Update stage status
+        new_status = "PASSED" if req.decision == "pass" else "FAILED"
+        db._conn.execute(
+            "INSERT INTO genesis_stages (id, book_id, stage_code, status) VALUES (?,?,?,?) "
+            "ON CONFLICT(book_id, stage_code) DO UPDATE SET status=excluded.status",
+            (str(uuid.uuid4()), book["id"], code, new_status),
+        )
 
-    # Update stage status
-    new_status = "PASSED" if req.decision == "pass" else "FAILED"
-    db._conn.execute(
-        "INSERT INTO genesis_stages (id, book_id, stage_code, status) VALUES (?,?,?,?) "
-        "ON CONFLICT(book_id, stage_code) DO UPDATE SET status=excluded.status",
-        (str(uuid.uuid4()), book["id"], code, new_status),
-    )
-
-    # Advance book state pointer
-    ss[code] = new_status
-    nxt = next_open_stage(ss)
-    new_book_state = nxt if nxt else "ALL_GATES_PASSED"
-    db._conn.execute(
-        "UPDATE genesis_books SET state=?, updated_at=? WHERE id=?",
-        (new_book_state, now_iso(), book["id"]),
-    )
-    db._conn.commit()
+        # Advance book state pointer
+        ss[code] = new_status
+        nxt = next_open_stage(ss)
+        new_book_state = nxt if nxt else "ALL_GATES_PASSED"
+        db._conn.execute(
+            "UPDATE genesis_books SET state=?, updated_at=? WHERE id=?",
+            (new_book_state, now_iso(), book["id"]),
+        )
+        db._conn.commit()
 
     return {
         "ok": True,
@@ -332,31 +341,42 @@ def seal_book(work_id: str, req: SealRequest, db=Depends(get_db)):
     """Seal the origination package — final G9 gate + manifest + READY_FOR_B0 state."""
     _get_work_or_404(db, work_id)
     book = _get_book_or_404(db, work_id)
-    if book["state"] == "READY_FOR_B0":
-        raise HTTPException(409, "Book is already sealed.")
     if not req.author.strip():
         raise HTTPException(422, "author is required")
 
     w = _get_work_or_404(db, work_id)
-    try:
-        import json
-        manifest = compute_seal(
-            db._conn,
-            book["id"],
-            w["title"],
-            book["length"],
-            book["acts"],
-            req.author,
-        )
-    except ValueError as e:
-        raise HTTPException(422, str(e))
+    import json
+    # FA-05: check + compute + write under one lock so two concurrent seal
+    # requests cannot both pass the "already sealed" check on the same
+    # snapshot; the CAS UPDATE ("AND state != 'READY_FOR_B0'") is the claim.
+    with db._lock:
+        row = db._conn.execute(
+            "SELECT state FROM genesis_books WHERE id=?", (book["id"],)
+        ).fetchone()
+        if row and row["state"] == "READY_FOR_B0":
+            raise HTTPException(409, "Book is already sealed.")
+        try:
+            manifest = compute_seal(
+                db._conn,
+                book["id"],
+                w["title"],
+                book["length"],
+                book["acts"],
+                req.author,
+            )
+        except ValueError as e:
+            raise HTTPException(422, str(e))
 
-    at = now_iso()
-    db._conn.execute(
-        "UPDATE genesis_books SET state='READY_FOR_B0', manifest_json=?, updated_at=? WHERE id=?",
-        (json.dumps(manifest), at, book["id"]),
-    )
-    db._conn.commit()
+        at = now_iso()
+        cur = db._conn.execute(
+            "UPDATE genesis_books SET state='READY_FOR_B0', manifest_json=?, updated_at=? "
+            "WHERE id=? AND state != 'READY_FOR_B0'",
+            (json.dumps(manifest), at, book["id"]),
+        )
+        if cur.rowcount == 0:
+            db._conn.rollback()
+            raise HTTPException(409, "Book is already sealed.")
+        db._conn.commit()
     return {"ok": True, "state": "READY_FOR_B0", "manifest": manifest}
 
 
