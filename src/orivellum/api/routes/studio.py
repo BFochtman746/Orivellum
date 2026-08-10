@@ -171,6 +171,27 @@ def _get_kokoro():
     return _kokoro_instance
 
 
+def _kokoro_probably_available() -> bool:
+    """No-load probe mirroring what a render's ``_get_kokoro()`` would find.
+
+    True when the model is already in memory OR the package + model files are
+    present so a render would load it on demand. Used by resume-info so its
+    cache accounting matches the engines a real render could actually reuse,
+    without forcing a model load on a lightweight status call.
+    """
+    if _is_kokoro_loaded():
+        return True
+    try:
+        import importlib.util
+        if importlib.util.find_spec("kokoro_onnx") is None:
+            return False
+        if importlib.util.find_spec("soundfile") is None:
+            return False
+    except Exception:
+        return False
+    return Path("kokoro-v0_19.onnx").exists() and Path("voices.bin").exists()
+
+
 def _is_kokoro_loaded() -> bool:
     """Return True only when the Kokoro ONNX model is actually loaded in memory.
 
@@ -714,6 +735,44 @@ def _seg_cache_put(cfg, text: str, engine: str, voice: str, speed: float,
         os.replace(tmp, dst)
     except Exception as exc:
         logger.debug("Segment cache write failed (non-fatal): %s", exc)
+
+
+def _work_engine_priority(seg_voice: str, premium_ok: bool,
+                          kokoro_ready: bool) -> list[str]:
+    """Engine priority order for one work-render segment.
+
+    Shared by the render worker and the resume-info endpoint so that
+    "already rendered" reflects exactly the cache entries a real render
+    would reuse. Neural engines only — no robotic fallback (owner policy).
+    """
+    if _is_clone_voice(seg_voice):
+        return ["premium"]
+    return ((["premium"] if premium_ok else [])
+            + (["kokoro"] if kokoro_ready else []))
+
+
+def _chapter_segment_texts(doc_title: str, doc_text: str) -> list[str]:
+    """The exact ordered segment texts a work render synthesizes for one
+    chapter (title intro + capped body segments).
+
+    Single source of truth for both the render worker and the resume-info
+    endpoint — if these ever diverge, resume progress reporting lies.
+    """
+    return [doc_title + "."] + _split_text_into_segments(doc_text)[:60]
+
+
+def _work_credits_texts(work_title: str, voice_name: str) -> tuple[str, str]:
+    """(opening, closing) credits lines — shared so cached credits segments
+    are recognized by the resume-info endpoint."""
+    opening = (
+        f"{work_title}. Narrated by {voice_name}. "
+        "This is an AI-generated audiobook produced with Orivellum."
+    )
+    closing = (
+        f"You have been listening to {work_title}. "
+        f"Narrated by {voice_name}. The end."
+    )
+    return opening, closing
 
 
 def _prune_seg_cache(cfg) -> None:
@@ -1964,20 +2023,30 @@ def _run_work_tts_job(
     premium_ok = _is_premium_tts_enabled(cfg)
     _prune_seg_cache(cfg)
 
+    def _note_segment(from_cache: bool) -> None:
+        """Advance the job's segment counters (drives the resume-aware UI)."""
+        with _work_tts_jobs_lock:
+            j = _work_tts_jobs.get(job_id)
+            if j is not None:
+                j["segments_done"] = int(j.get("segments_done", 0)) + 1
+                if from_cache:
+                    j["cached_segments"] = int(j.get("cached_segments", 0)) + 1
+
     def _synth(text: str, seg_voice: str | None = None) -> Path | None:
         nonlocal seg_idx
         seg_voice = seg_voice or voice
         wav = tmp_dir / f"seg_{seg_idx:06d}.wav"
         seg_idx += 1
 
-        # Neural engines only — no robotic fallback by owner policy.
-        engines = (["premium"] if _is_clone_voice(seg_voice) else
-                   (["premium"] if premium_ok else []) +
-                   (["kokoro"] if (kokoro_eng is not None and _sf2 is not None) else []))
+        engines = _work_engine_priority(
+            seg_voice, premium_ok,
+            kokoro_ready=(kokoro_eng is not None and _sf2 is not None),
+        )
         cached = _seg_cache_get(cfg, text, seg_voice, speed, engines)
         if cached is not None:
             import shutil
             shutil.copyfile(cached, wav)
+            _note_segment(from_cache=True)
             return wav
 
         def _attempt() -> tuple[Path | None, str | None]:
@@ -2025,6 +2094,7 @@ def _run_work_tts_job(
                 f"Segment {seg_idx - 1} could not be synthesized — "
                 + _NEURAL_TTS_UNAVAILABLE_MSG
             )
+        _note_segment(from_cache=False)
         return out
 
     def _silence(dur: float) -> None:
@@ -2048,13 +2118,11 @@ def _run_work_tts_job(
         with _work_tts_jobs_lock:
             _work_tts_jobs[job_id]["state"] = "running"
 
+        opening_credits, closing_credits = _work_credits_texts(work_title, voice_name)
+
         # Opening credits
         if include_credits:
-            credits_text = (
-                f"{work_title}. Narrated by {voice_name}. "
-                "This is an AI-generated audiobook produced with Orivellum."
-            )
-            p = _synth(credits_text)
+            p = _synth(opening_credits)
             if p:
                 wav_parts.append(p)
                 part_voices.append(voice)
@@ -2075,12 +2143,9 @@ def _run_work_tts_job(
                     "chapter_title": doc_title,
                 })
 
-            intro = _synth(doc_title + ".", chap_voice)
-            if intro:
-                wav_parts.append(intro)
-                part_voices.append(chap_voice)
-
-            for seg_text in _split_text_into_segments(doc_text)[:60]:
+            # Segment plan MUST come from _chapter_segment_texts so cache keys
+            # line up with what the resume-info endpoint reports as done.
+            for seg_text in _chapter_segment_texts(doc_title, doc_text):
                 if _cancelled():
                     with _work_tts_jobs_lock:
                         _work_tts_jobs[job_id]["state"] = "cancelled"
@@ -2094,11 +2159,7 @@ def _run_work_tts_job(
 
         # Closing credits — skip entirely if cancelled after the last chapter
         if include_credits and not _cancelled():
-            closing = (
-                f"You have been listening to {work_title}. "
-                f"Narrated by {voice_name}. The end."
-            )
-            p = _synth(closing)
+            p = _synth(closing_credits)
             if p:
                 wav_parts.append(p)
                 part_voices.append(voice)
@@ -2219,6 +2280,128 @@ def _run_work_tts_job(
             pass
 
 
+def _collect_work_doc_texts(db, work_id: str) -> tuple[str, list[tuple[str, str, str]]]:
+    """Resolve a Work's title and its ordered chapter texts.
+
+    Returns ``(work_title, [(doc_id, title, full_text), ...])`` using the same
+    document selection and ordering as a real render, so callers (job start,
+    resume-info) always agree on the chapter plan. Raises HTTPException on
+    missing Work / no ready documents / no extracted text.
+    """
+    with db._lock:
+        work_row = db._conn.execute(
+            "SELECT id, title FROM works WHERE id=?", (work_id,)
+        ).fetchone()
+    if not work_row:
+        raise HTTPException(404, f"Work {work_id!r} not found")
+    work_title = work_row["title"] or "Untitled Work"
+
+    with db._lock:
+        doc_rows = db._conn.execute(
+            """SELECT d.id, d.title, d.source
+               FROM documents d JOIN objects o ON o.id = d.id
+               WHERE d.work_id=? AND d.readiness='ready'
+               ORDER BY o.created_at""",
+            (work_id,),
+        ).fetchall()
+    if not doc_rows:
+        raise HTTPException(422, "No ready documents found in this Work. "
+                                 "Process documents in the Library first.")
+
+    doc_texts: list[tuple[str, str, str]] = []
+    with db._lock:
+        for doc in doc_rows:
+            chunks = db._conn.execute(
+                "SELECT text FROM chunks WHERE doc_id=? ORDER BY page, rowid",
+                (doc["id"],),
+            ).fetchall()
+            if chunks:
+                text = "\n\n".join(r["text"] for r in chunks)
+                doc_title = doc["title"] or (
+                    doc["source"].split("/")[-1] if doc["source"] else "Chapter"
+                )
+                doc_texts.append((doc["id"], doc_title, text))
+
+    if not doc_texts:
+        raise HTTPException(422, "No extracted text found in any document of this Work.")
+    return work_title, doc_texts
+
+
+class WorkResumeInfoRequest(BaseModel):
+    work_id: str
+    voice: str = "bm_george"
+    speed: float = 1.0
+    include_credits: bool = True
+
+
+@router.post("/studio/tts/work/resume-info")
+def work_tts_resume_info(body: WorkResumeInfoRequest):
+    """Report how much of a Work render is already in the segment cache.
+
+    An interrupted render keeps every finished segment in the persistent
+    cache, so a re-run with the same voice/speed fast-forwards through them
+    instead of starting over. This lets the UI show, per chapter, what is
+    already done and offer "Resume" instead of "start over".
+
+    Existence-only check by design — the render worker still QA-gates every
+    cache hit before it can reach the final audio.
+    """
+    db  = get_db()
+    cfg = get_config()
+
+    work_title, doc_texts = _collect_work_doc_texts(db, body.work_id)
+    casting    = _get_voice_casting(db, body.work_id)
+    premium_ok = _is_premium_tts_enabled(cfg)
+    voice_name = _VOICE_BY_ID.get(body.voice, {}).get("name", body.voice)
+
+    # Match the worker's engine set without loading the model: a cached
+    # kokoro WAV only counts when a real render could actually reuse it.
+    kokoro_ready = _kokoro_probably_available()
+
+    def _is_cached(text: str, seg_voice: str) -> bool:
+        for engine in _work_engine_priority(seg_voice, premium_ok, kokoro_ready):
+            p = _seg_cache_path(cfg, text, engine, seg_voice, body.speed)
+            try:
+                if p.exists() and p.stat().st_size > 0:
+                    return True
+            except OSError:
+                pass
+        return False
+
+    chapters: list[dict] = []
+    total_segments = 0
+    cached_segments = 0
+    for doc_id, doc_title, doc_text in doc_texts:
+        seg_voice = casting.get(doc_id) or body.voice
+        segs = _chapter_segment_texts(doc_title, doc_text)
+        hit  = sum(1 for s in segs if _is_cached(s, seg_voice))
+        chapters.append({
+            "doc_id": doc_id,
+            "title": doc_title,
+            "segments": len(segs),
+            "cached_segments": hit,
+            "complete": hit == len(segs),
+        })
+        total_segments  += len(segs)
+        cached_segments += hit
+
+    if body.include_credits:
+        for credit_text in _work_credits_texts(work_title, voice_name):
+            total_segments += 1
+            if _is_cached(credit_text, body.voice):
+                cached_segments += 1
+
+    return {
+        "work_id": body.work_id,
+        "work_title": work_title,
+        "chapters": chapters,
+        "total_segments": total_segments,
+        "cached_segments": cached_segments,
+        "complete_chapters": sum(1 for c in chapters if c["complete"]),
+        "resumable": cached_segments > 0,
+    }
+
+
 class WorkAudiobookStartRequest(BaseModel):
     work_id: str
     voice: str = "bm_george"
@@ -2241,14 +2424,7 @@ def start_work_audiobook_async(body: WorkAudiobookStartRequest):
     db  = get_db()
     cfg = get_config()
 
-    with db._lock:
-        work_row = db._conn.execute(
-            "SELECT id, title FROM works WHERE id=?", (body.work_id,)
-        ).fetchone()
-    if not work_row:
-        raise HTTPException(404, f"Work {body.work_id!r} not found")
-
-    work_title = work_row["title"] or "Untitled Work"
+    work_title, doc_texts = _collect_work_doc_texts(db, body.work_id)
 
     # Cloned voices exist only on the premium sidecar — reject before the job
     # is created rather than failing (or worse, mis-narrating) mid-render.
@@ -2262,35 +2438,11 @@ def start_work_audiobook_async(body: WorkAudiobookStartRequest):
             "premium voice engine (tts_premium_url) is not enabled.",
         )
 
-    with db._lock:
-        doc_rows = db._conn.execute(
-            """SELECT d.id, d.title, d.source
-               FROM documents d JOIN objects o ON o.id = d.id
-               WHERE d.work_id=? AND d.readiness='ready'
-               ORDER BY o.created_at""",
-            (body.work_id,),
-        ).fetchall()
-
-    if not doc_rows:
-        raise HTTPException(422, "No ready documents found in this Work. "
-                                 "Process documents in the Library first.")
-
-    doc_texts: list[tuple[str, str, str]] = []  # (doc_id, title, full_text)
-    with db._lock:
-        for doc in doc_rows:
-            chunks = db._conn.execute(
-                "SELECT text FROM chunks WHERE doc_id=? ORDER BY page, rowid",
-                (doc["id"],),
-            ).fetchall()
-            if chunks:
-                text = "\n\n".join(r["text"] for r in chunks)
-                doc_title = doc["title"] or (
-                    doc["source"].split("/")[-1] if doc["source"] else "Chapter"
-                )
-                doc_texts.append((doc["id"], doc_title, text))
-
-    if not doc_texts:
-        raise HTTPException(422, "No extracted text found in any document of this Work.")
+    # Total planned speech segments (chapters + credits) — lets the UI show
+    # fine-grained progress and how far a resumed render fast-forwards.
+    total_segments = sum(
+        len(_chapter_segment_texts(t, x)) for _, t, x in doc_texts
+    ) + (2 if body.include_credits else 0)
 
     job_id  = str(uuid.uuid4())
     out_dir = Path(cfg.data_dir) / "outputs"
@@ -2309,6 +2461,9 @@ def start_work_audiobook_async(body: WorkAudiobookStartRequest):
             "chapter_title": "",
             "work_title": work_title,
             "spatial": spatial_cfg is not None,
+            "segments_done": 0,
+            "cached_segments": 0,
+            "total_segments": total_segments,
             "cancel_requested": False,
         }
 
@@ -2327,12 +2482,15 @@ def start_work_audiobook_async(body: WorkAudiobookStartRequest):
 @router.get("/studio/tts/work/{job_id}/status")
 def get_work_tts_status(job_id: str):
     """Return current chapter-level progress for a work audiobook job."""
+    # Snapshot under the lock — the worker mutates the same dict concurrently
+    # (counters, terminal result/error), so copying outside the lock could
+    # yield an inconsistent view or a dict-changed-during-iteration error.
     with _work_tts_jobs_lock:
         raw = _work_tts_jobs.get(job_id)
-    if raw is None:
-        raise HTTPException(404, f"Work TTS job {job_id!r} not found")
-    # Strip the internal cancel flag before returning
-    out = {k: v for k, v in raw.items() if k != "cancel_requested"}
+        if raw is None:
+            raise HTTPException(404, f"Work TTS job {job_id!r} not found")
+        # Strip the internal cancel flag before returning
+        out = {k: v for k, v in raw.items() if k != "cancel_requested"}
     return {"job_id": job_id, **out}
 
 
