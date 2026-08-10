@@ -638,3 +638,113 @@ class TestVlmPdfOcr(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ---------------------------------------------------------------------------
+# Phase D — Cloned-voice sample previews (premium sidecar path)
+# ---------------------------------------------------------------------------
+
+@unittest.skipUnless(_DEPS_AVAILABLE, f"deps missing: {_MISSING}")
+class TestCloneVoiceSample(unittest.TestCase):
+    """GET /api/studio/voices/clone:<id>/sample routes through the premium
+    sidecar with caching, and fails with a clear 503 (never a silent Kokoro
+    fallback) when the sidecar is unconfigured or down."""
+
+    CLONE_ID = "clone:test-clone-1"
+    FAKE_MP3 = b"ID3" + b"\x00" * 4000  # > 1 KB so cache size checks pass
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self._tmp_path = Path(self._tmp.name)
+        self.client = _make_client(self._tmp_path)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _get_sample(self):
+        return self.client.get(f"/api/studio/voices/{self.CLONE_ID}/sample")
+
+    def test_clone_sample_unconfigured_returns_503_with_clear_detail(self):
+        # Default test config has no tts_premium_url — must explain, not 404.
+        resp = self._get_sample()
+        self.assertEqual(resp.status_code, 503, resp.text)
+        detail = str(resp.json().get("detail", "")).lower()
+        self.assertIn("premium", detail)
+        self.assertNotIn("internal server error", detail)
+
+    def test_clone_sample_sidecar_down_returns_503(self):
+        with patch("orivellum.api.routes.studio._is_premium_tts_enabled", return_value=True), \
+             patch("orivellum.api.routes.studio._call_premium_tts_sync", return_value=None):
+            resp = self._get_sample()
+        self.assertEqual(resp.status_code, 503, resp.text)
+        detail = str(resp.json().get("detail", "")).lower()
+        self.assertIn("not responding", detail)
+
+    def test_clone_sample_success_is_cached(self):
+        calls = MagicMock(return_value=self.FAKE_MP3)
+        with patch("orivellum.api.routes.studio._is_premium_tts_enabled", return_value=True), \
+             patch("orivellum.api.routes.studio._call_premium_tts_sync", calls):
+            r1 = self._get_sample()
+            r2 = self._get_sample()
+        self.assertEqual(r1.status_code, 200, r1.text)
+        self.assertEqual(r1.headers.get("X-TTS-Engine"), "premium")
+        self.assertEqual(r1.content, self.FAKE_MP3)
+        self.assertEqual(r2.status_code, 200)
+        self.assertEqual(calls.call_count, 1,
+                         "second request must be served from cache, not re-synthesized")
+        # Sample text is the short fixed sentence, voice is the clone id.
+        _text, _voice = calls.call_args[0][0], calls.call_args[0][1]
+        from orivellum.api.routes.studio import _SAMPLE_SENTENCE
+        self.assertEqual(_text, _SAMPLE_SENTENCE)
+        self.assertEqual(_voice, self.CLONE_ID)
+        # Cache filename must be Windows-safe (no ":").
+        from orivellum.api.routes.studio import _get_sample_cache_path
+        p = _get_sample_cache_path(_deps.get_config(), self.CLONE_ID)
+        self.assertNotIn(":", p.name)
+        self.assertTrue(p.exists())
+
+    def test_clone_delete_drops_cached_sample(self):
+        # Seed a cached sample via a successful synthesis.
+        with patch("orivellum.api.routes.studio._is_premium_tts_enabled", return_value=True), \
+             patch("orivellum.api.routes.studio._call_premium_tts_sync",
+                   return_value=self.FAKE_MP3):
+            self.assertEqual(self._get_sample().status_code, 200)
+
+        sidecar_resp = MagicMock(status_code=200, content=b"{}")
+        sidecar_resp.json.return_value = {"deleted": True}
+        with patch("orivellum.api.routes.studio._premium_base_url",
+                   return_value="http://127.0.0.1:9883"), \
+             patch("httpx.delete", return_value=sidecar_resp):
+            resp = self.client.delete("/api/studio/voice-clones/test-clone-1")
+        self.assertEqual(resp.status_code, 200, resp.text)
+
+        from orivellum.api.routes.studio import _get_sample_cache_path
+        p = _get_sample_cache_path(_deps.get_config(), self.CLONE_ID)
+        self.assertFalse(p.exists(), "cached clone sample must be removed on delete")
+        # And a fresh request with the sidecar down must now 503, proving the
+        # deleted voice's audio can never be served from a stale cache.
+        with patch("orivellum.api.routes.studio._is_premium_tts_enabled", return_value=True), \
+             patch("orivellum.api.routes.studio._call_premium_tts_sync", return_value=None):
+            self.assertEqual(self._get_sample().status_code, 503)
+
+    def test_unknown_catalog_voice_still_404s(self):
+        resp = self.client.get("/api/studio/voices/not-a-voice/sample")
+        self.assertEqual(resp.status_code, 404)
+
+    def test_clone_cache_row_with_wrong_engine_is_never_served(self):
+        """No-robot-voice policy for clones: a cached voice_samples row for a
+        clone id that is NOT marked engine='premium' (mislabeled/legacy) must
+        never be served — the route must re-synthesize via the sidecar or 503."""
+        from orivellum.api.routes.studio import (
+            _get_sample_cache_path, _upsert_voice_sample_db,
+        )
+        # Seed a valid-looking cached file mislabeled as Kokoro-generated.
+        p = _get_sample_cache_path(_deps.get_config(), self.CLONE_ID)
+        p.write_bytes(self.FAKE_MP3)
+        _upsert_voice_sample_db(_deps.get_db(), self.CLONE_ID, str(p), "kokoro")
+
+        with patch("orivellum.api.routes.studio._is_premium_tts_enabled", return_value=True), \
+             patch("orivellum.api.routes.studio._call_premium_tts_sync", return_value=None):
+            resp = self._get_sample()
+        self.assertEqual(resp.status_code, 503,
+                         "mislabeled clone cache row was served — policy violation")

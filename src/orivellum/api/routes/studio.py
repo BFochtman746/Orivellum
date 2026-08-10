@@ -806,7 +806,24 @@ def list_voices():
 def _get_sample_cache_path(cfg, voice_id: str) -> Path:
     p = Path(cfg.data_dir) / "voice_samples"
     p.mkdir(parents=True, exist_ok=True)
-    return p / f"{voice_id}.mp3"
+    # Cloned-voice ids look like "clone:<id>" — ":" is illegal in Windows
+    # filenames, so sanitize. Catalog ids are already filename-safe and keep
+    # their existing cache filenames unchanged.
+    safe = re.sub(r"[^A-Za-z0-9._-]", "_", voice_id)
+    return p / f"{safe}.mp3"
+
+
+def _drop_voice_sample(voice_id: str) -> None:
+    """Remove a cached sample (DB row + file), e.g. when a clone is deleted."""
+    from orivellum.api._deps import get_config as _cfg
+    try:
+        db = get_db()
+        with db._lock:
+            db._conn.execute("DELETE FROM voice_samples WHERE voice_id=?", (voice_id,))
+            db._conn.commit()
+        _get_sample_cache_path(_cfg(), voice_id).unlink(missing_ok=True)
+    except Exception as exc:
+        logger.debug("Voice sample cleanup failed for %s: %s", voice_id, exc)
 
 
 def _upsert_voice_sample_db(db, voice_id: str, sample_path: str, engine: str) -> None:
@@ -916,6 +933,32 @@ def _synthesize_sample_sync(voice_id: str) -> Path | None:
     return None
 
 
+def _synthesize_clone_sample_sync(voice_id: str) -> Path | None:
+    """Generate a sample MP3 for a cloned voice via the premium sidecar.
+
+    Cloned voices only exist on the sidecar, so there is no local fallback —
+    returns None on any failure and the route reports a clear 503. On success
+    the MP3 is cached to disk + the voice_samples table (engine "premium").
+    """
+    from orivellum.api._deps import get_config as _cfg
+    cfg = _cfg()
+    db = get_db()
+    audio = _call_premium_tts_sync(_SAMPLE_SENTENCE, voice_id, 1.0, cfg)
+    if not audio:
+        return None
+    out_path = _get_sample_cache_path(cfg, voice_id)
+    tmp = out_path.with_suffix(".tmp.mp3")
+    try:
+        tmp.write_bytes(audio)
+        tmp.replace(out_path)  # never leave a half-written cache file behind
+    except Exception as exc:
+        tmp.unlink(missing_ok=True)
+        logger.warning("Clone sample cache write failed for %s: %s", voice_id, exc)
+        return None
+    _upsert_voice_sample_db(db, voice_id, str(out_path), "premium")
+    return out_path
+
+
 @router.get("/studio/voices/{voice_id}/sample")
 async def get_voice_sample(voice_id: str):
     """Return a cached MP3 sample for *voice_id*, generating it on first call.
@@ -927,19 +970,28 @@ async def get_voice_sample(voice_id: str):
          robotic espeak fallback is disabled by owner policy)
 
     Every response includes an ``X-TTS-Engine`` header (``"kokoro"`` for new
-    samples; legacy pre-policy samples may still report ``"espeak"``).
+    samples, ``"premium"`` for cloned voices; legacy pre-policy samples may
+    still report ``"espeak"``).
+
+    Cloned voices (``clone:<id>``) only exist on the premium sidecar, so their
+    samples are synthesized there — a short fixed sentence, cached like the
+    catalog samples — with a clear 503 when the sidecar is unavailable.
     """
-    if voice_id not in _VOICE_BY_ID:
+    is_clone = _is_clone_voice(voice_id)
+    if not is_clone and voice_id not in _VOICE_BY_ID:
         raise HTTPException(404, f"Unknown voice: {voice_id!r}")
 
     db = get_db()
 
     # Quick DB lookup before spawning a thread. Legacy espeak-generated
     # samples are never served (no-robot-voice policy) — fall through to
-    # regenerate them with Kokoro instead.
+    # regenerate them with Kokoro instead. Clone samples are only trusted
+    # when they were synthesized by the premium sidecar: a mislabeled row
+    # must never let a cloned voice be previewed with a Kokoro/espeak sample.
     engine = await asyncio.to_thread(_lookup_voice_sample_engine, db, voice_id) or "kokoro"
     cached_path = await asyncio.to_thread(_lookup_voice_sample_db, db, voice_id)
-    if cached_path and engine != "espeak":
+    cache_ok = engine == "premium" if is_clone else engine != "espeak"
+    if cached_path and cache_ok:
         p = Path(cached_path)
         if p.exists() and p.stat().st_size > 1000:
             return FileResponse(str(p), media_type="audio/mpeg",
@@ -950,11 +1002,28 @@ async def get_voice_sample(voice_id: str):
                                 })
 
     # Generate (also writes to DB on success)
-    result = await asyncio.to_thread(_synthesize_sample_sync, voice_id)
-    if result is None:
-        raise HTTPException(503, _NEURAL_TTS_UNAVAILABLE_MSG)
+    if is_clone:
+        cfg = get_config()
+        if not _is_premium_tts_enabled(cfg):
+            raise HTTPException(
+                503,
+                "Cloned voices need the premium voice engine — set tts_premium_url "
+                "and acknowledge its license in config, then try again.",
+            )
+        result = await asyncio.to_thread(_synthesize_clone_sample_sync, voice_id)
+        if result is None:
+            raise HTTPException(
+                503,
+                "The premium voice engine is not responding — make sure the voice "
+                "sidecar is running on this machine, then try the sample again.",
+            )
+    else:
+        result = await asyncio.to_thread(_synthesize_sample_sync, voice_id)
+        if result is None:
+            raise HTTPException(503, _NEURAL_TTS_UNAVAILABLE_MSG)
 
-    engine = await asyncio.to_thread(_lookup_voice_sample_engine, db, voice_id) or "kokoro"
+    engine = (await asyncio.to_thread(_lookup_voice_sample_engine, db, voice_id)
+              or ("premium" if is_clone else "kokoro"))
     return FileResponse(str(result), media_type="audio/mpeg",
                         filename=f"sample_{voice_id}.mp3",
                         headers={
@@ -4363,6 +4432,9 @@ def delete_voice_clone(vid: str):
     if resp.status_code >= 400:
         detail = resp.json().get("detail", "delete failed") if resp.content else "delete failed"
         raise HTTPException(resp.status_code, detail)
+    # Drop the cached preview sample so a future clone reusing this id can
+    # never be previewed with the deleted voice's audio.
+    _drop_voice_sample(f"clone:{vid}")
     return resp.json()
 
 

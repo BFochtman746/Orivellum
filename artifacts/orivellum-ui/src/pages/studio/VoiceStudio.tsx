@@ -125,8 +125,15 @@ function useGlobalAudio() {
     setLoadingId(voiceId);
 
     try {
-      const resp = await apiFetch(`${BASE}/studio/voices/${voiceId}/sample`);
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const resp = await apiFetch(`${BASE}/studio/voices/${encodeURIComponent(voiceId)}/sample`);
+      if (!resp.ok) {
+        // Surface the server's explanation (e.g. "the voice sidecar is not
+        // running") instead of a generic failure — clone samples especially
+        // depend on an external service the user may need to start.
+        let msg = "";
+        try { msg = (await resp.json())?.detail ?? ""; } catch { /* not JSON */ }
+        throw new Error(msg || `HTTP ${resp.status}`);
+      }
 
       // Capture which engine generated this sample (always neural now — the
       // robotic espeak fallback was removed by policy).
@@ -141,7 +148,10 @@ function useGlobalAudio() {
       await el.play();
       setPlayingId(voiceId);
     } catch (e: any) {
-      toast.error(`Could not load sample for this voice`);
+      const detail = typeof e?.message === "string" && e.message && !/^HTTP \d+$/.test(e.message)
+        ? e.message
+        : "Could not load sample for this voice";
+      toast.error(detail);
     } finally {
       setLoadingId(null);
     }
@@ -512,7 +522,10 @@ interface CloneListResp {
   consent_statement: string | null;
 }
 
-function CloneTab({ onUseVoice }: { onUseVoice: (v: VoiceEntry) => void }) {
+function CloneTab({ onUseVoice, globalAudio }: {
+  onUseVoice: (v: VoiceEntry) => void;
+  globalAudio: ReturnType<typeof useGlobalAudio>;
+}) {
   const [data, setData] = useState<CloneListResp | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -687,6 +700,24 @@ function CloneTab({ onUseVoice }: { onUseVoice: (v: VoiceEntry) => void }) {
                   {!v.usable && (
                     <Button size="sm" variant="outline" onClick={() => handleConsent(v)}>
                       Acknowledge consent
+                    </Button>
+                  )}
+                  {v.usable && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => globalAudio.playVoiceSample(`clone:${v.id}`)}
+                      disabled={globalAudio.loadingId === `clone:${v.id}`}
+                      title="Hear a short sample of this cloned voice"
+                    >
+                      {globalAudio.loadingId === `clone:${v.id}` ? (
+                        <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+                      ) : globalAudio.playingId === `clone:${v.id}` ? (
+                        <Pause className="w-3.5 h-3.5 mr-1.5" />
+                      ) : (
+                        <Play className="w-3.5 h-3.5 mr-1.5" />
+                      )}
+                      Sample
                     </Button>
                   )}
                   {v.usable && (
@@ -2050,7 +2081,7 @@ export function VoiceStudio() {
           />
         )}
         {activeTab === "clone" && (
-          <CloneTab onUseVoice={handleUseVoice} />
+          <CloneTab onUseVoice={handleUseVoice} globalAudio={globalAudio} />
         )}
         {activeTab === "audiobook" && (
           <AudiobookTab
