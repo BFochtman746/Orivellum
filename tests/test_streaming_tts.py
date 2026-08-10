@@ -645,8 +645,9 @@ class TestNonStreamingFallback(unittest.TestCase):
         self._tmp.cleanup()
 
     @unittest.skipUnless(_ffmpeg_ok(), "ffmpeg not available")
-    def test_stream_false_with_espeak_returns_mpeg(self):
-        """When espeak-ng is available, stream=False returns audio/mpeg."""
+    def test_stream_false_returns_mpeg_or_503(self):
+        """stream=False returns audio/mpeg when a neural engine is up, or a
+        clean 503 when none is (espeak fallback removed by policy)."""
         resp = self._client.post(
             "/api/studio/tts",
             json={"text": "Hello.", "voice": "af_heart",

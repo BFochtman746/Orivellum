@@ -80,3 +80,5 @@
 - [Local transcription](orivellum-transcription.md) — large-v3-turbo default w/ DB override + base fallback; fallback cached per request; model meta travels via snapshot; verbose_json needs segment AND word granularities.
 - [Music & SFX generation](orivellum-music-gen.md) — sidecar :9884; per-model DB license acks; load+inference under one lock; strict registration with partial-success flag.
 - [Ingestion shield & abstention](orivellum-ingestion-shield.md) — quarantine enforced at every READ (COALESCE(d.quarantined,0)=0); vector cache invalidates on count only; mail gates off until mail_trusted_domains set.
+- [Voice chat / live TTS session](orivellum-voice-chat.md) — startLive must prime audio in a gesture; ignore silent-prime ended event; onTranscript("") contract; sync /studio/voice/transcribe gates.
+- [No-robot-voice policy](orivellum-no-robot-voice.md) — espeak banned from all audible paths; 503 + client pause-and-retry; never relabel/serve legacy espeak audio; segment failure must raise, not skip.

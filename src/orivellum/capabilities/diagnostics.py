@@ -344,11 +344,14 @@ def _check_services(cfg: "OrivellumConfig") -> list[dict]:
         checks.append(_check("Embeddings circuit breaker", INFO, "unknown",
                               "Could not read circuit breaker state"))
 
-    # TTS: espeak-ng
+    # TTS: espeak-ng (informational only — never used for audible speech;
+    # the no-robot-voice policy routes all synthesis through neural engines)
     espeak = shutil.which("espeak-ng") or shutil.which("espeak")
-    checks.append(_check("TTS (espeak-ng)", OK if espeak else WARN,
+    checks.append(_check("espeak-ng (unused, informational)", OK if espeak else WARN,
                           espeak or "not found",
-                          "Text-to-speech available" if espeak else "Install espeak-ng for Read Aloud support"))
+                          "Present but not used for speech — neural engines only"
+                          if espeak else
+                          "Not installed — fine; robotic fallback is disabled by policy"))
 
     # OCR: tesseract
     tess = shutil.which("tesseract")

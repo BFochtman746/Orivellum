@@ -258,9 +258,22 @@ def test_work_sync_clone_fails_closed_when_premium_dies(work_client, monkeypatch
         cfg.serving.tts_premium_ack_license = False
 
 
-def test_work_sync_catalog_voice_still_renders_without_premium(work_client):
+def test_work_sync_catalog_voice_renders_via_kokoro(work_client, monkeypatch):
     """Regression guard: normal catalog voices keep working via the local
-    cascade (espeak at minimum) — the clone gate must not affect them."""
+    neural engine (Kokoro) — the clone gate must not affect them."""
+    import math
+
+    import numpy as np
+
+    from orivellum.api.routes import studio
+
+    class _FakeKokoro:
+        def create(self, text, voice=None, speed=1.0, lang="en-us"):
+            sr = 24000
+            t = np.arange(int(sr * 0.5), dtype=np.float32) / sr
+            return (0.3 * np.sin(2 * math.pi * 220.0 * t)).astype(np.float32), sr
+
+    monkeypatch.setattr(studio, "_get_kokoro", lambda: _FakeKokoro())
     client, _cfg, wid = work_client
     r = client.post("/api/studio/tts/work",
                     json={"work_id": wid, "voice": "af_heart", "speed": 1.0,
@@ -268,3 +281,19 @@ def test_work_sync_catalog_voice_still_renders_without_premium(work_client):
                           "return_url": True})
     assert r.status_code == 200, r.text[:300]
     assert r.json()["ok"] is True
+
+
+def test_work_sync_fails_clearly_without_neural_engine(work_client, monkeypatch):
+    """No-robot-voice policy: with no neural engine at all, the render must
+    fail with a clear error — it must never fall back to espeak."""
+    from orivellum.api.routes import studio
+
+    monkeypatch.setattr(studio, "_get_kokoro", lambda: None)
+    client, _cfg, wid = work_client
+    r = client.post("/api/studio/tts/work",
+                    json={"work_id": wid, "voice": "af_heart", "speed": 1.0,
+                          "include_credits": False, "acx_mastering": False,
+                          "return_url": True})
+    assert r.status_code >= 500, r.text[:300]
+    detail = str(r.json().get("detail", "")).lower()
+    assert "neural" in detail or "engine" in detail

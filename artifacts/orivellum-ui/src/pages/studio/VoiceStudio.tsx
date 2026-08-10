@@ -54,8 +54,9 @@ interface VoiceEntry {
   engine?: string;
   custom?: boolean;
   /** Engine used to generate this voice's cached sample, if one exists.
-   *  "kokoro" = neural quality; "espeak" = basic robotic fallback; null = not yet generated. */
-  sample_engine?: "kokoro" | "espeak" | null;
+   *  Always neural ("kokoro") — the robotic fallback was removed by policy.
+   *  null = not yet generated. */
+  sample_engine?: string | null;
 }
 
 interface Recommendation {
@@ -126,9 +127,8 @@ function useGlobalAudio() {
       const resp = await apiFetch(`${BASE}/studio/voices/${voiceId}/sample`);
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
 
-      // Capture which engine generated this sample so VoiceCard can show a
-      // "basic synthesis" badge when the espeak fallback was used instead of
-      // neural Kokoro.
+      // Capture which engine generated this sample (always neural now — the
+      // robotic espeak fallback was removed by policy).
       const engine = resp.headers.get("X-TTS-Engine") ?? "kokoro";
       setSampleEngines(prev =>
         prev[voiceId] === engine ? prev : { ...prev, [voiceId]: engine }
@@ -205,12 +205,6 @@ function VoiceCard({
   const isLoading = loadingId === voice.id;
   const dims = voice.dimensions;
 
-  // Show a "basic" badge when the espeak fallback was used for this voice's
-  // sample — either discovered this session (sampleEngines) or from a previous
-  // session persisted in the DB (voice.sample_engine).
-  const isEspeak =
-    sampleEngines[voice.id] === "espeak" || voice.sample_engine === "espeak";
-
   const accentColor = voice.accent === "british"
     ? "border-border/60 bg-muted/20"
     : "";
@@ -238,14 +232,6 @@ function VoiceCard({
             {voice.builtin && (
               <span className="text-[9px] font-mono px-1 py-0.5 rounded" style={{ background: "var(--green-soft)", color: "var(--green-2)" }}>
                 ✓
-              </span>
-            )}
-            {isEspeak && (
-              <span
-                className="text-[9px] font-mono px-1 py-0.5 rounded" style={{ background: "var(--gilt-soft)", color: "var(--gilt)" }}
-                title="Sample uses basic espeak synthesis — Kokoro neural model not yet loaded. Install kokoro-onnx for premium audio."
-              >
-                basic
               </span>
             )}
           </div>
@@ -492,7 +478,6 @@ function _AudiobookEngineBadge() {
   const label =
     engine === "Kokoro ONNX" ? "Kokoro neural TTS" :
     engine === "AI Server"   ? "AI server TTS" :
-    engine === "espeak-ng"   ? "espeak-ng (basic)" :
     engine;
 
   return (
@@ -501,11 +486,6 @@ function _AudiobookEngineBadge() {
       <span className="text-[10px] font-mono text-muted-foreground">
         Engine: {label}
       </span>
-      {engine === "espeak-ng" && (
-        <span className="text-[9px] font-mono px-1 py-0.5 rounded ml-auto" style={{ background: "var(--gilt-soft)", color: "var(--gilt)" }}>
-          basic
-        </span>
-      )}
     </div>
   );
 }

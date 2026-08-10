@@ -329,17 +329,38 @@ export function ReadAloudProvider({
     const inflight = promisesRef.current.get(i);
     if (inflight) return inflight;
     const p = (async () => {
-      const resp = await apiFetch(`${BASE}/studio/tts`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        // quality:"draft" → server skips the premium sidecar so parts start
-        // instantly from Kokoro; studio-grade renders are for audiobook builds.
-        body: JSON.stringify({ text: parts[i], voice: v, speed: s, quality: "draft" }),
-      });
-      if (sessionRef.current !== session) throw new Error(TTS_STALE);
+      // 503 = "no neural voice engine ready yet" (the server never falls back
+      // to a robotic voice). Pause and retry a few times so playback waits
+      // for the engine to come up instead of failing instantly.
+      const MAX_ATTEMPTS = 4;
+      const RETRY_DELAY_MS = 3500;
+      let resp: Response;
+      for (let attempt = 1; ; attempt++) {
+        resp = await apiFetch(`${BASE}/studio/tts`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          // quality:"draft" → server skips the premium sidecar so parts start
+          // instantly from Kokoro; studio-grade renders are for audiobook builds.
+          body: JSON.stringify({ text: parts[i], voice: v, speed: s, quality: "draft" }),
+        });
+        if (sessionRef.current !== session) throw new Error(TTS_STALE);
+        if (resp.status !== 503 || attempt >= MAX_ATTEMPTS) break;
+        await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
+        if (sessionRef.current !== session) throw new Error(TTS_STALE);
+      }
       if (!resp.ok) {
         const err = await resp.json().catch(() => ({}));
-        throw new Error((err as any).detail ?? `HTTP ${resp.status}`);
+        const d = (err as any).detail;
+        if (resp.status === 503) {
+          throw new Error(
+            typeof d === "object" && d?.reason
+              ? String(d.reason)
+              : "The voice engine isn't ready yet — try again in a moment.",
+          );
+        }
+        throw new Error(
+          typeof d === "string" ? d : d ? JSON.stringify(d) : `HTTP ${resp.status}`,
+        );
       }
       const blob = await resp.blob();
       if (sessionRef.current !== session) throw new Error(TTS_STALE);

@@ -48,11 +48,12 @@ type StudioStatus = {
     strategies: TtsStrategy[];
     /**
      * Engine that will be used for voice *sample* synthesis.
-     * "kokoro_onnx" = neural | "espeak_ng" = basic | null = no local sample engine (503).
-     * NOTE: AI Server is NOT a valid fallback for the sample route — this field
-     * reflects only local engine availability, independent of `best_strategy`.
+     * "kokoro_onnx" = neural | null = no local sample engine (503).
+     * The robotic espeak fallback is disabled by policy — samples are
+     * neural-only. NOTE: AI Server is NOT a valid fallback for the sample
+     * route — this field reflects only local engine availability.
      */
-    sample_engine: "kokoro_onnx" | "espeak_ng" | null;
+    sample_engine: "kokoro_onnx" | null;
     sample_available: boolean;
   };
   image_gen: { available: boolean; backends: ImgBackend[] };
@@ -133,38 +134,33 @@ function ServiceStatusBar() {
 
           {data && (
             <div className="flex flex-wrap items-center gap-2">
-              {/* General TTS — reflects overall synthesis availability (AI Server, Kokoro, espeak) */}
+              {/* General TTS — neural engines only (Premium, AI Server, Kokoro); no robotic fallback */}
               <StatusPill
                 label="TTS"
                 available={data.tts.available}
-                detail={data.tts.available ? data.tts.best_strategy ?? undefined : "no backend"}
+                detail={data.tts.available ? data.tts.best_strategy ?? undefined : "waiting for voice engine"}
                 note={
                   data.tts.available
                     ? `Strategies available: ${data.tts.strategies.filter(s => s.available).map(s => s.name).join(", ")}`
-                    : "All TTS strategies offline — check AI server, Kokoro ONNX, and espeak-ng"
+                    : "No neural voice engine is ready — speech will wait rather than use a robotic voice. Check the AI server and Kokoro ONNX."
                 }
               />
 
-              {/* Voice samples — separate from general TTS; only Kokoro or espeak can generate catalog samples */}
+              {/* Voice samples — separate from general TTS; only Kokoro can generate catalog samples */}
               <StatusPill
                 label="Samples"
                 available={data.tts.sample_available}
-                warning={data.tts.sample_available && data.tts.sample_engine !== "kokoro_onnx"}
                 detail={
                   !data.tts.sample_available
-                    ? "unavailable"
-                    : data.tts.sample_engine === "kokoro_onnx"
-                      ? "Kokoro"
-                      : "espeak (basic)"
+                    ? "waiting for Kokoro"
+                    : "Kokoro"
                 }
                 note={
                   !data.tts.sample_available
-                    ? "No local TTS engine can generate voice samples — install Kokoro ONNX or espeak-ng. Voice sample previews will return 503."
-                    : data.tts.sample_engine === "kokoro_onnx"
-                      ? "Kokoro ONNX is loaded — voice catalog samples use neural synthesis (premium quality)"
-                      : data.tts.kokoro_pkg_installed
-                        ? "Kokoro package installed but model not yet loaded — samples fall back to espeak (basic quality) until Kokoro initializes"
-                        : "Kokoro ONNX not installed — samples use espeak (basic quality). Install kokoro-onnx for premium neural voices."
+                    ? data.tts.kokoro_pkg_installed
+                      ? "Kokoro package installed but model not yet loaded — samples will work once it initializes (no robotic fallback)."
+                      : "Kokoro ONNX not installed — voice sample previews are unavailable until it is (no robotic fallback)."
+                    : "Kokoro ONNX is loaded — voice catalog samples use neural synthesis (premium quality)"
                 }
               />
 

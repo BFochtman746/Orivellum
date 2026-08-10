@@ -153,4 +153,4 @@ sudo apt-get install -y tesseract-ocr poppler-utils ffmpeg espeak-ng
 
 ## User preferences
 
-*Populate as you build — explicit user instructions worth remembering across sessions.*
+- **No robot voice, ever.** Spoken audio must come only from neural TTS engines (premium sidecar, AI server, Kokoro ONNX). If none is ready, pause/wait and surface a clear "voice engine not ready" state — never fall back to espeak or any robotic synthesis. (Aug 2026)
