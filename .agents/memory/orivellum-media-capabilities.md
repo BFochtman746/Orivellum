@@ -4,12 +4,10 @@ description: TTS, OCR, PDF/DOCX/XLSX extraction — what's implemented and how i
 ---
 
 ## Text-to-Speech (POST /api/studio/tts)
-- Strategy 1: AI server's `/audio/speech` (OpenAI-compatible, used when Lemonade/LM Studio running)
-- Strategy 2: `espeak-ng` CLI → `ffmpeg` WAV→MP3 conversion (always available offline)
-- Voice map: af_heart→en+f4, af_bella→en+f1, am_adam→en+m1, bf_emma→en+f2, bm_george→en+m3
-- Speed param (0.5–2.0) maps to espeak-ng words-per-minute (80–400 wpm)
-- Returns `audio/mpeg` (MP3) in both paths
-- Nix packages required: `espeak-ng`, `ffmpeg`
+- Neural only: Kokoro ONNX locally (+ optional AI server `/audio/speech` and premium sidecar)
+- espeak was REMOVED from all audible paths Aug 2026 ("no robot voice" policy — see orivellum-no-robot-voice.md); when no neural engine is available the API returns 503 and clients pause-and-retry
+- Kokoro model assets (`kokoro-v0_19.onnx`, `voices.bin`) are NOT in git — fetched via `scripts/fetch_tts_model.sh` / `.ps1`
+- Returns `audio/mpeg` (MP3)
 
 ## Image OCR (POST /api/studio/ocr + extraction pipeline)
 - Uses `pytesseract` + `tesseract5` nix package
