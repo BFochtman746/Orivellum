@@ -3392,9 +3392,20 @@ def _run_retranscribe_job(job_id: str, doc_id: str, file_path: str, db) -> None:
                     job.update({"state": "cancelled", "finished_at": time.time()})
                 return
 
-        # Clear stale warnings and flip readiness so the Library UI shows
-        # the document as processing while the job runs.
+        # Destructive retry starts here: clear warnings, drop knowledge
+        # derived from the OLD transcript (human-approved items are kept),
+        # and flip readiness so the Library UI shows the doc as processing.
+        # Removing old auto-knowledge before harvest is required — harvest
+        # dedups by text hash, so stale rows would otherwise survive and
+        # keep feeding search/chat alongside facts from the new transcript.
+        # If the pipeline fails after this point the document lands in
+        # "error" with no transcript and no auto-knowledge — a consistent
+        # state that a re-run fully rebuilds.
         db.delete_extraction_warnings(doc_id)
+        removed = db.delete_document_knowledge(doc_id)
+        if removed:
+            logger.info("Re-transcribe %s: removed %d stale knowledge items",
+                        doc_id, removed)
         db.update_document_extracted(doc_id, "", 0, readiness="imported",
                                      error_message=None)
 

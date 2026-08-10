@@ -4183,6 +4183,47 @@ class OrivellumDB:
             self.update_knowledge_review_status(loser, "rejected")
         return True
 
+    def delete_document_knowledge(self, doc_id: str,
+                                  preserve_statuses: tuple[str, ...] = ("approved",)) -> int:
+        """Delete auto-derived knowledge sourced from *doc_id* plus its FTS
+        rows and vectors. Human-approved items are preserved by default.
+
+        Used before re-extracting a document whose text is about to change —
+        otherwise stale facts from the old text stay searchable, and the
+        text_hash dedup in create_knowledge_item can silently keep old rows
+        alive. Returns the number of items removed.
+        """
+        with self._lock:
+            ids = [r["id"] for r in self._conn.execute(
+                "SELECT id FROM knowledge WHERE source_doc_id=? "
+                f"AND review_status NOT IN ({','.join('?' for _ in preserve_statuses)})",
+                (doc_id, *preserve_statuses)).fetchall()]
+            if not ids:
+                return 0
+            # Batch to stay under SQLite's bound-variable limit.
+            for i in range(0, len(ids), 500):
+                batch = ids[i:i + 500]
+                ph = ",".join("?" for _ in batch)
+                self._conn.execute(
+                    f"DELETE FROM knowledge WHERE id IN ({ph})", batch)
+                self._conn.execute(
+                    f"DELETE FROM knowledge_fts WHERE knowledge_id IN ({ph})", batch)
+                self._conn.execute(
+                    f"DELETE FROM vectors WHERE object_type='knowledge' "
+                    f"AND object_id IN ({ph})", batch)
+            self._conn.commit()
+        self.audit("knowledge.pruned_for_reprocess", object_id=doc_id,
+                   object_type="document", actor="system",
+                   detail=f"{len(ids)} stale items removed before re-extraction")
+        # Direct SQL bypasses governed writes — bump the vector cache so
+        # semantic search stops serving the deleted embeddings.
+        try:
+            from orivellum.capabilities.embeddings import bump_vector_cache_version
+            bump_vector_cache_version(self._path, "knowledge")
+        except Exception:
+            pass
+        return len(ids)
+
     # -------------------------------------------------------------------------
     # Vectors (semantic embeddings)
     # -------------------------------------------------------------------------

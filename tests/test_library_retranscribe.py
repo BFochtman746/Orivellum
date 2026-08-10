@@ -172,6 +172,61 @@ class LibraryRetranscribeTest(unittest.TestCase):
         self.assertEqual(s["state"], "error")
         self.assertIn("No transcription engine", s["error"])
 
+    def test_retranscribe_replaces_stale_knowledge(self):
+        """Knowledge harvested from the OLD transcript is removed (with its
+        vectors and FTS rows); human-approved items survive; knowledge from
+        the NEW transcript exists afterwards."""
+        doc_id = self._make_audio_doc()
+        work = self.db.create_work("Lectures")
+        wid = work["id"]
+        old_auto = self.db.create_knowledge_item(
+            wid, "fact", "the sky is green", source_doc_id=doc_id,
+            review_status="ai_auto")
+        kept_approved = self.db.create_knowledge_item(
+            wid, "fact", "water is wet", source_doc_id=doc_id,
+            review_status="approved")
+        self.db.store_vector(old_auto, "knowledge", b"\x00" * 16, 4)
+
+        def fake_pipeline(doc_id, file_path, kind, work_id, title, db):
+            db.create_knowledge_item(
+                wid, "fact", "the sky is blue", source_doc_id=doc_id,
+                review_status="ai_auto")
+            db.update_document_extracted(
+                doc_id, "the sky is blue", 4, readiness="ready")
+            with db._lock:
+                import json
+                db._conn.execute(
+                    "UPDATE documents SET meta=? WHERE id=?",
+                    (json.dumps({"transcription": "faster-whisper (base)"}),
+                     doc_id))
+                db._conn.commit()
+
+        with mock.patch("orivellum.capabilities.pipeline.process_document",
+                        side_effect=fake_pipeline):
+            with _client(self.app, self.db, self.cfg) as client:
+                r = client.post(f"/api/studio/transcribe/library/{doc_id}")
+                self.assertEqual(r.status_code, 200)
+                s = _wait_for_terminal(client, r.json()["job_id"])
+        self.assertEqual(s["state"], "done")
+
+        with self.db._lock:
+            rows = self.db._conn.execute(
+                "SELECT id, text FROM knowledge WHERE source_doc_id=?",
+                (doc_id,)).fetchall()
+            texts = {r["text"] for r in rows}
+            fts = self.db._conn.execute(
+                "SELECT knowledge_id FROM knowledge_fts WHERE knowledge_id=?",
+                (old_auto,)).fetchall()
+            vecs = self.db._conn.execute(
+                "SELECT id FROM vectors WHERE object_type='knowledge' AND object_id=?",
+                (old_auto,)).fetchall()
+        self.assertNotIn("the sky is green", texts)   # stale auto removed
+        self.assertIn("water is wet", texts)          # approved preserved
+        self.assertIn("the sky is blue", texts)       # fresh harvest present
+        self.assertEqual(fts, [])                     # FTS row gone
+        self.assertEqual(vecs, [])                    # vector gone
+        self.assertIn(kept_approved, {r["id"] for r in rows})
+
     def test_no_engine_metadata_only_errors(self):
         """Pipeline "succeeds" with a placeholder (no ASR engine) → job errors."""
         doc_id = self._make_audio_doc()
