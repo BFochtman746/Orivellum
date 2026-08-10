@@ -2023,4 +2023,37 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         CREATE INDEX IF NOT EXISTS bg_jobs_state   ON bg_jobs(state);
         CREATE INDEX IF NOT EXISTS bg_jobs_created ON bg_jobs(created_at);
     """),
+
+    # v115 — Project Workbench: agentic build/edit/repair projects (xlsx or
+    # code) with full version history. Every accepted iteration is a new
+    # wb_versions row whose files live at data/workbench/{project}/v{n}/.
+    # Completing a project zips every version + a hash manifest into
+    # data/workbench/archives/ and flips status to 'archived'.
+    (115, "Project Workbench: versioned build/edit/repair projects", """
+        CREATE TABLE IF NOT EXISTS wb_projects (
+            id           TEXT PRIMARY KEY,
+            title        TEXT NOT NULL,
+            kind         TEXT NOT NULL,
+            brief        TEXT NOT NULL DEFAULT '',
+            status       TEXT NOT NULL DEFAULT 'active',
+            building     INTEGER NOT NULL DEFAULT 0,
+            last_error   TEXT,
+            archive_path TEXT,
+            created_at   TEXT NOT NULL,
+            updated_at   TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS wb_versions (
+            id          TEXT PRIMARY KEY,
+            project_id  TEXT NOT NULL,
+            version_no  INTEGER NOT NULL,
+            instruction TEXT NOT NULL,
+            note        TEXT,
+            files_json  TEXT NOT NULL DEFAULT '[]',
+            checks_json TEXT,
+            verdict     TEXT,
+            created_at  TEXT NOT NULL,
+            UNIQUE(project_id, version_no)
+        );
+        CREATE INDEX IF NOT EXISTS wb_versions_project ON wb_versions(project_id, version_no);
+    """),
 ]

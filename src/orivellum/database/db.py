@@ -6064,6 +6064,115 @@ class OrivellumDB:
         return stamp_id
 
     # -------------------------------------------------------------------------
+    # Project Workbench (wb_projects / wb_versions)
+    # -------------------------------------------------------------------------
+
+    def create_wb_project(self, title: str, kind: str, brief: str = "") -> dict:
+        now = _now()
+        pid = _uuid()
+        with self._lock:
+            self._conn.execute(
+                """INSERT INTO wb_projects(id,title,kind,brief,status,building,
+                   created_at,updated_at) VALUES(?,?,?,?, 'active',0,?,?)""",
+                (pid, title, kind, brief, now, now))
+            self._conn.commit()
+        return self.get_wb_project(pid)
+
+    def get_wb_project(self, project_id: str) -> dict | None:
+        with self._lock:
+            r = self._conn.execute(
+                "SELECT * FROM wb_projects WHERE id=?", (project_id,)).fetchone()
+        return dict(r) if r else None
+
+    def list_wb_projects(self, status: str | None = None) -> list[dict]:
+        q = "SELECT * FROM wb_projects"
+        params: tuple = ()
+        if status:
+            q += " WHERE status=?"
+            params = (status,)
+        q += " ORDER BY updated_at DESC"
+        with self._lock:
+            rows = self._conn.execute(q, params).fetchall()
+        return [dict(r) for r in rows]
+
+    def update_wb_project(self, project_id: str, **fields) -> None:
+        allowed = {"title", "brief", "status", "building", "last_error", "archive_path"}
+        sets = {k: v for k, v in fields.items() if k in allowed}
+        if not sets:
+            return
+        cols = ", ".join(f"{k}=?" for k in sets)
+        with self._lock:
+            self._conn.execute(
+                f"UPDATE wb_projects SET {cols}, updated_at=? WHERE id=?",
+                (*sets.values(), _now(), project_id))
+            self._conn.commit()
+
+    def claim_wb_build(self, project_id: str, *, require_active: bool = True) -> bool:
+        """Atomically claim a project for a mutating operation (build, revert,
+        archive, delete) by flipping building 0→1. Returns False if the
+        project is missing, already claimed, or (when required) not active.
+        The claim is released by setting building=0 via update_wb_project."""
+        cond = " AND status='active'" if require_active else ""
+        with self._lock:
+            cur = self._conn.execute(
+                f"UPDATE wb_projects SET building=1, updated_at=? "
+                f"WHERE id=? AND building=0{cond}",
+                (_now(), project_id))
+            self._conn.commit()
+            return cur.rowcount == 1
+
+    def delete_wb_version(self, version_id: str) -> None:
+        with self._lock:
+            self._conn.execute("DELETE FROM wb_versions WHERE id=?", (version_id,))
+            self._conn.commit()
+
+    def delete_wb_project(self, project_id: str) -> None:
+        with self._lock:
+            self._conn.execute("DELETE FROM wb_versions WHERE project_id=?", (project_id,))
+            self._conn.execute("DELETE FROM wb_projects WHERE id=?", (project_id,))
+            self._conn.commit()
+
+    def create_wb_version(self, project_id: str, instruction: str,
+                          files: list[dict], checks: dict | None = None,
+                          verdict: str = "verified", note: str = "") -> dict:
+        """Insert the next version row for a project (version_no assigned
+        atomically under the DB lock)."""
+        now = _now()
+        vid = _uuid()
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT COALESCE(MAX(version_no),0)+1 FROM wb_versions WHERE project_id=?",
+                (project_id,)).fetchone()
+            version_no = int(row[0])
+            self._conn.execute(
+                """INSERT INTO wb_versions(id,project_id,version_no,instruction,
+                   note,files_json,checks_json,verdict,created_at)
+                   VALUES(?,?,?,?,?,?,?,?,?)""",
+                (vid, project_id, version_no, instruction, note,
+                 json.dumps(files), json.dumps(checks or {}), verdict, now))
+            self._conn.execute(
+                "UPDATE wb_projects SET updated_at=? WHERE id=?", (now, project_id))
+            self._conn.commit()
+        return {"id": vid, "project_id": project_id, "version_no": version_no,
+                "instruction": instruction, "note": note, "files_json": json.dumps(files),
+                "checks_json": json.dumps(checks or {}), "verdict": verdict,
+                "created_at": now}
+
+    def list_wb_versions(self, project_id: str) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM wb_versions WHERE project_id=? ORDER BY version_no",
+                (project_id,)).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_wb_version(self, project_id: str, version_no: int) -> dict | None:
+        with self._lock:
+            r = self._conn.execute(
+                "SELECT * FROM wb_versions WHERE project_id=? AND version_no=?",
+                (project_id, version_no)).fetchone()
+        return dict(r) if r else None
+
+    # -------------------------------------------------------------------------
     # Health / diagnostics
     # -------------------------------------------------------------------------
 

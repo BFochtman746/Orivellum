@@ -18,7 +18,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Link, useLocation, useSearch } from "wouter";
-import { Globe2, Network, ChevronLeft } from "lucide-react";
+import { Globe2, Network, ChevronLeft, Wrench } from "lucide-react";
 import { useGdDark } from "@/lib/useGdDark";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -2237,6 +2237,7 @@ const HUB_TOOLS = [
   { key: "image",    href: "/studio?tool=image",    icon: ImageIcon, title: "Image generation",  desc: "Create images from text prompts" },
   { key: "transcribe", href: "/studio?tool=transcribe", icon: FileAudio, title: "Transcription",  desc: "Turn audio recordings into text" },
   { key: "forge",    href: "/forge",                icon: Globe2,   title: "Pressworks",         desc: "Plan, build & release websites under quality gates" },
+  { key: "workbench", href: "/workbench",           icon: Wrench,   title: "Workbench",          desc: "Build, refine & archive Excel and code projects version by version" },
   { key: "graph",    href: "/graph",                icon: Network,  title: "Knowledge graph",   desc: "Explore how your knowledge connects" },
   { key: "outputs",  href: "/studio?tool=outputs",  icon: Video,    title: "Outputs",           desc: "Browse, play & download everything you've made" },
 ] as const;

@@ -41,6 +41,8 @@ import ActionsPage from '@/pages/actions/index';
 import GraphPage from '@/pages/graph/index';
 import ForgePage from '@/pages/forge/index';
 import ForgeDetail from '@/pages/forge/detail';
+import WorkbenchPage from '@/pages/workbench/index';
+import WorkbenchDetail from '@/pages/workbench/detail';
 import MailPage from '@/pages/mail/index';
 import MailConnectPage from '@/pages/mail/connect';
 import ComposePage from '@/pages/mail/compose';
@@ -153,6 +155,8 @@ function RoutedPages() {
         <Route path="/graph">{() => <RouteWithBoundary component={GraphPage} />}</Route>
         <Route path="/forge">{() => <RouteWithBoundary component={ForgePage} />}</Route>
         <Route path="/forge/:projectId">{() => <RouteWithBoundary component={ForgeDetail} />}</Route>
+        <Route path="/workbench">{() => <RouteWithBoundary component={WorkbenchPage} />}</Route>
+        <Route path="/workbench/:projectId">{() => <RouteWithBoundary component={WorkbenchDetail} />}</Route>
         <Route path="/mail">{() => <RouteWithBoundary component={MailPage} />}</Route>
         <Route path="/mail/connect">{() => <RouteWithBoundary component={MailConnectPage} />}</Route>
         <Route path="/mail/compose/:actionRequestId">{() => <RouteWithBoundary component={ComposePage} />}</Route>

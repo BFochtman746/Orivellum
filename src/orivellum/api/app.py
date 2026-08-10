@@ -605,6 +605,7 @@ def create_app() -> FastAPI:
         studio,
         system,
         topics,
+        workbench,
         works,
         write,
     )
@@ -612,7 +613,7 @@ def create_app() -> FastAPI:
         auth, health, works, conversations, library, knowledge,
         projects, backups, studio, files, system, dashboard, learning, write,
         mcos, review, claims, pklos, intake, generate, topics, actions, mcp,
-        genesis, finishing, forge, mail, bench, music, notes,
+        genesis, finishing, forge, mail, bench, music, notes, workbench,
     ]
     for module in _route_modules:
         app.include_router(module.router)
