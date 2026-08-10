@@ -83,3 +83,4 @@
 - [Voice chat / live TTS session](orivellum-voice-chat.md) — startLive must prime audio in a gesture; ignore silent-prime ended event; onTranscript("") contract; sync /studio/voice/transcribe gates.
 - [Repo hygiene & release decisions](orivellum-repo-hygiene.md) — auth_keys is the only credential path; SQLite backups via online backup only; CI coverage ratchet 54%; model binaries fetched, not committed.
 - [No-robot-voice policy](orivellum-no-robot-voice.md) — espeak banned from all audible paths; 503 + client pause-and-retry; never relabel/serve legacy espeak audio; segment failure must raise, not skip.
+- [Book & trailer packaging](orivellum-packaging.md) — stdlib EPUB rules (mimetype first/stored, strip C0 chars); idle-guarded stale-run recovery; downloads via apiFetch blob, never bare window.open.
