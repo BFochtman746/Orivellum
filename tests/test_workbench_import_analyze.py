@@ -150,11 +150,13 @@ class TestImportRoute(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             app, db, _cfg = _make_app(tmp)
             client = TestClient(app)
-            r = client.post(
-                "/api/workbench/projects/import",
-                files={"file": ("Budget 2026.xlsx", _xlsx_bytes(), "application/octet-stream")},
-                headers=AUTH_HEADERS,
-            )
+            # auto-review dispatch is dropped so v1 import state is observable
+            with patch("orivellum.api.executor.submit_bg", return_value=False):
+                r = client.post(
+                    "/api/workbench/projects/import",
+                    files={"file": ("Budget 2026.xlsx", _xlsx_bytes(), "application/octet-stream")},
+                    headers=AUTH_HEADERS,
+                )
             self.assertEqual(r.status_code, 200, r.text)
             body = r.json()
             self.assertEqual(body["kind"], "xlsx")
@@ -346,12 +348,13 @@ class TestAnalyzeRoutes(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             app, db, _cfg = _make_app(tmp)
             client = TestClient(app)
-            # import a workbook first
-            r = client.post(
-                "/api/workbench/projects/import",
-                files={"file": ("b.xlsx", _xlsx_bytes(), "application/octet-stream")},
-                headers=AUTH_HEADERS,
-            )
+            # import a workbook first (drop the auto-review dispatch)
+            with patch("orivellum.api.executor.submit_bg", return_value=False):
+                r = client.post(
+                    "/api/workbench/projects/import",
+                    files={"file": ("b.xlsx", _xlsx_bytes(), "application/octet-stream")},
+                    headers=AUTH_HEADERS,
+                )
             pid = r.json()["id"]
 
             # report on a version without one → 404
@@ -397,11 +400,12 @@ class TestAnalyzeRoutes(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             app, db, _cfg = _make_app(tmp)
             client = TestClient(app)
-            r = client.post(
-                "/api/workbench/projects/import",
-                files={"file": ("b.xlsx", _xlsx_bytes(), "application/octet-stream")},
-                headers=AUTH_HEADERS,
-            )
+            with patch("orivellum.api.executor.submit_bg", return_value=False):
+                r = client.post(
+                    "/api/workbench/projects/import",
+                    files={"file": ("b.xlsx", _xlsx_bytes(), "application/octet-stream")},
+                    headers=AUTH_HEADERS,
+                )
             pid = r.json()["id"]
             with patch("orivellum.api.executor.submit_bg", return_value=False):
                 r = client.post(

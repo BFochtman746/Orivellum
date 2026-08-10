@@ -595,6 +595,34 @@ def import_upload(
     return db.get_wb_project(proj["id"])
 
 
+def auto_review_upload(db, cfg, file_path: pathlib.Path, filename: str) -> None:
+    """Automatic workbook review for an .xlsx that entered the Library:
+    imports it as a Workbench project and runs the analysis, so every
+    uploaded workbook gets a findings report without being asked.
+    Gated by the ``workbench_auto_review`` setting (default on).
+    Best-effort — a failure is logged, never raised into the upload path."""
+    try:
+        enabled = (db.get_setting("workbench_auto_review", "true") or "true").strip().lower()
+        if enabled not in ("true", "1", "yes"):
+            return
+        stem = pathlib.PurePosixPath(filename).stem
+        proj = import_upload(
+            db,
+            cfg,
+            title=f"Review: {stem}"[:200],
+            brief=f"Automatic workbook review of Library upload {filename}.",
+            upload_path=file_path,
+            filename=filename,
+            kind="xlsx",
+        )
+        if db.claim_wb_build(proj["id"]):
+            from orivellum.capabilities.workbench_analyze import run_analysis
+
+            run_analysis(db, cfg, proj["id"], "")
+    except Exception:  # noqa: BLE001 - review is a bonus; the upload already succeeded
+        logger.exception("automatic workbook review failed for %s", filename)
+
+
 def revert_to(db, cfg, project_id: str, version_no: int) -> dict:
     """Copy an existing version's files forward as a NEW version (history is
     append-only; nothing is ever rewritten)."""

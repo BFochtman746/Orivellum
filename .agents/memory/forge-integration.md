@@ -1,6 +1,6 @@
 ---
-name: Forge Website Factory integration
-description: Full-stack integration of Forge into Orivellum — DB tables, Python capabilities, FastAPI routes, React frontend.
+name: Forge Website Factory integration and design standards
+description: Full-stack integration of Forge into Orivellum — DB tables, Python capabilities, FastAPI routes, React frontend — plus the design-standards layer (WCAG/perf/design gates, design brief, token constitution).
 ---
 
 # Forge Website Factory — native Orivellum integration
@@ -39,3 +39,12 @@ Replaced the standalone Node.js forge-factory with a Python-native capability mo
 - Node.js forge-factory kept at artifacts/forge-factory/ for reference, not wired as a service
 
 **Why:** User asked for full native integration so Forge uses Orivellum's LLM gateway, DB, and auth instead of running as a separate Node.js service with its own dashboard.
+
+## Design-standards layer (Aug 2026 upgrade)
+- `gates_design.py`: 4 extra gates appended to the 6 originals — a11y, performance, contrast, design_quality. **All conditional, never blocked** — the REPAIR loop consumes their findings; a blocked design gate would brick otherwise-working builds.
+- a11y/perf checks use stdlib `html.parser` (`_PageScan`), not regexes — regexes false-flagged single-quoted/unquoted attributes, and per-control label association needs element-level data (one `<label for>` must not mask other unlabeled inputs; every below-fold img must be lazy, not just one).
+- Contrast gate is **token-level only** (`--color-text` vs `--color-background` in design-tokens.css); 4/8-digit alpha hex is reported as unverifiable, never truncated to 6 digits. Say "token-level" in messaging — it is not a page-wide guarantee.
+- Purple-gradient trope detector is **palette-aware advisory**: only flags gradients whose purple stops are NOT in design-tokens.css. A purple brand is legitimate; off-palette purple gradients are the stock AI look.
+- Planner emits `design_brief` (non_negotiables/identity/primary_cta/inspiration) and `_enforce_plan_constraints()` programmatically caps sections at 6/page — prompt rules alone aren't reliable with small local models. `design_brief` must be included in visual.py's plan_summary or it never reaches concept generation.
+- Concepts carry `rationale` (rendered in ConceptCard) + full token sets (7 palette roles, type scale, spacing/radius/shadow); DESIGN_SYSTEM demands 3 distinct layout archetypes and bans tropes.
+- Tests: tests/test_forge_design_gates.py.

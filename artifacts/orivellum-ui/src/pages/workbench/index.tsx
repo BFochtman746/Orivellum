@@ -69,18 +69,22 @@ export default function WorkbenchPage() {
   const importProject = useMutation({
     mutationFn: async () => {
       if (!importFile) throw new Error("Choose a file first");
+      const isPdf = /\.pdf$/i.test(importFile.name);
       const form = new FormData();
       form.append("file", importFile, importFile.name);
       if (title.trim()) form.append("title", title.trim());
       if (brief.trim()) form.append("brief", brief.trim());
-      const r = await apiFetch(`${API}/projects/import`, { method: "POST", body: form });
+      const url = isPdf ? `${API}/transcribe` : `${API}/projects/import`;
+      const r = await apiFetch(url, { method: "POST", body: form });
       const body = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error((body as { detail?: string }).detail ?? "Import failed");
-      return body as { id: string };
+      return { ...(body as { id: string }), isPdf };
     },
     onSuccess: (res) => {
       queryClient.invalidateQueries({ queryKey: ["wb-projects"] });
-      toast.success("Imported — the files are saved as v1");
+      toast.success(res.isPdf
+        ? "Transcribing the PDF into a verified workbook — this runs in the background"
+        : "Imported — the files are saved as v1 and a review is running");
       setShowNew(false); setTitle(""); setBrief(""); setImportFile(null);
       navigate(`/workbench/${res.id}`);
     },
@@ -163,7 +167,7 @@ export default function WorkbenchPage() {
             <DialogDescription>
               {mode === "describe"
                 ? "The AI builds the first version from your brief. You then refine it with instructions — every accepted change is saved as a new version."
-                : "Bring an existing Excel workbook or a zip of project files. The upload becomes version 1 exactly as it is — then you can analyze and improve it."}
+                : "Bring an existing Excel workbook, a zip of project files, or a PDF. Workbooks and zips become version 1 exactly as they are and get an automatic review; a PDF is transcribed into a verified workbook with an exception register."}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
@@ -184,11 +188,11 @@ export default function WorkbenchPage() {
             {mode === "import" && (
               <Input
                 type="file"
-                accept=".xlsx,.zip"
+                accept=".xlsx,.zip,.pdf"
                 onChange={e => {
                   const f = e.target.files?.[0] ?? null;
                   setImportFile(f);
-                  if (f && !title.trim()) setTitle(f.name.replace(/\.(xlsx|zip)$/i, ""));
+                  if (f && !title.trim()) setTitle(f.name.replace(/\.(xlsx|zip|pdf)$/i, ""));
                 }}
                 data-testid="input-wb-import-file"
               />
@@ -250,7 +254,7 @@ export default function WorkbenchPage() {
                 {importProject.isPending
                   ? <Loader2 className="h-4 w-4 animate-spin mr-1" />
                   : <Upload className="h-4 w-4 mr-1" />}
-                Import as v1
+                {importFile && /\.pdf$/i.test(importFile.name) ? "Transcribe PDF → Excel" : "Import as v1"}
               </Button>
             )}
           </div>

@@ -85,6 +85,28 @@ def _require_active(proj: dict) -> None:
         raise HTTPException(409, "project is archived — archived projects are read-only")
 
 
+def _start_auto_analysis(project_id: str) -> bool:
+    """Best-effort automatic workbook review after an upload lands as v1.
+    Claims the project and dispatches the analysis; returns False (and
+    releases the claim) when the project is busy or the worker is
+    saturated. Never raises — the upload itself already succeeded."""
+    from orivellum.api.executor import submit_bg
+
+    db = get_db()
+    if not db.claim_wb_build(project_id):
+        return False
+
+    def _run() -> None:
+        from orivellum.capabilities.workbench_analyze import run_analysis
+
+        run_analysis(get_db(), get_config(), project_id, "")
+
+    if not submit_bg(_run, kind="workbench.analyze", label=f"wb auto-review {project_id[:8]}"):
+        db.update_wb_project(project_id, building=0)
+        return False
+    return True
+
+
 def _start_build(project_id: str, instruction: str) -> None:
     """Dispatch a build; if the executor drops the work, release the claim
     and record the error so the project is never stranded as 'building'."""
@@ -187,7 +209,80 @@ async def import_project(
             raise internal_error(logger, exc, "workbench import") from exc
     finally:
         pathlib.Path(tmp_name).unlink(missing_ok=True)
-    return _project_out(proj, db.list_wb_versions(proj["id"]))
+    # Automatic workbook review on every upload (skipped silently if busy).
+    auto = _start_auto_analysis(proj["id"])
+    out = _project_out(db.get_wb_project(proj["id"]), db.list_wb_versions(proj["id"]))
+    out["auto_review_started"] = auto
+    return out
+
+
+@router.post("/transcribe")
+async def transcribe_pdf(
+    file: Annotated[UploadFile, File()],
+    title: Annotated[str, Form()] = "",
+    brief: Annotated[str, Form()] = "",
+):
+    """PDF→Excel protocol v2.1: transcribe an uploaded PDF into a verified
+    workbook (dual-channel extraction, exception register, acceptance
+    gates) published as v1 of a new project, then auto-analyze it."""
+    import os
+    import pathlib
+    import tempfile
+
+    filename = pathlib.PurePosixPath((file.filename or "").replace("\\", "/")).name
+    if not filename.lower().endswith(".pdf"):
+        raise HTTPException(422, "upload must be a .pdf file")
+    db = get_db()
+
+    fd, tmp_name = tempfile.mkstemp(suffix=".pdf")
+    tmp_path = pathlib.Path(tmp_name)
+    size = 0
+    try:
+        with os.fdopen(fd, "wb") as tmp:
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > _MAX_IMPORT_UPLOAD_BYTES:
+                    raise HTTPException(
+                        413,
+                        f"upload too large (limit {_MAX_IMPORT_UPLOAD_BYTES // (1024 * 1024)} MB)",
+                    )
+                tmp.write(chunk)
+        if size == 0:
+            raise HTTPException(400, "uploaded file is empty")
+    except Exception:
+        tmp_path.unlink(missing_ok=True)
+        raise
+
+    stem = pathlib.PurePosixPath(filename).stem
+    try:
+        proj = db.create_wb_project(
+            (title.strip() or f"Transcription: {stem}")[:200],
+            "xlsx",
+            (brief.strip() or f"PDF→Excel protocol transcription of {filename}.")[:8000],
+        )
+    except Exception as exc:  # noqa: BLE001
+        tmp_path.unlink(missing_ok=True)
+        raise internal_error(logger, exc, "workbench transcribe") from exc
+    db.claim_wb_build(proj["id"])  # fresh project — always succeeds
+    from orivellum.api.executor import submit_bg
+
+    def _run() -> None:
+        from orivellum.capabilities.pdf_excel import run_transcription
+
+        run_transcription(get_db(), get_config(), proj["id"], tmp_path, filename)
+
+    if not submit_bg(_run, kind="workbench.transcribe", label=f"pdf-excel {proj['id'][:8]}"):
+        tmp_path.unlink(missing_ok=True)
+        db.update_wb_project(
+            proj["id"],
+            building=0,
+            last_error="the background worker is saturated — try again in a moment",
+        )
+        raise HTTPException(503, "the background worker is saturated — try again in a moment")
+    return _project_out(db.get_wb_project(proj["id"]), [])
 
 
 @router.get("/projects/{project_id}")

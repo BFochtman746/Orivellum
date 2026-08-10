@@ -937,11 +937,23 @@ def _ingest_file(
             db=db,
         )
 
+    # Automatic workbook review: every uploaded .xlsx also lands in the
+    # Workbench with a findings report (setting-gated inside the helper).
+    if kind == "excel" and name.lower().endswith(".xlsx"):
+        background_tasks.add_task(_auto_workbench_review, str(file_path), name)
+
     # Version suggestion: check for similar-named docs in the same Work
     if work_id:
         _maybe_suggest_version(db, doc["id"], work_id, name)
 
     return {"document": doc, "duplicate": False}
+
+
+def _auto_workbench_review(file_path: str, name: str) -> None:
+    from orivellum.api._deps import get_config, get_db
+    from orivellum.capabilities.workbench import auto_review_upload
+
+    auto_review_upload(get_db(), get_config(), Path(file_path), name)
 
 
 def _cleanup_stale_parts(lib_root: Path, max_age_s: int = 3600) -> None:
