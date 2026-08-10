@@ -14,4 +14,6 @@ description: DFN3 pre-transcription denoising — why the sidecar exists, pin ra
 - Never hold the state lock across the setup subprocess, or every passive check blocks behind it.
 - A failed *enhancement run* (nonzero exit / launch error — but NOT a timeout, which may just be a long recording) must invalidate the ready state + marker, or the UI keeps claiming "Active" while silently passing through unenhanced audio.
 
+**Live setup progress:** the setup streams uv's output (Popen, stderr merged) and parses lifecycle lines (Resolved/Downloading pkg (size)/Prepared/Installed) into coarse stages exposed as `setup_progress` while `setting_up`. Two rules: on timeout, kill the WHOLE process tree (`taskkill /T` on Windows, own process group + killpg on POSIX) — uv's Python child inherits the pipe and would keep the reader blocked past the deadline; and a zero exit code always wins over a raced timeout flag (a killed process never exits 0). When uv's env is already cached it prints almost nothing, so the stage can sit at "resolving" until done — that's expected, not a stall.
+
 **API quirks:** `init_df()` returns 3 values on 0.5.6 and 4 on 0.5.7+ — index the tuple, never fixed-arity unpack. Windows subprocess calls need `CREATE_NO_WINDOW` or each run flashes a console window.
