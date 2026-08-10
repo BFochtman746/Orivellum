@@ -85,4 +85,5 @@
 - [No-robot-voice policy](orivellum-no-robot-voice.md) — espeak banned from all audible paths; 503 + client pause-and-retry; never relabel/serve legacy espeak audio; segment failure must raise, not skip.
 - [Book & trailer packaging](orivellum-packaging.md) — stdlib EPUB rules (mimetype first/stored, strip C0 chars); idle-guarded stale-run recovery; downloads via apiFetch blob, never bare window.open.
 - [Commonplace notes](orivellum-commonplace.md) — server-owned category policy; marker-idempotent vault; approval = atomic claim + replayable complete_approval; action provenance guard.
+- [Spatial audiobook rendering](orivellum-spatial-audio.md) — pan per-render temp copies at concat (dry cache untouched, all-or-nothing); spatial failures always fall back to plain render; UI must gate overrides on settings resolution.
 - [GitHub CI rules](orivellum-ci.md) — runners lack ffmpeg/kokoro/secrets; pnpm needs packageManager pin + lib build before tsc; never patch one target from concurrent coroutines (leaks mocks).
