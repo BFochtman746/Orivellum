@@ -1,0 +1,12 @@
+run = "python -m runner run --job xlsx --target targets/demo_defects.xlsx"
+entrypoint = "runner/cli.py"
+modules = ["python-3.11"]
+
+[nix]
+channel = "stable-24_05"
+
+[env]
+MOCK = "1"
+
+[deployment]
+run = ["sh", "-c", "python -m runner list"]

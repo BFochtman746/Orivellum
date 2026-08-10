@@ -1,0 +1,6 @@
+openpyxl==3.1.5
+httpx==0.28.1
+bandit==1.8.0
+# The recalculation engine — what turns "analysed" into "proven".
+# Without it the xlsx job reports UNVERIFIED, never "clean".
+formulas==1.3.4
