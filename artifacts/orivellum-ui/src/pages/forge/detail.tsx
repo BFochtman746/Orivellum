@@ -157,6 +157,11 @@ function ConceptCard({
       <p className="text-xs text-muted-foreground leading-relaxed line-clamp-3">
         {concept.summary}
       </p>
+      {concept.rationale && (
+        <p className="mt-1.5 text-[11px] text-foreground/70 italic leading-relaxed line-clamp-2">
+          Why: {concept.rationale}
+        </p>
+      )}
       {concept.typography && (
         <div className="mt-2 text-[10px] text-muted-foreground font-mono">
           {concept.typography.display} / {concept.typography.body}

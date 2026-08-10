@@ -43,7 +43,20 @@ Rules:
 - Paths are relative to the project root.
 - Write index.html, styles.css, app.js, and at least one inner page.
 - Use the palette colours and typography from the visual design concept.
-- Include a design-tokens.css with :root variables for every colour and font.
+- Include a design-tokens.css with :root variables for every colour and font;
+  styles.css must reference them with var(--…), never repeat raw hex values.
+
+Standards (every page is checked by automated gates):
+- Semantic HTML only: <button> for actions, <a> for navigation — never a
+  clickable <div>/<span>. Landmarks: <main>, <nav>, <footer>.
+- <html lang="en">, a viewport meta tag, a <title>, and a meta description
+  on every page. Exactly ONE <h1> per page.
+- Every <img> has alt text plus explicit width and height; images after the
+  first on a page get loading="lazy".
+- Every form control has a <label for=…> (or aria-label).
+- Text on background contrast ≥ 4.5:1; maximum two typeface families;
+  touch targets at least 44x44px.
+- No purple-gradient clichés — follow the concept's palette exactly.
 - Respond {"tool":"done","summary":"…"} when the site is complete.
 """
 

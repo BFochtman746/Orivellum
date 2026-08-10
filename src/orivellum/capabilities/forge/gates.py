@@ -158,6 +158,8 @@ def run_quality_gates(
     if on_event:
         on_event("gates_start", "Running quality gates…")
 
+    from .gates_design import DESIGN_GATES
+
     gate_fns = [
         _gate_structure,
         _gate_tokens,
@@ -165,6 +167,7 @@ def run_quality_gates(
         _gate_js_syntax,
         _gate_links,
         _gate_scope,
+        *DESIGN_GATES,
     ]
 
     # Run synchronously (Python can't parallelise subprocess easily without threads,

@@ -23,7 +23,26 @@ The JSON must have these top-level keys:
   palette_hint string — one-sentence mood/colour direction (e.g. "dark navy, gold accents, editorial")
   target_audience string
   tone        string — e.g. "professional", "playful", "literary"
+  design_brief object — extracted from the brief:
+      { "non_negotiables": [string]  — things the user explicitly requires,
+        "identity": string           — brand personality and emotional tone,
+        "primary_cta": string        — the ONE main action a visitor should take,
+        "inspiration": string        — referenced styles or sites, "" if none }
+
+Structural constraints (hard rules):
+- No page may have more than 6 sections.
+- Every page's sections list starts with its single most important message.
+- The home page must state the primary CTA in its first section.
 """
+
+
+def _enforce_plan_constraints(plan: dict) -> None:
+    """Enforce structural constraints programmatically — prompt rules alone
+    are not reliable with small local models."""
+    for page in plan.get("pages", []):
+        sections = page.get("sections")
+        if isinstance(sections, list) and len(sections) > 6:
+            page["sections"] = sections[:6]
 
 
 def create_plan(
@@ -72,6 +91,8 @@ def create_plan(
             plan = json.loads(text.strip())
         except json.JSONDecodeError as exc:
             raise RuntimeError(f"Plan JSON parse error: {exc}") from exc
+
+    _enforce_plan_constraints(plan)
 
     if on_event:
         page_count = len(plan.get("pages", []))
