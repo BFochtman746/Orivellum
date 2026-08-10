@@ -3327,6 +3327,101 @@ def cancel_transcription(job_id: str):
     return {"ok": True, "state": "cancelling"}
 
 
+# ── Voice quick-transcribe (chat voice mode) ─────────────────────────────────
+# Unlike POST /studio/transcribe (async job for long uploads), this endpoint
+# transcribes a short microphone clip SYNCHRONOUSLY — the request blocks until
+# the transcript is ready so the chat composer round-trip stays interactive.
+# Browser MediaRecorder output (.webm on Chrome/Firefox, .mp4 on Safari) is
+# accepted in addition to the standard audio formats.
+
+_VOICE_EXTS = frozenset({".webm", ".mp4", ".mp3", ".wav", ".m4a", ".ogg", ".flac"})
+_MAX_VOICE_BYTES = 25 * 1024 * 1024  # mic clips only — minutes, not hours
+
+
+@router.post("/studio/voice/transcribe")
+async def voice_transcribe(file: UploadFile = File(...)):
+    """Transcribe a short microphone clip and return the text directly.
+
+    Returns ``{text, engine, word_count, duration_sec, language}``.
+    503 when no transcription engine (AI-server Whisper or local
+    faster-whisper) is available.
+    """
+    db = get_db()
+
+    orig_name = file.filename or "clip.webm"
+    ext = Path(orig_name).suffix.lower()
+    if ext not in _VOICE_EXTS:
+        raise HTTPException(
+            422,
+            f"Unsupported audio format {ext or '(none)'!r} — "
+            f"supported: {', '.join(sorted(_VOICE_EXTS))}",
+        )
+
+    tmp_dir = Path(tempfile.mkdtemp(prefix="orv-voice-"))
+    tmp_path = tmp_dir / f"clip{ext}"
+
+    def _cleanup_tmp() -> None:
+        tmp_path.unlink(missing_ok=True)
+        try:
+            tmp_dir.rmdir()
+        except OSError:
+            pass
+
+    size = 0
+    try:
+        with open(tmp_path, "wb") as fh:
+            while chunk := await file.read(1024 * 1024):
+                size += len(chunk)
+                if size > _MAX_VOICE_BYTES:
+                    raise HTTPException(
+                        413,
+                        f"Voice clip too large (limit "
+                        f"{_MAX_VOICE_BYTES // (1024 * 1024)} MB) — use the "
+                        "Studio Transcription tool for long recordings",
+                    )
+                fh.write(chunk)
+    except HTTPException:
+        _cleanup_tmp()
+        raise
+    except Exception as exc:
+        _cleanup_tmp()
+        raise HTTPException(500, f"Could not store upload: {exc}")
+    if size == 0:
+        _cleanup_tmp()
+        raise HTTPException(422, "Uploaded clip is empty")
+
+    from orivellum.api.routes.library import _validate_mime_signature
+    try:
+        _validate_mime_signature(tmp_path, orig_name)
+    except HTTPException:
+        _cleanup_tmp()
+        raise
+
+    try:
+        from starlette.concurrency import run_in_threadpool
+        from orivellum.capabilities.extraction import extract
+        result = await run_in_threadpool(extract, tmp_path, "audio", db=db)
+
+        meta = result.meta or {}
+        engine = meta.get("transcription")
+        if not engine:
+            reason = meta.get("reason") or "No transcription engine available"
+            raise HTTPException(503, f"Transcription unavailable: {reason}")
+
+        # Pages carry the raw transcript without the "[Audio transcript: …]"
+        # header that full_text prepends.
+        text = (result.pages[0].text if result.pages else result.full_text or "").strip()
+        return {
+            "text": text,
+            "engine": engine,
+            "word_count": result.word_count,
+            "duration_sec": meta.get("duration"),
+            "language": meta.get("language"),
+        }
+    finally:
+        _cleanup_tmp()
+
+
 # ── Outputs ───────────────────────────────────────────────────────────────────
 
 @router.get("/studio/outputs")

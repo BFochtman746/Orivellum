@@ -112,6 +112,13 @@ const TTS_PART_CHARS = 4500;
 const TTS_KEEP_BEHIND = 1; // already-played parts kept cached for quick back-seek
 const TTS_STALE = "tts-session-stale";
 
+// ~100 ms of 8-bit mono silence. Played synchronously inside the user's tap
+// gesture by startLive() to "unlock" the shared <audio> element, so that the
+// live session's asynchronously-synthesized parts are allowed to auto-play
+// under browser autoplay policies.
+const SILENT_WAV =
+  "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEAESsAABErAAABAAgAZGF0YQQAAACAgICA";
+
 /** Split text into ≤TTS_PART_CHARS parts at paragraph/sentence boundaries. */
 export function splitTextForTts(text: string): string[] {
   const paras = text.replace(/\n{3,}/g, "\n\n").split(/\n\n+/);
@@ -183,6 +190,17 @@ interface ReadAloudCtx {
   declineResume: () => void;
   /** Play a ready audio file URL in the dock (starts immediately). */
   startUrl: (opts: { title: string; href?: string; url: string }) => void;
+  /** Begin a LIVE spoken-reply session (chat voice mode). MUST be called
+   *  synchronously inside a user gesture — it primes the shared audio element
+   *  so later, asynchronously-enqueued parts are allowed to auto-play.
+   *  `onDone` fires once when every enqueued part has finished playing after
+   *  endLive() was called. */
+  startLive: (opts: { title: string; href?: string; onDone?: () => void }) => void;
+  /** Append a sentence/fragment to the live session's speech queue. */
+  enqueueLive: (text: string) => void;
+  /** Signal that no more text will be enqueued; onDone fires when playback
+   *  drains (immediately if it already has). Safe to call more than once. */
+  endLive: () => void;
   toggle: () => void;
   goToPart: (i: number, autoplay: boolean) => Promise<void>;
   close: () => void;
@@ -241,6 +259,21 @@ export function ReadAloudProvider({
   // loadedmetadata listener can never seek a newer, unrelated source.
   const resumeKeyRef = useRef<string | null>(null);
   const pendingSeekRef = useRef<{ session: number; part: number; time: number } | null>(null);
+  // Live (voice-mode) session state. liveRef marks the session as live;
+  // liveOpenRef is true while more text may still be enqueued; liveIdleRef is
+  // true when the playback pipeline has drained (nothing playing or pending),
+  // so the next enqueueLive() must kick off playback itself.
+  const liveRef = useRef(false);
+  const liveOpenRef = useRef(false);
+  const liveIdleRef = useRef(false);
+  const onLiveDoneRef = useRef<(() => void) | null>(null);
+
+  /** Fire the live-done callback exactly once. */
+  const fireLiveDone = () => {
+    const cb = onLiveDoneRef.current;
+    onLiveDoneRef.current = null;
+    cb?.();
+  };
   // The source we currently WANT loaded. The effect below ignores any state
   // commit that doesn't match this, so a stale `mediaUrl=null` commit from
   // reset() can never pause/clear a source that startUrl() just set
@@ -370,6 +403,10 @@ export function ReadAloudProvider({
     resumeKeyRef.current = null;
     pendingSeekRef.current = null;
     setResumeOffer(null);
+    liveRef.current = false;
+    liveOpenRef.current = false;
+    liveIdleRef.current = false;
+    onLiveDoneRef.current = null;
   }, []);
 
   const startText = useCallback(async ({ title, href, text, resumeKey }: { title: string; href?: string; text: string; resumeKey?: string }) => {
@@ -460,16 +497,81 @@ export function ReadAloudProvider({
       if (e?.message !== TTS_STALE && sessionRef.current === session) {
         setPlaying(false);
         fail(`Could not synthesize part ${i + 1}: ${e?.message ?? "unknown error"}`);
+        // Live sessions: a failed part stalls the pipeline (nothing will fire
+        // onEnded). Mark the pipeline idle so the next enqueue restarts it,
+        // and fire onDone if the text producer already finished.
+        if (liveRef.current) {
+          liveIdleRef.current = true;
+          if (!liveOpenRef.current) fireLiveDone();
+        }
       }
     } finally {
       if (sessionRef.current === session) setLoading(false);
     }
   }, [synthesizePart, prefetchPart, evictOldParts, fail]);
 
+  const startLive = useCallback(({ title, href, onDone }: { title: string; href?: string; onDone?: () => void }) => {
+    saveProgress(); // remember the outgoing session's place, if any
+    reset();
+    liveRef.current = true;
+    liveOpenRef.current = true;
+    liveIdleRef.current = true; // nothing queued yet — first enqueue starts playback
+    onLiveDoneRef.current = onDone ?? null;
+    setNowPlaying({ title, href, kind: "tts" });
+    // Prime the shared <audio> element synchronously inside the caller's tap
+    // gesture: playing a moment of silence "unlocks" the element so that the
+    // asynchronously-synthesized parts below are allowed to auto-play.
+    // desiredSrc guards against reset()'s pending `mediaUrl=null` state commit
+    // pausing/clearing the source we just set (same pattern as startUrl).
+    desiredSrcRef.current = SILENT_WAV;
+    const el = audioRef.current;
+    if (el) {
+      el.src = SILENT_WAV;
+      lastSrcRef.current = SILENT_WAV;
+      el.play().catch(() => { /* blocked — dock still appears; user taps play */ });
+    }
+  }, [saveProgress, reset]);
+
+  const enqueueLive = useCallback((text: string) => {
+    if (!liveRef.current || !liveOpenRef.current) return;
+    const t = text.trim();
+    if (!t) return;
+    const parts = [...chunksRef.current, t];
+    chunksRef.current = parts;
+    setChunks(parts);
+    const i = parts.length - 1;
+    if (liveIdleRef.current) {
+      // Pipeline is drained — this part must kick playback off itself.
+      liveIdleRef.current = false;
+      void goToPart(i, true);
+    } else {
+      // Something is already playing/pending; onEnded will advance here.
+      // Pre-synthesize so the hand-off is gapless.
+      prefetchPart(parts, i, voiceRef.current, speedRef.current);
+    }
+  }, [goToPart, prefetchPart]);
+
+  const endLive = useCallback(() => {
+    if (!liveRef.current) return;
+    liveOpenRef.current = false;
+    if (liveIdleRef.current) fireLiveDone(); // already drained (or nothing was enqueued)
+  }, []);
+
   const onEnded = useCallback(() => {
     setPlaying(false);
+    // Live sessions: the priming silent source ending is NOT a queue event —
+    // the first real part may still be synthesizing (goToPart in flight).
+    // Advancing or marking the pipeline idle here would double-start playback
+    // and skip/reorder the opening sentences. lastSrcRef only moves off the
+    // silent WAV once a real part's audio has been installed.
+    if (liveRef.current && lastSrcRef.current === SILENT_WAV) return;
     if (indexRef.current + 1 < chunksRef.current.length) {
       void goToPart(indexRef.current + 1, true);
+    } else if (liveRef.current) {
+      // Live session drained. If more text may still arrive, go idle and wait
+      // for the next enqueueLive() to restart playback; otherwise we're done.
+      liveIdleRef.current = true;
+      if (!liveOpenRef.current) fireLiveDone();
     } else if (resumeKeyRef.current) {
       // Finished the last part — the document is done; forget the position.
       clearSavedPos(resumeKeyRef.current);
@@ -652,14 +754,16 @@ export function ReadAloudProvider({
   const value = useMemo<ReadAloudCtx>(() => ({
     nowPlaying, loading, playing, chunkCount: chunks.length, index, mediaUrl,
     voice, speed, audioRef,
-    startText, startUrl, toggle, goToPart, close, applySettings,
+    startText, startUrl, startLive, enqueueLive, endLive,
+    toggle, goToPart, close, applySettings,
     resumeOffer, acceptResume, declineResume,
     onEnded,
     onPlay: () => setPlaying(true),
     onPause: () => setPlaying(false),
     onError: fail,
   }), [nowPlaying, loading, playing, chunks.length, index, mediaUrl, voice, speed,
-       startText, startUrl, toggle, goToPart, close, applySettings,
+       startText, startUrl, startLive, enqueueLive, endLive,
+       toggle, goToPart, close, applySettings,
        resumeOffer, acceptResume, declineResume, onEnded, fail]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

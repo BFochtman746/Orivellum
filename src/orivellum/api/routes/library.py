@@ -142,7 +142,8 @@ _MIME_SIGNATURES: list[tuple[frozenset[str], bytes, int]] = [
     (frozenset({".mp3"}),                       b"\xff\xfb",         0),  # MP3 without ID3
     (frozenset({".mp3"}),                       b"\xff\xfa",         0),  # MP3 without ID3 (MPEG-1 Layer 3)
     (frozenset({".flac"}),                      b"fLaC",             0),
-    (frozenset({".m4a"}),                       b"ftyp",             4),  # ISO base media container
+    (frozenset({".m4a", ".mp4"}),               b"ftyp",             4),  # ISO base media container
+    (frozenset({".webm"}),                      b"\x1a\x45\xdf\xa3", 0),  # EBML (WebM/Matroska)
     (frozenset({".webp"}),                      b"WEBP",             8),  # RIFF????WEBP
     (frozenset({".gif"}),                       b"GIF8",             0),
 ]

@@ -49,6 +49,7 @@ import {
   Sparkles, History, RefreshCw, ExternalLink, Mail, Volume2,
 } from "lucide-react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { VoiceControls } from "./voice-controls";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import rehypeHighlight from "rehype-highlight";
 import "highlight.js/styles/atom-one-dark.css";
@@ -113,6 +114,26 @@ const TIMEOUT_SENTINEL = "\x02TIMEOUT\x02";
 const INTENT_PREFIX = "\x02INTENT\x02";
 /** Sentinel prefix carrying reasoning/thinking tokens from <think> blocks or reasoning_content. */
 const THINKING_PREFIX = "\x02THINKING\x02";
+
+// ─── Voice-mode sentence chunking ─────────────────────────────────────────────
+// While a reply streams in voice mode, completed sentences are flushed to the
+// live TTS queue so the first words are heard quickly. We only flush once at
+// least VOICE_FLUSH_MIN_CHARS of unspoken text has accumulated, batching up to
+// the LAST sentence boundary in the buffer — so short fragments ("e.g. ") ride
+// along with their sentence instead of creating awkward pauses.
+const VOICE_FLUSH_MIN_CHARS = 60;
+const SENTENCE_BOUNDARY_RE = /[.!?…][)"'\u201d\]]*\s|\n\n/g;
+
+/** Index just past the LAST sentence boundary in `text`, or -1 when none. */
+function lastSentenceBoundary(text: string): number {
+  let last = -1;
+  SENTENCE_BOUNDARY_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = SENTENCE_BOUNDARY_RE.exec(text))) {
+    last = m.index + m[0].length;
+  }
+  return last;
+}
 
 const INTENT_LABELS: Record<string, { icon: string; label: string }> = {
   web_search: { icon: "🌐", label: "Web search" },
@@ -1401,6 +1422,16 @@ export default function Chat() {
   });
   const [sending, setSending] = useState(false);
   const [pendingImage, setPendingImage] = useState<{ data: string; type: string } | null>(null);
+  // ── Voice mode ─────────────────────────────────────────────────────────────
+  // readAloud lives up here (not by the message list) because sendText streams
+  // reply sentences into its live TTS queue when a voice turn is active.
+  const readAloud = useReadAloud();
+  const [handsFree, setHandsFree] = useState(false);
+  const handsFreeRef = useRef(false);
+  useEffect(() => { handsFreeRef.current = handsFree; }, [handsFree]);
+  const voiceTurnRef = useRef(false);   // speak the currently-streaming reply
+  const spokenIdxRef = useRef(0);       // accumulator chars already queued for speech
+  const [autoListenNonce, setAutoListenNonce] = useState(0);
   const imgInputRef = useRef<HTMLInputElement>(null);
   const [localMessages, setLocalMessages] = useState<LocalMessage[]>([]);
   const localOverride = localMessages.length > 0;
@@ -1834,6 +1865,12 @@ export default function Chat() {
           if (token.startsWith(CLARIFY_PREFIX)) {
             // Cognition gate requests clarification — backend persisted with { model, isClarification: true }
             const question = token.slice(CLARIFY_PREFIX.length);
+            // Voice turn: speak the clarifying question too (the accumulator
+            // stays empty on this path, so the finally-block flush is a no-op).
+            if (voiceTurnRef.current) {
+              const q = stripForSpeech(question);
+              if (q) readAloud.enqueueLive(q);
+            }
             setLocalMessages((prev) => prev.map((m) =>
               m.id === assistantId
                 ? { ...m, text: question, status: "complete" as const, streaming: false, isClarification: true,
@@ -1855,6 +1892,20 @@ export default function Chat() {
             thinkingAccRef.current += token.slice(THINKING_PREFIX.length);
           } else {
             accumulatorRef.current += token;
+            // Voice turn: flush completed sentences to the live TTS queue so
+            // the first words are heard while the rest is still streaming.
+            if (voiceTurnRef.current) {
+              const acc = accumulatorRef.current;
+              if (acc.length - spokenIdxRef.current >= VOICE_FLUSH_MIN_CHARS) {
+                const boundary = lastSentenceBoundary(acc.slice(spokenIdxRef.current));
+                if (boundary > 0) {
+                  const chunk = acc.slice(spokenIdxRef.current, spokenIdxRef.current + boundary);
+                  spokenIdxRef.current += boundary;
+                  const speech = stripForSpeech(chunk);
+                  if (speech) readAloud.enqueueLive(speech);
+                }
+              }
+            }
             // Activity: first real text token → advance to "Writing response"
             if (firstTextToken) {
               firstTextToken = false;
@@ -1910,6 +1961,16 @@ export default function Chat() {
           }));
         }
       } finally {
+        // Voice turn: speak whatever remains unspoken, then close the live
+        // queue — onDone (auto-listen) fires once playback drains. Must run
+        // BEFORE the accumulator reset below.
+        if (voiceTurnRef.current) {
+          const rest = stripForSpeech(accumulatorRef.current.slice(spokenIdxRef.current));
+          if (rest) readAloud.enqueueLive(rest);
+          readAloud.endLive();
+          voiceTurnRef.current = false;
+          spokenIdxRef.current = 0;
+        }
         if (rafRef.current !== null) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
         accumulatorRef.current = "";
         thinkingAccRef.current = "";
@@ -1939,7 +2000,7 @@ export default function Chat() {
         setLocalMessages((prev) => prev.filter((m) => m.incomplete || m.status === "failed"));
       }
     },
-    [activeId, deepMode, scopeAll, pendingImage, activeConv?.messages, flushAccumulator, queryClient, defaultModel]
+    [activeId, deepMode, scopeAll, pendingImage, activeConv?.messages, flushAccumulator, queryClient, defaultModel, readAloud]
   );
 
   const handleSend = useCallback(
@@ -1954,6 +2015,39 @@ export default function Chat() {
     },
     [draft, pendingImage, sendText]
   );
+
+  // ── Voice mode handlers ────────────────────────────────────────────────────
+  const handleVoiceTurnDone = useCallback(() => {
+    // Spoken reply finished playing — in hands-free mode, listen again.
+    if (handsFreeRef.current) setAutoListenNonce((n) => n + 1);
+  }, []);
+
+  /** Runs synchronously inside the mic stop-tap gesture (hands-free mode):
+   *  primes the shared audio element so reply sentences can auto-play. */
+  const handlePrimeSpeech = useCallback(() => {
+    voiceTurnRef.current = true;
+    spokenIdxRef.current = 0;
+    readAloud.startLive({ title: "Voice reply", href: "/chat", onDone: handleVoiceTurnDone });
+  }, [readAloud, handleVoiceTurnDone]);
+
+  const handleTranscript = useCallback((text: string) => {
+    const t = text.trim();
+    if (!t) {
+      // Nothing usable (silence / error) — tear down any primed speech session
+      // so the dock doesn't linger waiting for text that will never arrive.
+      if (voiceTurnRef.current) {
+        voiceTurnRef.current = false;
+        readAloud.close();
+      }
+      return;
+    }
+    if (handsFreeRef.current) {
+      void sendText(t);
+    } else {
+      // Dictation: transcript lands in the composer, editable before sending.
+      setDraft((d) => (d ? d.replace(/\s+$/, "") + " " + t : t));
+    }
+  }, [readAloud, sendText]);
 
   // ── Continue a cut-short reply (append mode) ─────────────────────────────
   const handleContinue = useCallback(async (messageId: string) => {
@@ -2152,7 +2246,6 @@ export default function Chat() {
   // keeps the light parchment look untouched.  The wrapper class below
   // covers the first paint before the hook's effect runs.
   const gdDark = useGdDark();
-  const readAloud = useReadAloud();
 
   return (
     <div className={`flex-1 min-h-0 flex gap-0 md:gap-6 animate-in fade-in duration-500 ${gdDark ? "dark text-foreground" : ""}`}>
@@ -2683,7 +2776,7 @@ export default function Chat() {
                     value={draft}
                     onChange={(e) => setDraft(e.target.value)}
                     placeholder={dragOver ? "Drop files to import…" : importing ? "Importing…" : aiOnline ? "Ask anything… or drop a file (Enter to send, Shift+Enter for newline)" : "AI offline — messages saved locally"}
-                    className="pr-40 resize-none py-3 text-base"
+                    className="pr-56 resize-none py-3 text-base"
                     rows={2}
                     disabled={sending || importing}
                     onKeyDown={(e) => {
@@ -2710,6 +2803,15 @@ export default function Chat() {
                     within the textarea only, and min-44px expansion on mobile
                     is absorbed by the flex gap rather than causing overlap.   */}
                 <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-0.5">
+                  {/* Voice input — mic + hands-free toggle */}
+                  <VoiceControls
+                    disabled={sending || importing}
+                    handsFree={handsFree}
+                    onHandsFreeChange={setHandsFree}
+                    onTranscript={handleTranscript}
+                    onPrimeSpeech={handlePrimeSpeech}
+                    autoListenNonce={autoListenNonce}
+                  />
                   {/* Image attach */}
                   <button
                     type="button"
