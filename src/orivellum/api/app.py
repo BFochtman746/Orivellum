@@ -91,6 +91,109 @@ class SPAStaticFiles(StaticFiles):
         return response
 
 
+def _apply_pending_restore(cfg) -> None:
+    """Apply a staged backup restore (data/restore-pending.zip), if present.
+
+    Runs before the DB opens. Two-phase design so a failure can never leave a
+    half-restored state:
+
+    1. *Stage*: every archive member is extracted and validated into a
+       staging directory. Nothing live is touched — any extraction error
+       aborts here with the current data fully intact.
+    2. *Swap*: current files are moved into a timestamped safety snapshot,
+       then staged files are moved into place (pure renames — the only
+       remaining failure mode is the filesystem itself). On a swap failure
+       the safety snapshot is moved back, overwriting any partial state.
+
+    On any failure the pending zip is renamed to ``restore-failed.zip`` and
+    startup continues with the existing data — a broken restore must never
+    brick the app.
+    """
+    import shutil
+    import zipfile
+    from datetime import UTC as _UTC
+    from datetime import datetime as _dt
+
+    data_dir = Path(cfg.data_dir)
+    pending = data_dir / "restore-pending.zip"
+    if not pending.exists():
+        return
+
+    from orivellum.configuration.config import ROOT as _root
+    cfg_dst = _root / "config.yaml"
+
+    ts = _dt.now(_UTC).strftime("%Y%m%d_%H%M%S")
+    safety = data_dir / f"restore-safety-{ts}"
+    staging = data_dir / f"restore-staging-{ts}"
+    swap_started = False
+    try:
+        # ── Phase 1: stage (no live files touched) ─────────────────────────
+        with zipfile.ZipFile(pending) as zf:
+            names = set(zf.namelist())
+            if "orivellum.db" not in names or zf.testzip() is not None:
+                raise RuntimeError("staged archive is invalid")
+            staging.mkdir(parents=True, exist_ok=True)
+            # Only known-safe members to known-safe destinations — never a
+            # blind extractall (zip-slip).
+            members = ["orivellum.db"]
+            members += [s for s in ("atelier.db", "press.db", "config.yaml")
+                        if s in names]
+            members += [n for n in names
+                        if n.startswith("library/") and ".." not in n
+                        and not n.startswith("/")]
+            for m in members:
+                zf.extract(m, staging)
+
+        # ── Phase 2: swap (renames only) ───────────────────────────────────
+        swap_started = True
+        safety.mkdir(parents=True, exist_ok=True)
+        for fname in ("orivellum.db", "orivellum.db-wal", "orivellum.db-shm",
+                      "atelier.db", "press.db"):
+            p = data_dir / fname
+            if p.exists():
+                shutil.move(str(p), str(safety / fname))
+        lib = data_dir / "library"
+        if lib.exists():
+            shutil.move(str(lib), str(safety / "library"))
+        if (staging / "config.yaml").exists() and cfg_dst.exists():
+            shutil.copy2(cfg_dst, safety / "config.yaml.root")
+
+        for item in list(staging.iterdir()):
+            if item.name == "config.yaml":
+                shutil.move(str(item), str(cfg_dst))
+            else:
+                dst = data_dir / item.name
+                if dst.exists():
+                    (shutil.rmtree if dst.is_dir() else os.remove)(str(dst))
+                shutil.move(str(item), str(dst))
+
+        pending.unlink()
+        shutil.rmtree(staging, ignore_errors=True)
+        logger.info("Backup restore applied; previous data kept in %s", safety.name)
+    except Exception as exc:
+        logger.error("Backup restore FAILED (%s) — continuing with existing data", exc)
+        try:
+            if swap_started and safety.exists():
+                # Originals win: remove any partial destination, then move back.
+                for p in list(safety.iterdir()):
+                    if p.name == "config.yaml.root":
+                        shutil.copy2(p, cfg_dst)
+                        continue
+                    dst = data_dir / p.name
+                    if dst.exists():
+                        (shutil.rmtree if dst.is_dir() else os.remove)(str(dst))
+                    shutil.move(str(p), str(dst))
+                shutil.rmtree(safety, ignore_errors=True)
+            shutil.rmtree(staging, ignore_errors=True)
+            if pending.exists():
+                failed = data_dir / "restore-failed.zip"
+                if failed.exists():
+                    failed.unlink()
+                pending.rename(failed)
+        except Exception as exc2:
+            logger.error("Restore rollback also failed: %s", exc2)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Governed startup/shutdown: config → db → migrations → key → deps → serve.
@@ -113,6 +216,10 @@ async def lifespan(app: FastAPI):
     # Step 1-2: Config and DB path
     cfg = load_config()
     logger.info("Orivellum %s starting — data_dir=%s", __version__, cfg.data_dir)
+
+    # Step 2b: Apply a staged backup restore, if one is pending. Must happen
+    # BEFORE the DB is opened — the restore replaces the SQLite files on disk.
+    _apply_pending_restore(cfg)
 
     # Step 3-4: Open DB and run migrations
     db = OrivellumDB.open(cfg.db_path)

@@ -97,6 +97,52 @@ def create_backup():
     }
 
 
+@router.post("/backups/{name}/restore")
+def stage_restore(name: str):
+    """Stage a backup for restore. The actual swap happens at the next server
+    start, before the database is opened — a live SQLite file can't be safely
+    replaced under a running app. The current data is snapshotted to a safety
+    folder before anything is overwritten, so a restore is itself reversible."""
+    bd = _backup_dir()
+    src = bd / name
+    if not src.exists() or not src.name.endswith(".zip") or "/" in name or ".." in name:
+        raise HTTPException(404, "Backup not found")
+    try:
+        with zipfile.ZipFile(src) as zf:
+            bad = zf.testzip()
+            if bad is not None:
+                raise HTTPException(422, f"Backup archive is corrupt (bad entry: {bad})")
+            names = zf.namelist()
+            if "orivellum.db" not in names:
+                raise HTTPException(422, "Backup does not contain a database — cannot restore")
+    except zipfile.BadZipFile:
+        raise HTTPException(422, "Backup file is not a valid zip archive") from None
+
+    cfg = get_config()
+    pending = Path(cfg.data_dir) / "restore-pending.zip"
+    import shutil
+    shutil.copy2(src, pending)
+    return {"staged": True, "backup": name,
+            "detail": "Restore staged. It will be applied the next time the server starts. "
+                      "Current data will be kept in a safety snapshot."}
+
+
+@router.get("/backups/restore/pending")
+def restore_pending():
+    cfg = get_config()
+    return {"pending": (Path(cfg.data_dir) / "restore-pending.zip").exists()}
+
+
+@router.delete("/backups/restore/pending")
+def cancel_restore():
+    cfg = get_config()
+    pending = Path(cfg.data_dir) / "restore-pending.zip"
+    if pending.exists():
+        pending.unlink()
+        return {"cancelled": True}
+    return {"cancelled": False}
+
+
 @router.get("/backups/{name}/download")
 def download_backup(name: str):
     bd = _backup_dir()

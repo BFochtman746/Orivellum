@@ -29,3 +29,6 @@ description: Cleanup-packet decisions (Aug 2026) — login-key policy, backup me
 
 ## Flaky-test lesson
 - Never seed "recent" test timestamps with now-minus-hours when a "this week" filter is involved — it crosses the Monday 00:00 boundary; seed at `now`.
+
+## Backup restore (Aug 2026)
+Restore is staged (`data/restore-pending.zip` via POST /api/backups/{name}/restore) and applied at next startup BEFORE the DB opens — never swap a live SQLite file. Two-phase: extract allowlisted members to a staging dir first (failure = data untouched), then snapshot current files to `restore-safety-<ts>/` and swap via renames; rollback removes partial destinations before moving originals back. Root config.yaml snapshot is named `config.yaml.root`. A broken restore must never brick startup — park bad archive as `restore-failed.zip` and continue.

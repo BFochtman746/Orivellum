@@ -5,19 +5,58 @@ import { format } from "date-fns";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { HardDrive, ShieldCheck, Clock, Download, RefreshCw } from "lucide-react";
+import { HardDrive, ShieldCheck, Clock, Download, RefreshCw, History, X } from "lucide-react";
 import { toast } from "sonner";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { useGdDark } from "@/lib/useGdDark";
+
+const BASE = (import.meta.env.BASE_URL ?? "/").replace(/\/$/, "");
 
 export default function Backups() {
   const gdDark = useGdDark();
   const queryClient = useQueryClient();
   const { data: backupsResp, isLoading } = useListBackups();
   const createBackup = useCreateBackup();
-  
+
   const [verifying, setVerifying] = useState<string | null>(null);
+  const [restoring, setRestoring] = useState<string | null>(null);
+  const [restorePending, setRestorePending] = useState(false);
+
+  useEffect(() => {
+    apiFetch(`${BASE}/api/backups/restore/pending`)
+      .then(r => r.json())
+      .then(d => setRestorePending(!!d.pending))
+      .catch(() => {});
+  }, []);
+
+  const handleRestore = async (name: string) => {
+    if (!window.confirm(
+      `Restore "${name}"?\n\nYour current data will be replaced by this backup the next time the server starts. ` +
+      `A safety copy of today's data is kept automatically, so this can be undone.`)) return;
+    setRestoring(name);
+    try {
+      const resp = await apiFetch(`${BASE}/api/backups/${encodeURIComponent(name)}/restore`, { method: "POST" });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.detail || `HTTP ${resp.status}`);
+      setRestorePending(true);
+      toast.success("Restore staged — it will apply the next time the server starts.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Restore failed");
+    } finally {
+      setRestoring(null);
+    }
+  };
+
+  const handleCancelRestore = async () => {
+    try {
+      await apiFetch(`${BASE}/api/backups/restore/pending`, { method: "DELETE" });
+      setRestorePending(false);
+      toast.success("Pending restore cancelled");
+    } catch {
+      toast.error("Could not cancel the restore");
+    }
+  };
 
   const handleCreate = () => {
     createBackup.mutate(undefined, {
@@ -60,6 +99,25 @@ export default function Backups() {
         </Button>
       </div>
 
+      {restorePending && (
+        <Card className="border-amber-500/40 bg-amber-500/5">
+          <CardContent className="p-4 flex items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <History className="w-5 h-5 text-amber-500 shrink-0" />
+              <div className="text-sm">
+                <span className="font-medium">A restore is staged.</span>{" "}
+                <span className="text-muted-foreground">
+                  It will replace your current data the next time the server starts. A safety copy is kept.
+                </span>
+              </div>
+            </div>
+            <Button variant="outline" size="sm" className="gap-1 shrink-0" onClick={handleCancelRestore}>
+              <X className="w-3.5 h-3.5" /> Cancel restore
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
       <div className="grid gap-4">
         {isLoading ? (
           [1, 2, 3].map(i => <Skeleton key={i} className="h-20 w-full" />)
@@ -91,6 +149,17 @@ export default function Backups() {
                     disabled={verifying === backup.name || !backup.name}
                   >
                     {verifying === backup.name ? <RefreshCw className="w-4 h-4 animate-spin" /> : "Verify"}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="gap-1"
+                    onClick={() => handleRestore(backup.name!)}
+                    disabled={restoring === backup.name || !backup.name}
+                  >
+                    {restoring === backup.name
+                      ? <RefreshCw className="w-4 h-4 animate-spin" />
+                      : <><History className="w-4 h-4" /> Restore</>}
                   </Button>
                   <Button
                     variant="secondary"

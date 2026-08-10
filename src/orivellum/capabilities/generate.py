@@ -222,6 +222,18 @@ def generate_excel(work_id: str, db: OrivellumDB, cfg: OrivellumConfig) -> tuple
     ws.column_dimensions["A"].width = 22
     ws.column_dimensions["B"].width = 40
 
+    # ── Summary chart: contents at a glance ──
+    from openpyxl.chart import BarChart, Reference
+    chart = BarChart()
+    chart.type = "col"
+    chart.title = "Work contents"
+    chart.legend = None
+    chart.y_axis.title = "Count"
+    chart.add_data(Reference(ws, min_col=2, min_row=5, max_row=7))
+    chart.set_categories(Reference(ws, min_col=1, min_row=5, max_row=7))
+    chart.height, chart.width = 7, 12
+    ws.add_chart(chart, "D4")
+
     # ── Sheet 2: Knowledge ──
     ws2 = wb.create_sheet("Knowledge")
     headers2 = ["#", "Kind", "Text", "Confidence", "Created"]
@@ -239,6 +251,9 @@ def generate_excel(work_id: str, db: OrivellumDB, cfg: OrivellumConfig) -> tuple
         for cell in row:
             cell.border = border
     _autowidth(ws2)
+    ws2.freeze_panes = "A2"
+    if knowledge:
+        ws2.auto_filter.ref = f"A1:{get_column_letter(len(headers2))}{len(knowledge) + 1}"
 
     # ── Sheet 3: Documents ──
     ws3 = wb.create_sheet("Documents")
@@ -256,6 +271,9 @@ def generate_excel(work_id: str, db: OrivellumDB, cfg: OrivellumConfig) -> tuple
         for cell in row:
             cell.border = border
     _autowidth(ws3)
+    ws3.freeze_panes = "A2"
+    if doc_list:
+        ws3.auto_filter.ref = f"A1:{get_column_letter(len(headers3))}{len(doc_list) + 1}"
 
     # ── Sheet 4: Tasks ──
     ws4 = wb.create_sheet("Tasks")
@@ -273,6 +291,9 @@ def generate_excel(work_id: str, db: OrivellumDB, cfg: OrivellumConfig) -> tuple
         for cell in row:
             cell.border = border
     _autowidth(ws4)
+    ws4.freeze_panes = "A2"
+    if tasks:
+        ws4.auto_filter.ref = f"A1:{get_column_letter(len(headers4))}{len(tasks) + 1}"
 
     # ── Save ──
     out_dir = _ensure_dir(cfg, work_id)

@@ -394,6 +394,72 @@ def _clean_script(raw: str) -> str:
     return s.strip()
 
 
+# ── Sandbox runner ────────────────────────────────────────────────────────────
+# The LLM-written script runs under this wrapper, which disables network
+# access at the socket layer: every connection-creating entry point in both
+# `socket` and the C `_socket` module is replaced with one that raises before
+# user code runs. Imports stay allowed (reportlab/python-pptx legitimately
+# import urllib internals without using the network), but any actual
+# connection attempt fails. Combined with a scrubbed environment (no parent
+# secrets), `-I` isolated mode, and POSIX resource limits, this is a strong
+# guard against hallucinating or prompt-influenced generated code. It is a
+# best-effort in-process guard, not an adversarial security boundary — code
+# determined to escape (ctypes, re-exec) needs OS-level isolation, which is
+# not available on the Windows deployment target.
+_SANDBOX_RUNNER = """\
+import _socket
+import socket
+import sys
+
+
+def _deny(*_a, **_k):
+    raise OSError(
+        "Network access is disabled in the document-generation sandbox.")
+
+
+class _DeniedSocket:
+    def __init__(self, *a, **k):
+        _deny()
+
+
+for _mod in (socket, _socket):
+    _mod.socket = _DeniedSocket
+    for _name in ("create_connection", "create_server", "socketpair",
+                  "getaddrinfo", "gethostbyname", "gethostbyname_ex",
+                  "gethostbyaddr", "fromfd"):
+        if hasattr(_mod, _name):
+            setattr(_mod, _name, _deny)
+socket.SocketType = _DeniedSocket
+
+import runpy
+
+runpy.run_path(sys.argv[1], run_name="__main__")
+"""
+
+
+def _sandbox_env(tmp: str) -> dict:
+    """Minimal environment for the sandboxed script — never the parent's
+    os.environ (which carries API keys and session secrets)."""
+    env = {
+        "HOME": tmp, "TMPDIR": tmp, "TEMP": tmp, "TMP": tmp,
+        "LANG": os.environ.get("LANG", "C.UTF-8"),
+        "PYTHONDONTWRITEBYTECODE": "1",
+    }
+    for key in ("PATH", "SYSTEMROOT", "WINDIR", "COMSPEC"):  # Windows needs these
+        if os.environ.get(key):
+            env[key] = os.environ[key]
+    return env
+
+
+def _sandbox_preexec():
+    """POSIX-only resource caps applied in the child before exec."""
+    import resource
+    resource.setrlimit(resource.RLIMIT_CPU, (60, 60))
+    resource.setrlimit(resource.RLIMIT_AS, (768 * 1024 * 1024,) * 2)
+    resource.setrlimit(resource.RLIMIT_FSIZE, (100 * 1024 * 1024,) * 2)
+    resource.setrlimit(resource.RLIMIT_NOFILE, (128, 128))
+
+
 def _run_script_safely(
     script: str,
     output_path: str,
@@ -402,7 +468,9 @@ def _run_script_safely(
     db: OrivellumDB,
     request: str,
 ) -> dict:
-    """Execute generated script in a temp dir. Retry with LLM correction on failure."""
+    """Execute generated script sandboxed in a temp dir: scrubbed environment,
+    isolated interpreter, network-module import blocking, and (on POSIX)
+    CPU/memory/file-size caps. Retry with LLM correction on failure."""
     from orivellum.capabilities.llm import llm_call
 
     current_script = script
@@ -411,14 +479,18 @@ def _run_script_safely(
             script_path = os.path.join(tmp, "generate_doc.py")
             with open(script_path, "w", encoding="utf-8") as f:
                 f.write(current_script)
+            runner_path = os.path.join(tmp, "_sandbox_runner.py")
+            with open(runner_path, "w", encoding="utf-8") as f:
+                f.write(_SANDBOX_RUNNER)
 
             try:
                 result = subprocess.run(
-                    [sys.executable, script_path],
+                    [sys.executable, "-I", runner_path, script_path],
                     capture_output=True, text=True,
                     timeout=60,
                     cwd=tmp,
-                    env={**os.environ, "PYTHONPATH": ""},
+                    env=_sandbox_env(tmp),
+                    preexec_fn=_sandbox_preexec if sys.platform != "win32" else None,
                 )
                 stdout = result.stdout[:3000]
                 stderr = result.stderr[:3000]

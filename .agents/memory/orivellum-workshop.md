@@ -37,3 +37,6 @@ description: Self-prompting AI document generator — clarify → code-gen → s
 
 ## Packages available (already in pyproject.toml)
 openpyxl, python-pptx, python-docx, reportlab, matplotlib — all usable in generated scripts
+
+## Sandbox (Aug 2026)
+Workshop scripts run via `_SANDBOX_RUNNER`: scrubbed env (never parent os.environ — it holds secrets), `python -I`, POSIX rlimits (skipped on win32), and socket-layer denial (patch `socket`/`_socket` connection entry points, NOT import blocking — reportlab and python-pptx import urllib internals and break under import blocks). **Why:** best-effort guard against hallucinated network/exfil; explicitly not an adversarial boundary (no OS isolation on the Windows target). Regression tests generate real PDF/PPTX inside the sandbox.
