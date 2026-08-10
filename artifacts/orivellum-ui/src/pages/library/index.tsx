@@ -289,6 +289,163 @@ function DuplicatesBanner({ readyDocCount = 0 }: { readyDocCount?: number }) {
   );
 }
 
+// ─── Missing-source-files banner ──────────────────────────────────────────────
+
+type MissingDoc = {
+  id: string;
+  title?: string;
+  kind?: string;
+  readiness?: string;
+};
+
+const MISSING_FILES_KEY = ["library", "missing-files"];
+
+function MissingFileRow({ doc, onChanged }: { doc: MissingDoc; onChanged: () => void }) {
+  const [busy, setBusy] = useState<"upload" | "delete" | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const handleReupload = async (file: File) => {
+    setBusy("upload");
+    try {
+      const form = new FormData();
+      form.append("file", file, file.name);
+      const resp = await apiFetch(`${BASE}/library/${doc.id}/restore-file`, {
+        method: "POST",
+        body: form,
+      });
+      const body = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error((body as any).detail ?? "Re-upload failed");
+      toast.success(`${file.name} re-attached — extraction running`);
+      onChanged();
+    } catch (err: any) {
+      toast.error(err.message ?? "Re-upload failed");
+    } finally {
+      setBusy(null);
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!window.confirm(
+      `Remove "${doc.title || doc.id.slice(0, 8)}" from the library? ` +
+      "Its source file is already gone from disk — this deletes the dead record."
+    )) return;
+    setBusy("delete");
+    try {
+      const resp = await apiFetch(`${BASE}/library/${doc.id}`, { method: "DELETE" });
+      if (!resp.ok) throw new Error("Delete failed");
+      toast.success("Document removed");
+      onChanged();
+    } catch (err: any) {
+      toast.error(err.message ?? "Delete failed");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <div className="flex items-center gap-2 py-2 border-t first:border-t-0 first:pt-0 flex-wrap"
+         style={{ borderColor: "color-mix(in srgb, var(--rust) 20%, transparent)" }}>
+      <FileQuestion className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--rust)" }} />
+      <span className="flex-1 min-w-0 text-[12px] font-mono truncate" style={{ color: "var(--rust)" }}>
+        {doc.title || doc.id.slice(0, 8)}
+        {doc.kind ? <span className="opacity-60 ml-1.5">· {doc.kind}</span> : null}
+      </span>
+      <input
+        ref={fileRef}
+        type="file"
+        className="hidden"
+        onChange={(e) => { const f = e.target.files?.[0]; if (f) handleReupload(f); }}
+      />
+      <button
+        onClick={() => fileRef.current?.click()}
+        disabled={busy !== null}
+        className="text-[10px] font-mono px-2 py-0.5 rounded border disabled:opacity-40 transition-opacity hover:opacity-80 flex items-center gap-1"
+        style={{ borderColor: "color-mix(in srgb, var(--rust) 40%, transparent)", background: "var(--rust-soft)", color: "var(--rust)" }}
+      >
+        <Upload className="w-2.5 h-2.5" />
+        {busy === "upload" ? "Uploading…" : "Re-upload file"}
+      </button>
+      <button
+        onClick={handleDelete}
+        disabled={busy !== null}
+        className="text-[10px] font-mono px-2 py-0.5 rounded border bg-white/50 disabled:opacity-40 transition-opacity hover:opacity-80 flex items-center gap-1"
+        style={{ borderColor: "color-mix(in srgb, var(--rust) 40%, transparent)", color: "var(--rust)" }}
+      >
+        <Trash2 className="w-2.5 h-2.5" />
+        {busy === "delete" ? "Removing…" : "Remove record"}
+      </button>
+    </div>
+  );
+}
+
+function MissingFilesBanner() {
+  const [collapsed, setCollapsed] = useState(false);
+  const [showAll, setShowAll] = useState(false);
+  const queryClient = useQueryClient();
+  const { data } = useQuery<{ documents: MissingDoc[]; count: number }>({
+    queryKey: MISSING_FILES_KEY,
+    queryFn: () => apiFetch(`${BASE}/library/missing-files`).then((r) => r.json()),
+    staleTime: 60_000,
+    refetchInterval: 300_000,
+  });
+
+  const count = data?.count ?? 0;
+  if (count === 0) return null;
+
+  const onChanged = () => {
+    queryClient.invalidateQueries({ queryKey: MISSING_FILES_KEY });
+    queryClient.invalidateQueries({ queryKey: getListLibraryQueryKey({}) });
+  };
+
+  return (
+    <div
+      className="rounded-lg border overflow-hidden"
+      style={{
+        borderColor: "color-mix(in srgb, var(--rust) 40%, transparent)",
+        background: "var(--rust-soft)",
+        color: "var(--rust)",
+      }}
+      data-testid="missing-files-banner"
+    >
+      <div className="flex items-center gap-2.5 px-4 py-2.5">
+        <AlertCircle className="w-4 h-4 shrink-0" style={{ color: "var(--rust)" }} />
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-medium">
+            {count} document{count !== 1 ? "s" : ""} missing {count !== 1 ? "their" : "its"} source file
+          </p>
+          <p className="text-[11px] opacity-75">
+            The stored file is gone from disk, so these can't be re-extracted. Re-upload the file or remove the record.
+          </p>
+        </div>
+        <button
+          onClick={() => setCollapsed((c) => !c)}
+          className="text-[10px] font-mono transition-opacity hover:opacity-80 shrink-0"
+          style={{ color: "var(--rust)" }}
+        >
+          {collapsed ? "show" : "hide"}
+        </button>
+      </div>
+      {!collapsed && (
+        <div className="px-4 pb-3 space-y-0">
+          {(showAll ? (data?.documents ?? []) : (data?.documents ?? []).slice(0, 8)).map((d) => (
+            <MissingFileRow key={d.id} doc={d} onChanged={onChanged} />
+          ))}
+          {count > 8 && (
+            <button
+              onClick={() => setShowAll((v) => !v)}
+              className="text-[10px] font-mono pt-1.5 border-t w-full text-left transition-opacity hover:opacity-80"
+              style={{ color: "var(--rust)", borderColor: "color-mix(in srgb, var(--rust) 20%, transparent)" }}
+            >
+              {showAll ? "show fewer" : `show all ${count}`}
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Readiness config ─────────────────────────────────────────────────────────
 
 const READINESS: Record<string, {
@@ -985,7 +1142,8 @@ export default function Library() {
         // files are missing from disk and nothing was actually re-extracted.
         if ((skipped ?? 0) > 0) {
           toast.warning(
-            `Nothing queued — ${skipped} document${skipped !== 1 ? "s" : ""} skipped because the source file is missing from disk.`
+            `Nothing queued — ${skipped} document${skipped !== 1 ? "s" : ""} skipped because the source file is missing from disk.`,
+            { description: "See the list at the top of the Library to re-upload files or remove dead records." }
           );
         } else {
           toast.success("All documents are already fully processed.");
@@ -995,7 +1153,15 @@ export default function Library() {
         if (queued_zips > 0)
           toast.info(`${queued_zips} ZIP archive${queued_zips !== 1 ? "s" : ""} will be exploded into individual documents.`);
         if (skipped > 0)
-          toast.warning(`${skipped} document${skipped !== 1 ? "s" : ""} skipped — source file missing from disk.`);
+          toast.warning(
+            `${skipped} document${skipped !== 1 ? "s" : ""} skipped — source file missing from disk.`,
+            { description: "See the list at the top of the Library to re-upload files or remove dead records." }
+          );
+      }
+      if ((skipped ?? 0) > 0) {
+        // Refresh the missing-files banner immediately so the affected list
+        // the toast points at is actually visible.
+        queryClient.invalidateQueries({ queryKey: MISSING_FILES_KEY });
       }
       setTimeout(invalidate, 2000);
     } catch (err: any) {
@@ -1130,6 +1296,8 @@ export default function Library() {
         </div>
 
         {/* Near-duplicates banner */}
+        <MissingFilesBanner />
+
         <DuplicatesBanner readyDocCount={(listResp?.documents ?? []).filter((d: any) => d.readiness === "ready").length} />
 
         {/* Search */}

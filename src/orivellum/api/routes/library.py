@@ -381,6 +381,51 @@ def library_resolve_duplicate(dupe_id: str, body: DupeResolveBody):
     return {"ok": True, "dupe_id": dupe_id, "action": body.action}
 
 
+def _resolve_doc_file(lib_root: Path, content_path: str | None,
+                      source: str | None) -> Path | None:
+    """Resolve a document's on-disk file the same way reprocess does."""
+    if content_path:
+        return lib_root / content_path
+    if source:
+        return Path(source)
+    return None
+
+
+@router.get("/library/missing-files")
+def library_missing_files():
+    """List documents whose source file is missing from disk.
+
+    Scoped to documents that actually NEED their file — those a reprocess run
+    would try to re-extract (not finished: imported/error/no_text/reprocessing,
+    plus all ZIPs). A 'ready' document with no file keeps working from its
+    extracted text, so it is not reported here.
+
+    Each entry is a standard document dict. Recovery paths: re-upload the file
+    via POST /api/library/{doc_id}/restore-file, or delete the dead record.
+    """
+    db = get_db()
+    lib_root = _library_root()
+    with db._lock:
+        rows = db._conn.execute(
+            """SELECT id, source, content_path FROM documents
+               WHERE readiness IN ('imported','error','no_text',?)
+                  OR kind='zip'
+               ORDER BY created_at DESC
+               LIMIT 2000""",
+            (_REPROCESS_RESERVED,),
+        ).fetchall()
+    missing: list[dict] = []
+    for row in rows:
+        file_path = _resolve_doc_file(lib_root, row["content_path"], row["source"])
+        if file_path is not None and file_path.exists():
+            continue
+        doc = db.get_document(row["id"])
+        if doc:
+            doc["file_missing"] = True
+            missing.append(doc)
+    return {"documents": missing, "count": len(missing)}
+
+
 @router.get("/library/{doc_id}")
 def library_get(doc_id: str):
     db = get_db()
@@ -959,6 +1004,176 @@ async def library_upload(
         raise
 
 
+@router.post("/library/{doc_id}/restore-file")
+async def library_restore_file(
+    doc_id: str,
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+):
+    """Re-attach a source file to a document whose file is missing from disk.
+
+    Recovery path for records whose stored file was deleted or moved: the user
+    re-uploads the file, we store it in the library tree, point the document at
+    it, and queue extraction. Refused (409) when the document's current file is
+    still on disk — use /reprocess for that case.
+
+    The re-uploaded bytes may differ from the original (e.g. a fresh export of
+    the same document): the record's sha256 is updated. If the bytes match a
+    DIFFERENT existing document we refuse (409) rather than create two records
+    with the same content.
+    """
+    db = get_db()
+    doc = db.get_document(doc_id)
+    if not doc:
+        raise HTTPException(404, f"Document {doc_id!r} not found")
+
+    lib_root = _library_root()
+    current = _resolve_doc_file(lib_root, doc.get("content_path"), doc.get("source"))
+    if current is not None and current.exists():
+        raise HTTPException(
+            409,
+            "This document's source file is still on disk — use reprocess instead.",
+        )
+
+    name = _validate_import_target(db, file.filename or "", None)
+
+    # Atomically reserve the document (CAS on readiness) so a concurrent
+    # reprocess-all can't select it mid-restore and vice versa: reprocess-all
+    # excludes docs at the reservation marker, and if IT reserved first we
+    # refuse here instead of double-queuing extraction.
+    prior_readiness = doc.get("readiness") or "error"
+    _BUSY = HTTPException(
+        409, "This document is being reprocessed right now — try again in a moment.",
+    )
+    if prior_readiness == _REPROCESS_RESERVED:
+        raise _BUSY
+    with db._lock:
+        cur = db._conn.execute(
+            "UPDATE documents SET readiness=? WHERE id=? AND readiness=?",
+            (_REPROCESS_RESERVED, doc_id, prior_readiness),
+        )
+        db._conn.commit()
+    if cur.rowcount != 1:
+        raise _BUSY
+
+    import shutil as _shutil
+    import sqlite3 as _sqlite3
+    import tempfile as _tempfile
+    _cleanup_stale_parts(lib_root)
+    tmp = _tempfile.NamedTemporaryFile(delete=False, dir=lib_root, suffix=".part")
+    hasher = hashlib.sha256()
+    size = 0
+    moved_path: Path | None = None  # set once bytes live in the library tree
+    committed = False               # set once the DB record points at them
+    try:
+        try:
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                hasher.update(chunk)
+                size += len(chunk)
+                if size > _MAX_LIBRARY_FILE_BYTES:
+                    raise HTTPException(
+                        413,
+                        f"File too large (limit "
+                        f"{_MAX_LIBRARY_FILE_BYTES // (1024 * 1024)} MB)",
+                    )
+                tmp.write(chunk)
+        finally:
+            tmp.close()
+        if size == 0:
+            raise HTTPException(400, "Uploaded file is empty")
+        tmp_path = Path(tmp.name)
+        _validate_mime_signature(tmp_path, original_name=name)
+        sha256 = hasher.hexdigest()
+
+        # Store in the library tree (same sharded layout as uploads).
+        dest = lib_root / sha256[:2] / sha256[2:4]
+        dest.mkdir(parents=True, exist_ok=True)
+        file_path = dest / name
+        if file_path.exists():
+            file_path = dest / f"{sha256[:12]}_{name}"
+        _shutil.move(str(tmp_path), str(file_path))
+        moved_path = file_path
+
+        # Claim the sha256 and point the record at the new file in ONE
+        # transaction: the duplicate pre-check and the UPDATE happen under the
+        # same lock, and a concurrent import that claims the hash between them
+        # surfaces as IntegrityError — handled as the same 409, never a 500.
+        kind = doc.get("kind") or _kind_for(name)
+        conflict = False
+        try:
+            with db._lock:
+                other = db._conn.execute(
+                    "SELECT id FROM documents WHERE sha256=? AND id!=?",
+                    (sha256, doc_id),
+                ).fetchone()
+                if other is None:
+                    db._conn.execute(
+                        """UPDATE documents
+                           SET source=?, content_path=?, sha256=?,
+                               readiness='imported', error_message=NULL
+                           WHERE id=?""",
+                        (str(file_path), str(file_path.relative_to(lib_root)),
+                         sha256, doc_id),
+                    )
+                    db._conn.commit()
+                    committed = True
+                else:
+                    conflict = True
+        except _sqlite3.IntegrityError:
+            conflict = True
+        if conflict:
+            # Never delete the winning document's bytes if the paths coincide.
+            with db._lock:
+                winner = db._conn.execute(
+                    "SELECT content_path FROM documents WHERE sha256=? AND id!=?",
+                    (sha256, doc_id),
+                ).fetchone()
+            winner_path = (
+                (lib_root / winner["content_path"])
+                if winner and winner["content_path"] else None
+            )
+            if winner_path is None or file_path.resolve() != winner_path.resolve():
+                file_path.unlink(missing_ok=True)
+            moved_path = None
+            raise HTTPException(
+                409,
+                "That file already exists in the library as another document. "
+                "Delete this record and use the existing document instead.",
+            )
+
+        db.delete_extraction_warnings(doc_id)
+
+        background_tasks.add_task(
+            process_document,
+            doc_id=doc_id,
+            file_path=str(file_path),
+            kind=kind,
+            work_id=doc.get("work_id"),
+            title=doc.get("title") or name,
+            db=db,
+        )
+        logger.info("restore-file: doc=%s re-attached %s (%d bytes), extraction queued",
+                    doc_id, name, size)
+        return {"ok": True, "document": db.get_document(doc_id)}
+    except BaseException:
+        Path(tmp.name).unlink(missing_ok=True)
+        if not committed:
+            # Release the reservation so the record never sticks at the
+            # transient marker, and drop any orphaned staged file.
+            if moved_path is not None:
+                moved_path.unlink(missing_ok=True)
+            with db._lock:
+                db._conn.execute(
+                    "UPDATE documents SET readiness=? WHERE id=? AND readiness=?",
+                    (prior_readiness, doc_id, _REPROCESS_RESERVED),
+                )
+                db._conn.commit()
+        raise
+
+
 @router.post("/library/{doc_id}/extract")
 def library_extract(doc_id: str, background_tasks: BackgroundTasks):
     """Alias for /reprocess — re-queues extraction for a document in error state."""
@@ -1192,6 +1407,7 @@ def queue_library_reprocess(db, background_tasks: BackgroundTasks,
     queued_zips    = 0
     queued_stuck   = 0
     skipped        = 0
+    skipped_docs: list[dict] = []
 
     for row in candidates:
         doc_id       = row["id"]
@@ -1222,6 +1438,12 @@ def queue_library_reprocess(db, background_tasks: BackgroundTasks,
                 )
                 db._conn.commit()
             skipped += 1
+            skipped_docs.append({
+                "id": doc_id,
+                "title": row["title"] or doc_id[:8],
+                "kind": kind,
+                "readiness": prior,
+            })
             continue
 
         # Clear stale warnings.  Do NOT flip readiness back to 'imported' here —
@@ -1264,6 +1486,7 @@ def queue_library_reprocess(db, background_tasks: BackgroundTasks,
         "queued_zips":  queued_zips,
         "queued_stuck": queued_stuck,
         "skipped":      skipped,
+        "skipped_docs": skipped_docs,
         "message":      ". ".join(parts) if parts else "Nothing to reprocess.",
     }
 
