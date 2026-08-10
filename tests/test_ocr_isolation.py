@@ -289,32 +289,39 @@ class TestOCRConcurrency(unittest.TestCase):
             ) as client:
 
                 def _slow(_img):
-                    time.sleep(0.3)
+                    time.sleep(0.5)
                     return "text"
 
                 fake_img = MagicMock()
 
                 async def _one():
-                    with patch("PIL.Image.open", return_value=fake_img), \
-                         patch("pytesseract.image_to_string", side_effect=_slow), \
-                         patch("orivellum.api.routes.studio._probe_tesseract_cmd"):
-                        await client.post(
-                            "/api/studio/ocr",
-                            json={"content_b64": _tiny_png_b64()},
-                        )
+                    await client.post(
+                        "/api/studio/ocr",
+                        json={"content_b64": _tiny_png_b64()},
+                    )
 
-                t0 = time.monotonic()
-                await asyncio.gather(_one(), _one())
-                results.append(time.monotonic() - t0)
+                # Patch ONCE around both requests. Never patch the same target
+                # per-coroutine: overlapping enter/exit of two patches on one
+                # target restores in the wrong order and permanently leaks the
+                # MagicMock into PIL.Image.open, breaking every later PIL user
+                # in the test session (this happened — see test_thumbnail).
+                with patch("PIL.Image.open", return_value=fake_img), \
+                     patch("pytesseract.image_to_string", side_effect=_slow), \
+                     patch("orivellum.api.routes.studio._probe_tesseract_cmd"):
+                    t0 = time.monotonic()
+                    await asyncio.gather(_one(), _one())
+                    results.append(time.monotonic() - t0)
 
         self._run(_run_two())
 
         elapsed = results[0]
-        # Sequential would take ≥ 0.6 s; parallel should be ≤ 0.55 s (generous margin)
+        # Sequential would take ≥ 1.0 s; parallel ≈ 0.5 s. The 0.85 s budget
+        # leaves headroom for slow shared CI runners while still clearly
+        # distinguishing parallel from sequential execution.
         self.assertLess(
-            elapsed, 0.55,
-            f"Two 0.3 s OCR calls took {elapsed:.2f}s — expected parallel execution (~0.3 s), "
-            "not sequential (~0.6 s). asyncio.to_thread isolation may be broken.",
+            elapsed, 0.85,
+            f"Two 0.5 s OCR calls took {elapsed:.2f}s — expected parallel execution (~0.5 s), "
+            "not sequential (~1.0 s). asyncio.to_thread isolation may be broken.",
         )
 
 

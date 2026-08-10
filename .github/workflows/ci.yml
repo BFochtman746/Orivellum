@@ -17,6 +17,9 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Install system deps (ffmpeg for audio tests)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+
       - name: Ruff (errors only — style findings are not gated)
         run: uvx ruff check src/ --select F,E9
 

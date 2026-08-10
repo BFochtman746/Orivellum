@@ -2,6 +2,7 @@
   "name": "workspace",
   "version": "0.0.0",
   "license": "MIT",
+  "packageManager": "pnpm@10.26.1",
   "scripts": {
     "preinstall": "node -e \"['package-lock.json','yarn.lock'].forEach(f=>{try{require('fs').unlinkSync(f)}catch(e){}});if(process.env.npm_config_user_agent&&!/^pnpm\\//.test(process.env.npm_config_user_agent)){console.error('Use pnpm instead');process.exit(1)}\"",
     "dev": "bash scripts/dev.sh",
