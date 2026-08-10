@@ -88,13 +88,13 @@ interface SavedPos {
 }
 
 function loadSavedPos(key: string): SavedPos | null {
-  try {
-    const raw = localStorage.getItem(RA_POS_PREFIX + key);
-    if (!raw) return null;
-    const p = JSON.parse(raw);
-    if (!isValidPos(p)) { clearSavedPos(key); return null; } // corrupt — drop it
-    return p as SavedPos;
-  } catch { return null; }
+  let raw: string | null = null;
+  try { raw = localStorage.getItem(RA_POS_PREFIX + key); } catch { return null; }
+  if (!raw) return null;
+  let p: unknown;
+  try { p = JSON.parse(raw); } catch { clearSavedPos(key); return null; } // corrupt — drop it
+  if (!isValidPos(p)) { clearSavedPos(key); return null; } // invalid shape — drop it
+  return p;
 }
 
 function isValidPos(p: any): p is SavedPos {
@@ -358,6 +358,10 @@ export function ReadAloudProvider({
   // The seek is bound to the session AND part that requested it, so a stale
   // loadedmetadata listener can never seek a newer, unrelated source.
   const resumeKeyRef = useRef<string | null>(null);
+  // Mirrors nowPlaying so Media Session handlers can detect they belong to a
+  // replaced session (see the action-handler effect below).
+  const nowPlayingRef = useRef<NowPlaying | null>(null);
+  useEffect(() => { nowPlayingRef.current = nowPlaying; }, [nowPlaying]);
   const pendingSeekRef = useRef<{ session: number; part: number; time: number } | null>(null);
   // Wall-clock (ms) of the last server position push, to throttle sync writes.
   const lastServerSyncRef = useRef(0);
@@ -876,8 +880,19 @@ export function ReadAloudProvider({
   useEffect(() => {
     const ms = getMediaSession();
     if (!ms?.setActionHandler) return;
+    // Bind every handler to the session (nowPlaying identity) that registered
+    // it: browsers replace handlers on re-registration, but a callback
+    // retained elsewhere (or fired mid-transition) must never act on a NEWER
+    // session's playback. applySettings keeps nowPlaying, so voice/speed
+    // changes don't invalidate the lock-screen controls.
+    const boundTo = nowPlaying;
+    const guarded = (h: MediaSessionActionHandler): MediaSessionActionHandler =>
+      (details) => {
+        if (nowPlayingRef.current !== boundTo) return; // stale — ignore
+        h(details);
+      };
     const set = (action: MediaSessionAction, handler: MediaSessionActionHandler | null) => {
-      try { ms.setActionHandler(action, handler); } catch { /* unsupported action */ }
+      try { ms.setActionHandler(action, handler ? guarded(handler) : null); } catch { /* unsupported action */ }
     };
     if (!nowPlaying) {
       // No session — leave no stale handlers behind.
