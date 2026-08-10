@@ -636,13 +636,16 @@ def _apply_acx_mastering(input_path: str, output_path: str) -> bool:
 
 # ── QA gate: per-segment audio checks before the merge ───────────────────────
 
-def _qa_check_audio(path: Path) -> str | None:
+def _qa_measure_audio(path: Path) -> tuple[str | None, dict | None]:
     """Inspect one synthesized segment with ffmpeg volumedetect.
 
-    Returns a human-readable problem description when the segment should NOT
-    be shipped (clipping, near-silence, or unreadable audio), or None when it
-    passes. Thresholds are deliberately conservative so espeak's thin output
-    still passes while genuinely broken segments are caught.
+    Returns ``(problem, metrics)`` where ``problem`` is a human-readable
+    description when the segment should NOT be shipped (clipping,
+    near-silence, or unreadable audio) or None when it passes, and
+    ``metrics`` is ``{"mean_db", "max_db"}`` whenever volume stats could be
+    read (even for failing segments — the quality report uses them).
+    Thresholds are deliberately conservative so thin-but-valid output still
+    passes while genuinely broken segments are caught.
     """
     try:
         r = subprocess.run(
@@ -651,20 +654,26 @@ def _qa_check_audio(path: Path) -> str | None:
             capture_output=True, text=True, timeout=60,
         )
     except Exception as exc:
-        return f"unreadable audio ({exc})"
+        return f"unreadable audio ({exc})", None
     if r.returncode != 0:
-        return "unreadable audio (ffmpeg could not decode the segment)"
+        return "unreadable audio (ffmpeg could not decode the segment)", None
     mean_m = re.search(r"mean_volume:\s*(-?[\d.]+)\s*dB", r.stderr)
     max_m  = re.search(r"max_volume:\s*(-?[\d.]+)\s*dB", r.stderr)
     if not mean_m or not max_m:
-        return "unreadable audio (no volume stats)"
+        return "unreadable audio (no volume stats)", None
     max_db  = float(max_m.group(1))
     mean_db = float(mean_m.group(1))
+    metrics = {"mean_db": mean_db, "max_db": max_db}
     if max_db > -0.1:
-        return f"clipping (peak {max_db:.1f} dB)"
+        return f"clipping (peak {max_db:.1f} dB)", metrics
     if mean_db < -55.0:
-        return f"near-silent (mean {mean_db:.1f} dB)"
-    return None
+        return f"near-silent (mean {mean_db:.1f} dB)", metrics
+    return None, metrics
+
+
+def _qa_check_audio(path: Path) -> str | None:
+    """Pass/fail view of :func:`_qa_measure_audio` (problem string or None)."""
+    return _qa_measure_audio(path)[0]
 
 
 # ── Deterministic segment cache ───────────────────────────────────────────────
@@ -694,20 +703,26 @@ def _seg_cache_path(cfg, text: str, engine: str, voice: str, speed: float,
 
 
 def _seg_cache_get(cfg, text: str, voice: str, speed: float,
-                   engines: list[str], suffix: str = ".wav") -> Path | None:
+                   engines: list[str], suffix: str = ".wav",
+                   metrics_out: dict | None = None) -> Path | None:
     """Return the cached segment for the FIRST engine in priority order.
 
     The cache is treated as UNTRUSTED: every hit is re-validated through the
     QA gate before use. A corrupt/stale entry is evicted and the caller falls
     through to fresh synthesis — a bad cache file can never reach the merge.
+    When ``metrics_out`` is given, the hit's volume metrics are copied into it
+    (the QA re-validation already measured them — no extra ffmpeg pass).
     """
     for engine in engines:
         p = _seg_cache_path(cfg, text, engine, voice, speed, suffix)
         if p.exists() and p.stat().st_size > 0:
-            if _qa_check_audio(p) is not None:
+            reason, metrics = _qa_measure_audio(p)
+            if reason is not None:
                 logger.warning("Evicting cached TTS segment that failed QA: %s", p.name)
                 p.unlink(missing_ok=True)
                 continue
+            if metrics_out is not None and metrics:
+                metrics_out.update(metrics)
             try:  # touch so pruning treats it as recently used
                 p.touch()
             except OSError:
@@ -789,28 +804,45 @@ def _prune_seg_cache(cfg) -> None:
 
 
 def _finalize_segment(cfg, text: str, voice: str, speed: float,
-                      attempt_fn, seg_label: str) -> Path | None:
+                      attempt_fn, seg_label: str,
+                      on_result=None) -> Path | None:
     """QA-gate + cache one synthesized segment.
 
     ``attempt_fn() -> (Path | None, engine_name | None)`` runs the caller's
     synthesis strategy chain. A flagged segment is re-synthesized ONCE; if it
     still fails QA the render fails with a clear reason instead of shipping
     broken audio. Passing segments are written to the deterministic cache.
+
+    ``on_result(info)`` (optional, best-effort) is called for every shipped
+    segment with ``{"retried", "retry_reason", "engine", "mean_db",
+    "max_db"}`` so callers can build a quality report without re-measuring.
     """
     path, engine = attempt_fn()
     if path is None:
         return None
-    reason = _qa_check_audio(path)
+    reason, metrics = _qa_measure_audio(path)
+    first_reason = reason
     if reason:
         logger.warning("QA gate flagged %s (%s) — re-synthesizing once", seg_label, reason)
         retry_path, retry_engine = attempt_fn()
         if retry_path is not None:
             path, engine = retry_path, retry_engine
-            reason = _qa_check_audio(path)
+            reason, metrics = _qa_measure_audio(path)
     if reason:
         raise RuntimeError(f"Audio QA failed on {seg_label}: {reason}")
     if engine and engine != "ai":  # AI-server output varies with model config
         _seg_cache_put(cfg, text, engine, voice, speed, path)
+    if on_result is not None:
+        try:
+            on_result({
+                "retried": first_reason is not None,
+                "retry_reason": first_reason,
+                "engine": engine,
+                **(metrics or {}),
+            })
+        except Exception:  # the report must never break a render
+            logger.debug("Quality-report callback failed for %s", seg_label,
+                         exc_info=True)
     return path
 
 
@@ -2023,6 +2055,72 @@ def _run_work_tts_job(
     premium_ok = _is_premium_tts_enabled(cfg)
     _prune_seg_cache(cfg)
 
+    # Per-chapter quality report — built from the QA gate's own measurements
+    # (no extra ffmpeg passes) and published with the "done" job state.
+    chapter_reports: list[dict] = []
+    cur_report: dict | None = None
+
+    def _new_report(doc_id: str | None, title: str, kind: str = "chapter") -> dict:
+        rep = {"doc_id": doc_id, "title": title, "kind": kind,
+               "segments": 0, "cached_segments": 0, "retries": 0,
+               "flagged": [], "peak_db": None,
+               "_mean_sum": 0.0, "_mean_n": 0}
+        chapter_reports.append(rep)
+        return rep
+
+    def _note_quality(info: dict, from_cache: bool) -> None:
+        rep = cur_report
+        if rep is None:
+            return
+        rep["segments"] += 1
+        if from_cache:
+            rep["cached_segments"] += 1
+        if info.get("retried"):
+            rep["retries"] += 1
+            rep["flagged"].append({
+                "segment": rep["segments"],
+                "reason": info.get("retry_reason") or "flagged by QA gate",
+            })
+        mean_db = info.get("mean_db")
+        if mean_db is not None:
+            rep["_mean_sum"] += float(mean_db)
+            rep["_mean_n"] += 1
+        max_db = info.get("max_db")
+        if max_db is not None:
+            max_db = float(max_db)
+            rep["peak_db"] = (max_db if rep["peak_db"] is None
+                              else max(rep["peak_db"], max_db))
+
+    def _final_quality_report() -> dict:
+        chapters = []
+        totals = {"segments": 0, "cached_segments": 0, "retries": 0,
+                  "flagged_segments": 0}
+        mean_sum, mean_n, peak = 0.0, 0, None
+        # Credits rows (if any) sort after the chapter rows
+        for rep in sorted(chapter_reports, key=lambda r: r["kind"] == "credits"):
+            mean_db = (round(rep["_mean_sum"] / rep["_mean_n"], 1)
+                       if rep["_mean_n"] else None)
+            chapters.append({
+                "doc_id": rep["doc_id"], "title": rep["title"],
+                "kind": rep["kind"], "segments": rep["segments"],
+                "cached_segments": rep["cached_segments"],
+                "retries": rep["retries"], "flagged": rep["flagged"],
+                "mean_db": mean_db,
+                "peak_db": (round(rep["peak_db"], 1)
+                            if rep["peak_db"] is not None else None),
+            })
+            totals["segments"] += rep["segments"]
+            totals["cached_segments"] += rep["cached_segments"]
+            totals["retries"] += rep["retries"]
+            totals["flagged_segments"] += len(rep["flagged"])
+            mean_sum += rep["_mean_sum"]
+            mean_n += rep["_mean_n"]
+            if rep["peak_db"] is not None:
+                peak = rep["peak_db"] if peak is None else max(peak, rep["peak_db"])
+        totals["mean_db"] = round(mean_sum / mean_n, 1) if mean_n else None
+        totals["peak_db"] = round(peak, 1) if peak is not None else None
+        return {"chapters": chapters, "totals": totals}
+
     def _note_segment(from_cache: bool) -> None:
         """Advance the job's segment counters (drives the resume-aware UI)."""
         with _work_tts_jobs_lock:
@@ -2042,11 +2140,14 @@ def _run_work_tts_job(
             seg_voice, premium_ok,
             kokoro_ready=(kokoro_eng is not None and _sf2 is not None),
         )
-        cached = _seg_cache_get(cfg, text, seg_voice, speed, engines)
+        cache_metrics: dict = {}
+        cached = _seg_cache_get(cfg, text, seg_voice, speed, engines,
+                                metrics_out=cache_metrics)
         if cached is not None:
             import shutil
             shutil.copyfile(cached, wav)
             _note_segment(from_cache=True)
+            _note_quality(cache_metrics, from_cache=True)
             return wav
 
         def _attempt() -> tuple[Path | None, str | None]:
@@ -2086,7 +2187,9 @@ def _run_work_tts_job(
             return None, None
 
         out = _finalize_segment(cfg, text, seg_voice, speed, _attempt,
-                                f"segment {seg_idx - 1}")
+                                f"segment {seg_idx - 1}",
+                                on_result=lambda info: _note_quality(
+                                    info, from_cache=False))
         if out is None:
             # Fail the whole job instead of silently skipping speech —
             # otherwise a book with no working engine renders as silence.
@@ -2120,8 +2223,12 @@ def _run_work_tts_job(
 
         opening_credits, closing_credits = _work_credits_texts(work_title, voice_name)
 
+        credits_report = (_new_report(None, "Credits", kind="credits")
+                          if include_credits else None)
+
         # Opening credits
         if include_credits:
+            cur_report = credits_report
             p = _synth(opening_credits)
             if p:
                 wav_parts.append(p)
@@ -2136,6 +2243,7 @@ def _run_work_tts_job(
                 return
 
             chap_voice = casting.get(chap_doc_id) or voice
+            cur_report = _new_report(chap_doc_id, doc_title)
 
             with _work_tts_jobs_lock:
                 _work_tts_jobs[job_id].update({
@@ -2159,6 +2267,7 @@ def _run_work_tts_job(
 
         # Closing credits — skip entirely if cancelled after the last chapter
         if include_credits and not _cancelled():
+            cur_report = credits_report
             p = _synth(closing_credits)
             if p:
                 wav_parts.append(p)
@@ -2248,6 +2357,7 @@ def _run_work_tts_job(
                 "state": "done",
                 "chapter_idx": len(doc_texts),
                 "chapter_title": "",
+                "quality_report": _final_quality_report(),
                 "result": {
                     "path": rel,
                     "filename": mp3_path.name,

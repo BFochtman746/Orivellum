@@ -1336,6 +1336,21 @@ function AudiobookTab({
   };
   const [resumeInfo, setResumeInfo] = useState<ResumeInfo | null>(null);
 
+  type QualityChapter = {
+    doc_id: string | null; title: string; kind: string;
+    segments: number; cached_segments: number; retries: number;
+    flagged: { segment: number; reason: string }[];
+    mean_db: number | null; peak_db: number | null;
+  };
+  type QualityReport = {
+    chapters: QualityChapter[];
+    totals: {
+      segments: number; cached_segments: number; retries: number;
+      flagged_segments: number; mean_db: number | null; peak_db: number | null;
+    };
+  };
+  const [vsWorkQuality, setVsWorkQuality] = useState<QualityReport | null>(null);
+
   // ── Per-chapter voice casting ────────────────────────────────────────────────
   const [castDocs, setCastDocs] = useState<{ id: string; title: string }[]>([]);
   const [castMap, setCastMap] = useState<Record<string, string>>({});
@@ -1506,6 +1521,9 @@ function AudiobookTab({
       setVsWorkJobId(null);
       setLoading(false);
     }
+    // A quality report belongs to the render it came from — never show it
+    // against a different Work or source.
+    setVsWorkQuality(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workId, mode]);
 
@@ -1572,6 +1590,7 @@ function AudiobookTab({
         setVsWorkSegsDone(0);
         setVsWorkSegsTotal(resumeInfo?.total_segments ?? 0);
         setVsWorkCachedSegs(0);
+        setVsWorkQuality(null);
         // loading stays true while polling
         const iv: ReturnType<typeof setInterval> = setInterval(async () => {
           // The user may have switched Work/mode (detach) or started another
@@ -1604,6 +1623,7 @@ function AudiobookTab({
               stopPolling();
               vsWorkJobIdRef.current = null; setVsWorkJobId(null); setLoading(false);
               if (status.state === "done") {
+                setVsWorkQuality(status.quality_report ?? null);
                 const serveUrl = `${BASE}/studio/outputs/serve?path=${encodeURIComponent(status.result?.path ?? "")}`;
                 setAudioUrl(serveUrl);
                 setAudioName(status.result?.filename ?? `${works.find((w: any) => w.id === workId)?.title ?? "audiobook"}.mp3`);
@@ -2160,6 +2180,55 @@ function AudiobookTab({
               >
                 <Download className="w-4 h-4 text-muted-foreground" />
               </button>
+            </div>
+          </div>
+        )}
+
+        {/* Per-chapter quality report (work renders) */}
+        {mode === "work" && vsWorkQuality && (
+          <div className="rounded-xl border border-border/50 bg-muted/10 p-4 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-medium">Quality report</span>
+              <span className="text-xs text-muted-foreground">
+                {vsWorkQuality.totals.segments} segments
+                {vsWorkQuality.totals.cached_segments > 0 &&
+                  ` · ${vsWorkQuality.totals.cached_segments} reused`}
+                {vsWorkQuality.totals.mean_db != null &&
+                  ` · avg ${vsWorkQuality.totals.mean_db} dB`}
+                {vsWorkQuality.totals.peak_db != null &&
+                  ` · peak ${vsWorkQuality.totals.peak_db} dB`}
+              </span>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {vsWorkQuality.totals.retries === 0
+                ? "Every segment passed the loudness and silence checks on the first pass."
+                : `${vsWorkQuality.totals.retries} segment${vsWorkQuality.totals.retries === 1 ? "" : "s"} needed a second pass before passing the checks.`}
+            </p>
+            <div className="space-y-1 pt-1">
+              {vsWorkQuality.chapters.map((ch, i) => (
+                <div key={ch.doc_id ?? `${ch.kind}-${i}`} className="text-xs">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2
+                      className="w-3.5 h-3.5 shrink-0"
+                      style={{ color: ch.retries > 0 ? "var(--yellow-2, #d4a72c)" : "var(--green-2)" }}
+                    />
+                    <span className="truncate flex-1" title={ch.title}>{ch.title}</span>
+                    <span className="text-muted-foreground shrink-0">
+                      {ch.segments} seg
+                      {ch.cached_segments > 0 && ` (${ch.cached_segments} reused)`}
+                      {ch.mean_db != null && ` · ${ch.mean_db} dB`}
+                      {ch.retries > 0 && ` · ${ch.retries} redone`}
+                    </span>
+                  </div>
+                  {ch.flagged.length > 0 && (
+                    <div className="pl-5 text-muted-foreground">
+                      {ch.flagged.map(f => (
+                        <div key={f.segment}>segment {f.segment}: {f.reason} — fixed on retry</div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
             </div>
           </div>
         )}
