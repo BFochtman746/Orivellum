@@ -52,6 +52,11 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
+      - name: Build shared lib types
+        # Fresh checkouts have no lib/*/dist — the UI's project references
+        # need the built .d.ts files or tsc fails with TS6305 + implicit-any.
+        run: pnpm run typecheck:libs
+
       - name: Typecheck UI
         run: pnpm --filter @workspace/orivellum-ui exec tsc --noEmit
 

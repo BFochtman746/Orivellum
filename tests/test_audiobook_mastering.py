@@ -290,6 +290,10 @@ def test_render_rejects_clone_in_casting_without_premium(work_client):
         assert "premium" in r.json()["detail"].lower()
 
 
+@pytest.mark.skipif(
+    not (Path("kokoro-v0_19.onnx").exists() and Path("voices.bin").exists()),
+    reason="Kokoro ONNX model files not present (fetched locally, never committed — absent on CI)",
+)
 def test_render_with_catalog_casting_produces_audio(work_client):
     """Full sync render with a cast catalog voice: passes the QA gate, comes
     out mastered, and populates the segment cache."""

@@ -78,8 +78,14 @@ class TestIntentClassifier(unittest.TestCase):
 
 # ─── Web search ───────────────────────────────────────────────────────────────
 
+@patch.dict("os.environ", {"TAVILY_API_KEY": "test-key-not-real"})
 class TestWebSearch(unittest.TestCase):
-    """Tests use the real DDG Instant Answers JSON format (mocked)."""
+    """Tests use the real DDG Instant Answers JSON format (mocked).
+
+    TAVILY_API_KEY is stubbed at class level: the network layer is mocked,
+    but web_search() bails out early when no key is set — without the stub
+    these tests only pass on machines that happen to have a real key.
+    """
 
     # Realistic DDG Instant Answers API response for an abstract query
     _DDG_ABSTRACT = json.dumps({
