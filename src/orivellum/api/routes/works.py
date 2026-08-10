@@ -947,6 +947,53 @@ def get_pipeline(work_id: str):
     return {"pipeline": pipeline}
 
 
+@router.get("/works/{work_id}/pipeline/package")
+def pipeline_package_status(work_id: str):
+    """Report whether the book pipeline's chapters can be packaged for export.
+
+    Never fails when unready — returns ``ready: false`` plus human-readable
+    reasons so the UI can explain exactly what is missing.
+    """
+    from orivellum.capabilities.book_package import package_readiness
+
+    db = get_db()
+    if not db.get_work(work_id):
+        raise HTTPException(404, f"Work {work_id!r} not found")
+    pipeline = db.get_book_pipeline_for_work(work_id)
+    if not pipeline:
+        return {"ready": False, "reasons": ["No book pipeline exists for this Work yet."]}
+    chapters = db.list_pipeline_chapters(pipeline["id"])
+    return package_readiness(pipeline, chapters)
+
+
+@router.get("/works/{work_id}/pipeline/package/download")
+def pipeline_package_download(work_id: str):
+    """Build and download the book package — an EPUB plus per-chapter
+    Markdown and a manifest, in one ZIP. Assembled in memory on demand;
+    nothing is persisted."""
+    from fastapi.responses import Response
+
+    from orivellum.capabilities.book_package import build_book_export
+
+    db = get_db()
+    work = db.get_work(work_id)
+    if not work:
+        raise HTTPException(404, f"Work {work_id!r} not found")
+    pipeline = db.get_book_pipeline_for_work(work_id)
+    if not pipeline:
+        raise HTTPException(409, "No book pipeline exists for this Work yet.")
+    chapters = db.list_pipeline_chapters(pipeline["id"])
+    try:
+        filename, payload = build_book_export(pipeline, chapters, work)
+    except ValueError as e:
+        raise HTTPException(409, str(e)) from e
+    return Response(
+        content=payload,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 def _check_stage_gate(
     current: str,
     next_state: str,
@@ -1578,3 +1625,74 @@ def get_trailer(work_id: str, trailer_id: str):
         "updated_at": trailer["updated_at"],
         "package": pkg,
     }
+
+
+@router.get("/works/{work_id}/trailers/{trailer_id}/export")
+def export_trailer(work_id: str, trailer_id: str):
+    """Download the trailer production package as a ZIP.
+
+    Contains the production documents (script, shot list, narration, …) as
+    Markdown, shot prompts as plain text, and the full package as JSON —
+    per format (full/short/square) when the package is a combined envelope.
+    """
+    import io
+    import json as _json
+    import zipfile
+
+    from fastapi.responses import Response
+
+    db = get_db()
+    if not db.get_work(work_id):
+        raise HTTPException(404, f"Work {work_id!r} not found")
+    trailer = db.get_trailer(trailer_id)
+    if not trailer or trailer["work_id"] != work_id:
+        raise HTTPException(404, f"Trailer {trailer_id!r} not found for this Work")
+    if not trailer.get("package_json"):
+        raise HTTPException(
+            409,
+            f"No package to export — trailer status is {trailer['status']!r}"
+            + (f": {trailer['error']}" if trailer.get("error") else ""),
+        )
+    try:
+        pkg = _json.loads(trailer["package_json"])
+    except Exception as e:
+        raise HTTPException(500, "Stored package is corrupt") from e
+
+    # Combined envelopes carry sub-packages per format; flat ones are single.
+    fmt = pkg.get("format")
+    if fmt in ("both", "all"):
+        subs = {k: pkg[k] for k in ("full", "short", "square") if pkg.get(k)}
+    else:
+        subs = {fmt or "full": pkg}
+
+    def _write_sub(zf: zipfile.ZipFile, prefix: str, sub: dict) -> None:
+        for name, text in (sub.get("docs") or {}).items():
+            if isinstance(text, str):
+                zf.writestr(f"{prefix}docs/{name}.md", text)
+        # shot_prompts is a mapping (shot_00 → prompt) in current packages;
+        # keep a list fallback for any historical data.
+        prompts = sub.get("shot_prompts") or {}
+        lines: list[str] = []
+        if isinstance(prompts, dict):
+            for label, p in prompts.items():
+                lines.append(f"[{label}] {p if isinstance(p, str) else _json.dumps(p)}")
+        elif isinstance(prompts, list):
+            for i, p in enumerate(prompts, start=1):
+                lines.append(f"[{i:02d}] {p if isinstance(p, str) else _json.dumps(p)}")
+        if lines:
+            zf.writestr(f"{prefix}shot-prompts.txt", "\n\n".join(lines) + "\n")
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("package.json", _json.dumps(pkg, indent=2))
+        if len(subs) == 1:
+            _write_sub(zf, "", next(iter(subs.values())))
+        else:
+            for key, sub in subs.items():
+                _write_sub(zf, f"{key}/", sub)
+    return Response(
+        content=buf.getvalue(),
+        media_type="application/zip",
+        headers={"Content-Disposition":
+                 f'attachment; filename="trailer-{trailer_id[:8]}-package.zip"'},
+    )

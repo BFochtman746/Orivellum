@@ -1,7 +1,6 @@
 """Finishing Suite — PRESS (manuscript finalization) + ATELIER (cover/series design)."""
 from __future__ import annotations
 
-from pathlib import Path
 
 
 def configure(data_dir: str) -> None:

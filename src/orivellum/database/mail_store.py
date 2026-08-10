@@ -241,7 +241,7 @@ class MailStore:
         threat_evidence: list,
     ) -> None:
         signals_json  = json.dumps(assessment.signals)
-        evidence_json = json.dumps([
+        json.dumps([
             {"feed": e.feed, "indicator": e.indicator, "type": e.indicator_type}
             for e in threat_evidence
         ])

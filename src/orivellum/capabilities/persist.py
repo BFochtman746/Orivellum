@@ -322,7 +322,7 @@ def register_text_note(
 
     Returns the new ``doc_id``.
     """
-    data_dir = Path(cfg.data_dir)
+    Path(cfg.data_dir)
     lib_root = Path(cfg.data_dir) / "library"
     # Write directly into lib_root/generated/notes/ so content_path is
     # naturally lib-root-relative without needing a symlink.

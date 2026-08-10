@@ -172,7 +172,7 @@ def _check_orphans(db: OrivellumDB) -> list[dict]:
 
 def _check_stuck_records(db: OrivellumDB) -> list[dict]:
     checks: list[dict] = []
-    now_ts = datetime.now(UTC).isoformat()
+    datetime.now(UTC).isoformat()
 
     # Documents stuck in 'imported' > 10 minutes
     try:

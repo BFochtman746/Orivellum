@@ -254,7 +254,7 @@ class OutputValidator:
             pred  = c.get("predicate", "")
             value = c.get("value", "")
             unit  = c.get("unit") or ""
-            tier  = c.get("authority_tier", "A7")
+            c.get("authority_tier", "A7")
             status = c.get("status", "")
             display = f"{value} {unit}".strip()
             qual = " (self-reported)" if status == "USER_ASSERTED" else ""

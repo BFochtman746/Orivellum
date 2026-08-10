@@ -292,10 +292,10 @@ def generate_suggestions(work_id: str | None = Body(None), limit: int = Body(6))
     if not llm_suggestions:
         # Group by work/topic and propose exploration of less-covered areas
         from collections import Counter
-        work_counts: Counter = Counter(
+        Counter(
             r["work_title"] or "Library" for r in k_rows
         )
-        kind_counts: Counter = Counter(r["kind"] for r in k_rows)
+        Counter(r["kind"] for r in k_rows)
         seen_topics = set()
         fallback = []
         for r in k_rows:

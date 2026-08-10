@@ -288,7 +288,6 @@ def review_resolve(item_type: str, item_id: str, body: ResolveBody,
         raise HTTPException(400, f"unknown item type {item_type!r}")
 
     db = get_db()
-    key = f"{item_type}:{item_id}"
 
     if body.decision == "defer":
         result = _defer(db, item_type, item_id, body.reason)

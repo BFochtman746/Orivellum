@@ -59,7 +59,7 @@ def compute_seal(conn, book_id: str, title: str, length: int, acts: int,
 
     # Append seal + handoff to ledger
     from .gates import ledger_append
-    seal_hash = ledger_append(conn, book_id, "seal", {
+    ledger_append(conn, book_id, "seal", {
         "author": author,
         "package_sha256": package_hash,
     })

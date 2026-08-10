@@ -171,7 +171,6 @@ def generate_excel(work_id: str, db: OrivellumDB, cfg: OrivellumConfig) -> tuple
         raise ValueError(f"Work {work_id!r} not found")
 
     knowledge = db.list_knowledge(work_id=work_id, limit=500)
-    docs = db.list_knowledge  # we'll use the raw query below
     tasks = db.list_tasks(work_id=work_id)
     # Documents via DB
     with db._lock:
@@ -463,7 +462,7 @@ def generate_pdf_report(work_id: str, db: OrivellumDB, cfg: OrivellumConfig) -> 
         fontSize=13, spaceBefore=14, spaceAfter=6,
         textColor=colors.HexColor("#334155"),
     )
-    body_style = ParagraphStyle(
+    ParagraphStyle(
         "Body", parent=styles["Normal"],
         fontSize=10, leading=15, spaceAfter=4,
         textColor=colors.HexColor("#374151"),
@@ -647,7 +646,7 @@ def generate_pptx(work_id: str, db: OrivellumDB, cfg: OrivellumConfig) -> tuple[
         run.font.bold = bold
         run.font.color.rgb = color
 
-    inch = Inches(1)
+    Inches(1)
 
     # ── Slide 1: Title ──
     slide1 = prs.slides.add_slide(slide_layouts[6])  # blank

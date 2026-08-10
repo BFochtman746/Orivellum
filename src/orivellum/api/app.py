@@ -146,6 +146,17 @@ async def lifespan(app: FastAPI):
     # Step 5: Wire deps
     _deps.init(db=db, cfg=cfg)
 
+    # Step 5a: Recover orphaned background jobs. Trailer generation runs as an
+    # in-process task, so any row still 'running' now was lost to a restart —
+    # mark it failed so the UI shows an actionable error instead of an
+    # eternal spinner with "Package not yet available".
+    try:
+        stale = db.fail_stale_trailers()
+        if stale:
+            logger.info("Marked %d orphaned running trailer(s) as failed", stale)
+    except Exception as e:  # never block startup on recovery
+        logger.warning("Stale-trailer recovery failed: %s", e)
+
     # Step 5b: Register PKLOS adapters with the global AdapterRegistry.
     # The WindowsInventoryAdapter reads from the claim ledger (not live CIM),
     # so it only needs db and can be safely registered at startup.

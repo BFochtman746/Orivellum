@@ -263,7 +263,7 @@ def _pass_db_optimise(db: OrivellumDB, report: list[str]) -> None:
                 ratio, freelist, page_cnt = _get_freelist_ratio(db._conn)
                 do_vacuum = ratio > _FREELIST_VACUUM_RATIO
             except Exception:
-                ratio, freelist, page_cnt = 0.0, 0, 0
+                ratio, _freelist, _page_cnt = 0.0, 0, 0
                 do_vacuum = False
 
             # ── conditional VACUUM (still under db._lock) ──────────────────────

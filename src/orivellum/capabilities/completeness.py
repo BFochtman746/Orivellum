@@ -234,7 +234,7 @@ def calculate_work_completeness(work_id: str, db: OrivellumDB) -> CompletenessRe
     # ── Overall weighted score ───────────────────────────────────────────────
 
     dims = [structural, content, research, editorial, source]
-    dim_map = {d.name: d for d in dims}
+    {d.name: d for d in dims}
     overall = round(sum(_WEIGHTS[d.name] * d.score for d in dims))
 
     readiness = (

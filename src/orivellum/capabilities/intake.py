@@ -450,7 +450,7 @@ def run_intake(
         else:
             try:
                 from orivellum.capabilities.websearch import web_search_synthesize
-                base_url = getattr(cfg, "serving", None)
+                getattr(cfg, "serving", None)
                 model_name = "gpt-3.5-turbo"
                 try:
                     from orivellum.api._deps import get_config as _get_cfg

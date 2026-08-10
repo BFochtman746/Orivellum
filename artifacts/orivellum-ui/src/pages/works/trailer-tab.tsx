@@ -1108,7 +1108,11 @@ function TrailerPackageDetail({ trailer }: { trailer: TrailerPackage }) {
   if (!rawPkg) {
     return (
       <div className="text-sm text-muted-foreground italic text-center py-8">
-        Package not yet available.
+        {trailer.status === "running"
+          ? `Still generating — ${PHASE_LABELS[trailer.phase] ?? trailer.phase}…`
+          : trailer.status === "failed"
+            ? `Generation failed${trailer.error ? `: ${trailer.error}` : " — start a new trailer."}`
+            : "No package was produced for this trailer — start a new one."}
       </div>
     );
   }

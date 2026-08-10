@@ -23,6 +23,7 @@ import {
   Sparkles,
   X,
   Film,
+  Download,
   RefreshCw,
   Clock,
   CheckCircle,
@@ -383,6 +384,80 @@ function FindingsList({ findings, workId }: { findings: PipelineFinding[]; workI
 
 // ─── Pipeline panel ───────────────────────────────────────────────────────────
 
+/** Download through apiFetch so the Bearer-token fallback works (plain
+ *  window.open only carries the session cookie, which the PWA can lose). */
+async function downloadViaApi(url: string, fallbackName: string) {
+  const r = await apiFetch(url);
+  if (!r.ok) {
+    let detail = "";
+    try { detail = (await r.json())?.detail ?? ""; } catch { /* not json */ }
+    throw new Error(detail || `Download failed (${r.status})`);
+  }
+  const disposition = r.headers.get("content-disposition") ?? "";
+  const name = /filename="([^"]+)"/.exec(disposition)?.[1] ?? fallbackName;
+  const blobUrl = URL.createObjectURL(await r.blob());
+  const a = document.createElement("a");
+  a.href = blobUrl;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(blobUrl);
+}
+
+function PackageExportRow({ workId }: { workId: string }) {
+  const { data } = useQuery({
+    queryKey: ["pipeline-package", workId],
+    queryFn: async () => {
+      const r = await apiFetch(`${BASE}/works/${workId}/pipeline/package`);
+      if (!r.ok) throw new Error();
+      return r.json() as Promise<{
+        ready: boolean;
+        chapters_with_text?: number;
+        chapters_total?: number;
+        reasons?: string[];
+      }>;
+    },
+    staleTime: 15_000,
+  });
+
+  if (!data) return null;
+
+  if (!data.ready) {
+    return (
+      <div className="flex items-start gap-2 text-[11px] text-muted-foreground">
+        <Download className="w-3.5 h-3.5 mt-0.5 shrink-0 opacity-50" />
+        <span>
+          <span className="font-mono uppercase tracking-widest text-[10px] mr-2">Package</span>
+          {data.reasons?.[0] ?? "Not ready to package yet."}
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-center justify-between gap-3 flex-wrap">
+      <div className="text-[11px] text-muted-foreground">
+        <span className="font-mono uppercase tracking-widest text-[10px] mr-2">Package</span>
+        {data.chapters_with_text} chapter{data.chapters_with_text === 1 ? "" : "s"} ready to export
+        (EPUB + Markdown)
+      </div>
+      <Button
+        size="sm"
+        variant="outline"
+        className="gap-1.5 h-7 text-xs shrink-0"
+        onClick={() =>
+          downloadViaApi(`${BASE}/works/${workId}/pipeline/package/download`, "book-package.zip")
+            .catch((e) => toast.error(e.message))
+        }
+      >
+        <Download className="w-3 h-3" />
+        Download book package
+      </Button>
+    </div>
+  );
+}
+
 function PipelinePanel({ workId }: { workId: string }) {
   const queryClient = useQueryClient();
   const [blockerMsg, setBlockerMsg] = useState<string | null>(null);
@@ -617,6 +692,11 @@ function PipelinePanel({ workId }: { workId: string }) {
           </div>
         )}
 
+        {/* Package & export */}
+        <div className="pt-1 border-t border-border/30">
+          <PackageExportRow workId={workId} />
+        </div>
+
         {/* Blocker warning */}
         {blockerMsg && (
           <div className="rounded-lg border border-destructive/30 bg-destructive/10 text-destructive text-xs overflow-hidden">
@@ -751,7 +831,11 @@ function TrailerPackageView({ trailer }: { trailer: TrailerPackage }) {
   if (!pkg) {
     return (
       <div className="text-sm text-muted-foreground italic py-4 text-center">
-        Package not yet available.
+        {trailer.status === "running"
+          ? `Still generating — ${PHASE_LABELS[trailer.phase] ?? trailer.phase}…`
+          : trailer.status === "failed"
+            ? `Generation failed${trailer.error ? `: ${trailer.error}` : " — start a new trailer."}`
+            : "No package was produced for this trailer — start a new one."}
       </div>
     );
   }
@@ -922,7 +1006,27 @@ function TrailerItem({ trailer, workId }: { trailer: TrailerListItem; workId: st
             </div>
           )}
           {(liveStatus === "ready" || liveStatus === "blocked") && fullTrailer && (
-            <TrailerPackageView trailer={fullTrailer} />
+            <>
+              {fullTrailer.package && (
+                <div className="flex justify-end pt-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="gap-1.5 h-7 text-xs"
+                    onClick={() =>
+                      downloadViaApi(
+                        `${BASE}/works/${workId}/trailers/${trailer.id}/export`,
+                        "trailer-package.zip",
+                      ).catch((e) => toast.error(e.message))
+                    }
+                  >
+                    <Download className="w-3 h-3" />
+                    Download package
+                  </Button>
+                </div>
+              )}
+              <TrailerPackageView trailer={fullTrailer} />
+            </>
           )}
         </div>
       )}

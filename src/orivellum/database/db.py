@@ -415,7 +415,6 @@ class OrivellumDB:
         if not kind and not work_id:
             return None
         try:
-            candidates: list = []
             with self._lock:
                 # Priority 1: exact kind + work match
                 if kind and work_id:
@@ -1676,7 +1675,6 @@ class OrivellumDB:
         transition_message(msg_id, 'streaming') should have been called first).
         If the message is not found, the call is a no-op.
         """
-        now = _now()
         _wc = len(text.split()) if text else 0
         with self.governed_write(
             operation="message.finalized",
@@ -1854,7 +1852,7 @@ class OrivellumDB:
                 self._conn.commit()
                 return ("generate", None, user_dict)
 
-            state, ai_msg_id, slot_created = slot[0], slot[1], slot[2]
+            state, ai_msg_id = slot[0], slot[1]
 
             if state == "completed":
                 return ("return", ai_msg_id, user_dict)
@@ -2487,8 +2485,6 @@ class OrivellumDB:
 
         if not doc_rows:
             return {"nodes": [], "edges": [], "node_count": 0, "edge_count": 0}
-
-        doc_ids = [r["id"] for r in doc_rows]
 
         # Add document nodes (capped)
         for r in doc_rows:
@@ -3606,6 +3602,47 @@ class OrivellumDB:
                 (status, phase, package_json, error, now, trailer_id),
             )
             self._conn.commit()
+
+    def list_pipeline_chapters(self, pipeline_id: str) -> list[dict]:
+        """Return all chapters linked to a book pipeline, ordered by seq.
+
+        Used by the packaging step — includes full text, so callers should
+        only fetch this when actually assembling an export.
+        """
+        with self._lock:
+            rows = self._conn.execute(
+                """SELECT id, pipeline_id, work_id, seq, title, text, status,
+                          source_doc_id, meta
+                   FROM book_chapters WHERE pipeline_id=? ORDER BY seq""",
+                (pipeline_id,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def fail_stale_trailers(self, min_idle_minutes: int = 5) -> int:
+        """Mark orphaned 'running' trailers as failed.
+
+        Trailer generation is an in-process background task; a server restart
+        loses it, which would otherwise leave the row 'running' forever with a
+        null package. Called at startup. Only rows whose ``updated_at`` is
+        older than ``min_idle_minutes`` are failed: the runner touches the row
+        on every phase change, so a generation legitimately owned by another
+        live process (multi-worker or overlapping dev reload) keeps its row
+        fresh and is left alone.
+        """
+        import datetime as _dt
+        cutoff = (
+            _dt.datetime.now(_dt.UTC) - _dt.timedelta(minutes=min_idle_minutes)
+        ).strftime("%Y-%m-%dT%H:%M:%S")
+        now = _now()
+        with self._lock:
+            cur = self._conn.execute(
+                """UPDATE trailers SET status='failed', phase='done',
+                   error='Generation was interrupted by a server restart — start a new trailer.',
+                   updated_at=? WHERE status='running' AND updated_at < ?""",
+                (now, cutoff),
+            )
+            self._conn.commit()
+        return cur.rowcount
 
     # -------------------------------------------------------------------------
     # Brainstorm sessions (divergent thinking engine)
