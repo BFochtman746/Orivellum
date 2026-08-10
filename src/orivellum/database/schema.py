@@ -1964,4 +1964,27 @@ MIGRATIONS: list[tuple[int, str, str]] = [
     (111, "Drop push_tokens table (mobile push retired)", """
         DROP TABLE IF EXISTS push_tokens;
     """),
+    (112, "Commonplace notes: note_blocks capture inbox + note_reports daily reports", """
+        CREATE TABLE IF NOT EXISTS note_blocks (
+            id          TEXT PRIMARY KEY,
+            day         TEXT NOT NULL,
+            text        TEXT NOT NULL,
+            source      TEXT NOT NULL DEFAULT 'web',
+            status      TEXT NOT NULL DEFAULT 'inbox',
+            proposal    TEXT,
+            error       TEXT,
+            filed_paths TEXT,
+            created_at  TEXT NOT NULL,
+            updated_at  TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS note_blocks_day    ON note_blocks(day);
+        CREATE INDEX IF NOT EXISTS note_blocks_status ON note_blocks(status);
+        CREATE TABLE IF NOT EXISTS note_reports (
+            day        TEXT PRIMARY KEY,
+            report     TEXT NOT NULL,
+            block_ids  TEXT NOT NULL DEFAULT '[]',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+    """),
 ]

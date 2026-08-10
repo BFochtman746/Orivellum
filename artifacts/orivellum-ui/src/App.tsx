@@ -16,6 +16,7 @@ import WorkIntelligence from '@/pages/works/intelligence';
 import { useParams, useLocation } from 'wouter';
 import Chat from '@/pages/chat/index';
 import Library from '@/pages/library/index';
+import NotesPage from '@/pages/notes/index';
 import DocumentDetail from '@/pages/library/detail';
 import Projects from '@/pages/projects/index';
 import ProjectDetail from '@/pages/projects/detail';
@@ -118,6 +119,7 @@ function RoutedPages() {
         <Route path="/works/:workId">{() => <RouteWithBoundary component={WorkDetail} />}</Route>
         <Route path="/works/:workId/intelligence">{() => <RouteWithBoundary component={WorkIntelligence} />}</Route>
         <Route path="/chat">{() => <RouteWithBoundary component={Chat} />}</Route>
+        <Route path="/notes">{() => <RouteWithBoundary component={NotesPage} />}</Route>
         <Route path="/library">{() => <RouteWithBoundary component={Library} />}</Route>
         <Route path="/library/:docId">{() => <RouteWithBoundary component={DocumentDetail} />}</Route>
         <Route path="/files">{() => <Redirect to="/library" />}</Route>

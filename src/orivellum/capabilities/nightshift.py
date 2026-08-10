@@ -1800,6 +1800,30 @@ def _run_nightshift_passes(db: OrivellumDB, cfg: OrivellumConfig) -> None:
         logger.warning("Cold-item detection pass failed (non-fatal): %s", _cidex)
         report.append(f"Cold-item detection: failed — {_cidex}")
 
+    # Commonplace notes: classify captured inbox blocks into filing proposals
+    # (surfaced in the review inbox) and refresh yesterday's + today's reports.
+    logger.info("Nightshift pass 19: commonplace note processing")
+    try:
+        from orivellum.capabilities import notes as _notes_cap
+        _nrec = _notes_cap.resume_approved(db, cfg)
+        if _nrec:
+            report.append(f"Notes: recovered {_nrec} interrupted filing(s)")
+        _nres = _notes_cap.process_inbox(db, cfg)
+        if _nres["scanned"]:
+            report.append(
+                f"Notes: {_nres['proposed']} of {_nres['scanned']} inbox note(s) "
+                f"classified for review"
+                + (f", {_nres['failed']} failed (will retry)" if _nres["failed"] else "")
+            )
+        for _nday in (_notes_cap.yesterday_str(), _notes_cap.today_str()):
+            try:
+                _notes_cap.build_daily_report(db, cfg, _nday)
+            except Exception as _nrex:
+                logger.warning("Notes report for %s failed (non-fatal): %s", _nday, _nrex)
+    except Exception as _nex:
+        logger.warning("Notes pass failed (non-fatal): %s", _nex)
+        report.append(f"Notes: failed — {_nex}")
+
     elapsed = time.time() - start_ts
     report.append(f"Completed in {elapsed:.0f}s")
 

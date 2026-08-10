@@ -16,6 +16,7 @@ import {
   Gauge,
   Mail,
   Library as LibraryIcon,
+  NotebookPen,
 } from "lucide-react";
 
 export interface AppRoute {
@@ -130,6 +131,17 @@ export const APPS: AppDef[] = [
       { name: "Intake", href: "/intake" },
     ],
     own: ["/library", "/intake"],
+  },
+  {
+    id: "commonplace",
+    name: "Commonplace",
+    tagline: "Daily notes & capture",
+    icon: NotebookPen,
+    entry: "/notes",
+    routes: [
+      { name: "Notes", href: "/notes" },
+    ],
+    own: ["/notes"],
   },
 ];
 

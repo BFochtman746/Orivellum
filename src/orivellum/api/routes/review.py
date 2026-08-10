@@ -29,7 +29,7 @@ router = APIRouter(prefix="/api")
 
 _DEFER_DAYS = 7
 _VALID_DECISIONS = {"approve", "reject", "defer"}
-_VALID_TYPES = {"knowledge", "reclassify", "suggestion", "duplicate", "quarantine"}
+_VALID_TYPES = {"knowledge", "reclassify", "suggestion", "duplicate", "quarantine", "noteblock"}
 
 
 def _now_iso() -> str:
@@ -227,6 +227,44 @@ def review_queue(limit: int = 200):
             "created_at": r["created_at"],
         })
 
+    # 6. Captured notes with an AI filing proposal awaiting approval
+    with db._lock:
+        rows = db._conn.execute(
+            """SELECT id, day, text, source, proposal, created_at
+               FROM note_blocks WHERE status='proposed'
+               ORDER BY created_at ASC LIMIT 200""",
+        ).fetchall()
+    for r in rows:
+        key = f"noteblock:{r['id']}"
+        if key in deferred:
+            continue
+        proposal = _jload(r["proposal"], {})
+        cats = proposal.get("categories") or []
+        actions = proposal.get("actions") or []
+        items.append({
+            "id": key,
+            "item_type": "noteblock",
+            "title": proposal.get("title") or (r["text"][:70] + ("…" if len(r["text"]) > 70 else "")),
+            "description": (
+                (proposal.get("summary") or r["text"][:200])
+                + f" — file under {', '.join(cats) if cats else 'unsorted'}"
+                + (f"; {len(actions)} action(s)" if actions else "")
+            ),
+            "confidence": proposal.get("confidence"),
+            "work_id": None,
+            "work_title": None,
+            "evidence": {
+                "day": r["day"],
+                "text": r["text"][:1000],
+                "categories": cats,
+                "kind": proposal.get("kind"),
+                "actions": actions,
+                "open_questions": proposal.get("open_questions") or [],
+                "warnings": proposal.get("warnings") or [],
+            },
+            "created_at": r["created_at"],
+        })
+
     # Most uncertain first; None confidence treated as 0.5
     items.sort(key=lambda i: i["confidence"] if i["confidence"] is not None else 0.5)
     counts: dict[str, int] = {}
@@ -248,6 +286,7 @@ _PENDING_SQL = {
     "reclassify": "SELECT 1 FROM pending_reclassify WHERE id=?",
     "duplicate": "SELECT 1 FROM doc_dupes WHERE id=? AND resolved=0",
     "quarantine": "SELECT 1 FROM documents WHERE id=? AND quarantined=1",
+    "noteblock": "SELECT 1 FROM note_blocks WHERE id=? AND status='proposed'",
 }
 
 
@@ -299,6 +338,8 @@ def review_resolve(item_type: str, item_id: str, body: ResolveBody,
         result = _resolve_suggestion(db, item_id, body)
     elif item_type == "quarantine":
         result = _resolve_quarantine(db, item_id, body, background_tasks)
+    elif item_type == "noteblock":
+        result = _resolve_noteblock(db, item_id, body)
     else:  # duplicate
         result = _resolve_duplicate(db, item_id, body)
 
@@ -431,6 +472,40 @@ def review_quarantine_reopen(item_id: str):
     db.audit("review.quarantine_reopened", object_id=item_id,
              object_type="document", actor="user")
     return {"ok": True}
+
+
+def _resolve_noteblock(db, item_id: str, body: ResolveBody) -> dict:
+    block = db.get_note_block(item_id)
+    if not block:
+        raise HTTPException(404, f"Note {item_id!r} not found")
+    if block["status"] != "proposed":
+        raise HTTPException(409, "This note was already resolved.")
+
+    if body.decision == "reject":
+        if not db.claim_note_block(item_id, "rejected", expected="proposed"):
+            raise HTTPException(409, "This note was already resolved.")
+        return {"resolved": True, "decision": "reject"}
+
+    # Approve: atomic claim first; only the winner files and creates side effects.
+    if not db.claim_note_block(item_id, "approved", expected="proposed"):
+        raise HTTPException(409, "This note was already resolved.")
+
+    from orivellum.api._deps import get_config
+    from orivellum.capabilities import notes as notes_cap
+
+    # complete_approval is fully idempotent; if anything fails here the block
+    # stays 'approved' and the nightshift recovery pass replays it — the
+    # decision is never lost and filing is never left permanently partial.
+    try:
+        out = notes_cap.complete_approval(db, get_config(), db.get_note_block(item_id))
+    except Exception as exc:
+        logger.warning("noteblock %s: filing failed, queued for retry: %s", item_id, exc)
+        db.set_note_block_error(item_id, f"Filing failed; will retry automatically: {exc}")
+        return {"resolved": True, "decision": "approve", "pending": True,
+                "detail": "Approved. Filing hit an error and will be retried automatically."}
+
+    return {"resolved": True, "decision": "approve",
+            "filed_paths": out["filed_paths"], "tasks_created": out["tasks_created"]}
 
 
 def _resolve_suggestion(db, item_id: str, body: ResolveBody) -> dict:

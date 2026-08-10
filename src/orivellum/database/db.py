@@ -3645,6 +3645,116 @@ class OrivellumDB:
         return cur.rowcount
 
     # -------------------------------------------------------------------------
+    # Commonplace notes (capture inbox → proposed → approved/rejected → filed)
+    # -------------------------------------------------------------------------
+
+    def create_note_block(self, text: str, day: str, source: str = "web") -> dict:
+        bid = _uuid()
+        now = _now()
+        with self._lock:
+            self._conn.execute(
+                """INSERT INTO note_blocks(id,day,text,source,status,created_at,updated_at)
+                   VALUES(?,?,?,?,'inbox',?,?)""",
+                (bid, day, text, source, now, now),
+            )
+            self._conn.commit()
+            row = self._conn.execute(
+                "SELECT * FROM note_blocks WHERE id=?", (bid,)
+            ).fetchone()
+        return dict(row)
+
+    def get_note_block(self, block_id: str) -> dict | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM note_blocks WHERE id=?", (block_id,)
+            ).fetchone()
+        return dict(row) if row else None
+
+    def list_note_blocks(self, day: str | None = None, status: str | None = None,
+                         limit: int = 200) -> list[dict]:
+        q = "SELECT * FROM note_blocks"
+        conds, params = [], []
+        if day:
+            conds.append("day=?"); params.append(day)
+        if status:
+            conds.append("status=?"); params.append(status)
+        if conds:
+            q += " WHERE " + " AND ".join(conds)
+        q += " ORDER BY created_at ASC LIMIT ?"
+        params.append(max(1, min(limit, 500)))
+        with self._lock:
+            rows = self._conn.execute(q, params).fetchall()
+        return [dict(r) for r in rows]
+
+    def set_note_block_proposal(self, block_id: str, proposal: dict) -> bool:
+        """inbox → proposed with the classification attached. CAS-guarded."""
+        with self._lock:
+            cur = self._conn.execute(
+                """UPDATE note_blocks SET status='proposed', proposal=?, error=NULL,
+                   updated_at=? WHERE id=? AND status='inbox'""",
+                (json.dumps(proposal), _now(), block_id),
+            )
+            self._conn.commit()
+        return cur.rowcount == 1
+
+    def set_note_block_error(self, block_id: str, error: str) -> None:
+        with self._lock:
+            self._conn.execute(
+                "UPDATE note_blocks SET error=?, updated_at=? WHERE id=?",
+                (error[:300], _now(), block_id),
+            )
+            self._conn.commit()
+
+    def claim_note_block(self, block_id: str, new_status: str,
+                         expected: str = "proposed") -> bool:
+        """Atomically move a block out of ``expected`` status. Only the
+        winning claimant (rowcount==1) may apply side effects."""
+        with self._lock:
+            cur = self._conn.execute(
+                "UPDATE note_blocks SET status=?, updated_at=? WHERE id=? AND status=?",
+                (new_status, _now(), block_id, expected),
+            )
+            self._conn.commit()
+        return cur.rowcount == 1
+
+    def mark_note_block_filed(self, block_id: str, paths: list[str]) -> None:
+        with self._lock:
+            self._conn.execute(
+                """UPDATE note_blocks SET status='filed', filed_paths=?, updated_at=?
+                   WHERE id=? AND status='approved'""",
+                (json.dumps(paths), _now(), block_id),
+            )
+            self._conn.commit()
+
+    def delete_note_block(self, block_id: str) -> bool:
+        """Delete a block that is still in the inbox (undo a capture)."""
+        with self._lock:
+            cur = self._conn.execute(
+                "DELETE FROM note_blocks WHERE id=? AND status='inbox'", (block_id,)
+            )
+            self._conn.commit()
+        return cur.rowcount == 1
+
+    def upsert_note_report(self, day: str, report: str, block_ids: list[str]) -> None:
+        now = _now()
+        with self._lock:
+            self._conn.execute(
+                """INSERT INTO note_reports(day,report,block_ids,created_at,updated_at)
+                   VALUES(?,?,?,?,?)
+                   ON CONFLICT(day) DO UPDATE SET report=excluded.report,
+                     block_ids=excluded.block_ids, updated_at=excluded.updated_at""",
+                (day, report, json.dumps(block_ids), now, now),
+            )
+            self._conn.commit()
+
+    def get_note_report(self, day: str) -> dict | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM note_reports WHERE day=?", (day,)
+            ).fetchone()
+        return dict(row) if row else None
+
+    # -------------------------------------------------------------------------
     # Brainstorm sessions (divergent thinking engine)
     # -------------------------------------------------------------------------
 

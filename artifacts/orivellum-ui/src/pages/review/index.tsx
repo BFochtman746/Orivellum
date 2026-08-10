@@ -24,6 +24,7 @@ import {
   Inbox, ThumbsUp, ThumbsDown, Clock, CheckCircle2, Sparkles,
   RefreshCw, Copy, FileQuestion, Lightbulb, Loader2, ExternalLink,
   ShieldAlert,
+  NotebookPen,
 } from "lucide-react";
 
 const BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
@@ -32,7 +33,7 @@ const BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/
 
 interface ReviewItem {
   id: string;
-  item_type: "knowledge" | "reclassify" | "suggestion" | "duplicate" | "quarantine";
+  item_type: "knowledge" | "reclassify" | "suggestion" | "duplicate" | "quarantine" | "noteblock";
   title: string;
   description: string;
   confidence: number | null;
@@ -84,6 +85,12 @@ const TYPE_META: Record<ReviewItem["item_type"], {
     badgeCls: "border",
     badgeStyle: { borderColor: 'var(--rust)', color: 'var(--rust)', background: 'var(--rust-soft)' },
     borderStyle: { borderLeftColor: 'var(--rust)' },
+  },
+  noteblock: {
+    label: "Note filing", icon: NotebookPen,
+    badgeCls: "border",
+    badgeStyle: { borderColor: 'var(--gilt-line)', color: 'var(--gilt)', background: 'var(--gilt-soft)' },
+    borderStyle: { borderLeftColor: 'var(--gilt)' },
   },
 };
 
@@ -144,6 +151,30 @@ function EvidenceLine({ item }: { item: ReviewItem }) {
     parts.push(
       <span key="n" className="font-mono text-[11px]">{(ev.doc_ids as unknown[]).length} documents</span>,
     );
+  } else if (item.item_type === "noteblock") {
+    if (ev.day) {
+      parts.push(
+        <span key="day" className="font-mono text-[11px]">{String(ev.day)}</span>,
+      );
+    }
+    if (Array.isArray(ev.categories) && ev.categories.length > 0) {
+      parts.push(
+        <span key="cats" className="font-mono text-[11px]">
+          → {(ev.categories as string[]).join(", ")}
+        </span>,
+      );
+    }
+    if (Array.isArray(ev.actions) && ev.actions.length > 0) {
+      // Show the full action text — the user must be able to review exactly
+      // what will become a task, not just a count.
+      for (const [idx, a] of (ev.actions as { text: string; due?: string }[]).entries()) {
+        parts.push(
+          <span key={`act-${idx}`} className="font-mono text-[11px]">
+            task: {a.text}{a.due ? ` (due ${a.due})` : ""}
+          </span>,
+        );
+      }
+    }
   } else if (item.item_type === "quarantine" && ev.doc_id) {
     parts.push(
       <Link key="doc" href={`/library/${ev.doc_id}`}

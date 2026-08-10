@@ -17,7 +17,7 @@ import { Command } from "cmdk";
 import { useLocation } from "wouter";
 import type { LucideIcon } from "lucide-react";
 import {
-  Workflow, Search, Plus, RefreshCcw, ArrowRight, Sparkles, X, LayoutGrid,
+  Workflow, Search, Plus, RefreshCcw, ArrowRight, Sparkles, X, LayoutGrid, NotebookPen,
 } from "lucide-react";
 import { APPS } from "@/lib/apps";
 
@@ -47,6 +47,7 @@ const NAV_GROUPS = ["Home", ...APPS.map((a) => a.name)];
 // ── Quick actions ─────────────────────────────────────────────────────────────
 
 const QUICK_ACTIONS = [
+  { id: "capture",     label: "Capture a note",     icon: NotebookPen, href: "/notes" },
   { id: "new-chat",    label: "New conversation",   icon: Plus,        href: "/chat" },
   { id: "import-doc",  label: "Import a document",  icon: Workflow,    href: "/intake" },
   { id: "reprocess",   label: "System diagnostics", icon: RefreshCcw,  href: "/system" },
