@@ -92,3 +92,4 @@
 - [Audit remediation patterns](orivellum-audit-remediation.md) — internal_error helper, CAS transitions, router-level require_auth on every new router, bg_jobs upsert-before-submit, percent-encoded traversal tests.
 - [Orivellum Runner xlsx proving](orivellum-runner.md) — standalone harness at orivellum-runner/; surgery-only writes, six proof gates, candidate→rename certification, formulas==1.3.4 engine.
 - [Work render pause/resume](orivellum-work-render-resume.md) — segment texts single-sourced; resume-info counts only engine-reachable cache; status copied under lock; UI detach + job-id poll guard.
+- [Project Workbench](orivellum-workbench.md) — Tasklet-style build/edit/repair for xlsx+code; claim-before-mutate, files-before-row publish, hash-gated archives; proof gates queued.
